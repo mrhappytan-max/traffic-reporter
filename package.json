@@ -2,12 +2,14 @@
   "name": "traffic-reporter",
   "version": "0.1.0",
   "private": true,
-  "description": "路況播報員 - Cloudflare Worker (bootstrap)",
+  "description": "路況播報員 - Cloudflare Worker",
+  "type": "module",
   "main": "src/index.js",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "start": "wrangler dev"
+    "start": "wrangler dev",
+    "test": "node --test"
   },
   "devDependencies": {
     "wrangler": "^4.123.0"
