@@ -9,6 +9,7 @@
 
 import { runTdxPipelineAndCommit } from './pipeline.js';
 import { runLineBroadcast } from './broadcastPipeline.js';
+import { runPbsPipelineAndCommit } from '../pbs/pipeline.js';
 
 export async function runScheduledTdxSync(env, now = new Date()) {
   const summary = await runTdxPipelineAndCommit(env, now);
@@ -47,5 +48,30 @@ export async function runScheduledTdxSync(env, now = new Date()) {
       `errors=${lineSummary.lineErrors.length ? lineSummary.lineErrors.join('; ') : 'none'}`
   );
 
-  return { ...summary, line: lineSummary };
+  // PBS runs as a fully separate step: its own KV key
+  // (pbs:lifecycle-state), its own fetch, its own failure isolation. It
+  // is NOT included in `allEvents` passed to runLineBroadcast above — PBS
+  // never reaches the LINE push pipeline this round (PBS_BROADCAST_ENABLED
+  // = false, see pbsConfig.js). tdxEvents is passed only for cross-source
+  // dedup observability (canonical event matching), not for anything
+  // that gets sent anywhere.
+  let pbsSummary;
+  try {
+    pbsSummary = await runPbsPipelineAndCommit(env, { tdxEvents: summary.allEvents, now });
+    console.log(
+      `[cron][pbs] pbsOk=${pbsSummary.pbsOk} pbsError=${pbsSummary.pbsError ?? 'none'} ` +
+        `kvAvailable=${pbsSummary.kvAvailable} committed=${pbsSummary.committed} ` +
+        `raw=${pbsSummary.rawCount} hsinchu=${pbsSummary.hsinchuCount} active=${pbsSummary.activeCount} ` +
+        `cleared=${pbsSummary.clearedCount} stale=${pbsSummary.staleCount} filtered=${pbsSummary.filteredCount} ` +
+        `crossSourceDuplicates=${pbsSummary.crossSourceDuplicateCount} canonical=${pbsSummary.canonicalEventCount}`
+    );
+  } catch (err) {
+    // Belt-and-suspenders: PBS must never be able to take down the Cron
+    // run even if something in this brand-new pipeline throws
+    // unexpectedly — TDX + LINE above have already completed by now.
+    console.error(`[cron][pbs] pipeline failed: ${err && err.message}`);
+    pbsSummary = { pbsOk: false, pbsError: err && err.message };
+  }
+
+  return { ...summary, line: lineSummary, pbs: pbsSummary };
 }

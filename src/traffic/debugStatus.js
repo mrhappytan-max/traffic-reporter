@@ -17,6 +17,8 @@
 import { runTdxPipelinePreview } from './pipeline.js';
 import { runLineBroadcast } from './broadcastPipeline.js';
 import { formatTaipeiTime } from './broadcastHours.js';
+import { runPbsPipelinePreview } from '../pbs/pipeline.js';
+import { PBS_BROADCAST_ENABLED } from '../pbs/pbsConfig.js';
 
 // Safety cap so a runaway source can't blow up the response payload.
 const MAX_LISTED_EVENTS = 100;
@@ -38,6 +40,11 @@ export async function handleDebugStatus(env) {
     now,
     dryRun: true,
   });
+
+  // PBS: fully separate, read-only preview (never writes KV, never
+  // touches LINE). tdxEvents is passed only so cross-source dedup counts
+  // are meaningful — PBS_BROADCAST_ENABLED stays false regardless.
+  const pbsSummary = await runPbsPipelinePreview(env, { tdxEvents: summary.allEvents, now });
 
   const body = {
     lastRunAt: summary.lastRunAt,
@@ -77,6 +84,18 @@ export async function handleDebugStatus(env) {
     lineReady: lineSummary.lineReady,
     lastLinePushAt: lineSummary.lastLinePushAt,
     lineErrors: lineSummary.lineErrors,
+
+    // PBS — observation-only this round (see pbsConfig.js).
+    pbsOk: pbsSummary.pbsOk,
+    pbsRawCount: pbsSummary.rawCount,
+    pbsHsinchuCount: pbsSummary.hsinchuCount,
+    pbsActiveCount: pbsSummary.activeCount,
+    pbsClearedCount: pbsSummary.clearedCount,
+    pbsStaleCount: pbsSummary.staleCount,
+    pbsFilteredCount: pbsSummary.filteredCount,
+    crossSourceDuplicateCount: pbsSummary.crossSourceDuplicateCount,
+    canonicalEventCount: pbsSummary.canonicalEventCount,
+    pbsBroadcastEnabled: PBS_BROADCAST_ENABLED,
   };
 
   return Response.json(body, { status: summary.tokenOk ? 200 : 502 });
