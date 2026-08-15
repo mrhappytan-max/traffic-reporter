@@ -104,8 +104,16 @@ export async function readDedupeState(kv) {
  * initialized yet, EVERY event is a baseline seed and none of them are
  * ever new/updated/pushable — this is what stops the first-ever run from
  * flooding a future LINE push with every currently-open event.
+ *
+ * `sourceHealth` = { [sourceId]: boolean } for this run (see
+ * fetchAllSources' per-source `ok`). A stored key only becomes a
+ * "missingKey" candidate if ITS source reported ok===true this run — if
+ * the source failed (429/5xx/timeout/token error/etc.), we genuinely don't
+ * know whether that source's existing events are still there or not, so
+ * they are left completely untouched: not new, not updated, not missing,
+ * not pruned. "Source failed" must never be misread as "event resolved".
  */
-export function classifyEvents(events, { baselineInitialized, dedupeMap }) {
+export function classifyEvents(events, { baselineInitialized, dedupeMap, sourceHealth = {} }) {
   if (!baselineInitialized) {
     return {
       baselineSeedEvents: events,
@@ -135,7 +143,11 @@ export function classifyEvents(events, { baselineInitialized, dedupeMap }) {
     }
   }
 
-  const missingKeys = Object.keys(dedupeMap || {}).filter((key) => !seenKeys.has(key));
+  const missingKeys = Object.keys(dedupeMap || {}).filter((key) => {
+    if (seenKeys.has(key)) return false;
+    const source = key.slice(0, key.indexOf(':'));
+    return sourceHealth[source] === true; // unhealthy/unknown source -> not a candidate
+  });
 
   return {
     baselineSeedEvents: [],

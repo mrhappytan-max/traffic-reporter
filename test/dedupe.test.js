@@ -201,10 +201,12 @@ test('an event absent for less than the grace period is kept and does not become
   let state = { baselineInitialized: false, dedupeMap: {} };
   await commitDedupeState(kv, { ...state, classification: classifyEvents([eventA], state) }, t0);
 
-  // Missing for one run (e.g. a transient TDX blip), 1 hour later.
+  // Missing for one run (e.g. a transient TDX blip), 1 hour later. The
+  // source itself reported ok this run (sourceHealth.freeway=true), so a
+  // genuinely-absent event IS a valid missing-key candidate here.
   const missingAt = new Date(t0.getTime() + 60 * 60 * 1000);
   state = await readDedupeState(kv);
-  let classification = classifyEvents([], state); // eventA absent from this fetch
+  let classification = classifyEvents([], { ...state, sourceHealth: { freeway: true } });
   assert.equal(classification.missingKeys.length, 1);
   await commitDedupeState(kv, { ...state, classification }, missingAt);
 
@@ -212,7 +214,7 @@ test('an event absent for less than the grace period is kept and does not become
   // not new.
   const reappearAt = new Date(t0.getTime() + 3 * 60 * 60 * 1000);
   state = await readDedupeState(kv);
-  classification = classifyEvents([eventA], state);
+  classification = classifyEvents([eventA], { ...state, sourceHealth: { freeway: true } });
   assert.equal(classification.newEvents.length, 0);
   assert.equal(classification.duplicateEvents.length, 1);
 });
@@ -224,15 +226,17 @@ test('an event absent continuously for >= the grace period is pruned, and only t
   let state = { baselineInitialized: false, dedupeMap: {} };
   await commitDedupeState(kv, { ...state, classification: classifyEvents([eventA], state) }, t0);
 
+  const healthySourceOnly = { sourceHealth: { freeway: true } };
+
   // First missing run: absence clock starts.
   let now = new Date(t0.getTime() + 1 * 60 * 60 * 1000);
   state = await readDedupeState(kv);
-  await commitDedupeState(kv, { ...state, classification: classifyEvents([], state) }, now);
+  await commitDedupeState(kv, { ...state, classification: classifyEvents([], { ...state, ...healthySourceOnly }) }, now);
 
   // Still missing, just under 24h of consecutive absence -> not pruned yet.
   now = new Date(t0.getTime() + (1 + 23) * 60 * 60 * 1000);
   state = await readDedupeState(kv);
-  let classification = classifyEvents([], state);
+  let classification = classifyEvents([], { ...state, ...healthySourceOnly });
   assert.equal(Object.keys(state.dedupeMap).length, 1); // still tracked
   await commitDedupeState(kv, { ...state, classification }, now);
 
@@ -240,7 +244,7 @@ test('an event absent continuously for >= the grace period is pruned, and only t
   // on this write.
   now = new Date(t0.getTime() + (1 + 25) * 60 * 60 * 1000);
   state = await readDedupeState(kv);
-  classification = classifyEvents([], state);
+  classification = classifyEvents([], { ...state, ...healthySourceOnly });
   await commitDedupeState(kv, { ...state, classification }, now);
 
   state = await readDedupeState(kv);

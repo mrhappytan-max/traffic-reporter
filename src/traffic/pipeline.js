@@ -1,4 +1,4 @@
-// Full V1.2A pipeline: fetch all 5 TDX sources (Hsinchu geo-filter and
+// Full V1.2A/B pipeline: fetch all 5 TDX sources (Hsinchu geo-filter and
 // noise filters already applied per-source, see src/tdx/sources.js) ->
 // read dedup state -> classify new/updated/duplicate -> (Cron only) commit.
 //
@@ -8,8 +8,9 @@
 //   - runTdxPipelineAndCommit: used by the Cron scheduled handler. Reads,
 //     classifies, and (if KV is reliably available) commits.
 //
-// Neither sends anything anywhere (no LINE/push) — this round only
-// computes and, for the Cron path, records dedup state.
+// This module still doesn't send anything anywhere itself — the LINE
+// broadcast layer (src/traffic/broadcastPipeline.js) consumes its output
+// (`allEvents`, `kvAvailable`) separately, see src/traffic/scheduled.js.
 
 import { fetchAllSources } from '../tdx/fetchAll.js';
 import { readDedupeState, classifyEvents, commitDedupeState } from './dedupe.js';
@@ -17,6 +18,7 @@ import { readDedupeState, classifyEvents, commitDedupeState } from './dedupe.js'
 async function runCore(env) {
   const { tokenOk, results } = await fetchAllSources(env);
   const allEvents = results.flatMap((r) => r.events);
+  const sourceHealth = Object.fromEntries(results.map((r) => [r.source, r.ok]));
   const dedupeState = await readDedupeState(env.TRAFFIC_KV); // read-only, always
 
   // Fail-closed: if we can't reliably read dedup state, don't classify
@@ -24,7 +26,7 @@ async function runCore(env) {
   // risk re-flooding every 5 minutes because we lost track of what was
   // already seen.
   const classification = dedupeState.kvAvailable
-    ? classifyEvents(allEvents, dedupeState)
+    ? classifyEvents(allEvents, { ...dedupeState, sourceHealth })
     : {
         baselineSeedEvents: [],
         newEvents: [],
@@ -34,11 +36,11 @@ async function runCore(env) {
         missingKeys: [],
       };
 
-  return { tokenOk, results, allEvents, dedupeState, classification };
+  return { tokenOk, results, allEvents, sourceHealth, dedupeState, classification };
 }
 
 function buildSummary(core, commitResult) {
-  const { tokenOk, results, allEvents, dedupeState, classification } = core;
+  const { tokenOk, results, allEvents, sourceHealth, dedupeState, classification } = core;
 
   const kvWriteFailed = Boolean(commitResult && commitResult.reason === 'kv-error');
   // A write failure mid-run means we can't trust that anything got
@@ -66,6 +68,7 @@ function buildSummary(core, commitResult) {
     baselineInitialized,
     kvAvailable: effectiveKvAvailable,
     kvError,
+    sourceHealth,
     rawCounts: Object.fromEntries(results.map((r) => [r.source, r.rawCount])),
     normalizedCount: results.reduce((sum, r) => sum + r.normalizedCount, 0),
     hsinchuFilteredCount: allEvents.length,
@@ -94,9 +97,11 @@ function buildSummary(core, commitResult) {
       updated: effective.updatedEvents.slice(0, 3),
       duplicate: effective.duplicateEvents.slice(0, 2),
     },
-    // Full lists too, for internal/test use — /debug/status truncates
-    // these before responding, see debugStatus.js.
+    // Full lists too, for internal/test use and for the LINE broadcast
+    // layer — /debug/status truncates `pending` before responding and
+    // never surfaces `allEvents` directly, see debugStatus.js.
     pending: effective.pushableEvents,
+    allEvents,
   };
 }
 
@@ -106,17 +111,26 @@ export async function runTdxPipelinePreview(env) {
   return buildSummary(core, null);
 }
 
-/** Cron path — reads, classifies, and commits dedup state if possible. */
-export async function runTdxPipelineAndCommit(env) {
+/**
+ * Cron path — reads, classifies, and commits dedup state if possible.
+ * `now` defaults to the real clock; tests pass an explicit Date so
+ * multi-hour scenarios (source outages, absence windows) don't need to
+ * sleep.
+ */
+export async function runTdxPipelineAndCommit(env, now = new Date()) {
   const core = await runCore(env);
 
   let commitResult = { committed: false, reason: 'kv-unavailable' };
   if (core.dedupeState.kvAvailable) {
-    commitResult = await commitDedupeState(env.TRAFFIC_KV, {
-      baselineInitialized: core.dedupeState.baselineInitialized,
-      dedupeMap: core.dedupeState.dedupeMap,
-      classification: core.classification,
-    });
+    commitResult = await commitDedupeState(
+      env.TRAFFIC_KV,
+      {
+        baselineInitialized: core.dedupeState.baselineInitialized,
+        dedupeMap: core.dedupeState.dedupeMap,
+        classification: core.classification,
+      },
+      now
+    );
   }
 
   return buildSummary(core, commitResult);

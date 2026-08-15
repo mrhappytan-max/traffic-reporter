@@ -2,6 +2,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { resetTdxTokenCache } from '../src/tdx/auth.js';
 import { runTdxPipelinePreview, runTdxPipelineAndCommit } from '../src/traffic/pipeline.js';
+import { readDedupeState } from '../src/traffic/dedupe.js';
 import { handleDebugStatus } from '../src/traffic/debugStatus.js';
 import { runScheduledTdxSync } from '../src/traffic/scheduled.js';
 
@@ -34,6 +35,20 @@ function makeFreewayRaw(id, overrides = {}) {
   };
 }
 
+// Within the configured Hsinchu range for 台1線 (see hsinchuConfig.js).
+function makeHighwayRaw(id, overrides = {}) {
+  return {
+    EventID: id,
+    EventTitle: `台1線南向90K事件${id}`,
+    EventType: '施工',
+    Description: '南向90K處施工',
+    EffectiveTime: '2026-08-15T08:00:00+08:00',
+    LastUpdateTime: '2026-08-15T08:00:00+08:00',
+    Location: { FreeExpressHighway: { Road: '台1線', Direction: '南向', StartKM: '90K+000', EndKM: '90K+500' } },
+    ...overrides,
+  };
+}
+
 function mockTdxFetch(state) {
   return async (url) => {
     const href = String(url);
@@ -41,19 +56,25 @@ function mockTdxFetch(state) {
       return new Response(JSON.stringify({ access_token: 'tok', expires_in: 3600 }), { status: 200 });
     }
     if (href.includes('/RoadEvent/LiveEvent/Freeway')) {
+      if (state.freewayStatus && state.freewayStatus !== 200) {
+        return new Response('error', { status: state.freewayStatus });
+      }
       return new Response(JSON.stringify({ RoadEvents: state.freewayEvents ?? [] }), { status: 200 });
     }
     if (href.includes('/RoadEvent/LiveEvent/Highway')) {
-      return new Response(JSON.stringify({ RoadEvents: [] }), { status: 200 });
+      if (state.highwayStatus && state.highwayStatus !== 200) {
+        return new Response('error', { status: state.highwayStatus });
+      }
+      return new Response(JSON.stringify({ RoadEvents: state.highwayEvents ?? [] }), { status: 200 });
     }
     if (href.includes('/Road/Traffic/Live/CMS/City/Hsinchu')) {
-      return new Response(JSON.stringify({ CMSs: [] }), { status: 200 });
+      return new Response(JSON.stringify({ CMSs: state.cmsEvents ?? [] }), { status: 200 });
     }
     if (href.includes('/Bus/Alert/City/HsinchuCounty')) {
-      return new Response(JSON.stringify({ Alerts: [] }), { status: 200 });
+      return new Response(JSON.stringify({ Alerts: state.busCountyEvents ?? [] }), { status: 200 });
     }
     if (href.includes('/Bus/Alert/City/Hsinchu')) {
-      return new Response(JSON.stringify({ Alerts: [] }), { status: 200 });
+      return new Response(JSON.stringify({ Alerts: state.busCityEvents ?? [] }), { status: 200 });
     }
     throw new Error(`unexpected fetch: ${href}`);
   };
@@ -268,4 +289,125 @@ test('after baseline is established, a fresh pipeline call ("restart") does not 
   assert.equal(afterRestart.newEventsCount, 0);
   assert.equal(afterRestart.pushableEventsCount, 0);
   assert.equal(afterRestart.duplicateCount, 2);
+});
+
+// ---------------------------------------------------------------------
+// Source Health: a source's own fetch failure must never be misread as
+// "its events resolved". missingSince must only ever start/advance/prune
+// for a source that reported ok===true this run.
+// ---------------------------------------------------------------------
+
+test('Source Health: a Highway 5xx failure freezes H-1\'s missingSince entirely, even across 25 consecutive hourly failures, and it survives unpruned', async () => {
+  const kv = createMockKV();
+  const env = { TDX_CLIENT_ID: 'id', TDX_CLIENT_SECRET: 'secret', TRAFFIC_KV: kv };
+  const t0 = new Date('2026-08-15T00:00:00Z');
+
+  const state = { highwayEvents: [makeHighwayRaw('H-1')] };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockTdxFetch(state);
+
+  // 1) Highway event exists, baseline established.
+  const baselineRun = await runTdxPipelineAndCommit(env, t0);
+  assert.equal(baselineRun.baselineSeedCount, 1);
+  assert.equal(baselineRun.sourceHealth.highway, true);
+
+  let stored = await readDedupeState(kv);
+  assert.equal(stored.dedupeMap['highway:H-1'].missingSince, null);
+
+  // 2) Highway API starts failing (500) — H-1 must not start its absence
+  // clock. Simulate this continuously for 25 hourly ticks (past the old
+  // 24h mark) to prove it never gets pruned while the SOURCE is unhealthy.
+  state.highwayStatus = 500;
+  for (let hour = 1; hour <= 25; hour += 1) {
+    const now = new Date(t0.getTime() + hour * 60 * 60 * 1000);
+    const run = await runTdxPipelineAndCommit(env, now);
+    const highwaySource = run.sources.find((s) => s.source === 'highway');
+    assert.equal(highwaySource.ok, false, `hour ${hour}: highway must be reported as failed`);
+    assert.equal(run.sourceHealth.highway, false, `hour ${hour}: sourceHealth.highway must be false`);
+
+    stored = await readDedupeState(kv);
+    assert.ok(stored.dedupeMap['highway:H-1'], `hour ${hour}: H-1 must still be tracked`);
+    assert.equal(
+      stored.dedupeMap['highway:H-1'].missingSince,
+      null,
+      `hour ${hour}: missingSince must remain null while the source is unhealthy`
+    );
+  }
+
+  // 3) Highway recovers, H-1 reappears unchanged -> must be a duplicate,
+  // never "new", and must not have been pruned in the meantime.
+  state.highwayStatus = 200;
+  const recoveredAt = new Date(t0.getTime() + 26 * 60 * 60 * 1000);
+  const recoveredRun = await runTdxPipelineAndCommit(env, recoveredAt);
+  assert.equal(recoveredRun.sourceHealth.highway, true);
+  assert.equal(recoveredRun.newEventsCount, 0);
+  assert.equal(recoveredRun.updatedEventsCount, 0);
+  assert.equal(recoveredRun.duplicateCount, 1);
+});
+
+test('Source Health: a genuinely-successful source with the event truly gone is pruned only after 24h of consecutive (healthy-run) absence', async () => {
+  const kv = createMockKV();
+  const env = { TDX_CLIENT_ID: 'id', TDX_CLIENT_SECRET: 'secret', TRAFFIC_KV: kv };
+  const t0 = new Date('2026-08-15T00:00:00Z');
+
+  const state = { highwayEvents: [makeHighwayRaw('H-2')] };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockTdxFetch(state);
+
+  await runTdxPipelineAndCommit(env, t0); // baseline
+
+  // The event genuinely disappears from a HEALTHY Highway response (not a
+  // source failure) — this is the one case where the absence clock should
+  // actually run.
+  state.highwayEvents = [];
+
+  for (let hour = 1; hour <= 23; hour += 1) {
+    const now = new Date(t0.getTime() + hour * 60 * 60 * 1000);
+    const run = await runTdxPipelineAndCommit(env, now);
+    assert.equal(run.sourceHealth.highway, true);
+  }
+  let stored = await readDedupeState(kv);
+  assert.ok(stored.dedupeMap['highway:H-2'], 'still tracked just under 24h of genuine absence');
+
+  const at25h = new Date(t0.getTime() + 25 * 60 * 60 * 1000);
+  await runTdxPipelineAndCommit(env, at25h);
+
+  stored = await readDedupeState(kv);
+  assert.equal(stored.dedupeMap['highway:H-2'], undefined, 'pruned after 24h of genuine, healthy-source absence');
+});
+
+test('Source Health: Freeway failing does not affect Highway/CMS/Bus Alert dedup at all', async () => {
+  const kv = createMockKV();
+  const env = { TDX_CLIENT_ID: 'id', TDX_CLIENT_SECRET: 'secret', TRAFFIC_KV: kv };
+  const t0 = new Date('2026-08-15T00:00:00Z');
+
+  const state = {
+    freewayEvents: [makeFreewayRaw('FRW-1')],
+    highwayEvents: [makeHighwayRaw('H-3')],
+  };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockTdxFetch(state);
+
+  await runTdxPipelineAndCommit(env, t0); // baseline: FRW-1 + H-3
+
+  // Freeway starts failing; Highway keeps succeeding with the same,
+  // unchanged event.
+  state.freewayStatus = 429;
+  const now = new Date(t0.getTime() + 60 * 60 * 1000);
+  const run = await runTdxPipelineAndCommit(env, now);
+
+  assert.equal(run.sourceHealth.freeway, false);
+  assert.equal(run.sourceHealth.highway, true);
+  assert.equal(run.failedSources.length, 1);
+  assert.equal(run.failedSources[0].source, 'freeway');
+
+  // Highway's own event is still classified normally (duplicate, since
+  // unchanged) — completely unaffected by Freeway's outage.
+  assert.equal(run.duplicateCount, 1);
+  assert.equal(run.newEventsCount, 0);
+
+  const stored = await readDedupeState(kv);
+  assert.ok(stored.dedupeMap['freeway:FRW-1'], 'FRW-1 untouched, still present');
+  assert.equal(stored.dedupeMap['freeway:FRW-1'].missingSince, null);
+  assert.ok(stored.dedupeMap['highway:H-3'], 'H-3 unaffected by the unrelated Freeway outage');
 });
