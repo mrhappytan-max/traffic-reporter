@@ -7,8 +7,19 @@
 
 export const PBS_ENDPOINT_URL = 'https://rtr.pbs.gov.tw/NMP103_PbsWS/resources/roadData/opendata';
 
-// Abort the fetch if PBS hasn't responded within this long.
-export const PBS_FETCH_TIMEOUT_MS = 8000;
+// Abort a single attempt if PBS hasn't responded within this long. Real
+// production Cloudflare Worker traffic showed the previous 8s timeout
+// tripping ("PBS request timed out after 8000ms") — raised to 15s.
+export const PBS_FETCH_TIMEOUT_MS = 15000;
+
+// At most this many total requests (1 initial + retries). Retries only
+// happen for timeout/network-error/5xx — never for 4xx (see client.js's
+// isRetryableFailure).
+export const PBS_MAX_ATTEMPTS = 2;
+
+// Short randomized backoff before the single retry attempt.
+export const PBS_RETRY_BACKOFF_MIN_MS = 300;
+export const PBS_RETRY_BACKOFF_MAX_MS = 1000;
 
 // How old a NOT-explicitly-cleared PBS event may be (by updatedAt, falling
 // back to happenedAt) before we stop treating it as currently active.

@@ -28,12 +28,19 @@ async function runPbsCore(env, now) {
   let rawItems = [];
   let pbsOk = true;
   let pbsError = null;
+  let attempts = null;
+  let durationMs = null;
 
   try {
-    rawItems = await fetchPbsData();
+    const result = await fetchPbsData();
+    rawItems = result.items;
+    attempts = result.attempts;
+    durationMs = result.durationMs;
   } catch (err) {
     pbsOk = false;
     pbsError = safeErrorMessage(err);
+    attempts = typeof err.attempts === 'number' ? err.attempts : null;
+    durationMs = typeof err.durationMs === 'number' ? err.durationMs : null;
   }
 
   const normalized = [];
@@ -50,16 +57,31 @@ async function runPbsCore(env, now) {
   const { clearedEvents, staleEvents, activeEvents, seenIds } = classifyPbsLifecycle(hsinchuFiltered, now);
   const lifecycleState = await readPbsLifecycleState(env.TRAFFIC_KV); // read-only, always
 
-  return { rawItems, normalized, hsinchuFiltered, clearedEvents, staleEvents, activeEvents, seenIds, pbsOk, pbsError, lifecycleState };
+  return {
+    rawItems,
+    normalized,
+    hsinchuFiltered,
+    clearedEvents,
+    staleEvents,
+    activeEvents,
+    seenIds,
+    pbsOk,
+    pbsError,
+    attempts,
+    durationMs,
+    lifecycleState,
+  };
 }
 
 function buildSummary(core, tdxEvents, commitResult) {
-  const { rawItems, hsinchuFiltered, clearedEvents, staleEvents, activeEvents, pbsOk, pbsError, lifecycleState } = core;
+  const { rawItems, hsinchuFiltered, clearedEvents, staleEvents, activeEvents, pbsOk, pbsError, attempts, durationMs, lifecycleState } = core;
   const { canonicalEvents, duplicatePbsEvents, uniquePbsEvents } = crossSourceDedup(activeEvents, tdxEvents);
 
   return {
     pbsOk,
     pbsError,
+    attempts,
+    durationMs,
     kvAvailable: lifecycleState.kvAvailable,
     kvError: lifecycleState.kvError,
     committed: Boolean(commitResult && commitResult.committed),

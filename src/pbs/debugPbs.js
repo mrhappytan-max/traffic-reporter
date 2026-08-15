@@ -15,6 +15,8 @@ export async function handleDebugPbs(env) {
     generatedAt: now.toISOString(),
     pbsOk: pbsSummary.pbsOk,
     pbsError: pbsSummary.pbsError,
+    attempts: pbsSummary.attempts,
+    durationMs: pbsSummary.durationMs,
     kvAvailable: pbsSummary.kvAvailable,
     kvError: pbsSummary.kvError,
     pbsBroadcastEnabled: PBS_BROADCAST_ENABLED,
