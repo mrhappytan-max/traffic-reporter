@@ -3,6 +3,15 @@ import assert from 'node:assert/strict';
 import { extractArray } from '../src/tdx/extract.js';
 import { normalizeRoadEvent, normalizeCmsEvent, normalizeBusAlert } from '../src/tdx/normalize.js';
 import { fetchSource, SOURCES } from '../src/tdx/sources.js';
+import {
+  realFreewayEvent,
+  realHighwayConstructionEvent,
+  busAlertNormalOperationById,
+  busAlertNormalOperationByText,
+  busAlertRealDetour,
+  cmsSafetySlogan,
+  cmsCongestionMessage,
+} from './fixtures.js';
 
 test('extractArray finds the named key, then falls back to the first array property', () => {
   assert.deepEqual(extractArray({ RoadEvents: [1, 2] }, ['RoadEvents']), [1, 2]);
@@ -89,6 +98,82 @@ test('fetchSource isolates a malformed record instead of failing the whole sourc
     assert.equal(rawItems.length, 2);
     assert.equal(normalized.length, 1);
     assert.equal(normalized[0].rawId, '1');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('normalizeRoadEvent (real freeway schema): road/direction/startKM/endKM/title are populated', () => {
+  const event = normalizeRoadEvent(realFreewayEvent, 'freeway');
+
+  assert.equal(event.title, '國道1號南向122K車輛事故');
+  assert.equal(event.road, '國道1號');
+  assert.equal(event.direction, '南向');
+  assert.equal(event.startKM, 121.8);
+  assert.equal(event.endKM, 122.3);
+  assert.equal(event.blockedLanes, 1);
+  assert.equal(event.type, 'accident');
+  assert.equal(event.startTime, '2026-08-15T08:12:00+08:00');
+  assert.equal(event.updatedAt, '2026-08-15T08:20:00+08:00');
+  assert.match(event.location, /國道1號/);
+  assert.match(event.location, /南向/);
+  assert.match(event.location, /121\.8/);
+
+  for (const field of ['title', 'road', 'direction', 'location']) {
+    assert.ok(event[field] && event[field].length > 0, `${field} should not be empty`);
+  }
+});
+
+test('normalizeRoadEvent (real highway schema): classifies via EventType even when EventSubType is more specific', () => {
+  const event = normalizeRoadEvent(realHighwayConstructionEvent, 'highway');
+
+  assert.equal(event.type, 'construction');
+  assert.equal(event.road, '台68線');
+  assert.equal(event.direction, '東向');
+  assert.equal(event.startKM, 4.5);
+  assert.equal(event.endKM, 6);
+  assert.equal(event.title, '台68線東向5K道路施工');
+});
+
+test('bus alert filter drops AlertID "0" and any 正常營運 text, keeps real disruptions', async () => {
+  const source = SOURCES.find((s) => s.id === 'bus-hsinchu');
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        Alerts: [busAlertNormalOperationById, busAlertNormalOperationByText, busAlertRealDetour],
+      }),
+      { status: 200 }
+    );
+
+  try {
+    const { rawItems, normalized } = await fetchSource(source, 'token');
+    assert.equal(rawItems.length, 3);
+    assert.equal(normalized.length, 1);
+    assert.equal(normalized[0].rawId, 'A-9982');
+    assert.equal(normalized[0].type, 'control');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('normalizeBusAlert + filter: AlertID "0" alone is enough to drop it even with no text', () => {
+  const event = normalizeBusAlert(busAlertNormalOperationById, 'bus-hsinchu');
+  assert.equal(event.rawId, '0');
+});
+
+test('cms filter drops generic safety slogans and keeps real congestion messages', async () => {
+  const source = SOURCES.find((s) => s.id === 'cms');
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ CMSs: [cmsSafetySlogan, cmsCongestionMessage] }), { status: 200 });
+
+  try {
+    const { rawItems, normalized } = await fetchSource(source, 'token');
+    assert.equal(rawItems.length, 2);
+    assert.equal(normalized.length, 1);
+    assert.equal(normalized[0].rawId, 'CMS-HC-021');
+    assert.equal(normalized[0].type, 'congestion');
   } finally {
     globalThis.fetch = originalFetch;
   }

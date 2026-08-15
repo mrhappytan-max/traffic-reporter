@@ -7,6 +7,22 @@ import { normalizeRoadEvent, normalizeCmsEvent, normalizeBusAlert } from './norm
 
 const BASE = 'https://tdx.transportdata.tw/api/basic';
 
+// A CMS signboard only becomes an event when its text actually matches a
+// road-condition keyword (classify.js) — generic safety slogans etc. stay
+// type "other" and are dropped. Verified against real data: rawCount=64,
+// normalized=0 for Hsinchu on the day this was checked, which is expected.
+function isRoadConditionCms(item) {
+  return item.type !== 'other';
+}
+
+// Bus Alert: TDX represents "nothing wrong, business as usual" as either
+// AlertID "0" or a Title/Description that says 正常營運. Neither should
+// ever reach the rider/driver as an "event".
+function isNormalOperationBusAlert(item) {
+  if (item.rawId === '0') return true;
+  return /正常營運/.test(`${item.title} ${item.description}`);
+}
+
 export const SOURCES = [
   {
     id: 'freeway',
@@ -28,8 +44,7 @@ export const SOURCES = [
     url: `${BASE}/v2/Road/Traffic/Live/CMS/City/Hsinchu?$format=JSON`,
     extractKeys: ['CMSs', 'CMSLives', 'Data'],
     normalize: normalizeCmsEvent,
-    // Empty-message signboards add no value to a road-status feed.
-    filter: (item) => Boolean(item.description && item.description.trim()),
+    filter: isRoadConditionCms,
   },
   {
     id: 'bus-hsinchu',
@@ -37,6 +52,7 @@ export const SOURCES = [
     url: `${BASE}/v2/Bus/Alert/City/Hsinchu?$format=JSON`,
     extractKeys: ['Alerts', 'BusAlerts'],
     normalize: (raw) => normalizeBusAlert(raw, 'bus-hsinchu'),
+    filter: (item) => !isNormalOperationBusAlert(item),
   },
   {
     id: 'bus-hsinchu-county',
@@ -44,6 +60,7 @@ export const SOURCES = [
     url: `${BASE}/v2/Bus/Alert/City/HsinchuCounty?$format=JSON`,
     extractKeys: ['Alerts', 'BusAlerts'],
     normalize: (raw) => normalizeBusAlert(raw, 'bus-hsinchu-county'),
+    filter: (item) => !isNormalOperationBusAlert(item),
   },
 ];
 

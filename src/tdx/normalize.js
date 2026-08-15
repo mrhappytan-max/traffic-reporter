@@ -5,12 +5,12 @@
 //   startTime, endTime, updatedAt, rawId,
 // }
 //
-// Field names below are best-effort guesses at the real TDX schema (this
-// session could not reach the live Swagger to verify them — see
-// TDX_SOURCE_AUDIT.md). Every mapper tries several plausible field names
-// and falls back gracefully rather than throwing, and /debug/tdx exposes
-// raw samples so the mapping can be corrected once verified against real
-// responses.
+// Freeway/Highway field mapping below was corrected against a real TDX
+// response verified via the deployed /debug/tdx endpoint (see commit
+// history / TDX_SOURCE_AUDIT.md for the earlier, unverified guesses).
+// CMS and Bus Alert mappings still carry defensive fallbacks since only
+// the "ignore" rules for those two were confirmed against real data, not
+// every field name.
 
 import { firstDefined, get } from './extract.js';
 import { classifyByKeyword, classifyAlertText } from './classify.js';
@@ -29,15 +29,33 @@ const EVENT_TYPE_TEXT_MAP = {
   車多: 'congestion',
 };
 
+// Checks EventType, then EventSubType, then Category independently (rather
+// than stopping at whichever is present first) so a generic EventType
+// doesn't shadow a more specific EventSubType.
 function mapRoadEventType(raw, description) {
-  const rawType = firstDefined(raw, ['EventType', 'EventSubType', 'Category'], '');
-  if (rawType) {
-    const key = String(rawType).trim();
+  const candidates = [get(raw, 'EventType'), get(raw, 'EventSubType'), get(raw, 'Category')].filter(
+    (v) => v !== undefined && v !== null && v !== ''
+  );
+
+  for (const candidate of candidates) {
+    const key = String(candidate).trim();
     if (EVENT_TYPE_TEXT_MAP[key]) return EVENT_TYPE_TEXT_MAP[key];
     const byKeyword = classifyByKeyword(key);
     if (byKeyword !== 'other') return byKeyword;
   }
+
   return classifyByKeyword(description);
+}
+
+function composeLocation({ road, direction, startKM, endKM }) {
+  const parts = [];
+  if (road) parts.push(String(road));
+  if (direction) parts.push(String(direction));
+  if (startKM !== undefined || endKM !== undefined) {
+    const km = [startKM, endKM].filter((v) => v !== undefined && v !== '').join(' - ');
+    if (km) parts.push(`${km}K`);
+  }
+  return parts.join(' ');
 }
 
 /** Freeway / Highway live road events (v1 Traffic/RoadEvent/LiveEvent/*). */
@@ -48,39 +66,52 @@ export function normalizeRoadEvent(raw, source) {
     ''
   );
 
+  const road = firstDefined(
+    raw,
+    ['Location.FreeExpressHighway.Road', 'RoadName', 'RoadID'],
+    ''
+  );
+  const direction = firstDefined(
+    raw,
+    ['Location.FreeExpressHighway.Direction', 'Direction', 'RoadDirection'],
+    ''
+  );
   const startKM = firstDefined(
     raw,
-    ['Location.StartLocationMile', 'StartLocationMile', 'Location.StartMile', 'StartMile'],
+    ['Location.FreeExpressHighway.StartKM', 'Location.StartLocationMile', 'StartLocationMile'],
     undefined
   );
   const endKM = firstDefined(
     raw,
-    ['Location.EndLocationMile', 'EndLocationMile', 'Location.EndMile', 'EndMile'],
+    ['Location.FreeExpressHighway.EndKM', 'Location.EndLocationMile', 'EndLocationMile'],
     undefined
   );
   const blockedLanes = firstDefined(
     raw,
-    ['ImpactLane.BlockedLanesNum', 'BlockedLanesNum', 'ImpactLane.Description', 'ImpactLaneDescription'],
+    ['Impact.BlockedLanes', 'ImpactLane.BlockedLanesNum', 'BlockedLanesNum'],
     undefined
   );
+
+  const composedLocation = composeLocation({ road, direction, startKM, endKM });
+  const location =
+    composedLocation ||
+    String(firstDefined(raw, ['LocationDescription', 'Location.Description', 'LocationMile'], ''));
 
   return {
     source,
     type: mapRoadEventType(raw, description),
     title: firstDefined(
       raw,
-      ['EventName', 'EventType', 'Description'],
+      ['EventTitle', 'EventName', 'EventType', 'Description'],
       source === 'freeway' ? '國道路況事件' : '省道路況事件'
     ),
     description,
-    road: String(firstDefined(raw, ['RoadName', 'RoadID'], '')),
-    direction: String(firstDefined(raw, ['Direction', 'RoadDirection'], '')),
-    location: String(
-      firstDefined(raw, ['LocationDescription', 'Location.Description', 'LocationMile'], '')
-    ),
-    startTime: firstDefined(raw, ['EventStartTime', 'StartTime', 'OccurTime'], null) || null,
+    road: String(road),
+    direction: String(direction),
+    location,
+    startTime: firstDefined(raw, ['EffectiveTime', 'EventStartTime', 'StartTime'], null) || null,
     endTime: firstDefined(raw, ['EventEndTime', 'EndTime'], null) || null,
-    updatedAt: firstDefined(raw, ['UpdateTime', 'DataCollectTime', 'SrcUpdateTime'], null) || null,
+    updatedAt: firstDefined(raw, ['LastUpdateTime', 'UpdateTime', 'SrcUpdateTime'], null) || null,
     rawId: String(firstDefined(raw, ['EventID', 'ID', 'id'], '')),
     ...(startKM !== undefined ? { startKM } : {}),
     ...(endKM !== undefined ? { endKM } : {}),
