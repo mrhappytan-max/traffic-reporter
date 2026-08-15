@@ -2,6 +2,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { resetTdxTokenCache } from '../src/tdx/auth.js';
 import { handleDebugTdx } from '../src/tdx/debug.js';
+import { realFreewayEvent } from './fixtures.js';
 
 const ENV = { TDX_CLIENT_ID: 'id', TDX_CLIENT_SECRET: 'super-secret-value' };
 
@@ -24,9 +25,9 @@ test('handleDebugTdx: one source failing (429) does not take down the other four
       return new Response('Too Many Requests', { status: 429, statusText: 'Too Many Requests' });
     }
     if (href.includes('/RoadEvent/LiveEvent/Freeway')) {
-      return new Response(JSON.stringify({ RoadEvents: [{ EventID: '1', Description: '事故' }] }), {
-        status: 200,
-      });
+      // Must be Hsinchu-relevant (road + in-range KM) to survive the geo
+      // filter that's now wired into the freeway source, see hsinchuFilter.js.
+      return new Response(JSON.stringify({ RoadEvents: [realFreewayEvent] }), { status: 200 });
     }
     if (href.includes('/RoadEvent/LiveEvent/Highway')) {
       return new Response(JSON.stringify({ RoadEvents: [] }), { status: 200 });

@@ -4,6 +4,7 @@
 import { fetchTdxJson } from './client.js';
 import { extractArray } from './extract.js';
 import { normalizeRoadEvent, normalizeCmsEvent, normalizeBusAlert } from './normalize.js';
+import { isHsinchuRelevant } from '../traffic/hsinchuFilter.js';
 
 const BASE = 'https://tdx.transportdata.tw/api/basic';
 
@@ -30,6 +31,10 @@ export const SOURCES = [
     url: `${BASE}/v1/Traffic/RoadEvent/LiveEvent/Freeway?$format=JSON`,
     extractKeys: ['RoadEvents', 'Events', 'LiveEvents'],
     normalize: (raw) => normalizeRoadEvent(raw, 'freeway'),
+    // Freeway/Highway data is nationwide — restrict to Hsinchu-relevant
+    // events here so every consumer (Cron, /debug/tdx, /debug/status)
+    // gets the same filtered view for free. See src/traffic/hsinchuFilter.js.
+    filter: isHsinchuRelevant,
   },
   {
     id: 'highway',
@@ -37,10 +42,13 @@ export const SOURCES = [
     url: `${BASE}/v1/Traffic/RoadEvent/LiveEvent/Highway?$format=JSON`,
     extractKeys: ['RoadEvents', 'Events', 'LiveEvents'],
     normalize: (raw) => normalizeRoadEvent(raw, 'highway'),
+    filter: isHsinchuRelevant,
   },
   {
     id: 'cms',
     label: '新竹市 CMS 即時看板',
+    // Already Hsinchu-scoped by the City=Hsinchu query param — no
+    // additional geo filter needed.
     url: `${BASE}/v2/Road/Traffic/Live/CMS/City/Hsinchu?$format=JSON`,
     extractKeys: ['CMSs', 'CMSLives', 'Data'],
     normalize: normalizeCmsEvent,
@@ -49,6 +57,7 @@ export const SOURCES = [
   {
     id: 'bus-hsinchu',
     label: '新竹市公車營運通阻',
+    // Already Hsinchu-scoped by the City=Hsinchu query param.
     url: `${BASE}/v2/Bus/Alert/City/Hsinchu?$format=JSON`,
     extractKeys: ['Alerts', 'BusAlerts'],
     normalize: (raw) => normalizeBusAlert(raw, 'bus-hsinchu'),
@@ -57,6 +66,7 @@ export const SOURCES = [
   {
     id: 'bus-hsinchu-county',
     label: '新竹縣公車營運通阻',
+    // Already Hsinchu-scoped by the City=HsinchuCounty query param.
     url: `${BASE}/v2/Bus/Alert/City/HsinchuCounty?$format=JSON`,
     extractKeys: ['Alerts', 'BusAlerts'],
     normalize: (raw) => normalizeBusAlert(raw, 'bus-hsinchu-county'),
@@ -68,22 +78,28 @@ export const SOURCES = [
  * Fetch + normalize a single source. Throws (TdxApiError) on transport/HTTP
  * failure so the caller can report it per-source; never throws for a
  * malformed individual record — those are just skipped.
+ *
+ * A source's `filter(normalizedItem, rawItem)` — when present — decides
+ * whether a record should be kept; it receives both the normalized event
+ * and the original raw record (some filters, like the Hsinchu geo filter,
+ * need raw fields that aren't part of the unified schema).
  */
 export async function fetchSource(source, accessToken) {
   const json = await fetchTdxJson(source.url, accessToken, { source: source.id });
   const rawItems = extractArray(json, source.extractKeys);
 
-  const normalized = rawItems
-    .map((item) => {
-      if (!item || typeof item !== 'object') return null; // skip malformed records
-      try {
-        return source.normalize(item);
-      } catch {
-        return null; // one bad record shouldn't drop the whole source
-      }
-    })
-    .filter(Boolean)
-    .filter((item) => (source.filter ? source.filter(item) : true));
+  const normalized = [];
+  for (const raw of rawItems) {
+    if (!raw || typeof raw !== 'object') continue; // skip malformed records
+    let item;
+    try {
+      item = source.normalize(raw);
+    } catch {
+      continue; // one bad record shouldn't drop the whole source
+    }
+    if (source.filter && !source.filter(item, raw)) continue;
+    normalized.push(item);
+  }
 
   return { rawItems, normalized };
 }

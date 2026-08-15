@@ -1,4 +1,6 @@
 import { handleDebugTdx } from './tdx/debug.js';
+import { handleDebugStatus } from './traffic/debugStatus.js';
+import { runScheduledTdxSync } from './traffic/scheduled.js';
 
 export default {
   async fetch(request, env) {
@@ -16,6 +18,20 @@ export default {
       return handleDebugTdx(env);
     }
 
+    if (url.pathname === '/debug/status' && request.method === 'GET') {
+      return handleDebugStatus(env);
+    }
+
     return new Response('Not Found', { status: 404 });
+  },
+
+  // Every 5 minutes (see wrangler.jsonc triggers.crons): fetch TDX ->
+  // Hsinchu geo-filter -> KV dedup. No LINE/push this round.
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(
+      runScheduledTdxSync(env).catch((err) => {
+        console.error(`[cron] pipeline failed: ${err && err.message}`);
+      })
+    );
   },
 };

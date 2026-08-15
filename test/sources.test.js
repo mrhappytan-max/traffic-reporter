@@ -5,6 +5,8 @@ import { normalizeRoadEvent, normalizeCmsEvent, normalizeBusAlert } from '../src
 import { fetchSource, SOURCES } from '../src/tdx/sources.js';
 import {
   realFreewayEvent,
+  freewayEventOutsideHsinchu,
+  freewayEventUnknownRoad,
   realHighwayConstructionEvent,
   busAlertNormalOperationById,
   busAlertNormalOperationByText,
@@ -86,7 +88,7 @@ test('fetchSource isolates a malformed record instead of failing the whole sourc
     new Response(
       JSON.stringify({
         RoadEvents: [
-          { EventID: '1', Description: '事故' },
+          realFreewayEvent, // valid + Hsinchu-relevant, should survive
           null, // malformed — normalize() would throw reading its fields
         ],
       }),
@@ -97,31 +99,41 @@ test('fetchSource isolates a malformed record instead of failing the whole sourc
     const { rawItems, normalized } = await fetchSource(source, 'token');
     assert.equal(rawItems.length, 2);
     assert.equal(normalized.length, 1);
-    assert.equal(normalized[0].rawId, '1');
+    assert.equal(normalized[0].rawId, 'FRW-2026-0815-001');
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test('normalizeRoadEvent (real freeway schema): road/direction/startKM/endKM/title are populated', () => {
+test('normalizeRoadEvent (real freeway schema): road/direction/startKM/endKM/title are populated, location has no duplicated K', () => {
   const event = normalizeRoadEvent(realFreewayEvent, 'freeway');
 
-  assert.equal(event.title, '國道1號南向122K車輛事故');
-  assert.equal(event.road, '國道1號');
-  assert.equal(event.direction, '南向');
-  assert.equal(event.startKM, 121.8);
-  assert.equal(event.endKM, 122.3);
+  assert.equal(event.title, '國道一號北向92K車輛事故');
+  assert.equal(event.road, '國道一號');
+  assert.equal(event.direction, '北向');
+  assert.equal(event.startKM, '92K+500');
+  assert.equal(event.endKM, '91K+800');
   assert.equal(event.blockedLanes, 1);
   assert.equal(event.type, 'accident');
   assert.equal(event.startTime, '2026-08-15T08:12:00+08:00');
   assert.equal(event.updatedAt, '2026-08-15T08:20:00+08:00');
-  assert.match(event.location, /國道1號/);
-  assert.match(event.location, /南向/);
-  assert.match(event.location, /121\.8/);
+  assert.equal(event.location, '國道一號 北向 92K+500 - 91K+800');
+  assert.doesNotMatch(event.location, /K+K/); // no double-K regression
 
   for (const field of ['title', 'road', 'direction', 'location']) {
     assert.ok(event[field] && event[field].length > 0, `${field} should not be empty`);
   }
+});
+
+test('normalizeRoadEvent: location composition never appends an extra K (bug report repro)', () => {
+  const event = normalizeRoadEvent(
+    {
+      EventID: 'X',
+      Location: { FreeExpressHighway: { Road: '國道一號', Direction: '北向', StartKM: '42K+000', EndKM: '39K+000' } },
+    },
+    'freeway'
+  );
+  assert.equal(event.location, '國道一號 北向 42K+000 - 39K+000');
 });
 
 test('normalizeRoadEvent (real highway schema): classifies via EventType even when EventSubType is more specific', () => {
@@ -130,9 +142,30 @@ test('normalizeRoadEvent (real highway schema): classifies via EventType even wh
   assert.equal(event.type, 'construction');
   assert.equal(event.road, '台68線');
   assert.equal(event.direction, '東向');
-  assert.equal(event.startKM, 4.5);
-  assert.equal(event.endKM, 6);
+  assert.equal(event.startKM, '4K+500');
+  assert.equal(event.endKM, '6K+000');
   assert.equal(event.title, '台68線東向5K道路施工');
+});
+
+test('fetchSource("freeway") applies the Hsinchu geo-filter end to end', async () => {
+  const source = SOURCES.find((s) => s.id === 'freeway');
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        RoadEvents: [realFreewayEvent, freewayEventOutsideHsinchu, freewayEventUnknownRoad],
+      }),
+      { status: 200 }
+    );
+
+  try {
+    const { rawItems, normalized } = await fetchSource(source, 'token');
+    assert.equal(rawItems.length, 3);
+    assert.equal(normalized.length, 1);
+    assert.equal(normalized[0].rawId, 'FRW-2026-0815-001');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('bus alert filter drops AlertID "0" and any 正常營運 text, keeps real disruptions', async () => {

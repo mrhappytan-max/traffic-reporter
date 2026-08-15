@@ -52,8 +52,10 @@ function composeLocation({ road, direction, startKM, endKM }) {
   if (road) parts.push(String(road));
   if (direction) parts.push(String(direction));
   if (startKM !== undefined || endKM !== undefined) {
+    // StartKM/EndKM come back from TDX already formatted with a "K" unit
+    // (e.g. "42K+000") — do not append another "K" here.
     const km = [startKM, endKM].filter((v) => v !== undefined && v !== '').join(' - ');
-    if (km) parts.push(`${km}K`);
+    if (km) parts.push(km);
   }
   return parts.join(' ');
 }
