@@ -40,6 +40,7 @@ async function runCore(env) {
 }
 
 function buildSummary(core, commitResult) {
+  const prunedKeys = (commitResult && commitResult.prunedKeys) || [];
   const { tokenOk, results, allEvents, sourceHealth, dedupeState, classification } = core;
 
   const kvWriteFailed = Boolean(commitResult && commitResult.reason === 'kv-error');
@@ -99,9 +100,24 @@ function buildSummary(core, commitResult) {
     },
     // Full lists too, for internal/test use and for the LINE broadcast
     // layer — /debug/status truncates `pending` before responding and
-    // never surfaces `allEvents` directly, see debugStatus.js.
+    // never surfaces `allEvents`/`dedupeMapSnapshot` directly, see
+    // debugStatus.js.
     pending: effective.pushableEvents,
     allEvents,
+    newEvents: effective.newEvents,
+    updatedEvents: effective.updatedEvents,
+    duplicateEvents: effective.duplicateEvents,
+    // The dedupe-state map AS READ at the start of this run (before any
+    // commit). broadcastPipeline.js uses this + newEvents/updatedEvents to
+    // work out "when was this event's current content first established"
+    // for its enabledAt backfill guard, without duplicating dedupe.js's
+    // own lastSeenAt bookkeeping.
+    dedupeMapSnapshot: dedupeState.dedupeMap,
+    // Event keys (source:rawId) genuinely, healthily pruned from
+    // dedupe-state THIS run — notified-state cleanup piggybacks on this
+    // same lifecycle decision rather than tracking its own absence clock,
+    // see broadcastPipeline.js.
+    prunedKeys,
   };
 }
 

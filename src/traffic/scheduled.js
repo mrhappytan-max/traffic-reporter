@@ -23,18 +23,27 @@ export async function runScheduledTdxSync(env, now = new Date()) {
       `failedSources=${summary.failedSources.map((f) => f.source).join(',') || 'none'}`
   );
 
+  const newUpdatedKeys = new Set(
+    [...summary.newEvents, ...summary.updatedEvents].map((e) => `${e.source}:${e.rawId}`)
+  );
+
   const lineSummary = await runLineBroadcast(env, {
     allEvents: summary.allEvents,
     dedupeAvailable: summary.kvAvailable,
+    newUpdatedKeys,
+    dedupeMapSnapshot: summary.dedupeMapSnapshot,
+    prunedKeys: summary.prunedKeys,
     now,
     dryRun: false,
   });
 
   console.log(
     `[cron][line] withinHours=${lineSummary.withinBroadcastHours} ready=${lineSummary.lineReady} ` +
-      `subscriptions=${lineSummary.subscriptionsCount} relevant=${lineSummary.broadcastRelevantCount} ` +
-      `activeNow=${lineSummary.activeNowCount} future60=${lineSummary.futureWithin60MinCount} ` +
+      `enabledUsers=${lineSummary.enabledUsersCount} enabledGroups=${lineSummary.enabledGroupsCount} ` +
+      `relevant=${lineSummary.broadcastRelevantCount} activeNow=${lineSummary.activeNowCount} ` +
+      `future60=${lineSummary.futureWithin60MinCount} pendingTargets=${lineSummary.pendingTargetCount} ` +
       `pushed=${lineSummary.pushSucceeded}/${lineSummary.pushAttempted} ` +
+      `partialFailures=${lineSummary.partialPushFailures} ` +
       `errors=${lineSummary.lineErrors.length ? lineSummary.lineErrors.join('; ') : 'none'}`
   );
 

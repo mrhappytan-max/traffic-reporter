@@ -32,6 +32,11 @@ function accidentEvent(overrides = {}) {
   };
 }
 
+// Fixed early "already subscribed" timestamp, well before every test
+// scenario's event/now values, so the new enabledAt backfill guard never
+// interferes with tests that aren't specifically testing that guard.
+const ENROLLED_AT = new Date('2026-08-01T00:00:00+08:00');
+
 let originalFetch;
 let pushCalls;
 
@@ -49,7 +54,7 @@ afterEach(() => {
 
 test('fail-closed: missing LINE_CHANNEL_ACCESS_TOKEN -> 0 push', async () => {
   const kv = createMockKV();
-  await setUserEnabled(kv, 'U1', true);
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   const env = { TRAFFIC_KV: kv };
   const now = new Date('2026-08-15T09:00:00+08:00');
 
@@ -61,7 +66,7 @@ test('fail-closed: missing LINE_CHANNEL_ACCESS_TOKEN -> 0 push', async () => {
 
 test('fail-closed: dedupeAvailable=false (base pipeline KV unavailable) -> 0 push', async () => {
   const kv = createMockKV();
-  await setUserEnabled(kv, 'U1', true);
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
   const now = new Date('2026-08-15T09:00:00+08:00');
 
@@ -85,7 +90,7 @@ test('fail-closed: subscriptions read failure -> 0 push', async () => {
 
 test('quiet hours: 07:59 Taipei -> 0 push even with a ready system and a real event', async () => {
   const kv = createMockKV();
-  await setUserEnabled(kv, 'U1', true);
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   originalFetch = globalThis.fetch;
   globalThis.fetch = mockLinePushFetch();
   const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
@@ -102,7 +107,7 @@ test('quiet hours: 07:59 Taipei -> 0 push even with a ready system and a real ev
 
 test('quiet hours: 22:00 Taipei -> 0 push', async () => {
   const kv = createMockKV();
-  await setUserEnabled(kv, 'U1', true);
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   originalFetch = globalThis.fetch;
   globalThis.fetch = mockLinePushFetch();
   const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
@@ -140,7 +145,7 @@ test('0 subscribers -> LINE API is never called, even with a relevant event insi
 // ---------------------------------------------------------------------
 test('seen at 07:35 (pre-hours), still active at 08:00 -> must be notified exactly once at 08:00', async () => {
   const kv = createMockKV();
-  await setUserEnabled(kv, 'U1', true);
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   originalFetch = globalThis.fetch;
   globalThis.fetch = mockLinePushFetch();
   const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
@@ -179,7 +184,7 @@ test('seen at 07:35 (pre-hours), still active at 08:00 -> must be notified exact
 
 test('notified dedup: first push succeeds, second identical run does not push again', async () => {
   const kv = createMockKV();
-  await setUserEnabled(kv, 'U1', true);
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   originalFetch = globalThis.fetch;
   globalThis.fetch = mockLinePushFetch();
   const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
@@ -197,7 +202,7 @@ test('notified dedup: first push succeeds, second identical run does not push ag
 
 test('notified dedup: a real content change (blockedLanes) re-triggers a push; updatedAt-only does not', async () => {
   const kv = createMockKV();
-  await setUserEnabled(kv, 'U1', true);
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   originalFetch = globalThis.fetch;
   globalThis.fetch = mockLinePushFetch();
   const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
@@ -224,7 +229,7 @@ test('notified dedup: a real content change (blockedLanes) re-triggers a push; u
 
 test('forecast event crossing into the 60-minute window is pushed once, then not repeated on later ticks with unchanged content', async () => {
   const kv = createMockKV();
-  await setUserEnabled(kv, 'U1', true);
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   originalFetch = globalThis.fetch;
   globalThis.fetch = mockLinePushFetch();
   const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
@@ -263,7 +268,7 @@ test('forecast event crossing into the 60-minute window is pushed once, then not
 
 test('dry-run mode never calls the LINE API and never marks anything notified', async () => {
   const kv = createMockKV();
-  await setUserEnabled(kv, 'U1', true);
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   originalFetch = globalThis.fetch;
   globalThis.fetch = mockLinePushFetch();
   const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
@@ -273,7 +278,7 @@ test('dry-run mode never calls the LINE API and never marks anything notified', 
   const preview = await runLineBroadcast(env, { allEvents: [accidentEvent()], dedupeAvailable: true, now, dryRun: true });
 
   assert.equal(pushCalls.length, 0);
-  assert.equal(preview.wouldPushCount, 1);
+  assert.equal(preview.pendingTargetCount, 1);
   assert.equal(preview.pushSucceeded, 0);
   assert.equal(kv.store.size, sizeBefore); // nothing written
 
@@ -284,7 +289,7 @@ test('dry-run mode never calls the LINE API and never marks anything notified', 
 
 test('LINE push API 500 does not throw, is recorded as a structured error, and does not mark notified', async () => {
   const kv = createMockKV();
-  await setUserEnabled(kv, 'U1', true);
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   originalFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response('server error', { status: 500 });
   const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };

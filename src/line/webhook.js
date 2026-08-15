@@ -16,7 +16,7 @@ const REPLY_ENABLED =
   '✅ 路況播報已啟動\n播報時間：08:00～22:00\n僅通知目前或未來60分鐘內會影響行車的路況。';
 const REPLY_DISABLED = '🔕 路況播報已關閉';
 
-export async function handleLineWebhook(request, env) {
+export async function handleLineWebhook(request, env, now = new Date()) {
   const bodyText = await request.text();
   const signature = request.headers.get('X-Line-Signature');
 
@@ -39,7 +39,7 @@ export async function handleLineWebhook(request, env) {
 
   for (const event of events) {
     try {
-      await handleSingleEvent(event, env);
+      await handleSingleEvent(event, env, now);
     } catch (err) {
       // Never let one bad event fail the whole webhook ack.
       console.error(`[line-webhook] event handling failed: ${err && err.message}`);
@@ -49,7 +49,7 @@ export async function handleLineWebhook(request, env) {
   return new Response('OK', { status: 200 });
 }
 
-async function handleSingleEvent(event, env) {
+async function handleSingleEvent(event, env, now) {
   if (event.type !== 'message' || !event.message || event.message.type !== 'text') return;
 
   const text = typeof event.message.text === 'string' ? event.message.text.trim() : '';
@@ -70,21 +70,21 @@ async function handleSingleEvent(event, env) {
   if (!targetId) return;
 
   if (ENABLE_COMMANDS.has(text)) {
-    if (targetKind === 'user') await setUserEnabled(env.TRAFFIC_KV, targetId, true);
-    else await setGroupEnabled(env.TRAFFIC_KV, targetId, true);
+    if (targetKind === 'user') await setUserEnabled(env.TRAFFIC_KV, targetId, true, now);
+    else await setGroupEnabled(env.TRAFFIC_KV, targetId, true, now);
     if (replyToken) await replyLineMessage(env, replyToken, REPLY_ENABLED);
     return;
   }
 
   if (DISABLE_COMMANDS.has(text)) {
-    if (targetKind === 'user') await setUserEnabled(env.TRAFFIC_KV, targetId, false);
-    else await setGroupEnabled(env.TRAFFIC_KV, targetId, false);
+    if (targetKind === 'user') await setUserEnabled(env.TRAFFIC_KV, targetId, false, now);
+    else await setGroupEnabled(env.TRAFFIC_KV, targetId, false, now);
     if (replyToken) await replyLineMessage(env, replyToken, REPLY_DISABLED);
     return;
   }
 
   if (STATUS_COMMANDS.has(text)) {
-    const state = await readSubscriptions(env.TRAFFIC_KV);
+    const state = await readSubscriptions(env.TRAFFIC_KV, now);
     const enabled = targetKind === 'user' ? isUserEnabled(state.subscriptions, targetId) : isGroupEnabled(state.subscriptions, targetId);
     const statusText = enabled ? '目前：✅ 已啟動' : '目前：🔕 已關閉';
     if (replyToken) await replyLineMessage(env, replyToken, statusText);

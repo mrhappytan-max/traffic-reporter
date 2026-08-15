@@ -180,7 +180,7 @@ export function classifyEvents(events, { baselineInitialized, dedupeMap, sourceH
  *   unchanged) writes nothing at all — this is the common steady state.
  */
 export async function commitDedupeState(kv, { baselineInitialized, dedupeMap, classification }, now = new Date()) {
-  if (!kv) return { committed: false, reason: 'no-kv' };
+  if (!kv) return { committed: false, reason: 'no-kv', prunedKeys: [] };
 
   const nowIso = now.toISOString();
   const nowMs = now.getTime();
@@ -195,11 +195,12 @@ export async function commitDedupeState(kv, { baselineInitialized, dedupeMap, cl
       // missingSince/ABSENCE_GRACE_PERIOD_MS inside the blob itself.
       await kv.put(STATE_KEY, JSON.stringify({ events: nextMap, updatedAt: nowIso }));
       await kv.put(BASELINE_KEY, JSON.stringify({ initialized: true, initializedAt: nowIso }));
-      return { committed: true, baselineJustInitialized: true };
+      return { committed: true, baselineJustInitialized: true, prunedKeys: [] };
     }
 
     const nextMap = { ...dedupeMap };
     let changed = false;
+    const prunedKeys = []; // events that genuinely, healthily disappeared this run
 
     for (const event of [...classification.newEvents, ...classification.updatedEvents]) {
       nextMap[eventKey(event)] = { fingerprint: computeFingerprint(event), lastSeenAt: nowIso, missingSince: null };
@@ -224,16 +225,17 @@ export async function commitDedupeState(kv, { baselineInitialized, dedupeMap, cl
       } else if (nowMs - new Date(existing.missingSince).getTime() >= ABSENCE_GRACE_PERIOD_MS) {
         delete nextMap[key];
         changed = true;
+        prunedKeys.push(key);
       }
     }
 
     if (!changed) {
-      return { committed: false, reason: 'no-changes' };
+      return { committed: false, reason: 'no-changes', prunedKeys: [] };
     }
 
     await kv.put(STATE_KEY, JSON.stringify({ events: nextMap, updatedAt: nowIso }));
-    return { committed: true, baselineJustInitialized: false };
+    return { committed: true, baselineJustInitialized: false, prunedKeys };
   } catch (err) {
-    return { committed: false, reason: 'kv-error', error: safeErrorMessage(err) };
+    return { committed: false, reason: 'kv-error', error: safeErrorMessage(err), prunedKeys: [] };
   }
 }
