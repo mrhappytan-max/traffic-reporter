@@ -8,8 +8,11 @@ import { verifyLineSignature } from './verifySignature.js';
 import { replyLineMessage } from './replyMessage.js';
 import { setUserEnabled, setGroupEnabled, readSubscriptions, isUserEnabled, isGroupEnabled } from '../traffic/subscriptions.js';
 
-const ENABLE_COMMANDS = new Set(['啟動播報']);
-const DISABLE_COMMANDS = new Set(['關閉播報', '停止播報']);
+// Fixed-string command matching only (trim() first, then exact match) —
+// no fuzzy matching, no AI intent detection, no extra synonyms beyond
+// what's listed here.
+const ENABLE_COMMANDS = new Set(['啟動播報', '播報啟動']);
+const DISABLE_COMMANDS = new Set(['關閉播報', '播報關閉', '停止播報']);
 const STATUS_COMMANDS = new Set(['播報狀態']);
 
 const REPLY_ENABLED =

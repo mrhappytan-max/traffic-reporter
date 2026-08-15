@@ -160,6 +160,133 @@ test('user: 停止播報 also disables (synonym for 關閉播報)', async () => 
   assert.equal(isUserEnabled(subs.subscriptions, 'U7'), false);
 });
 
+test('user: 播報啟動 (new ON synonym) enables, 播報關閉 (new OFF synonym) disables', async () => {
+  const kv = createMockKV();
+  const env = { LINE_CHANNEL_SECRET: SECRET, LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineReplyFetch();
+
+  async function send(text) {
+    const body = {
+      events: [{ type: 'message', replyToken: 'rt', message: { type: 'text', text }, source: { type: 'user', userId: 'U100' } }],
+    };
+    const bodyText = JSON.stringify(body);
+    return handleLineWebhook(makeRequest(body, sign(bodyText)), env);
+  }
+
+  // 1. 啟動播報 -> ON
+  await send('啟動播報');
+  let subs = await readSubscriptions(kv);
+  assert.equal(isUserEnabled(subs.subscriptions, 'U100'), true);
+  assert.match(repliesSent.at(-1).body.messages[0].text, /已啟動/);
+
+  // 3. 關閉播報 -> OFF
+  await send('關閉播報');
+  subs = await readSubscriptions(kv);
+  assert.equal(isUserEnabled(subs.subscriptions, 'U100'), false);
+
+  // 2. 播報啟動 -> ON
+  await send('播報啟動');
+  subs = await readSubscriptions(kv);
+  assert.equal(isUserEnabled(subs.subscriptions, 'U100'), true);
+  assert.match(repliesSent.at(-1).body.messages[0].text, /已啟動/);
+
+  // 4. 播報關閉 -> OFF
+  await send('播報關閉');
+  subs = await readSubscriptions(kv);
+  assert.equal(isUserEnabled(subs.subscriptions, 'U100'), false);
+  assert.match(repliesSent.at(-1).body.messages[0].text, /已關閉/);
+
+  // 5. 啟動播報 -> ON again
+  await send('啟動播報');
+  subs = await readSubscriptions(kv);
+  assert.equal(isUserEnabled(subs.subscriptions, 'U100'), true);
+
+  // 6. 播報關閉 -> OFF again
+  await send('播報關閉');
+  subs = await readSubscriptions(kv);
+  assert.equal(isUserEnabled(subs.subscriptions, 'U100'), false);
+});
+
+test('group: 播報啟動/播報關閉 work identically to 啟動播報/關閉播報', async () => {
+  const kv = createMockKV();
+  const env = { LINE_CHANNEL_SECRET: SECRET, LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineReplyFetch();
+
+  async function send(text) {
+    const body = {
+      events: [{ type: 'message', replyToken: 'rt', message: { type: 'text', text }, source: { type: 'group', groupId: 'C200' } }],
+    };
+    const bodyText = JSON.stringify(body);
+    return handleLineWebhook(makeRequest(body, sign(bodyText)), env);
+  }
+
+  await send('播報啟動');
+  let subs = await readSubscriptions(kv);
+  assert.equal(isGroupEnabled(subs.subscriptions, 'C200'), true);
+  assert.match(repliesSent.at(-1).body.messages[0].text, /已啟動/);
+
+  await send('播報關閉');
+  subs = await readSubscriptions(kv);
+  assert.equal(isGroupEnabled(subs.subscriptions, 'C200'), false);
+  assert.match(repliesSent.at(-1).body.messages[0].text, /已關閉/);
+
+  // 播報狀態 still works after using the new synonyms.
+  await send('播報狀態');
+  assert.match(repliesSent.at(-1).body.messages[0].text, /已關閉/);
+
+  await send('啟動播報');
+  await send('播報狀態');
+  assert.match(repliesSent.at(-1).body.messages[0].text, /已啟動/);
+});
+
+test('leading/trailing whitespace around a command is trimmed before matching', async () => {
+  const kv = createMockKV();
+  const env = { LINE_CHANNEL_SECRET: SECRET, LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineReplyFetch();
+
+  const body = {
+    events: [
+      {
+        type: 'message',
+        replyToken: 'rt',
+        message: { type: 'text', text: '  啟動播報  \n' },
+        source: { type: 'user', userId: 'U300' },
+      },
+    ],
+  };
+  const bodyText = JSON.stringify(body);
+  await handleLineWebhook(makeRequest(body, sign(bodyText)), env);
+
+  const subs = await readSubscriptions(kv);
+  assert.equal(isUserEnabled(subs.subscriptions, 'U300'), true);
+});
+
+test('near-miss text ("播報" alone, "啟動" alone, "播報開啟") must not accidentally trigger ON/OFF (no fuzzy matching)', async () => {
+  const kv = createMockKV();
+  const env = { LINE_CHANNEL_SECRET: SECRET, LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineReplyFetch();
+
+  async function send(text) {
+    const body = {
+      events: [{ type: 'message', replyToken: 'rt', message: { type: 'text', text }, source: { type: 'user', userId: 'U400' } }],
+    };
+    const bodyText = JSON.stringify(body);
+    return handleLineWebhook(makeRequest(body, sign(bodyText)), env);
+  }
+
+  for (const text of ['播報', '啟動', '播報開啟', '請幫我啟動播報', '播報啟動吧']) {
+    repliesSent.length = 0;
+    await send(text);
+    const subs = await readSubscriptions(kv);
+    assert.equal(isUserEnabled(subs.subscriptions, 'U400'), false, `"${text}" must not enable`);
+    assert.equal(repliesSent.length, 0, `"${text}" must not trigger a reply`);
+  }
+});
+
 test('group: 啟動播報/關閉播報/播報狀態 work the same as 1:1, independent of any user state', async () => {
   const kv = createMockKV();
   const env = { LINE_CHANNEL_SECRET: SECRET, LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
