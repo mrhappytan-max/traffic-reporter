@@ -25,7 +25,14 @@ async function runCore(env) {
   // already seen.
   const classification = dedupeState.kvAvailable
     ? classifyEvents(allEvents, dedupeState)
-    : { baselineSeedEvents: [], newEvents: [], updatedEvents: [], duplicateEvents: [], pushableEvents: [] };
+    : {
+        baselineSeedEvents: [],
+        newEvents: [],
+        updatedEvents: [],
+        duplicateEvents: [],
+        pushableEvents: [],
+        missingKeys: [],
+      };
 
   return { tokenOk, results, allEvents, dedupeState, classification };
 }
@@ -67,6 +74,9 @@ function buildSummary(core, commitResult) {
     duplicateCount: effective.duplicateEvents.length,
     pushableEventsCount: effective.pushableEvents.length,
     baselineSeedCount: classification.baselineSeedEvents.length,
+    // Informational only — stored keys absent from this run's fetch.
+    // Never affects newEventsCount/pushableEventsCount.
+    missingKeysCount: classification.missingKeys.length,
     failedSources,
     errors,
     sources: results.map((r) => ({

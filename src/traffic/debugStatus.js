@@ -28,6 +28,7 @@ export async function handleDebugStatus(env) {
     duplicateCount: summary.duplicateCount,
     pushableEventsCount: summary.pushableEventsCount,
     baselineSeedCount: summary.baselineSeedCount,
+    missingKeysCount: summary.missingKeysCount,
     failedSources: summary.failedSources,
     errors: summary.errors,
     sources: summary.sources,

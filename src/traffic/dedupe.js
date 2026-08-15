@@ -1,8 +1,18 @@
 // Baseline + dedup + "did anything meaningful change" state, backed by
 // TRAFFIC_KV. Deliberately just 2 KV keys total (not one key per event) —
 // "儘量少量 key" — and writes only happen when something actually needs to
-// change (baseline seeding, or a run with at least one new/updated event).
-// A run where everything is a duplicate writes nothing.
+// change (baseline seeding, a new/updated event, or an event's
+// presence/absence status changing). A run where every event is an
+// unchanged, continuously-present duplicate writes nothing at all.
+//
+// Neither `traffic:baseline` nor `traffic:dedupe-state` carries an
+// expirationTtl — no blanket KV-key TTL on either. An event's lifecycle in
+// the dedupe-state blob is managed entirely by its own `lastSeenAt` /
+// `missingSince` fields: it is only pruned once it has been *consecutively
+// absent from the live TDX feed* for ABSENCE_GRACE_PERIOD_MS. An event that
+// keeps appearing in every fetch — even for days — is never pruned and
+// therefore never reclassified as "new", no matter how much wall-clock
+// time passes. This is presence-based, not calendar-time-based.
 //
 // This module is split into a pure read (readDedupeState), a pure
 // computation (classifyEvents — no I/O at all), and a write
@@ -13,15 +23,11 @@
 const BASELINE_KEY = 'traffic:baseline';
 const STATE_KEY = 'traffic:dedupe-state';
 
-// Per-event dedup window (agreed default). Enforced by pruning entries
-// from the state blob on write, not by KV's own per-key TTL, since we only
-// have one blob for all events.
-const DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000;
-
-// Safety-net TTL on the blob itself so abandoned state doesn't linger in
-// KV forever if Cron ever stops firing for a long time. This is NOT the
-// per-event dedup window — that's pruneExpired() below.
-const STATE_KEY_SAFETY_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
+// How long an event may be *consecutively missing* from the live TDX feed
+// before it's pruned from the dedupe-state blob. Reuses the previously
+// agreed 24h number, but the meaning changed: this now measures absence,
+// not "time since we last happened to write this key".
+const ABSENCE_GRACE_PERIOD_MS = 24 * 60 * 60 * 1000;
 
 function safeErrorMessage(err) {
   if (err && typeof err.message === 'string') return err.message;
@@ -44,15 +50,6 @@ export function computeFingerprint(event) {
     endKM: event.endKM ?? null,
     blockedLanes: event.blockedLanes ?? null,
   });
-}
-
-function pruneExpired(map, nowMs) {
-  const pruned = {};
-  for (const [key, record] of Object.entries(map || {})) {
-    const lastSeenMs = record && record.lastSeenAt ? new Date(record.lastSeenAt).getTime() : 0;
-    if (nowMs - lastSeenMs < DEDUP_WINDOW_MS) pruned[key] = record;
-  }
-  return pruned;
 }
 
 /**
@@ -100,11 +97,13 @@ export async function readDedupeState(kv) {
 }
 
 /**
- * Pure — no I/O. Given events fetched this run and the state read from KV,
- * decides new / updated / duplicate / baseline-seed. When the baseline
- * hasn't been initialized yet, EVERY event is a baseline seed and none of
- * them are ever new/updated/pushable — this is what stops the first-ever
- * run from flooding a future LINE push with every currently-open event.
+ * Pure — no I/O, no wall-clock reads. Given events fetched this run and the
+ * state read from KV, decides new / updated / duplicate / baseline-seed,
+ * plus which stored keys are missing from this run's fetch (candidates for
+ * the absence clock in commitDedupeState). When the baseline hasn't been
+ * initialized yet, EVERY event is a baseline seed and none of them are
+ * ever new/updated/pushable — this is what stops the first-ever run from
+ * flooding a future LINE push with every currently-open event.
  */
 export function classifyEvents(events, { baselineInitialized, dedupeMap }) {
   if (!baselineInitialized) {
@@ -114,15 +113,19 @@ export function classifyEvents(events, { baselineInitialized, dedupeMap }) {
       updatedEvents: [],
       duplicateEvents: [],
       pushableEvents: [],
+      missingKeys: [],
     };
   }
 
+  const seenKeys = new Set();
   const newEvents = [];
   const updatedEvents = [];
   const duplicateEvents = [];
 
   for (const event of events) {
-    const existing = dedupeMap[eventKey(event)];
+    const key = eventKey(event);
+    seenKeys.add(key);
+    const existing = dedupeMap[key];
     if (!existing) {
       newEvents.push(event);
     } else if (existing.fingerprint !== computeFingerprint(event)) {
@@ -132,12 +135,15 @@ export function classifyEvents(events, { baselineInitialized, dedupeMap }) {
     }
   }
 
+  const missingKeys = Object.keys(dedupeMap || {}).filter((key) => !seenKeys.has(key));
+
   return {
     baselineSeedEvents: [],
     newEvents,
     updatedEvents,
     duplicateEvents,
     pushableEvents: [...newEvents, ...updatedEvents],
+    missingKeys,
   };
 }
 
@@ -146,51 +152,74 @@ export function classifyEvents(events, { baselineInitialized, dedupeMap }) {
  * the Cron path (src/traffic/scheduled.js via pipeline.js) — /debug/status
  * must never call this.
  *
- * - Baseline run: seeds the state blob with every fetched event and marks
- *   the baseline key, in one write each (2 KV writes total, one-time).
- * - Normal run with 0 new/updated events: writes nothing at all.
- * - Normal run with >=1 new/updated event: one write of the whole blob,
- *   refreshing lastSeenAt for everything seen this run (including
- *   duplicates) so a long-running-but-unchanged event doesn't fall out of
- *   the 24h dedup window while unrelated events keep triggering writes.
- *   (Known residual edge case: if literally nothing changes anywhere for
- *   >24h, an unchanged event's lastSeenAt won't get refreshed either,
- *   since no write happens at all — it could then reappear as "new" once
- *   the window passes. Same 24h-window tradeoff already agreed upon;
- *   documented rather than solved with more writes.)
+ * `now` defaults to the real clock; tests pass an explicit Date to
+ * simulate many Cron ticks without actually sleeping.
+ *
+ * - Baseline run: seeds the state blob with every fetched event
+ *   (missingSince: null) and marks the baseline key. No TTL on either key.
+ * - New/updated events: (re)written with a fresh fingerprint and
+ *   missingSince cleared.
+ * - A duplicate that was previously flagged missing (a transient feed
+ *   blip) has its missingSince cleared on reappearance.
+ * - A stored event absent from this run's fetch: on its first missing run,
+ *   its absence clock (missingSince) starts. Once ABSENCE_GRACE_PERIOD_MS
+ *   of *consecutive* absence has elapsed, it's pruned from the blob.
+ * - A run where none of the above applies (every event present and
+ *   unchanged) writes nothing at all — this is the common steady state.
  */
-export async function commitDedupeState(kv, { baselineInitialized, dedupeMap, classification }) {
+export async function commitDedupeState(kv, { baselineInitialized, dedupeMap, classification }, now = new Date()) {
   if (!kv) return { committed: false, reason: 'no-kv' };
 
-  const now = new Date();
   const nowIso = now.toISOString();
+  const nowMs = now.getTime();
 
   try {
     if (!baselineInitialized) {
       const nextMap = {};
       for (const event of classification.baselineSeedEvents) {
-        nextMap[eventKey(event)] = { fingerprint: computeFingerprint(event), lastSeenAt: nowIso };
+        nextMap[eventKey(event)] = { fingerprint: computeFingerprint(event), lastSeenAt: nowIso, missingSince: null };
       }
-      await kv.put(STATE_KEY, JSON.stringify({ events: nextMap, updatedAt: nowIso }), {
-        expirationTtl: STATE_KEY_SAFETY_TTL_SECONDS,
-      });
+      // No expirationTtl on either key — lifecycle is managed entirely by
+      // missingSince/ABSENCE_GRACE_PERIOD_MS inside the blob itself.
+      await kv.put(STATE_KEY, JSON.stringify({ events: nextMap, updatedAt: nowIso }));
       await kv.put(BASELINE_KEY, JSON.stringify({ initialized: true, initializedAt: nowIso }));
       return { committed: true, baselineJustInitialized: true };
     }
 
-    const toWrite = [...classification.newEvents, ...classification.updatedEvents];
-    if (toWrite.length === 0) {
+    const nextMap = { ...dedupeMap };
+    let changed = false;
+
+    for (const event of [...classification.newEvents, ...classification.updatedEvents]) {
+      nextMap[eventKey(event)] = { fingerprint: computeFingerprint(event), lastSeenAt: nowIso, missingSince: null };
+      changed = true;
+    }
+
+    for (const event of classification.duplicateEvents) {
+      const key = eventKey(event);
+      const existing = nextMap[key];
+      if (existing && existing.missingSince) {
+        nextMap[key] = { ...existing, lastSeenAt: nowIso, missingSince: null };
+        changed = true;
+      }
+    }
+
+    for (const key of classification.missingKeys) {
+      const existing = nextMap[key];
+      if (!existing) continue;
+      if (!existing.missingSince) {
+        nextMap[key] = { ...existing, missingSince: nowIso };
+        changed = true;
+      } else if (nowMs - new Date(existing.missingSince).getTime() >= ABSENCE_GRACE_PERIOD_MS) {
+        delete nextMap[key];
+        changed = true;
+      }
+    }
+
+    if (!changed) {
       return { committed: false, reason: 'no-changes' };
     }
 
-    const nextMap = pruneExpired(dedupeMap, now.getTime());
-    for (const event of [...toWrite, ...classification.duplicateEvents]) {
-      nextMap[eventKey(event)] = { fingerprint: computeFingerprint(event), lastSeenAt: nowIso };
-    }
-
-    await kv.put(STATE_KEY, JSON.stringify({ events: nextMap, updatedAt: nowIso }), {
-      expirationTtl: STATE_KEY_SAFETY_TTL_SECONDS,
-    });
+    await kv.put(STATE_KEY, JSON.stringify({ events: nextMap, updatedAt: nowIso }));
     return { committed: true, baselineJustInitialized: false };
   } catch (err) {
     return { committed: false, reason: 'kv-error', error: safeErrorMessage(err) };

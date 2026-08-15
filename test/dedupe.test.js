@@ -4,14 +4,17 @@ import { computeFingerprint, readDedupeState, classifyEvents, commitDedupeState 
 
 function createMockKV(initial = {}) {
   const store = new Map(Object.entries(initial));
+  const putCalls = [];
   return {
     async get(key) {
       return store.has(key) ? store.get(key) : null;
     },
-    async put(key, value) {
+    async put(key, value, options) {
       store.set(key, value);
+      putCalls.push({ key, options });
     },
     store,
+    putCalls,
   };
 }
 
@@ -143,4 +146,108 @@ test('commitDedupeState surfaces a structured error and commits nothing when kv.
   assert.equal(result.committed, false);
   assert.equal(result.reason, 'kv-error');
   assert.match(result.error, /KV write outage/);
+});
+
+test('neither traffic:baseline nor traffic:dedupe-state is ever written with an expirationTtl', async () => {
+  const kv = createMockKV();
+  await commitDedupeState(kv, {
+    baselineInitialized: false,
+    dedupeMap: {},
+    classification: classifyEvents([eventA], { baselineInitialized: false, dedupeMap: {} }),
+  });
+
+  // Also exercise the "new event on an established baseline" write path.
+  let state = await readDedupeState(kv);
+  await commitDedupeState(kv, { ...state, classification: classifyEvents([eventB], state) });
+
+  assert.ok(kv.putCalls.length >= 3);
+  for (const call of kv.putCalls) {
+    assert.equal(call.options, undefined, `put("${call.key}") must not carry an expirationTtl`);
+  }
+});
+
+test('an event present and unchanged for 48+ consecutive hours is never re-flagged as new (presence-based lifecycle, not calendar-time-based)', async () => {
+  const kv = createMockKV();
+  const t0 = new Date('2026-08-15T00:00:00Z');
+
+  let state = { baselineInitialized: false, dedupeMap: {} };
+  await commitDedupeState(kv, { ...state, classification: classifyEvents([eventA], state) }, t0);
+  const sizeAfterBaseline = kv.store.size;
+
+  // Cron ticks once an hour for 49 hours — well past the old 24h mark —
+  // with eventA present and fingerprint-identical every single time.
+  for (let hour = 1; hour <= 49; hour += 1) {
+    const now = new Date(t0.getTime() + hour * 60 * 60 * 1000);
+    state = await readDedupeState(kv);
+    const classification = classifyEvents([eventA], state);
+
+    assert.equal(classification.newEvents.length, 0, `hour ${hour}: must not be classified as new`);
+    assert.equal(classification.updatedEvents.length, 0, `hour ${hour}: must not be classified as updated`);
+    assert.equal(classification.duplicateEvents.length, 1, `hour ${hour}: must remain a duplicate`);
+
+    await commitDedupeState(kv, { ...state, classification }, now);
+  }
+
+  // A continuously-present, unchanged event should never require a write
+  // after the initial baseline — confirms this is genuinely presence-based
+  // (no periodic "keep-alive" write needed), not merely passing the test.
+  assert.equal(kv.store.size, sizeAfterBaseline);
+});
+
+test('an event absent for less than the grace period is kept and does not become "new" on reappearance', async () => {
+  const kv = createMockKV();
+  const t0 = new Date('2026-08-15T00:00:00Z');
+
+  let state = { baselineInitialized: false, dedupeMap: {} };
+  await commitDedupeState(kv, { ...state, classification: classifyEvents([eventA], state) }, t0);
+
+  // Missing for one run (e.g. a transient TDX blip), 1 hour later.
+  const missingAt = new Date(t0.getTime() + 60 * 60 * 1000);
+  state = await readDedupeState(kv);
+  let classification = classifyEvents([], state); // eventA absent from this fetch
+  assert.equal(classification.missingKeys.length, 1);
+  await commitDedupeState(kv, { ...state, classification }, missingAt);
+
+  // Reappears 2 hours later (well under the 24h grace period) -> duplicate,
+  // not new.
+  const reappearAt = new Date(t0.getTime() + 3 * 60 * 60 * 1000);
+  state = await readDedupeState(kv);
+  classification = classifyEvents([eventA], state);
+  assert.equal(classification.newEvents.length, 0);
+  assert.equal(classification.duplicateEvents.length, 1);
+});
+
+test('an event absent continuously for >= the grace period is pruned, and only then would reappear as new', async () => {
+  const kv = createMockKV();
+  const t0 = new Date('2026-08-15T00:00:00Z');
+
+  let state = { baselineInitialized: false, dedupeMap: {} };
+  await commitDedupeState(kv, { ...state, classification: classifyEvents([eventA], state) }, t0);
+
+  // First missing run: absence clock starts.
+  let now = new Date(t0.getTime() + 1 * 60 * 60 * 1000);
+  state = await readDedupeState(kv);
+  await commitDedupeState(kv, { ...state, classification: classifyEvents([], state) }, now);
+
+  // Still missing, just under 24h of consecutive absence -> not pruned yet.
+  now = new Date(t0.getTime() + (1 + 23) * 60 * 60 * 1000);
+  state = await readDedupeState(kv);
+  let classification = classifyEvents([], state);
+  assert.equal(Object.keys(state.dedupeMap).length, 1); // still tracked
+  await commitDedupeState(kv, { ...state, classification }, now);
+
+  // Now past 24h of consecutive absence since the clock started -> pruned
+  // on this write.
+  now = new Date(t0.getTime() + (1 + 25) * 60 * 60 * 1000);
+  state = await readDedupeState(kv);
+  classification = classifyEvents([], state);
+  await commitDedupeState(kv, { ...state, classification }, now);
+
+  state = await readDedupeState(kv);
+  assert.equal(Object.keys(state.dedupeMap).length, 0); // pruned
+
+  // Reappearing after being pruned is indistinguishable from a genuinely
+  // new event — this is the intended, documented behavior.
+  classification = classifyEvents([eventA], state);
+  assert.equal(classification.newEvents.length, 1);
 });
