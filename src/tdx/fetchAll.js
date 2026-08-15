@@ -14,9 +14,15 @@ function safeErrorMessage(err) {
 /**
  * @returns {{ tokenOk: boolean, results: Array<{
  *   source: string, label: string, ok: boolean, count: number,
- *   rawCount: number, durationMs: number, events: object[],
- *   rawSample: object[], status: number|null, error: string|null,
+ *   normalizedCount: number, rawCount: number, durationMs: number,
+ *   events: object[], rawSample: object[], status: number|null,
+ *   error: string|null,
  * }> }}
+ *
+ * `count` = post-filter (Hsinchu-relevant / noise-filtered) event count,
+ * used everywhere the old behavior already relied on it (e.g. /debug/tdx).
+ * `normalizedCount` = successfully-parsed count *before* that filter, for
+ * /debug/status's normalizedCount vs. hsinchuFilteredCount distinction.
  */
 export async function fetchAllSources(env) {
   let accessToken = null;
@@ -38,6 +44,7 @@ export async function fetchAllSources(env) {
           label: source.label,
           ok: false,
           count: 0,
+          normalizedCount: 0,
           rawCount: 0,
           durationMs: 0,
           events: [],
@@ -48,12 +55,13 @@ export async function fetchAllSources(env) {
       }
 
       try {
-        const { rawItems, normalized } = await fetchSource(source, accessToken);
+        const { rawItems, normalizedAll, normalized } = await fetchSource(source, accessToken);
         return {
           source: source.id,
           label: source.label,
           ok: true,
           count: normalized.length,
+          normalizedCount: normalizedAll.length,
           rawCount: rawItems.length,
           durationMs: Date.now() - startedAt,
           events: normalized,
@@ -67,6 +75,7 @@ export async function fetchAllSources(env) {
           label: source.label,
           ok: false,
           count: 0,
+          normalizedCount: 0,
           rawCount: 0,
           durationMs: Date.now() - startedAt,
           events: [],

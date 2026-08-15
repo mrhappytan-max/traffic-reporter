@@ -1,20 +1,22 @@
 // Cron entry point (every 5 minutes, see wrangler.jsonc `triggers.crons`).
-// Runs the pipeline and logs a one-line summary. Deliberately does not
-// send anything anywhere yet (no LINE/push this round) — the point of
-// V1.2A is just to prove fetch -> Hsinchu filter -> KV dedup runs cleanly
-// on a schedule; GET /debug/status exposes the same computation on demand.
+// This is the ONLY code path allowed to establish the baseline, write KV
+// dedup state, or otherwise change what counts as "already seen" — see
+// runTdxPipelineAndCommit in pipeline.js. Deliberately does not send
+// anything anywhere yet (no LINE/push this round).
 
-import { runTdxPipeline } from './pipeline.js';
+import { runTdxPipelineAndCommit } from './pipeline.js';
 
 export async function runScheduledTdxSync(env) {
-  const summary = await runTdxPipeline(env);
+  const summary = await runTdxPipelineAndCommit(env);
 
-  const failed = summary.sources.filter((s) => !s.ok).map((s) => s.source);
   console.log(
-    `[cron] tokenOk=${summary.tokenOk} totalEvents=${summary.totalEvents} ` +
-      `pending=${summary.pendingCount} duplicate=${summary.duplicateCount} ` +
+    `[cron] tokenOk=${summary.tokenOk} baselineInitialized=${summary.baselineInitialized} ` +
       `kvAvailable=${summary.kvAvailable} kvError=${summary.kvError ?? 'none'} ` +
-      `failedSources=${failed.length ? failed.join(',') : 'none'}`
+      `raw=${JSON.stringify(summary.rawCounts)} normalized=${summary.normalizedCount} ` +
+      `hsinchuFiltered=${summary.hsinchuFilteredCount} new=${summary.newEventsCount} ` +
+      `updated=${summary.updatedEventsCount} duplicate=${summary.duplicateCount} ` +
+      `pushable=${summary.pushableEventsCount} baselineSeed=${summary.baselineSeedCount} ` +
+      `failedSources=${summary.failedSources.map((f) => f.source).join(',') || 'none'}`
   );
 
   return summary;

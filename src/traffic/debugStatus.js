@@ -1,27 +1,38 @@
-// GET /debug/status — runs the full pipeline (fetch -> Hsinchu geo-filter
-// -> noise filter -> KV dedup) on demand, so the dedup/geo-filter logic can
-// be checked without waiting for the next Cron tick. Does not send
-// anything anywhere.
+// GET /debug/status — read-only preview of the full pipeline (fetch TDX ->
+// normalize -> Hsinchu filter -> read KV dedup state -> classify). This
+// endpoint is deliberately incapable of writing: it calls
+// runTdxPipelinePreview, which never calls commitDedupeState, so opening
+// this URL any number of times can never create the baseline, mark events
+// as seen, or otherwise change what the next Cron run decides. Only the
+// scheduled handler (src/traffic/scheduled.js) commits state.
 
-import { runTdxPipeline } from './pipeline.js';
+import { runTdxPipelinePreview } from './pipeline.js';
 
 // Safety cap so a runaway source can't blow up the response payload.
 const MAX_LISTED_EVENTS = 100;
 
 export async function handleDebugStatus(env) {
-  const summary = await runTdxPipeline(env);
+  const summary = await runTdxPipelinePreview(env);
 
   const body = {
+    lastRunAt: summary.lastRunAt,
     tokenOk: summary.tokenOk,
-    generatedAt: summary.generatedAt,
-    sources: summary.sources,
-    totalEvents: summary.totalEvents,
-    pendingCount: summary.pendingCount,
-    duplicateCount: summary.duplicateCount,
+    baselineInitialized: summary.baselineInitialized,
     kvAvailable: summary.kvAvailable,
     kvError: summary.kvError,
+    rawCounts: summary.rawCounts,
+    normalizedCount: summary.normalizedCount,
+    hsinchuFilteredCount: summary.hsinchuFilteredCount,
+    newEventsCount: summary.newEventsCount,
+    updatedEventsCount: summary.updatedEventsCount,
+    duplicateCount: summary.duplicateCount,
+    pushableEventsCount: summary.pushableEventsCount,
+    baselineSeedCount: summary.baselineSeedCount,
+    failedSources: summary.failedSources,
+    errors: summary.errors,
+    sources: summary.sources,
+    sample: summary.sample,
     pending: summary.pending.slice(0, MAX_LISTED_EVENTS),
-    duplicateSample: summary.duplicates.slice(0, 5),
   };
 
   return Response.json(body, { status: summary.tokenOk ? 200 : 502 });

@@ -83,11 +83,17 @@ export const SOURCES = [
  * whether a record should be kept; it receives both the normalized event
  * and the original raw record (some filters, like the Hsinchu geo filter,
  * need raw fields that aren't part of the unified schema).
+ *
+ * Returns both `normalizedAll` (everything that parsed successfully,
+ * before any source-specific filter) and `normalized` (after the filter)
+ * so callers can report a normalizedCount vs. a post-filter count
+ * separately — see /debug/status.
  */
 export async function fetchSource(source, accessToken) {
   const json = await fetchTdxJson(source.url, accessToken, { source: source.id });
   const rawItems = extractArray(json, source.extractKeys);
 
+  const normalizedAll = [];
   const normalized = [];
   for (const raw of rawItems) {
     if (!raw || typeof raw !== 'object') continue; // skip malformed records
@@ -97,9 +103,10 @@ export async function fetchSource(source, accessToken) {
     } catch {
       continue; // one bad record shouldn't drop the whole source
     }
+    normalizedAll.push(item);
     if (source.filter && !source.filter(item, raw)) continue;
     normalized.push(item);
   }
 
-  return { rawItems, normalized };
+  return { rawItems, normalizedAll, normalized };
 }
