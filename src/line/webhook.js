@@ -1,19 +1,14 @@
 // POST /webhook — LINE Messaging API webhook. Verifies X-Line-Signature
-// before touching anything else. Only handles the 4 recognized text
-// commands for 1:1 chats and groups; everything else is a silent 200 ack
-// (per LINE's webhook contract — non-200 responses cause retries/webhook
-// disablement).
+// before touching anything else. Text messages are classified by
+// parseBroadcastCommand (see broadcastIntent.js) into enable/disable/
+// status/unknown for 1:1 chats and groups; 'unknown' text (including
+// anything ambiguous) is a silent 200 ack (per LINE's webhook contract —
+// non-200 responses cause retries/webhook disablement).
 
 import { verifyLineSignature } from './verifySignature.js';
 import { replyLineMessage } from './replyMessage.js';
 import { setUserEnabled, setGroupEnabled, readSubscriptions, isUserEnabled, isGroupEnabled } from '../traffic/subscriptions.js';
-
-// Fixed-string command matching only (trim() first, then exact match) —
-// no fuzzy matching, no AI intent detection, no extra synonyms beyond
-// what's listed here.
-const ENABLE_COMMANDS = new Set(['啟動播報', '播報啟動']);
-const DISABLE_COMMANDS = new Set(['關閉播報', '播報關閉', '停止播報']);
-const STATUS_COMMANDS = new Set(['播報狀態']);
+import { parseBroadcastCommand } from './broadcastIntent.js';
 
 const REPLY_ENABLED =
   '✅ 路況播報已啟動\n播報時間：08:00～22:00\n僅通知目前或未來60分鐘內會影響行車的路況。';
@@ -72,21 +67,23 @@ async function handleSingleEvent(event, env, now) {
   }
   if (!targetId) return;
 
-  if (ENABLE_COMMANDS.has(text)) {
+  const { intent } = parseBroadcastCommand(text);
+
+  if (intent === 'enable') {
     if (targetKind === 'user') await setUserEnabled(env.TRAFFIC_KV, targetId, true, now);
     else await setGroupEnabled(env.TRAFFIC_KV, targetId, true, now);
     if (replyToken) await replyLineMessage(env, replyToken, REPLY_ENABLED);
     return;
   }
 
-  if (DISABLE_COMMANDS.has(text)) {
+  if (intent === 'disable') {
     if (targetKind === 'user') await setUserEnabled(env.TRAFFIC_KV, targetId, false, now);
     else await setGroupEnabled(env.TRAFFIC_KV, targetId, false, now);
     if (replyToken) await replyLineMessage(env, replyToken, REPLY_DISABLED);
     return;
   }
 
-  if (STATUS_COMMANDS.has(text)) {
+  if (intent === 'status') {
     const state = await readSubscriptions(env.TRAFFIC_KV, now);
     const enabled = targetKind === 'user' ? isUserEnabled(state.subscriptions, targetId) : isGroupEnabled(state.subscriptions, targetId);
     const statusText = enabled ? '目前：✅ 已啟動' : '目前：🔕 已關閉';
@@ -94,5 +91,5 @@ async function handleSingleEvent(event, env, now) {
     return;
   }
 
-  // Non-command text: do nothing.
+  // intent === 'unknown': do nothing — never guess, never touch state.
 }

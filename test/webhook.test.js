@@ -264,7 +264,7 @@ test('leading/trailing whitespace around a command is trimmed before matching', 
   assert.equal(isUserEnabled(subs.subscriptions, 'U300'), true);
 });
 
-test('near-miss text ("播報" alone, "啟動" alone, "播報開啟") must not accidentally trigger ON/OFF (no fuzzy matching)', async () => {
+test('bare fragments ("播報" alone, "啟動" alone) must not accidentally trigger ON/OFF (no fuzzy matching)', async () => {
   const kv = createMockKV();
   const env = { LINE_CHANNEL_SECRET: SECRET, LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
   originalFetch = globalThis.fetch;
@@ -278,12 +278,96 @@ test('near-miss text ("播報" alone, "啟動" alone, "播報開啟") must not a
     return handleLineWebhook(makeRequest(body, sign(bodyText)), env);
   }
 
-  for (const text of ['播報', '啟動', '播報開啟', '請幫我啟動播報', '播報啟動吧']) {
+  for (const text of ['播報', '啟動']) {
     repliesSent.length = 0;
     await send(text);
     const subs = await readSubscriptions(kv);
     assert.equal(isUserEnabled(subs.subscriptions, 'U400'), false, `"${text}" must not enable`);
     assert.equal(repliesSent.length, 0, `"${text}" must not trigger a reply`);
+  }
+});
+
+// "播報開啟" / "請幫我啟動播報" / "播報啟動吧" were previously (fixed-string
+// era) treated as near-misses. Under this round's intent parser they are
+// explicitly recognized natural phrasings (see broadcastIntent.js) — this
+// documents that intentional behavior change.
+test('natural phrasings recognized by the new parser: "播報開啟", "請幫我啟動播報", "播報啟動吧" all enable', async () => {
+  const kv = createMockKV();
+  const env = { LINE_CHANNEL_SECRET: SECRET, LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineReplyFetch();
+
+  async function send(text, userId) {
+    const body = {
+      events: [{ type: 'message', replyToken: 'rt', message: { type: 'text', text }, source: { type: 'user', userId } }],
+    };
+    const bodyText = JSON.stringify(body);
+    return handleLineWebhook(makeRequest(body, sign(bodyText)), env);
+  }
+
+  for (const [text, userId] of [
+    ['播報開啟', 'U401'],
+    ['請幫我啟動播報', 'U402'],
+    ['播報啟動吧', 'U403'],
+  ]) {
+    await send(text, userId);
+    const subs = await readSubscriptions(kv);
+    assert.equal(isUserEnabled(subs.subscriptions, userId), true, `"${text}" should enable`);
+  }
+});
+
+test('must not be misjudged: negated verbs and unrelated questions never flip ON/OFF or reply', async () => {
+  const kv = createMockKV();
+  const env = { LINE_CHANNEL_SECRET: SECRET, LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineReplyFetch();
+
+  async function send(text) {
+    const body = {
+      events: [{ type: 'message', replyToken: 'rt', message: { type: 'text', text }, source: { type: 'user', userId: 'U500' } }],
+    };
+    const bodyText = JSON.stringify(body);
+    return handleLineWebhook(makeRequest(body, sign(bodyText)), env);
+  }
+
+  for (const text of [
+    '我不要關閉播報',
+    '不要停止播報',
+    '我不要開啟播報',
+    '為什麼播報關閉了',
+    '今天路況如何',
+    '現在有事故嗎',
+  ]) {
+    repliesSent.length = 0;
+    await send(text);
+    const subs = await readSubscriptions(kv);
+    assert.equal(isUserEnabled(subs.subscriptions, 'U500'), false, `"${text}" must not change the (default OFF) state`);
+    assert.equal(repliesSent.length, 0, `"${text}" must not trigger a reply`);
+  }
+});
+
+test('group: the same negation/question texts never flip a group\'s ON/OFF state either', async () => {
+  const kv = createMockKV();
+  const env = { LINE_CHANNEL_SECRET: SECRET, LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineReplyFetch();
+
+  async function send(text) {
+    const body = {
+      events: [{ type: 'message', replyToken: 'rt', message: { type: 'text', text }, source: { type: 'group', groupId: 'Cneg' } }],
+    };
+    const bodyText = JSON.stringify(body);
+    return handleLineWebhook(makeRequest(body, sign(bodyText)), env);
+  }
+
+  await send('啟動播報');
+  let subs = await readSubscriptions(kv);
+  assert.equal(isGroupEnabled(subs.subscriptions, 'Cneg'), true);
+
+  for (const text of ['我不要關閉播報', '不要停止播報', '為什麼播報關閉了']) {
+    await send(text);
+    subs = await readSubscriptions(kv);
+    assert.equal(isGroupEnabled(subs.subscriptions, 'Cneg'), true, `"${text}" must not disable the group`);
   }
 });
 
