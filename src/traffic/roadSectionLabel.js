@@ -60,6 +60,42 @@ const ROAD_ANCHORS = {
 // than invent a label ("不要猜不存在的交流道").
 const OUT_OF_TABLE_BUFFER_KM = 5;
 
+// V1.2C follow-up — CORRIDOR_BOUNDARIES vs ROAD_ANCHORS, and why there
+// are two separate tables:
+//
+// ROAD_ANCHORS (above) is fine-grained and used for the DISPLAY label —
+// every named interchange gets its own point, so "竹北－湖口路段" reads
+// precisely. That precision is exactly what makes it unsuitable for a
+// notification-key identity: a real jam's reported range genuinely
+// shrinks/grows tick to tick, and if the key snaps to "whichever anchor
+// is nearest right now", a range that shrinks onto a single interchange
+// (e.g. from 91K～82K down to 88K～93K) can flip which anchor pair it's
+// keyed under mid-cooldown — exactly the bug this table exists to avoid.
+//
+// CORRIDOR_BOUNDARIES is deliberately coarser: interchanges that sit
+// close together (e.g. 湖口 83K / 湖口服務區 86K, only 3km apart) are
+// collapsed into ONE boundary, so a jam anywhere in that whole ~8km span
+// keys the same way regardless of exactly how far it currently reaches.
+// getCorridorId() below also matches by MAXIMUM OVERLAP against these
+// wider segments (not "nearest single point"), which is what gives a
+// shrinking/growing/drifting range hysteresis across a boundary — see
+// module tests for the exact real-world progression this was built
+// against (82.4K～91K shrinking through 84～91, 86～92, 88～93, all
+// staying keyed to the same corridor).
+const CORRIDOR_BOUNDARIES = {
+  國道一號: [83, 91, 95, 99], // 湖口(+湖口服務區) | 竹北 | 新竹／科學園區 | 新竹系統
+  國道三號: [79, 90, 98, 103, 109], // 關西 | 竹林 | 寶山(+新竹系統) | 茄苳 | 香山
+};
+
+// Roads without a curated boundary list (anything outside this round's
+// 國道一號/國道三號 scope) still get a stable, overlap-matched corridor —
+// just from a generic, wide (20km) absolute-position grid instead of
+// named interchanges. Wider than the old fixed-width midpoint bucket
+// this replaced, and — critically — matched by overlap, not by which
+// single bucket the midpoint happens to fall in, so it has the same
+// hysteresis property.
+const GENERIC_CORRIDOR_WIDTH_KM = 20;
+
 /** Parses TDX-style KM strings ("42K+000", "42K", "42.5", or a plain number) into a float. */
 function parseKM(value) {
   if (value === undefined || value === null || value === '') return null;
@@ -152,6 +188,80 @@ export function getRoadSectionLabel({ road, startKM, endKM }) {
   const corridorLo = Math.min(startAnchor.km, endAnchor.km);
   const corridorHi = Math.max(startAnchor.km, endAnchor.km);
   return { label, corridorId: `${corridorLo}-${corridorHi}` };
+}
+
+// Turns a sorted boundary list [b0, b1, ..., bn] into closed segments
+// covering the whole number line: (-Inf, b0], [b0, b1], ..., [bn, +Inf).
+// Adjacent segments deliberately share their boundary point (both sides
+// "own" it) — a range landing exactly on a boundary can overlap either
+// side equally, which is fine: buildCorridorSegments+matchByOverlap below
+// just picks whichever segment has the larger overlap, and ties can only
+// happen for a zero-width point sitting exactly on a boundary.
+function buildCorridorSegments(boundaries) {
+  const segments = [];
+  segments.push({ lo: -Infinity, hi: boundaries[0], id: `lt${boundaries[0]}` });
+  for (let i = 0; i < boundaries.length - 1; i += 1) {
+    segments.push({ lo: boundaries[i], hi: boundaries[i + 1], id: `${boundaries[i]}-${boundaries[i + 1]}` });
+  }
+  segments.push({ lo: boundaries[boundaries.length - 1], hi: Infinity, id: `gt${boundaries[boundaries.length - 1]}` });
+  return segments;
+}
+
+// Picks the segment with the LARGEST overlap against [minKM, maxKM] —
+// not "which segment contains the midpoint" — so a range that mostly
+// still sits in its original corridor keeps that identity even after it
+// creeps partway into the next one. A single KM point (minKM===maxKM)
+// naturally falls back to "which segment contains this point".
+function matchByOverlap(segments, minKM, maxKM) {
+  let best = segments[0];
+  let bestOverlap = -Infinity;
+  for (const segment of segments) {
+    const overlap = Math.min(maxKM, segment.hi) - Math.max(minKM, segment.lo);
+    if (overlap > bestOverlap) {
+      bestOverlap = overlap;
+      best = segment;
+    }
+  }
+  return best.id;
+}
+
+function genericCorridorBoundaries(minKM, maxKM) {
+  // Generates just enough fixed grid lines (multiples of
+  // GENERIC_CORRIDOR_WIDTH_KM) to bracket this run's range, so the
+  // segment-matching logic above works the same way it does for the
+  // curated tables, without needing to enumerate a boundary list for
+  // the entire country up front.
+  const startIndex = Math.floor(minKM / GENERIC_CORRIDOR_WIDTH_KM) - 1;
+  const endIndex = Math.ceil(maxKM / GENERIC_CORRIDOR_WIDTH_KM) + 1;
+  const boundaries = [];
+  for (let i = startIndex; i <= endIndex; i += 1) boundaries.push(i * GENERIC_CORRIDOR_WIDTH_KM);
+  return boundaries;
+}
+
+/**
+ * A congestion-notification-key-stable corridor identifier — see the
+ * CORRIDOR_BOUNDARIES comment above for why this is a SEPARATE, coarser
+ * concept from getRoadSectionLabel()'s corridorId. Always returns a
+ * value (never null) for any road with usable KM input; roads outside
+ * the curated table still get a stable answer from the generic grid.
+ *
+ * @param {{ road: string, startKM: string|number, endKM: string|number }} input
+ * @returns {string|null} e.g. "83-91" — null only when neither KM value
+ *   is usable at all (caller should fall back to some other key, e.g.
+ *   source:rawId, for that one unplaceable event).
+ */
+export function getCorridorId({ road, startKM, endKM }) {
+  const start = parseKM(startKM);
+  const end = parseKM(endKM);
+  if (start === null && end === null) return null;
+
+  const minKM = Math.min(start ?? end, end ?? start);
+  const maxKM = Math.max(start ?? end, end ?? start);
+
+  const roadKey = resolveRoadKey(road);
+  const boundaries = roadKey ? CORRIDOR_BOUNDARIES[roadKey] : null;
+  const segments = buildCorridorSegments(boundaries || genericCorridorBoundaries(minKM, maxKM));
+  return matchByOverlap(segments, minKM, maxKM);
 }
 
 /** Short display name ("國1") for a road, or the original string if unknown. */

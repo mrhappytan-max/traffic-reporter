@@ -189,3 +189,44 @@ test('十二. real fixture — 國1南向 4 overlapping rows -> 1 cluster in the
   const { label } = getRoadSectionLabel({ road: candidate.road, startKM: candidate.startKM, endKM: candidate.endKM });
   assert.match(label, /湖口/);
 });
+
+// --- notification-key stability fix (post-f32830a) ----------------------
+
+function notificationKeyFor(startKM, endKM, overrides = {}) {
+  const { congestionClusters } = clusterCongestionEvents([congestionEvent({ startKM, endKM, ...overrides })]);
+  return congestionClusters[0].notificationKey;
+}
+
+test('same jam crossing the old 90km bucket boundary keeps the same notification key end-to-end', () => {
+  const wide = notificationKeyFor('82K+400', '91K+000');
+  const shrunk = notificationKeyFor('88K+000', '93K+000');
+  assert.equal(wide, shrunk);
+});
+
+test('same jam shifts several km across 4 ticks, always overlapping the previous range -> one stable notification key throughout', () => {
+  const keys = [
+    notificationKeyFor('82K+400', '91K+000'),
+    notificationKeyFor('84K+000', '91K+000'),
+    notificationKeyFor('86K+000', '92K+000'),
+    notificationKeyFor('88K+000', '93K+000'),
+  ];
+  assert.ok(keys.every((k) => k === keys[0]), `expected one stable key, got: ${JSON.stringify(keys)}`);
+});
+
+test('genuinely distant congestion (82-87 vs 96-100) gets different notification keys', () => {
+  const a = notificationKeyFor('82K+000', '87K+000');
+  const b = notificationKeyFor('96K+000', '100K+000');
+  assert.notEqual(a, b);
+});
+
+test('same road+corridor but different direction -> different notification key', () => {
+  const northbound = notificationKeyFor('91K+000', '82K+400', { direction: '北向' });
+  const southbound = notificationKeyFor('82K+400', '91K+000', { direction: '南向' });
+  assert.notEqual(northbound, southbound);
+});
+
+test('same direction+corridor KM but different road -> different notification key', () => {
+  const gd1 = notificationKeyFor('82K+400', '91K+000', { road: '國道一號' });
+  const gd3 = notificationKeyFor('82K+400', '91K+000', { road: '國道三號' });
+  assert.notEqual(gd1, gd3);
+});

@@ -16,7 +16,7 @@
 // events for callers that need to reason about their individual lifecycle
 // (see broadcastPipeline.js's cluster-aware contentSince computation).
 
-import { parseKM } from './roadSectionLabel.js';
+import { parseKM, getCorridorId } from './roadSectionLabel.js';
 
 // "彼此距離 <= 1 km" — same constant referenced by name everywhere a gap
 // threshold is needed, per "不要硬寫 magic number 到很多地方".
@@ -36,24 +36,6 @@ function earliestValidIso(values) {
   const valid = values.filter((v) => v && Number.isFinite(new Date(v).getTime()));
   if (valid.length === 0) return null;
   return valid.reduce((min, v) => (new Date(v).getTime() < new Date(min).getTime() ? v : min));
-}
-
-// The notification key's corridor component is DELIBERATELY not the
-// same precise anchor-pair the display label uses (getRoadSectionLabel's
-// own corridorId) — a real jam's reported range genuinely shrinks/grows
-// tick to tick (e.g. 91K～82K -> 89K～82K -> 83K～84K, all "the same"
-// backup as it clears), and snapping to the nearest anchor PAIR per tick
-// would flip which anchors are "touched" as soon as the range narrows
-// onto just one of them — defeating the whole point of the cooldown.
-// Instead: bucket the cluster's own midpoint into a wide, fixed zone.
-// Wide enough that the shrink/grow patterns actually seen in production
-// reports stay in the same zone; still fine enough that two genuinely
-// distant jams on the same road+direction don't share one cooldown.
-const CORRIDOR_ZONE_WIDTH_KM = 10;
-
-function corridorZoneId(minKM, maxKM) {
-  const midpoint = (minKM + maxKM) / 2;
-  return `z${Math.floor(midpoint / CORRIDOR_ZONE_WIDTH_KM)}`;
 }
 
 function buildCandidate(members, road, direction) {
@@ -76,8 +58,11 @@ function buildCandidate(members, road, direction) {
   // The driver-readable label itself is intentionally NOT computed here —
   // messageFormat.js calls getRoadSectionLabel() fresh on the candidate's
   // startKM/endKM at message-format time, exactly like it does for any
-  // other event. Only the coarse notification-key zone is computed here.
-  const notificationKey = `congestion:${road}:${direction}:${corridorZoneId(minKM, maxKM)}`;
+  // other event. Only the notification-key's corridor identity is
+  // computed here, via getCorridorId() — a deliberately coarser, overlap-
+  // matched, hysteresis-friendly identity than the display label (see
+  // roadSectionLabel.js's CORRIDOR_BOUNDARIES comment for why).
+  const notificationKey = `congestion:${road}:${direction}:${getCorridorId({ road, startKM: minKM, endKM: maxKM })}`;
 
   const kmFmt = (km) => `${km}K`;
   const location = `${road} ${direction} ${kmFmt(startKM)} - ${kmFmt(endKM)}`.trim();

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { getRoadSectionLabel, getRoadShortName } from '../src/traffic/roadSectionLabel.js';
+import { getRoadSectionLabel, getRoadShortName, getCorridorId } from '../src/traffic/roadSectionLabel.js';
 
 test('1. 國1 北向 91K -> 82K includes both 竹北 and 湖口', () => {
   const { label } = getRoadSectionLabel({ road: '國道一號', startKM: '91K+000', endKM: '82K+400' });
@@ -96,4 +96,52 @@ test('getRoadShortName maps the two known roads and passes through anything else
 test('accepts numeric startKM/endKM too (congestionCluster.js candidates use numbers, not TDX strings)', () => {
   const { label } = getRoadSectionLabel({ road: '國道一號', startKM: 91, endKM: 82.4 });
   assert.equal(label, '竹北－湖口路段');
+});
+
+// --- getCorridorId: notification-key stability (post-f32830a fix) ------
+
+test('same jam crossing the old 90km bucket boundary keeps the same corridor id (82.4-91 vs 88-93)', () => {
+  const wide = getCorridorId({ road: '國道一號', startKM: 82.4, endKM: 91 }); // old midpoint 86.7 -> old bucket z8
+  const shrunk = getCorridorId({ road: '國道一號', startKM: 88, endKM: 93 }); // old midpoint 90.5 -> old bucket z9 (would have flipped)
+  assert.equal(wide, shrunk);
+});
+
+test('same jam shrinking through several intermediate ranges keeps one stable corridor id throughout', () => {
+  const ids = [
+    getCorridorId({ road: '國道一號', startKM: 82.4, endKM: 91 }),
+    getCorridorId({ road: '國道一號', startKM: 84, endKM: 91 }),
+    getCorridorId({ road: '國道一號', startKM: 86, endKM: 92 }),
+    getCorridorId({ road: '國道一號', startKM: 88, endKM: 93 }),
+  ];
+  assert.ok(ids.every((id) => id === ids[0]), `expected all identical, got: ${JSON.stringify(ids)}`);
+});
+
+test('genuinely distant congestion (82-87 vs 96-100) gets different corridor ids', () => {
+  const a = getCorridorId({ road: '國道一號', startKM: 82, endKM: 87 });
+  const b = getCorridorId({ road: '國道一號', startKM: 96, endKM: 100 });
+  assert.notEqual(a, b);
+});
+
+test('getCorridorId is direction-agnostic by itself — direction is layered on separately by the caller (congestionCluster.js)', () => {
+  const northbound = getCorridorId({ road: '國道一號', startKM: 91, endKM: 82.4 }); // descending KM order
+  const southbound = getCorridorId({ road: '國道一號', startKM: 82.4, endKM: 91 }); // ascending KM order
+  assert.equal(northbound, southbound);
+});
+
+test('國3 gets its own independent corridor ids, never colliding with 國1 values for a similar KM range', () => {
+  const gd1 = getCorridorId({ road: '國道一號', startKM: 82.4, endKM: 91 });
+  const gd3 = getCorridorId({ road: '國道三號', startKM: 82.4, endKM: 91 });
+  assert.notEqual(gd1, gd3); // same numbers, different anchor tables (國1: 83/91/95/99, 國3: 79/90/98/103/109)
+});
+
+test('a road without a curated boundary table still gets a stable id from the generic 20km grid', () => {
+  const a = getCorridorId({ road: '台1線', startKM: 90, endKM: 91 });
+  const b = getCorridorId({ road: '台1線', startKM: 91, endKM: 93 });
+  assert.equal(a, b);
+  assert.notEqual(a, null);
+});
+
+test('getCorridorId returns null only when neither KM value is usable at all', () => {
+  assert.equal(getCorridorId({ road: '國道一號', startKM: undefined, endKM: undefined }), null);
+  assert.equal(getCorridorId({ road: '國道一號', startKM: 'garbage', endKM: 'garbage' }), null);
 });

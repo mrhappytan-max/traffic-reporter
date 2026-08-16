@@ -593,3 +593,32 @@ test('enabledAt backfill guard, cluster-aware: a corridor whose earliest member 
   assert.equal(result.pushSucceeded, 0); // must not backfill old content to the new subscriber
   assert.equal(pushCalls.length, 0);
 });
+
+test('notification-key stability fix: a jam that shrinks across what used to be a corridor bucket boundary still stays cooled down end-to-end', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLinePushFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+
+  const t0 = new Date('2026-08-15T10:50:00+08:00');
+  const first = await runLineBroadcast(env, {
+    allEvents: [congestionEvent({ startKM: '82K+400', endKM: '91K+000' })], // old midpoint 86.7 -> old bucket z8
+    dedupeAvailable: true,
+    now: t0,
+  });
+  assert.equal(first.pushSucceeded, 1);
+
+  // 20 minutes later, the range has shrunk onto what the OLD midpoint-
+  // bucket scheme would have called a different zone (old midpoint 90.5
+  // -> old bucket z9) — must still be within cooldown.
+  pushCalls.length = 0;
+  const t20 = new Date(t0.getTime() + 20 * 60 * 1000);
+  const later = await runLineBroadcast(env, {
+    allEvents: [congestionEvent({ startKM: '88K+000', endKM: '93K+000' })],
+    dedupeAvailable: true,
+    now: t20,
+  });
+  assert.equal(later.pushSucceeded, 0);
+  assert.equal(pushCalls.length, 0);
+});
