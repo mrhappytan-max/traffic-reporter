@@ -25,11 +25,16 @@ import {
   applyNotifiedTargets,
   removePrunedEvents,
   persistNotifiedState,
-  computeFingerprint,
+  computeNotificationFingerprint,
 } from './notified.js';
 import { clusterCongestionEvents } from './congestionCluster.js';
 import { formatEventMessage } from './messageFormat.js';
 import { pushLineMessage } from '../line/pushMessage.js';
+import {
+  readIncidentSuppressionState,
+  resolveIncidentNotifications,
+  persistIncidentSuppressionState,
+} from './incidentSuppression.js';
 
 function safeErrorMessage(err) {
   if (err && typeof err.message === 'string') return err.message;
@@ -120,6 +125,17 @@ export async function runLineBroadcast(
     // fully visible and its exclusion reason is verifiable.
     typeIneligibleCount: 0,
     ineligibleByReason: {},
+    // V1.5.1: accident-specific incident-level suppression stats — see
+    // incidentSuppression.js. incidentSuppressedCount/ByReason count
+    // accident events this run that matched an already-notified, real-
+    // world incident with no material change (never pushed);
+    // materialRebroadcastCount counts ones that matched an existing
+    // incident but were allowed through because something actually
+    // changed (escalation to closure/control, more lanes blocked, a new
+    // closure/impassable signal). Purely observational.
+    incidentSuppressedCount: 0,
+    incidentSuppressedByReason: {},
+    materialRebroadcastCount: 0,
     broadcastRelevantCount: 0,
     activeNowCount: 0,
     futureWithin60MinCount: 0,
@@ -214,6 +230,40 @@ export async function runLineBroadcast(
   result.activeNowCount = relevant.filter(({ window }) => new Date(window.effectiveStart).getTime() <= now.getTime()).length;
   result.futureWithin60MinCount = result.broadcastRelevantCount - result.activeNowCount;
 
+  // V1.5.1: accident-specific incident-level suppression — see
+  // incidentSuppression.js. Read regardless of dryRun (debug/status
+  // needs it for its own preview stats — never writes below when
+  // dryRun); decided here, independent of LINE readiness/broadcast
+  // hours, same as dedupe.js's own state updates — "was this accident
+  // seen again, and did it actually get worse" is a data-layer fact,
+  // not a LINE-availability-dependent one.
+  const incidentState = await readIncidentSuppressionState(env.TRAFFIC_KV);
+  if (!incidentState.kvAvailable) result.lineErrors.push(`incident suppression state unavailable: ${incidentState.kvError}`);
+
+  const accidentRelevant = relevant.filter(({ event, cluster }) => !cluster && event.type === 'accident');
+  const otherRelevant = relevant.filter(({ event, cluster }) => cluster || event.type !== 'accident');
+
+  const { results: incidentResults, nextIncidentsByGroup } = resolveIncidentNotifications(
+    accidentRelevant.map(({ event }) => event),
+    incidentState.incidentsByGroup,
+    now
+  );
+  const incidentResolutionByEvent = new Map(incidentResults.map((r) => [r.event, r]));
+
+  for (const r of incidentResults) {
+    if (r.suppressed) {
+      result.incidentSuppressedCount += 1;
+      result.incidentSuppressedByReason[r.reason] = (result.incidentSuppressedByReason[r.reason] || 0) + 1;
+    } else if (r.reason === 'material-escalation') {
+      result.materialRebroadcastCount += 1;
+    }
+  }
+
+  if (!dryRun && incidentState.kvAvailable) {
+    const commit = await persistIncidentSuppressionState(env.TRAFFIC_KV, nextIncidentsByGroup, now);
+    if (!commit.committed) result.lineErrors.push(`failed to persist incident suppression state: ${commit.error}`);
+  }
+
   const failClosed = !hasToken || !dedupeAvailable || !subsState.kvAvailable || !notifiedState.kvAvailable;
   result.lineReady = !failClosed;
   if (failClosed) return result; // 0 push for every target, whether dry-run or real
@@ -225,40 +275,69 @@ export async function runLineBroadcast(
   // fingerprint-based check every other event type uses below — the
   // whole point of clustering is that a congestion cluster's KM range is
   // *expected* to shift every ~5 minutes without that being new
-  // information for a driver. Accident/construction/closure/control/
-  // alert/other keep the original fingerprint-based, no-cooldown logic
-  // completely unchanged, per the explicit "事故不要套壅塞冷卻" requirement.
-  const perEventPending = relevant.map(({ event, window, cluster }) => {
-    if (cluster) {
-      const eventKeyStr = cluster.notificationKey;
-      // Stored for record-keeping/debugging only — targetNeedsCongestionNotification
-      // never reads it, so it can never gate whether a congestion cluster gets pushed.
-      const fingerprint = computeFingerprint(event);
-      const contentSince = clusterContentSince(cluster.members, { newUpdatedKeys, dedupeMapSnapshot, now });
+  // information for a driver. construction/closure/control/alert/other
+  // keep the original fingerprint-based, no-cooldown logic (now using
+  // computeNotificationFingerprint — see notified.js — instead of
+  // dedupe.js's description-including computeFingerprint). accident gets
+  // its own incident-level suppression layer below (V1.5.1) — see
+  // incidentResolutionByEvent, computed above.
+  const perEventPending = [
+    ...otherRelevant.map(({ event, window, cluster }) => {
+      if (cluster) {
+        const eventKeyStr = cluster.notificationKey;
+        // Stored for record-keeping/debugging only — targetNeedsCongestionNotification
+        // never reads it, so it can never gate whether a congestion cluster gets pushed.
+        const fingerprint = computeNotificationFingerprint(event);
+        const contentSince = clusterContentSince(cluster.members, { newUpdatedKeys, dedupeMapSnapshot, now });
+
+        const pendingTargets = targets.filter((target) => {
+          if (!targetNeedsCongestionNotification(eventKeyStr, target, notifiedState.notifiedMap, now)) return false;
+          if (target.enabledAt && contentSince.getTime() < new Date(target.enabledAt).getTime()) return false;
+          return true;
+        });
+
+        return { event, window, eventKeyStr, fingerprint, pendingTargets };
+      }
+
+      const eventKeyStr = eventKeyOf(event);
+      const fingerprint = computeNotificationFingerprint(event);
+      const contentSince = effectiveContentSince(event, { newUpdatedKeys, dedupeMapSnapshot, now });
 
       const pendingTargets = targets.filter((target) => {
-        if (!targetNeedsCongestionNotification(eventKeyStr, target, notifiedState.notifiedMap, now)) return false;
+        if (!targetNeedsNotification(eventKeyStr, target, fingerprint, notifiedState.notifiedMap)) return false;
+        // Backfill guard: this exact content predates the target's
+        // subscription and hasn't changed since -> don't send it.
         if (target.enabledAt && contentSince.getTime() < new Date(target.enabledAt).getTime()) return false;
         return true;
       });
 
       return { event, window, eventKeyStr, fingerprint, pendingTargets };
-    }
+    }),
+    ...accidentRelevant.map(({ event, window }) => {
+      const resolution = incidentResolutionByEvent.get(event);
+      // Should always be found — every accidentRelevant event was fed
+      // into resolveIncidentNotifications above. Fail toward the
+      // event's OWN key/not-suppressed if somehow missing, never toward
+      // silently dropping a real accident.
+      const eventKeyStr = resolution ? resolution.notificationKey : eventKeyOf(event);
+      const fingerprint = computeNotificationFingerprint(event);
 
-    const eventKeyStr = eventKeyOf(event);
-    const fingerprint = computeFingerprint(event);
-    const contentSince = effectiveContentSince(event, { newUpdatedKeys, dedupeMapSnapshot, now });
+      if (resolution && resolution.suppressed) {
+        // Same real incident, no material change since it was last
+        // notified — 0 pending targets, no per-target check needed.
+        return { event, window, eventKeyStr, fingerprint, pendingTargets: [] };
+      }
 
-    const pendingTargets = targets.filter((target) => {
-      if (!targetNeedsNotification(eventKeyStr, target, fingerprint, notifiedState.notifiedMap)) return false;
-      // Backfill guard: this exact content predates the target's
-      // subscription and hasn't changed since -> don't send it.
-      if (target.enabledAt && contentSince.getTime() < new Date(target.enabledAt).getTime()) return false;
-      return true;
-    });
+      const contentSince = effectiveContentSince(event, { newUpdatedKeys, dedupeMapSnapshot, now });
+      const pendingTargets = targets.filter((target) => {
+        if (!targetNeedsNotification(eventKeyStr, target, fingerprint, notifiedState.notifiedMap)) return false;
+        if (target.enabledAt && contentSince.getTime() < new Date(target.enabledAt).getTime()) return false;
+        return true;
+      });
 
-    return { event, window, eventKeyStr, fingerprint, pendingTargets };
-  });
+      return { event, window, eventKeyStr, fingerprint, pendingTargets };
+    }),
+  ];
 
   result.pendingTargetCount = perEventPending.reduce((sum, e) => sum + e.pendingTargets.length, 0);
 

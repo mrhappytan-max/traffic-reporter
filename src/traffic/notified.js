@@ -185,3 +185,48 @@ export async function persistNotifiedState(kv, notifiedMap, lastLinePushAt, now 
 /** Re-exported for callers that need to fingerprint an event without a
  * second import — same content fingerprint as the seen-dedupe layer. */
 export { computeFingerprint };
+
+// V1.5.1 hotfix — dedupe.js's computeFingerprint() deliberately includes
+// `description` (the DATA layer needs to know when upstream text
+// changed at all, e.g. to keep KV state fresh), but messageFormat.js
+// never displays raw description text — so a wording-only upstream edit
+// changed the dedupe fingerprint without changing anything a driver
+// could actually see, and targetNeedsNotification (fed that fingerprint
+// directly) re-notified for content that looked identical on LINE. This
+// is the NOTIFICATION-layer counterpart: only fields that could
+// plausibly change what's on screen or a route decision. `updatedAt`
+// and raw `description` text are deliberately excluded — a
+// closure/impassable signal buried in the description text still
+// counts, but only as a derived boolean, never the text itself.
+const CLOSURE_IMPACT_PATTERNS = [/禁止通行/, /無法通行/, /匝道封閉/, /全線封閉/, /封閉/];
+
+function hasClosureImpactSignal(event) {
+  const text = `${event.title || ''} ${event.description || ''}`;
+  return CLOSURE_IMPACT_PATTERNS.some((p) => p.test(text));
+}
+
+/**
+ * The fingerprint used for the per-target "have I already told this
+ * target about this exact content" check (targetNeedsNotification) —
+ * everywhere EXCEPT congestion, which has its own separate
+ * time-cooldown path (targetNeedsCongestionNotification) that never
+ * compares fingerprints at all. Deliberately a DIFFERENT, narrower field
+ * set than dedupe.js's computeFingerprint(): includes `startKM`/`endKM`
+ * when present, otherwise falls back to `location` as the "stable
+ * position" signal (some sources — CMS, bus alerts — never carry KM).
+ */
+export function computeNotificationFingerprint(event) {
+  const position =
+    event.startKM !== undefined || event.endKM !== undefined
+      ? { startKM: event.startKM ?? null, endKM: event.endKM ?? null }
+      : { location: event.location || '' };
+
+  return JSON.stringify({
+    type: event.type ?? null,
+    road: event.road ?? '',
+    direction: event.direction ?? '',
+    ...position,
+    blockedLanes: event.blockedLanes ?? null,
+    closureImpact: hasClosureImpactSignal(event),
+  });
+}

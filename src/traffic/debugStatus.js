@@ -108,6 +108,16 @@ export async function handleDebugStatus(env) {
     // just never pushed.
     typeIneligibleCount: lineSummary.typeIneligibleCount,
     ineligibleByReason: lineSummary.ineligibleByReason,
+    // V1.5.1: accident-specific incident-level suppression (see
+    // incidentSuppression.js) — how many accident events this run were
+    // the SAME real incident as one already notified with no material
+    // change (never pushed, broken down by reason), and how many were
+    // allowed through specifically because something actually escalated
+    // (closure/control upgrade, more lanes blocked, a new closure/
+    // impassable signal).
+    incidentSuppressedCount: lineSummary.incidentSuppressedCount,
+    incidentSuppressedByReason: lineSummary.incidentSuppressedByReason,
+    materialRebroadcastCount: lineSummary.materialRebroadcastCount,
     broadcastRelevantCount: lineSummary.broadcastRelevantCount,
     activeNowCount: lineSummary.activeNowCount,
     futureWithin60MinCount: lineSummary.futureWithin60MinCount,
