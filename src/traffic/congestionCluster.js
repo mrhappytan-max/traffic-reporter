@@ -17,6 +17,7 @@
 // (see broadcastPipeline.js's cluster-aware contentSince computation).
 
 import { parseKM, getCorridorId } from './roadSectionLabel.js';
+import { mostSevereCongestion } from './congestionSeverity.js';
 
 // "彼此距離 <= 1 km" — same constant referenced by name everywhere a gap
 // threshold is needed, per "不要硬寫 magic number 到很多地方".
@@ -54,6 +55,11 @@ function buildCandidate(members, road, direction) {
   const updatedAt = members.reduce((acc, m) => latestIso(acc, m.event.updatedAt), null);
   const startTime = earliestValidIso(members.map((m) => m.event.startTime));
   const description = members.reduce((acc, m) => (m.event.updatedAt === updatedAt ? m.event.description : acc), members[0].event.description);
+  // V1.4.1: the candidate's severity is the MOST severe among its
+  // members — one member confirmed severe (via congestionValidation.js,
+  // run before clustering — see scheduled.js) is enough for the whole
+  // merged cluster to read as severe, since they're the same physical jam.
+  const congestionSeverity = members.reduce((acc, m) => mostSevereCongestion(acc, m.event.congestionSeverity), null);
 
   // The driver-readable label itself is intentionally NOT computed here —
   // messageFormat.js calls getRoadSectionLabel() fresh on the candidate's
@@ -71,7 +77,9 @@ function buildCandidate(members, road, direction) {
     source: 'congestion-cluster',
     rawId: members.map((m) => `${m.event.source}:${m.event.rawId}`).sort().join('+'),
     type: 'congestion',
-    title: `${road} ${direction} 嚴重壅塞`,
+    // V1.4.1: no longer hardcodes "嚴重壅塞" — see congestionSeverity.js;
+    // this candidate may well just be "車流偏多".
+    title: `${road} ${direction} 壅塞`,
     description,
     road,
     direction,
@@ -81,6 +89,7 @@ function buildCandidate(members, road, direction) {
     updatedAt,
     startKM,
     endKM,
+    congestionSeverity,
   };
 
   return {

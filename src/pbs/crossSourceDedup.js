@@ -13,6 +13,7 @@ import {
   CROSS_SOURCE_MAX_TIME_DIFF_MS,
   CROSS_SOURCE_MAX_KM_DIFF,
 } from './pbsConfig.js';
+import { mostSevereCongestion } from '../traffic/congestionSeverity.js';
 
 // PBS types collapse several distinct real categories into "other" — two
 // "other" events should still be allowed to match each other (e.g. PBS
@@ -145,6 +146,13 @@ export function buildCanonicalEvent(tdxEvent, pbsEvent) {
     startTime: tdxEvent.startTime || pbsEvent.startTime || pbsEvent.happenedAt || null,
     endTime: tdxEvent.endTime ?? pbsEvent.endTime ?? null,
     updatedAt: [tdxEvent.updatedAt, pbsEvent.updatedAt].filter(Boolean).sort().at(-1) || null,
+    // V1.4.1: when both sides independently reported congestion, take the
+    // more severe of the two keyword-derived subtypes (still never
+    // 'severe' here — only congestionValidation.js's real-time VD check
+    // can set that, applied AFTER this merge, see scheduled.js).
+    ...(tdxEvent.type === 'congestion'
+      ? { congestionSeverity: mostSevereCongestion(tdxEvent.congestionSeverity, pbsEvent.congestionSeverity) }
+      : {}),
     // Debug/observability only (see /debug/pbs's crossSourceSample) —
     // never read by broadcastPipeline.js/messageFormat.js.
     primarySource: 'tdx',

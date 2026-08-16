@@ -11,9 +11,16 @@
 // CMS and Bus Alert mappings still carry defensive fallbacks since only
 // the "ignore" rules for those two were confirmed against real data, not
 // every field name.
+//
+// V1.4.1: when `type` comes out as 'congestion', also attach a
+// `congestionSeverity` ('moderate'|'congested'|null) derived from the
+// SAME source text that decided the type — see congestionSeverity.js for
+// why this exists (車多 vs 壅塞 must not both read as "嚴重壅塞") and for
+// the only path allowed to ever set 'severe'.
 
 import { firstDefined, get } from './extract.js';
 import { classifyByKeyword, classifyAlertText } from './classify.js';
+import { classifyCongestionSeverity } from '../traffic/congestionSeverity.js';
 
 const EVENT_TYPE_TEXT_MAP = {
   事故: 'accident',
@@ -45,6 +52,19 @@ function mapRoadEventType(raw, description) {
   }
 
   return classifyByKeyword(description);
+}
+
+// Same candidate fields mapRoadEventType() reads from, concatenated so
+// classifyCongestionSeverity() sees whichever of them actually carried
+// the 車多/壅塞-type keyword — deliberately NOT trying to track which
+// single candidate "won" in mapRoadEventType above, since a plain
+// substring search over all of them together is simpler and just as
+// correct here (unlike type classification, severity has no "first
+// specific match wins" ordering requirement).
+function roadEventCongestionSeverityText(raw, description) {
+  return [get(raw, 'EventType'), get(raw, 'EventSubType'), get(raw, 'Category'), description]
+    .filter((v) => v !== undefined && v !== null && v !== '')
+    .join(' ');
 }
 
 function composeLocation({ road, direction, startKM, endKM }) {
@@ -99,9 +119,11 @@ export function normalizeRoadEvent(raw, source) {
     composedLocation ||
     String(firstDefined(raw, ['LocationDescription', 'Location.Description', 'LocationMile'], ''));
 
+  const type = mapRoadEventType(raw, description);
+
   return {
     source,
-    type: mapRoadEventType(raw, description),
+    type,
     title: firstDefined(
       raw,
       ['EventTitle', 'EventName', 'EventType', 'Description'],
@@ -115,6 +137,9 @@ export function normalizeRoadEvent(raw, source) {
     endTime: firstDefined(raw, ['EventEndTime', 'EndTime'], null) || null,
     updatedAt: firstDefined(raw, ['LastUpdateTime', 'UpdateTime', 'SrcUpdateTime'], null) || null,
     rawId: String(firstDefined(raw, ['EventID', 'ID', 'id'], '')),
+    ...(type === 'congestion'
+      ? { congestionSeverity: classifyCongestionSeverity(roadEventCongestionSeverityText(raw, description)) }
+      : {}),
     ...(startKM !== undefined ? { startKM } : {}),
     ...(endKM !== undefined ? { endKM } : {}),
     ...(blockedLanes !== undefined ? { blockedLanes } : {}),
@@ -159,9 +184,10 @@ function extractCmsText(raw) {
 /** City CMS signboards (v2 Road/Traffic/Live/CMS/City/{City}). */
 export function normalizeCmsEvent(raw) {
   const text = extractCmsText(raw);
+  const type = classifyByKeyword(text);
   return {
     source: 'cms',
-    type: classifyByKeyword(text),
+    type,
     title: text ? text.slice(0, 30) : 'CMS 看板訊息',
     description: text,
     road: String(firstDefined(raw, ['RoadName', 'RoadID'], '')),
@@ -171,6 +197,7 @@ export function normalizeCmsEvent(raw) {
     endTime: null,
     updatedAt: firstDefined(raw, ['UpdateTime', 'DataCollectTime', 'SrcUpdateTime'], null) || null,
     rawId: String(firstDefined(raw, ['CMSID', 'ID', 'id'], '')),
+    ...(type === 'congestion' ? { congestionSeverity: classifyCongestionSeverity(text) } : {}),
   };
 }
 
@@ -187,9 +214,11 @@ export function normalizeBusAlert(raw, source) {
     description ? description.slice(0, 30) : '公車動態公告'
   );
 
+  const type = description ? classifyAlertText(description) : 'alert';
+
   return {
     source,
-    type: description ? classifyAlertText(description) : 'alert',
+    type,
     title,
     description,
     road: String(firstDefined(raw, ['RouteName', 'RouteID'], '')),
@@ -199,5 +228,6 @@ export function normalizeBusAlert(raw, source) {
     endTime: firstDefined(raw, ['ExpireTime', 'EndTime'], null) || null,
     updatedAt: firstDefined(raw, ['PublishTime', 'UpdateTime'], null) || null,
     rawId: String(firstDefined(raw, ['AlertID', 'ID', 'id', 'RouteID'], '')),
+    ...(type === 'congestion' ? { congestionSeverity: classifyCongestionSeverity(description) } : {}),
   };
 }

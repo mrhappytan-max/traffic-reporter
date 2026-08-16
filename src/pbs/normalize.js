@@ -10,6 +10,7 @@
 
 import { normalizePbsRoad } from './roadName.js';
 import { classifyPbsEvent } from './classify.js';
+import { classifyCongestionSeverity } from '../traffic/congestionSeverity.js';
 
 const DIRECTION_MAP = {
   北上: '北向',
@@ -90,5 +91,12 @@ export function normalizePbsEvent(raw) {
     happenedAt,
     roadtype: raw.roadtype || '',
     pbsCategory,
+    // V1.4.1 — same 車多(moderate)/壅塞(congested) distinction as TDX's
+    // RoadEvent normalizer, see congestionSeverity.js. `roadtype`+
+    // `description` is the same text classifyPbsEvent() itself just used
+    // to decide `type === 'congestion'`.
+    ...(type === 'congestion'
+      ? { congestionSeverity: classifyCongestionSeverity(`${raw.roadtype || ''} ${description}`) }
+      : {}),
   };
 }

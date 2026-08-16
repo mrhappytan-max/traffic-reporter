@@ -12,6 +12,7 @@ import { runLineBroadcast } from './broadcastPipeline.js';
 import { runPbsPipelineAndCommit } from '../pbs/pipeline.js';
 import { mergeForBroadcast } from '../pbs/crossSourceDedup.js';
 import { PBS_BROADCAST_ENABLED } from '../pbs/pbsConfig.js';
+import { applyCongestionSeverityValidation } from './congestionValidation.js';
 
 export async function runScheduledTdxSync(env, now = new Date()) {
   const summary = await runTdxPipelineAndCommit(env, now);
@@ -63,9 +64,23 @@ export async function runScheduledTdxSync(env, now = new Date()) {
   // false, or when PBS's own pipeline failed above (empty arrays),
   // mergeForBroadcast returns `summary.allEvents` completely unchanged,
   // so this is byte-for-byte the pre-V1.4 TDX-only behavior either way.
-  const broadcastEvents = PBS_BROADCAST_ENABLED
+  const mergedEvents = PBS_BROADCAST_ENABLED
     ? mergeForBroadcast(summary.allEvents, pbsSummary.canonicalEvents || [], pbsSummary.uniquePbsEvents || [])
     : summary.allEvents;
+
+  // V1.4.1: confirm/upgrade congestion severity via real-time TDX VD
+  // speed BEFORE clustering (broadcastPipeline.js's own
+  // clusterCongestionEvents call, below) — see congestionValidation.js.
+  // Lazy (skips the extra TDX call entirely when no congestion event is
+  // present this run) and fail-safe (any failure here leaves
+  // `mergedEvents` completely unchanged) — never affects accident/
+  // construction/closure/control broadcasting either way.
+  let broadcastEvents = mergedEvents;
+  try {
+    broadcastEvents = await applyCongestionSeverityValidation(mergedEvents, env);
+  } catch (err) {
+    console.error(`[cron][congestion-validation] failed, leaving severity unchanged: ${err && err.message}`);
+  }
 
   const lineSummary = await runLineBroadcast(env, {
     allEvents: broadcastEvents,

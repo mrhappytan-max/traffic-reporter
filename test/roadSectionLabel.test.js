@@ -24,6 +24,18 @@ test('4. 國1 95K -> 99K is 新竹／科學園區－新竹系統路段', () => {
   assert.equal(label, '新竹／科學園區－新竹系統路段');
 });
 
+// V1.4.1: production report — 國1 北向 105.72K - 104.52K had no section
+// label at all (anchors previously stopped at 新竹系統/99K).
+test('4b. 國1 北向 105.72K -> 104.52K (production report) is 頭份－新竹系統路段', () => {
+  const { label } = getRoadSectionLabel({ road: '國道一號', startKM: '105K+720', endKM: '104K+520' });
+  assert.equal(label, '頭份－新竹系統路段');
+});
+
+test('4c. 國1 頭份 anchor point (109K+720) resolves to 頭份附近', () => {
+  const { label } = getRoadSectionLabel({ road: '國道一號', startKM: '109K+720', endKM: '109K+720' });
+  assert.equal(label, '頭份附近');
+});
+
 test('5. 國3 anchor mapping: 關西/竹林/寶山/新竹系統', () => {
   const kx_zl = getRoadSectionLabel({ road: '國道三號', startKM: '79K+000', endKM: '90K+000' });
   assert.match(kx_zl.label, /關西/);
@@ -131,7 +143,7 @@ test('getCorridorId is direction-agnostic by itself — direction is layered on 
 test('國3 gets its own independent corridor ids, never colliding with 國1 values for a similar KM range', () => {
   const gd1 = getCorridorId({ road: '國道一號', startKM: 82.4, endKM: 91 });
   const gd3 = getCorridorId({ road: '國道三號', startKM: 82.4, endKM: 91 });
-  assert.notEqual(gd1, gd3); // same numbers, different anchor tables (國1: 83/91/95/99, 國3: 79/90/98/103/109)
+  assert.notEqual(gd1, gd3); // same numbers, different anchor tables (國1: 83/91/95/100.73/109.72, 國3: 79/90/98/103/109)
 });
 
 test('a road without a curated boundary table still gets a stable id from the generic 20km grid', () => {

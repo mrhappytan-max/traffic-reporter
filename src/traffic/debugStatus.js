@@ -21,6 +21,7 @@ import { runPbsPipelinePreview } from '../pbs/pipeline.js';
 import { mergeForBroadcast } from '../pbs/crossSourceDedup.js';
 import { PBS_BROADCAST_ENABLED } from '../pbs/pbsConfig.js';
 import { getLastTdxTokenSource } from '../tdx/auth.js';
+import { applyCongestionSeverityValidation } from './congestionValidation.js';
 
 // Safety cap so a runaway source can't blow up the response payload.
 const MAX_LISTED_EVENTS = 100;
@@ -41,9 +42,19 @@ export async function handleDebugStatus(env) {
   // truthful about what would actually be pushed.
   const pbsSummary = await runPbsPipelinePreview(env, { tdxEvents: summary.allEvents, now });
 
-  const broadcastEvents = PBS_BROADCAST_ENABLED
+  const mergedEvents = PBS_BROADCAST_ENABLED
     ? mergeForBroadcast(summary.allEvents, pbsSummary.canonicalEvents || [], pbsSummary.uniquePbsEvents || [])
     : summary.allEvents;
+
+  // Same lazy/fail-safe congestion-severity confirmation as the real
+  // Cron run (see scheduled.js/congestionValidation.js) — still entirely
+  // read-only (only ever reads TDX VD data, changes nothing in KV).
+  let broadcastEvents = mergedEvents;
+  try {
+    broadcastEvents = await applyCongestionSeverityValidation(mergedEvents, env);
+  } catch {
+    // Preview only — leave severity unchanged, same as scheduled.js.
+  }
 
   const lineSummary = await runLineBroadcast(env, {
     allEvents: broadcastEvents,

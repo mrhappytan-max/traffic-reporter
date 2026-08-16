@@ -84,6 +84,11 @@ test('6. the reported duplicate-line bug ("國道一號 北向" then "國道一�
 });
 
 test('7. congestion message matches the required new short format exactly', () => {
+  // V1.4.1: no congestionSeverity set here (this event predates the field
+  // entirely, same as a hand-built fixture) -> defaults to 'congested'
+  // ("壅塞"), never the old hardcoded "嚴重壅塞" — see
+  // congestionSeverity.test.js for the full moderate/congested/severe
+  // matrix this default is part of.
   const event = {
     type: 'congestion',
     road: '國道一號',
@@ -96,7 +101,7 @@ test('7. congestion message matches the required new short format exactly', () =
   const text = formatEventMessage(event);
   assert.equal(
     text,
-    ['🐢 嚴重壅塞', '國1 北向｜竹北－湖口路段', '91K+000～82K+400', '車多回堵\n請預留時間', '🕒 10:50更新'].join('\n')
+    ['🐢 壅塞', '國1 北向｜竹北－湖口路段', '91K+000～82K+400', '車多回堵\n請預留時間', '🕒 10:50更新'].join('\n')
   );
 });
 
@@ -148,5 +153,70 @@ test('a congestion cluster candidate (numeric startKM/endKM from congestionClust
     updatedAt: '2026-08-15T10:50:00+08:00',
   };
   const text = formatEventMessage(clusterCandidate);
-  assert.match(text, /^🐢 嚴重壅塞\n國3 北向｜竹林－關西路段\n90K\+000～79K\+000\n/);
+  // V1.4.1: defaults to "壅塞", not "嚴重壅塞" — see the test above.
+  assert.match(text, /^🐢 壅塞\n國3 北向｜竹林－關西路段\n90K\+000～79K\+000\n/);
+});
+
+// --- V1.4.1: congestion severity (moderate/congested/severe) — see congestionSeverity.js ---
+
+test('congestion severity "moderate" (車多) renders as 車流偏多, never as 嚴重壅塞', () => {
+  const event = {
+    type: 'congestion',
+    congestionSeverity: 'moderate',
+    road: '國道一號',
+    direction: '北向',
+    startKM: 91,
+    endKM: 82.4,
+    description: '北向車多',
+    updatedAt: '2026-08-15T10:50:00+08:00',
+  };
+  const text = formatEventMessage(event);
+  assert.match(text, /^🚗 車流偏多\n/);
+  assert.doesNotMatch(text, /嚴重壅塞/);
+});
+
+test('congestion severity "congested" (壅塞) renders as 壅塞, not 嚴重壅塞', () => {
+  const event = {
+    type: 'congestion',
+    congestionSeverity: 'congested',
+    road: '國道一號',
+    direction: '北向',
+    startKM: 91,
+    endKM: 82.4,
+    description: '北向壅塞',
+    updatedAt: '2026-08-15T10:50:00+08:00',
+  };
+  const text = formatEventMessage(event);
+  assert.match(text, /^🐢 壅塞\n/);
+  assert.doesNotMatch(text, /嚴重壅塞/);
+});
+
+test('congestion severity "severe" (VD-confirmed only) renders as 嚴重壅塞', () => {
+  const event = {
+    type: 'congestion',
+    congestionSeverity: 'severe',
+    road: '國道一號',
+    direction: '北向',
+    startKM: 91,
+    endKM: 82.4,
+    description: '北向壅塞',
+    updatedAt: '2026-08-15T10:50:00+08:00',
+  };
+  const text = formatEventMessage(event);
+  assert.match(text, /^🐢 嚴重壅塞\n/);
+});
+
+test('congestion with no congestionSeverity at all (e.g. an older/foreign event shape) defaults to 壅塞, never 嚴重壅塞', () => {
+  const event = {
+    type: 'congestion',
+    road: '國道一號',
+    direction: '北向',
+    startKM: 91,
+    endKM: 82.4,
+    description: '北向車多',
+    updatedAt: '2026-08-15T10:50:00+08:00',
+  };
+  const text = formatEventMessage(event);
+  assert.match(text, /^🐢 壅塞\n/);
+  assert.doesNotMatch(text, /嚴重壅塞/);
 });

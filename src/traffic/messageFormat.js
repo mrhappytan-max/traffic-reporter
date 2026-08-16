@@ -14,13 +14,13 @@
 // location-based line, per "不要擴大 scope").
 
 import { getRoadShortName, getRoadSectionLabel } from './roadSectionLabel.js';
+import { DEFAULT_CONGESTION_SEVERITY } from './congestionSeverity.js';
 
 const TYPE_EMOJI = {
   accident: '🚨',
   construction: '🚧',
   closure: '🚧',
   control: '⚠️',
-  congestion: '🐢',
   alert: 'ℹ️',
   other: 'ℹ️',
 };
@@ -30,7 +30,6 @@ const TYPE_LABEL = {
   construction: '道路施工',
   closure: '道路封閉',
   control: '交通管制',
-  congestion: '嚴重壅塞',
   alert: '公車異動',
   other: '路況異常',
 };
@@ -40,9 +39,20 @@ const TYPE_IMPACT_LINES = {
   construction: '施工影響通行\n請注意車道',
   closure: '道路封閉\n請改道行駛',
   control: '交通管制中\n請配合疏導',
-  congestion: '車多回堵\n請預留時間',
   alert: '營運異動\n請留意公告',
   other: '請留意路況',
+};
+
+// V1.4.1: congestion is no longer a single flat label — see
+// congestionSeverity.js. 'severe' is only ever reached when
+// congestionValidation.js has confirmed a real-time low VD speed
+// upstream; a bare keyword match (or an unrecognized subtype, which
+// falls back to DEFAULT_CONGESTION_SEVERITY='congested') can never
+// produce "嚴重壅塞" on its own — that's the exact bug this fixes.
+const CONGESTION_SEVERITY_DISPLAY = {
+  moderate: { emoji: '🚗', label: '車流偏多', impactLines: '車流略多\n請留意路況' },
+  congested: { emoji: '🐢', label: '壅塞', impactLines: '車多回堵\n請預留時間' },
+  severe: { emoji: '🐢', label: '嚴重壅塞', impactLines: '嚴重回堵\n請提前改道' },
 };
 
 function toTaipeiHHMM(isoString) {
@@ -131,9 +141,14 @@ export function formatEventMessage(event, { forecast = false, minutesUntilStart 
     return lines.join('\n');
   }
 
-  const emoji = TYPE_EMOJI[event.type] || 'ℹ️';
-  const label = TYPE_LABEL[event.type] || '路況異常';
-  const impactLines = TYPE_IMPACT_LINES[event.type] || '請留意路況';
+  const congestionDisplay =
+    event.type === 'congestion'
+      ? CONGESTION_SEVERITY_DISPLAY[event.congestionSeverity] || CONGESTION_SEVERITY_DISPLAY[DEFAULT_CONGESTION_SEVERITY]
+      : null;
+
+  const emoji = congestionDisplay ? congestionDisplay.emoji : TYPE_EMOJI[event.type] || 'ℹ️';
+  const label = congestionDisplay ? congestionDisplay.label : TYPE_LABEL[event.type] || '路況異常';
+  const impactLines = congestionDisplay ? congestionDisplay.impactLines : TYPE_IMPACT_LINES[event.type] || '請留意路況';
   const updatedHHMM = toTaipeiHHMM(event.updatedAt);
 
   const lines = [

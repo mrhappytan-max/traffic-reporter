@@ -37,13 +37,23 @@ const ROAD_ALIASES = {
 
 // km: official-estimate distance marker. name: what a driver calls it.
 // Ordered ascending by km — the algorithms below assume that.
+//
+// V1.4.1: 新竹系統 corrected from the earlier estimate (99K) to the
+// 高速公路局 official mileage (100K+730), and 頭份 (109K+720) added — the
+// table previously stopped at 新竹系統, so anything from ~100K to ~110K
+// (production report: "國1 北向 105.72K - 104.52K") fell through to
+// label:null (raw-KM-only display, no interchange name at all). Both
+// values per 高速公路局 official 里程樁 data, not estimated the way the
+// rest of this table still is — see module comment above for that
+// broader caveat.
 const ROAD_ANCHORS = {
   國道一號: [
     { km: 83, name: '湖口' }, // 湖口交流道
     { km: 86, name: '湖口服務區' },
     { km: 91, name: '竹北' }, // 竹北交流道
     { km: 95, name: '新竹／科學園區' }, // 新竹交流道 (also serves 竹東/科學園區)
-    { km: 99, name: '新竹系統' }, // 新竹系統交流道
+    { km: 100.73, name: '新竹系統' }, // 新竹系統交流道 — 高速公路局官方里程 100K+730
+    { km: 109.72, name: '頭份' }, // 頭份交流道 — 高速公路局官方里程 109K+720
   ],
   國道三號: [
     { km: 79, name: '關西' }, // 關西交流道
@@ -83,7 +93,10 @@ const OUT_OF_TABLE_BUFFER_KM = 5;
 // against (82.4K～91K shrinking through 84～91, 86～92, 88～93, all
 // staying keyed to the same corridor).
 const CORRIDOR_BOUNDARIES = {
-  國道一號: [83, 91, 95, 99], // 湖口(+湖口服務區) | 竹北 | 新竹／科學園區 | 新竹系統
+  // V1.4.1: 99 -> 100.73 (corrected 新竹系統 mileage) and 109.72 (頭份)
+  // added, matching the ROAD_ANCHORS correction above — see that
+  // comment for the official-mileage source.
+  國道一號: [83, 91, 95, 100.73, 109.72], // 湖口(+湖口服務區) | 竹北 | 新竹／科學園區 | 新竹系統 | 頭份
   國道三號: [79, 90, 98, 103, 109], // 關西 | 竹林 | 寶山(+新竹系統) | 茄苳 | 香山
 };
 
