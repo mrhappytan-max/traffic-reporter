@@ -12,7 +12,7 @@ function abortError() {
   return err;
 }
 
-test('fetchPbsData requests the PBS Windows VPC relay with bearer auth', async () => {
+test('fetchPbsData requests the PBS Windows VPC relay with the custom token header', async () => {
   let request;
   const result = await fetchPbsData(relayEnv(async (url, options) => {
     request = { url, options };
@@ -23,7 +23,8 @@ test('fetchPbsData requests the PBS Windows VPC relay with bearer auth', async (
   }));
 
   assert.equal(request.url, 'http://pbs-relay.internal/pbs');
-  assert.equal(request.options.headers.Authorization, 'Bearer test-token');
+  assert.equal(request.options.headers['X-PBS-Relay-Token'], 'test-token');
+  assert.equal(request.options.headers.Authorization, undefined);
   assert.equal(result.items.length, 1);
   assert.equal(result.relayOk, true);
   assert.equal(result.relayCache, 'HIT');

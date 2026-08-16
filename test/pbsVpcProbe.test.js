@@ -22,8 +22,9 @@ test('PBS VPC probe checks health then PBS and returns only safe bounded fields'
     'http://pbs-relay.internal/health',
     'http://pbs-relay.internal/pbs',
   ]);
-  assert.equal(calls[0].options.headers.Authorization, undefined);
-  assert.equal(calls[1].options.headers.Authorization, `Bearer ${secret}`);
+  assert.equal(calls[0].options.headers['X-PBS-Relay-Token'], undefined);
+  assert.equal(calls[1].options.headers['X-PBS-Relay-Token'], secret);
+  assert.equal(calls[1].options.headers.Authorization, undefined);
   assert.deepEqual(Object.keys(json).sort(), [
     'healthBody', 'healthOk', 'healthStatus', 'pbsBodyPreview', 'pbsOk', 'pbsStatus', 'relayConfigured',
   ].sort());

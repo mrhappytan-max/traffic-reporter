@@ -24,7 +24,7 @@ async function probe(binding, path, token) {
     const response = await binding.fetch(`${PBS_RELAY_PROBE_BASE_URL}${path}`, {
       headers: {
         Accept: 'application/json',
-        ...(path === '/pbs' ? { Authorization: `Bearer ${token}` } : {}),
+        ...(path === '/pbs' ? { 'X-PBS-Relay-Token': token } : {}),
       },
     });
     return {
