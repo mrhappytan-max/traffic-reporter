@@ -325,7 +325,21 @@ function congestionEvent(overrides = {}) {
   };
 }
 
-test('8. same Cron tick, 4 overlapping 國1北向 congestion rows -> exactly 1 LINE push, not 4 ("不准洗版")', async () => {
+// V1.5: 8/9/12-16/17 below used to prove the V1.2C clustering/cooldown
+// machinery worked end-to-end THROUGH a real push. Pure congestion is no
+// longer broadcast-eligible at all (see broadcastRules.js's
+// isBroadcastEligibleType) — professional drivers already have Google
+// Maps/1968 for ordinary traffic flow; this service now only interrupts
+// for accidents/closures/control/other genuinely abnormal events. The
+// underlying clustering/cooldown FUNCTIONS are untouched and still fully
+// covered at the unit level (congestionCluster.test.js,
+// notified.test.js's own "different targets have fully independent
+// cooldowns" case) — kept, not deleted, per "不刪除 congestion 資料來源"
+// — they just never fire inside the real broadcast pipeline anymore.
+// These integration tests now assert the new, correct outcome: 0 pushes,
+// regardless of overlap/direction/KM-churn/multi-target scenario.
+
+test('8. same Cron tick, 4 overlapping 國1北向 congestion rows -> 0 LINE pushes (pure congestion is no longer broadcast-eligible)', async () => {
   const kv = createMockKV();
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   originalFetch = globalThis.fetch;
@@ -342,14 +356,13 @@ test('8. same Cron tick, 4 overlapping 國1北向 congestion rows -> exactly 1 L
   ];
 
   const result = await runLineBroadcast(env, { allEvents: events, dedupeAvailable: true, now });
-  assert.equal(result.broadcastRelevantCount, 1); // 5 rows collapsed into 1 cluster candidate
-  assert.equal(result.pushSucceeded, 1);
-  assert.equal(pushCalls.length, 1);
-  assert.match(pushCalls[0].body.messages[0].text, /竹北/);
-  assert.match(pushCalls[0].body.messages[0].text, /湖口/);
+  assert.equal(result.typeIneligibleCount, 5); // all 5 excluded before clustering ever ran
+  assert.equal(result.broadcastRelevantCount, 0);
+  assert.equal(result.pushSucceeded, 0);
+  assert.equal(pushCalls.length, 0);
 });
 
-test('9. same road, different direction congestion never merges — 2 independent pushes', async () => {
+test('9. same road, different direction congestion — still 0 pushes either way', async () => {
   const kv = createMockKV();
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   originalFetch = globalThis.fetch;
@@ -363,12 +376,12 @@ test('9. same road, different direction congestion never merges — 2 independen
   ];
 
   const result = await runLineBroadcast(env, { allEvents: events, dedupeAvailable: true, now });
-  assert.equal(result.broadcastRelevantCount, 2);
-  assert.equal(result.pushSucceeded, 2);
-  assert.equal(pushCalls.length, 2);
+  assert.equal(result.typeIneligibleCount, 2);
+  assert.equal(result.pushSucceeded, 0);
+  assert.equal(pushCalls.length, 0);
 });
 
-test('12-16. congestion cooldown through the full pipeline: notify once, then KM churn/rawId churn stays silent until 30 minutes pass', async () => {
+test('12-16. congestion stays silent across every tick (KM churn, rawId churn, 30+ minutes later) — never pushed at all', async () => {
   const kv = createMockKV();
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   originalFetch = globalThis.fetch;
@@ -376,86 +389,40 @@ test('12-16. congestion cooldown through the full pipeline: notify once, then KM
   const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
 
   const t0 = new Date('2026-08-15T10:50:00+08:00');
+  const ticks = [
+    { at: t0, event: congestionEvent({ startKM: '91K+000', endKM: '82K+400' }) },
+    { at: new Date(t0.getTime() + 5 * 60 * 1000), event: congestionEvent({ startKM: '89K+000', endKM: '82K+400' }) },
+    { at: new Date(t0.getTime() + 10 * 60 * 1000), event: congestionEvent({ rawId: 'CONG-DIFFERENT-ID', startKM: '86K+000', endKM: '87K+000' }) },
+    { at: new Date(t0.getTime() + 30 * 60 * 1000), event: congestionEvent({ startKM: '91K+000', endKM: '82K+400' }) },
+  ];
 
-  // 12. first time -> notify.
-  const first = await runLineBroadcast(env, {
-    allEvents: [congestionEvent({ startKM: '91K+000', endKM: '82K+400' })],
-    dedupeAvailable: true,
-    now: t0,
-  });
-  assert.equal(first.pushSucceeded, 1);
-
-  // 13. 5 minutes later, KM shrinks -> must NOT notify.
-  pushCalls.length = 0;
-  const t5 = new Date(t0.getTime() + 5 * 60 * 1000);
-  const at5 = await runLineBroadcast(env, {
-    allEvents: [congestionEvent({ startKM: '89K+000', endKM: '82K+400' })],
-    dedupeAvailable: true,
-    now: t5,
-  });
-  assert.equal(at5.pushSucceeded, 0);
-  assert.equal(pushCalls.length, 0);
-
-  // 14. 10 minutes later, TDX swapped the rawId -> still must NOT notify
-  // (this is the whole point of the corridor-based key, not source:rawId).
-  pushCalls.length = 0;
-  const t10 = new Date(t0.getTime() + 10 * 60 * 1000);
-  const at10 = await runLineBroadcast(env, {
-    allEvents: [congestionEvent({ rawId: 'CONG-DIFFERENT-ID', startKM: '86K+000', endKM: '87K+000' })],
-    dedupeAvailable: true,
-    now: t10,
-  });
-  assert.equal(at10.pushSucceeded, 0);
-  assert.equal(pushCalls.length, 0);
-
-  // 15. 25 minutes later, range changes again -> still NOT.
-  pushCalls.length = 0;
-  const t25 = new Date(t0.getTime() + 25 * 60 * 1000);
-  const at25 = await runLineBroadcast(env, {
-    allEvents: [congestionEvent({ startKM: '83K+000', endKM: '84K+000' })],
-    dedupeAvailable: true,
-    now: t25,
-  });
-  assert.equal(at25.pushSucceeded, 0);
-  assert.equal(pushCalls.length, 0);
-
-  // 16. 30 minutes later, still congestion -> eligible again.
-  pushCalls.length = 0;
-  const t30 = new Date(t0.getTime() + 30 * 60 * 1000);
-  const at30 = await runLineBroadcast(env, {
-    allEvents: [congestionEvent({ startKM: '91K+000', endKM: '82K+400' })],
-    dedupeAvailable: true,
-    now: t30,
-  });
-  assert.equal(at30.pushSucceeded, 1);
-  assert.equal(pushCalls.length, 1);
+  for (const { at, event } of ticks) {
+    pushCalls.length = 0;
+    const result = await runLineBroadcast(env, { allEvents: [event], dedupeAvailable: true, now: at });
+    assert.equal(result.pushSucceeded, 0);
+    assert.equal(pushCalls.length, 0);
+  }
 });
 
-test('17. two different targets each get their own independent congestion cooldown', async () => {
+test('17. multiple targets, congestion — still 0 pushes for everyone', async () => {
   const kv = createMockKV();
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
-  originalFetch = globalThis.fetch;
-  globalThis.fetch = mockLinePushFetch();
-  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
-
-  const t0 = new Date('2026-08-15T10:50:00+08:00');
-  await runLineBroadcast(env, { allEvents: [congestionEvent()], dedupeAvailable: true, now: t0 });
-
-  // A second target subscribes 10 minutes later (their own enabledAt is
-  // in the past relative to t0 here so the backfill guard doesn't block
-  // them — this test is specifically about cooldown independence).
   await setUserEnabled(kv, 'U2', true, ENROLLED_AT);
-  pushCalls.length = 0;
-  const t10 = new Date(t0.getTime() + 10 * 60 * 1000);
-  const result = await runLineBroadcast(env, { allEvents: [congestionEvent()], dedupeAvailable: true, now: t10 });
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLinePushFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
 
-  // U1 is still within its own cooldown; U2 has never been notified for
-  // this corridor at all -> gets notified now, independent of U1.
-  assert.equal(result.pushSucceeded, 1);
-  assert.equal(pushCalls.length, 1);
+  const result = await runLineBroadcast(env, { allEvents: [congestionEvent()], dedupeAvailable: true, now: new Date('2026-08-15T10:50:00+08:00') });
+  assert.equal(result.pushSucceeded, 0);
+  assert.equal(pushCalls.length, 0);
 });
 
 test('18. a target whose LINE push failed can still be retried next run; a successful target is not re-pushed', async () => {
+  // V1.5: this test's real subject is the generic partial-push-failure
+  // retry mechanism (fingerprint-based notified-state), not congestion —
+  // it used a congestionEvent() fixture only incidentally. Switched to
+  // accidentEvent() (broadcast-eligible) so this still exercises the
+  // real code path instead of being filtered out before ever reaching it.
   const kv = createMockKV();
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   await setUserEnabled(kv, 'U2', true, ENROLLED_AT);
@@ -474,12 +441,13 @@ test('18. a target whose LINE push failed can still be retried next run; a succe
   };
   pushCalls = [];
 
-  const first = await runLineBroadcast(env, { allEvents: [congestionEvent()], dedupeAvailable: true, now });
+  const first = await runLineBroadcast(env, { allEvents: [accidentEvent()], dedupeAvailable: true, now });
   assert.equal(first.pushAttempted, 2);
   assert.equal(first.pushSucceeded, 1);
 
-  // Immediately retry (still within cooldown for U1, but U2 was never
-  // successfully notified, so U2 must still be pending).
+  // Immediately retry with the SAME unchanged content — U1 was already
+  // successfully notified (fingerprint-based dedup, no cooldown), but U2
+  // was never successfully notified, so U2 must still be pending.
   pushCalls = [];
   globalThis.fetch = async (url, init) => {
     const body = JSON.parse(init.body);
@@ -487,7 +455,7 @@ test('18. a target whose LINE push failed can still be retried next run; a succe
     return new Response('{}', { status: 200 });
   };
   const retryNow = new Date(now.getTime() + 60 * 1000);
-  const second = await runLineBroadcast(env, { allEvents: [congestionEvent()], dedupeAvailable: true, now: retryNow });
+  const second = await runLineBroadcast(env, { allEvents: [accidentEvent()], dedupeAvailable: true, now: retryNow });
   assert.equal(second.pushSucceeded, 1); // only U2
   assert.equal(pushCalls.length, 1);
   assert.equal(pushCalls[0].body.to, 'U2');
@@ -594,7 +562,11 @@ test('enabledAt backfill guard, cluster-aware: a corridor whose earliest member 
   assert.equal(pushCalls.length, 0);
 });
 
-test('notification-key stability fix: a jam that shrinks across what used to be a corridor bucket boundary still stays cooled down end-to-end', async () => {
+test('notification-key stability (corridor boundary shrink) — still 0 pushes either way, now that pure congestion is broadcast-ineligible', async () => {
+  // The corridor-id stability property itself (a shrinking jam keeps one
+  // stable id across what used to be a bucket boundary) is still fully
+  // unit-tested in roadSectionLabel.test.js — this integration test now
+  // only needs to confirm neither KM range reaches LINE at all.
   const kv = createMockKV();
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   originalFetch = globalThis.fetch;
@@ -603,15 +575,12 @@ test('notification-key stability fix: a jam that shrinks across what used to be 
 
   const t0 = new Date('2026-08-15T10:50:00+08:00');
   const first = await runLineBroadcast(env, {
-    allEvents: [congestionEvent({ startKM: '82K+400', endKM: '91K+000' })], // old midpoint 86.7 -> old bucket z8
+    allEvents: [congestionEvent({ startKM: '82K+400', endKM: '91K+000' })],
     dedupeAvailable: true,
     now: t0,
   });
-  assert.equal(first.pushSucceeded, 1);
+  assert.equal(first.pushSucceeded, 0);
 
-  // 20 minutes later, the range has shrunk onto what the OLD midpoint-
-  // bucket scheme would have called a different zone (old midpoint 90.5
-  // -> old bucket z9) — must still be within cooldown.
   pushCalls.length = 0;
   const t20 = new Date(t0.getTime() + 20 * 60 * 1000);
   const later = await runLineBroadcast(env, {

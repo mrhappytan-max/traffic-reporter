@@ -15,7 +15,7 @@
 
 import { isWithinBroadcastHours } from './broadcastHours.js';
 import { computeEffectiveWindow } from './effectiveWindow.js';
-import { isBroadcastRelevant } from './broadcastRules.js';
+import { isBroadcastRelevant, isBroadcastEligibleType } from './broadcastRules.js';
 import { readSubscriptions, persistSubscriptions } from './subscriptions.js';
 import {
   readNotifiedState,
@@ -109,6 +109,12 @@ export async function runLineBroadcast(
     enabledGroupsCount: 0,
     subscriptionsCount: 0,
     notifiedEventCount: 0,
+    // V1.5: how many of this run's events were excluded purely by type
+    // (pure congestion — see broadcastRules.js's isBroadcastEligibleType)
+    // before relevance/pending-target computation even started. Purely
+    // observational — GET /debug/status surfaces this so "congestion
+    // still fully visible in debug, never in LINE" stays verifiable.
+    typeIneligibleCount: 0,
     broadcastRelevantCount: 0,
     activeNowCount: 0,
     futureWithin60MinCount: 0,
@@ -153,6 +159,17 @@ export async function runLineBroadcast(
     : [];
   result.subscriptionsCount = targets.length;
 
+  // V1.5: drop broadcast-ineligible-by-type events (pure congestion, see
+  // broadcastRules.js) FIRST — before clustering, before relevance, before
+  // anything else. This is a pure eligibility gate at the very entrance
+  // of the broadcast pipeline; it does not touch TDX/PBS's own
+  // fetch/normalize/classify/VD-validate stages at all (those already
+  // completed by the time `allEvents` gets here — see scheduled.js/
+  // debugStatus.js), so congestion data collection and its
+  // GET /debug/status visibility are completely unaffected.
+  const broadcastEligibleEvents = allEvents.filter(isBroadcastEligibleType);
+  result.typeIneligibleCount = allEvents.length - broadcastEligibleEvents.length;
+
   // V1.2C: cluster same-run congestion events into candidates BEFORE
   // computing relevance/pending targets at all, so N overlapping
   // congestion rows this Cron tick become exactly one candidate — never
@@ -160,8 +177,12 @@ export async function runLineBroadcast(
   // overlapping congestion rows this tick -> 5 pushes this run" — see
   // congestionCluster.js and the "同一 Cron 不准洗版" requirement.
   // Non-congestion events (accident/construction/closure/control/alert/
-  // other) pass through completely untouched.
-  const { nonCongestionEvents, congestionClusters } = clusterCongestionEvents(allEvents);
+  // other) pass through completely untouched. (Since congestion is now
+  // filtered out above, this will always yield congestionClusters:[] in
+  // practice — left in place unchanged rather than removed, so a future
+  // round can re-admit a congestion subtype here without restructuring
+  // this pipeline.)
+  const { nonCongestionEvents, congestionClusters } = clusterCongestionEvents(broadcastEligibleEvents);
 
   const withWindow = [
     ...nonCongestionEvents.map((event) => ({ event, window: computeEffectiveWindow(event, now), cluster: null })),

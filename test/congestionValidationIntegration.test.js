@@ -118,65 +118,71 @@ async function baseEnv() {
 
 afterEach(() => resetTdxTokenCache());
 
-test('壅塞 + VD confirms low speed -> LINE message reads 嚴重壅塞', async () => {
+// V1.5: pure congestion is no longer broadcast-eligible AT ALL (see
+// broadcastRules.js's isBroadcastEligibleType) — professional drivers
+// already have Google Maps/1968 for ordinary traffic flow. This applies
+// EVEN to a VD-confirmed 'severe' congestion event: the severity
+// computation below still runs in full (still visible via GET
+// /debug/status — see requirement "congestion 仍可保留在 debug/status")
+// and is still exhaustively unit-tested in congestionValidation.test.js,
+// but the eligibility gate in broadcastPipeline.js runs strictly BEFORE
+// clustering/relevance/push, so no severity outcome — moderate,
+// congested, or a genuinely VD-confirmed severe — can ever reach LINE.
+// The tests below are the regression guard for exactly that: a VD
+// upgrade to 'severe' must never accidentally bypass the new gate.
+
+test('壅塞 + VD confirms low speed (would be "severe") -> still 0 LINE messages', async () => {
   const env = await baseEnv();
   const { pushed } = await withPushCapture(
     mockFetch({ freewayEvents: [freewayCongestionRaw()], vdSpeed: SEVERE_CONGESTION_MAX_KPH - 10 }),
     () => runScheduledTdxSync(env, NOW)
   );
 
-  assert.equal(pushed.length, 1);
-  assert.match(pushed[0], /^🐢 嚴重壅塞/);
+  assert.equal(pushed.length, 0);
 });
 
-test('壅塞 + VD reports normal speed -> LINE message reads 壅塞, NOT 嚴重壅塞', async () => {
+test('壅塞 + VD reports normal speed -> still 0 LINE messages', async () => {
   const env = await baseEnv();
   const { pushed } = await withPushCapture(
     mockFetch({ freewayEvents: [freewayCongestionRaw()], vdSpeed: SEVERE_CONGESTION_MAX_KPH + 30 }),
     () => runScheduledTdxSync(env, NOW)
   );
 
-  assert.equal(pushed.length, 1);
-  assert.match(pushed[0], /^🐢 壅塞/);
-  assert.doesNotMatch(pushed[0], /嚴重壅塞/);
+  assert.equal(pushed.length, 0);
 });
 
-test('車多 (moderate) alone, no VD confirmation nearby -> LINE message reads 車流偏多, never 嚴重壅塞', async () => {
+test('車多 (moderate) alone, no VD confirmation nearby -> still 0 LINE messages', async () => {
   const env = await baseEnv();
   const { pushed } = await withPushCapture(
     mockFetch({ freewayEvents: [freewayModerateRaw()], vdSpeed: null }), // no VD reading at all
     () => runScheduledTdxSync(env, NOW)
   );
 
-  assert.equal(pushed.length, 1);
-  assert.match(pushed[0], /^🚗 車流偏多/);
-  assert.doesNotMatch(pushed[0], /嚴重壅塞/);
+  assert.equal(pushed.length, 0);
 });
 
-test('車多 (moderate) + VD confirms genuinely low speed -> upgraded all the way to 嚴重壅塞', async () => {
+test('車多 (moderate) + VD confirms genuinely low speed (would be upgraded to "severe") -> still 0 LINE messages — VD confirmation never bypasses the new eligibility gate', async () => {
   const env = await baseEnv();
   const { pushed } = await withPushCapture(
     mockFetch({ freewayEvents: [freewayModerateRaw()], vdSpeed: SEVERE_CONGESTION_MAX_KPH - 15 }),
     () => runScheduledTdxSync(env, NOW)
   );
 
-  assert.equal(pushed.length, 1);
-  assert.match(pushed[0], /^🐢 嚴重壅塞/);
+  assert.equal(pushed.length, 0);
 });
 
-test('VD endpoint failure never blocks the congestion broadcast — still exactly 1 message, at its keyword-classified severity', async () => {
+test('VD endpoint failure -> still 0 LINE messages, does not crash the Cron run', async () => {
   const env = await baseEnv();
   const { pushed, result } = await withPushCapture(
     mockFetch({ freewayEvents: [freewayCongestionRaw()], vdFails: true }),
     () => runScheduledTdxSync(env, NOW)
   );
 
-  assert.equal(pushed.length, 1);
-  assert.match(pushed[0], /^🐢 壅塞/); // 壅塞 keyword classified it 'congested'; VD failure never upgrades OR blocks
-  assert.equal(result.line.pushSucceeded, 1);
+  assert.equal(pushed.length, 0);
+  assert.equal(result.line.pushSucceeded, 0);
 });
 
-test('PBS + TDX both report the SAME congestion -> still exactly 1 message (cross-source dedup unaffected by severity work)', async () => {
+test('PBS + TDX both report the SAME congestion -> still 0 LINE messages (not 2, not 1 — zero)', async () => {
   const env = await baseEnv();
   env.PBS_RELAY_TOKEN = 'relay-token';
   env.PBS_RELAY_WINDOWS = {
@@ -198,9 +204,10 @@ test('PBS + TDX both report the SAME congestion -> still exactly 1 message (cros
     () => runScheduledTdxSync(env, NOW)
   );
 
-  assert.equal(pushed.length, 1); // not 2 — the whole point of cross-source dedup
+  assert.equal(pushed.length, 0);
+  // Cross-source dedup itself still ran correctly (still visible in
+  // debug/status) — it's only the broadcast step that's now gated off.
   assert.equal(result.pbs.canonicalEventCount, 1);
-  assert.match(pushed[0], /^🐢 嚴重壅塞/); // VD confirmation still upgrades the MERGED canonical event
 });
 
 test('a non-congestion event (accident) never triggers any VD fetch at all', async () => {

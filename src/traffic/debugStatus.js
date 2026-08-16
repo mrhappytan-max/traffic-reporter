@@ -99,6 +99,11 @@ export async function handleDebugStatus(env) {
     enabledGroupsCount: lineSummary.enabledGroupsCount,
     subscriptionsCount: lineSummary.subscriptionsCount,
     notifiedEventCount: lineSummary.notifiedEventCount,
+    // V1.5: how many merged events this run were excluded purely by type
+    // (pure congestion, see broadcastRules.js) before ever reaching
+    // relevance/pending-target computation — proof that congestion is
+    // still fully collected/classified/VD-validated, just never pushed.
+    typeIneligibleCount: lineSummary.typeIneligibleCount,
     broadcastRelevantCount: lineSummary.broadcastRelevantCount,
     activeNowCount: lineSummary.activeNowCount,
     futureWithin60MinCount: lineSummary.futureWithin60MinCount,
