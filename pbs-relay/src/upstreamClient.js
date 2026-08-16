@@ -3,16 +3,24 @@
 // otherwise interprets the payload. That logic stays in the Cloudflare
 // Worker's own src/pbs/* pipeline; this Relay is not wired into it yet.
 //
+// The upstream request is deliberately kept equivalent to plain
+// `fetch(url)` — no custom headers of any kind. A live A/B repro
+// (comparing this against plain fetch(url) on the same machine) showed
+// PBS answering `Accept: application/json` with 406 Not Acceptable; PBS
+// only ever serves text/plain;charset=UTF-8, so demanding
+// application/json via Accept is a request it genuinely can't satisfy.
+// See fetchOnce() below — the only addition over plain fetch(url) is
+// the AbortSignal used for the timeout.
+//
 // Retry policy (unchanged this round): at most DEFAULT_MAX_ATTEMPTS (2)
 // total requests — the initial attempt plus one retry. A retry only
 // happens for timeout, network error, or 5xx; a 4xx never retries. A
 // short randomized backoff separates the two attempts. No third
 // attempt, ever.
 //
-// This round adds diagnostic logging only (see log.js) — every attempt,
-// its outcome (success/http-error/timeout/network-error), and the
-// retry-or-not decision are logged with a requestId for correlation.
-// Nothing about the fetch/retry/timeout behavior itself changed.
+// Diagnostic logging (see log.js): every attempt, its outcome (success/
+// http-error/timeout/network-error), and the retry-or-not decision are
+// logged with a requestId for correlation.
 
 import {
   logUpstreamAttemptStart,
@@ -29,10 +37,6 @@ const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_MAX_ATTEMPTS = 2;
 const BACKOFF_MIN_MS = 300;
 const BACKOFF_MAX_MS = 1000;
-
-// Honest, conservative identification — no fake browser UA, no cookies,
-// no login, no automation.
-const USER_AGENT = 'traffic-reporter-pbs-relay/1.0';
 
 export class UpstreamError extends Error {
   constructor(message, { status = null, code = 'unknown', errorName = null, errorCode = null, causeName = null, causeCode = null } = {}) {
@@ -108,9 +112,18 @@ async function fetchOnce(fetchImpl, url, timeoutMs, { requestId, attempt }) {
   // same try/catch/finally, so any failure in either phase gets the
   // same timeout/network classification and logging, and the abort
   // timer stays armed for the whole attempt.
+  // Real evidence (a live Windows repro comparing this against plain
+  // fetch(url)): sending `Accept: application/json` made PBS respond
+  // with 406 Not Acceptable — PBS only ever serves
+  // text/plain;charset=UTF-8 and does real content negotiation against
+  // Accept, so demanding application/json is a request PBS genuinely
+  // cannot satisfy. No custom headers are sent at all now — this call
+  // is deliberately kept equivalent to plain `fetch(url)`, plus only
+  // the AbortSignal needed for the timeout. Do not add Accept,
+  // User-Agent, or any other header here without live evidence it's
+  // both necessary and doesn't trigger the same 406.
   try {
     const response = await fetchImpl(url, {
-      headers: { Accept: 'application/json', 'User-Agent': USER_AGENT },
       signal: controller.signal,
     });
 

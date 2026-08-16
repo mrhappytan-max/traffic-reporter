@@ -150,17 +150,45 @@ test('waits a real backoff (>=~250ms) between the first failure and the retry', 
   assert.ok(callTimes[1] - callTimes[0] >= 250, `expected a backoff, got ${callTimes[1] - callTimes[0]}ms`);
 });
 
-test('sends Accept + a plain, honest User-Agent; never Authorization or Cookie to upstream', async () => {
+test('the upstream request carries no custom headers at all — equivalent to plain fetch(url), plus only the AbortSignal', async () => {
+  // Regression test for the real 406 Not Acceptable bug: PBS only ever
+  // serves text/plain;charset=UTF-8 and does real content negotiation
+  // against Accept, so an `Accept: application/json` header (or any
+  // other custom header) here reintroduces exactly that failure.
   let capturedInit;
+  let capturedUrl;
   const fetchImpl = async (url, init) => {
+    capturedUrl = url;
     capturedInit = init;
     return new Response('[]', { status: 200 });
   };
   await fetchPbsUpstream({ fetchImpl });
-  assert.equal(capturedInit.headers.Accept, 'application/json');
-  assert.match(capturedInit.headers['User-Agent'], /pbs-relay/);
-  assert.equal(capturedInit.headers.Authorization, undefined);
-  assert.equal(capturedInit.headers.Cookie, undefined);
+
+  assert.equal(capturedUrl, 'https://rtr.pbs.gov.tw/NMP103_PbsWS/resources/roadData/opendata');
+  assert.equal(capturedInit.headers, undefined, 'no headers object should be sent at all');
+  assert.ok(capturedInit.signal instanceof AbortSignal);
+  // Exactly one option beyond the URL: signal.
+  assert.deepEqual(Object.keys(capturedInit), ['signal']);
+});
+
+test('mirrors the real PBS server behavior: an Accept header would get 406, so succeeds now that none is sent', async () => {
+  // A mock upstream shaped exactly like PBS's real content-negotiation
+  // behavior confirmed on Windows: 406 if an Accept header is present
+  // (any value demanding a specific type PBS won't produce), 200
+  // otherwise. This directly encodes the real bug so a regression
+  // (re-adding an Accept header) fails this test immediately.
+  const fetchImpl = async (url, init) => {
+    if (init.headers && init.headers.Accept) {
+      return new Response('Not Acceptable', { status: 406, statusText: 'Not Acceptable' });
+    }
+    return new Response('{"result":[{"UID":"1"}]}', {
+      status: 200,
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+    });
+  };
+  const result = await fetchPbsUpstream({ fetchImpl });
+  assert.equal(result.rawText, '{"result":[{"UID":"1"}]}');
+  assert.equal(result.attempts, 1);
 });
 
 // --- diagnostic logging (this round's addition) -----------------------
