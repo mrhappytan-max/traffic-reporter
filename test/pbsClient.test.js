@@ -22,7 +22,7 @@ test('fetchPbsData requests the PBS Windows VPC relay with bearer auth', async (
     });
   }));
 
-  assert.equal(request.url, 'http://localhost:3000/pbs');
+  assert.equal(request.url, 'http://pbs-relay.internal/pbs');
   assert.equal(request.options.headers.Authorization, 'Bearer test-token');
   assert.equal(result.items.length, 1);
   assert.equal(result.relayOk, true);
