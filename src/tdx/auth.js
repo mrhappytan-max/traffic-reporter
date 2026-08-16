@@ -1,20 +1,40 @@
 // TDX OAuth2 (client_credentials) token acquisition.
 //
-// Reads TDX_CLIENT_ID / TDX_CLIENT_SECRET from the Worker's runtime
-// environment (Cloudflare Secrets, configured outside this repo). The
-// values are only ever placed into the outgoing token-request body — they
-// are never logged, thrown, or returned in any response.
+// V1.2C.1: a real production 429 ("TDX token request failed with HTTP
+// 429") was traced to Cloudflare isolate churn — the old module-memory-
+// only cache meant every cold start / isolate swap / debug request could
+// re-authenticate against TDX from scratch. Lookup order is now:
 //
-// A token is kept in a module-scope variable for reuse within the same
-// Worker isolate. This is NOT a persistence layer (no KV/D1, nothing
-// survives a cold start) — it just avoids re-authenticating on every single
-// request while the isolate is warm.
+//   A. this isolate's own module memory (fastest, no I/O)
+//   B. TRAFFIC_KV — a token acquired by ANY isolate, shared across all of
+//      them, survives cold starts
+//   C. only then, a real TDX OAuth request
+//
+// KV here is purely an optimization to cut OAuth request volume — NOT a
+// fail-closed dependency the way traffic:dedupe-state/line:notified-state
+// are for the broadcast pipeline. A KV read/write failure degrades this
+// straight back to "isolate-local memory cache + OAuth on miss" (the
+// pre-V1.2C.1 behavior), never blocks token acquisition, and never
+// invalidates a token this call just legitimately obtained.
+//
+// Reads TDX_CLIENT_ID / TDX_CLIENT_SECRET from the Worker's runtime
+// environment (Cloudflare Secrets, configured outside this repo). Neither
+// those values nor the resulting accessToken are ever logged, thrown,
+// returned in any response, or partially displayed (no "first/last N
+// chars") — anywhere in this module.
 
 const TDX_AUTH_URL =
   'https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token';
 
 // Refresh this many ms before actual expiry to avoid edge-of-expiry races.
-const EXPIRY_SAFETY_MARGIN_MS = 30_000;
+// Bumped from 30s to 60s this round (still just one named constant, used
+// for both the memory and the KV cache freshness check below).
+const EXPIRY_SAFETY_MARGIN_MS = 60_000;
+
+// Deliberately versioned ("-v1") so a future schema change can roll out
+// without needing to parse/migrate old entries — an unrecognized/stale-
+// shaped blob is simply treated as a cache miss (see readKvTokenCache).
+const KV_TOKEN_KEY = 'tdx:oauth-token-v1';
 
 export class TdxAuthError extends Error {
   constructor(message) {
@@ -23,25 +43,68 @@ export class TdxAuthError extends Error {
   }
 }
 
-let tokenCache = null; // { accessToken, expiresAt }
+let tokenCache = null; // { accessToken, expiresAt } — this isolate's own memory
+// Stampede guard: while a refresh is in flight, every other concurrent
+// getAccessToken() caller in this isolate awaits this SAME promise
+// instead of issuing its own OAuth request. Always cleared via .finally()
+// so a rejected refresh doesn't wedge future calls.
+let tokenRefreshPromise = null;
 
-/** Test-only: clear the in-memory token cache between test cases. */
+// Diagnostic only (see GET /debug/status's `tdxTokenCache` field) — which
+// tier most recently served a successful getAccessToken() call. Never the
+// token itself, never partially displayed.
+let lastTokenSource = null; // 'memory' | 'kv' | 'oauth' | null
+
+/** Test-only: clear the in-memory token cache, in-flight refresh, and diagnostic state between test cases. */
 export function resetTdxTokenCache() {
   tokenCache = null;
+  tokenRefreshPromise = null;
+  lastTokenSource = null;
 }
 
-export async function getAccessToken(env) {
-  const now = Date.now();
-  if (tokenCache && tokenCache.expiresAt > now + EXPIRY_SAFETY_MARGIN_MS) {
-    return tokenCache.accessToken;
-  }
+/** Diagnostic only — see module comment. Never exposes the token. */
+export function getLastTdxTokenSource() {
+  return lastTokenSource;
+}
 
+function isFresh(entry, now) {
+  return Boolean(entry) && Number.isFinite(entry.expiresAt) && entry.expiresAt > now + EXPIRY_SAFETY_MARGIN_MS;
+}
+
+async function readKvTokenCache(kv) {
+  if (!kv) return null;
+  try {
+    const raw = await kv.get(KV_TOKEN_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.accessToken !== 'string' || !parsed.accessToken || typeof parsed.expiresAt !== 'number') {
+      return null; // unrecognized shape -> treat as a miss, never throw
+    }
+    return { accessToken: parsed.accessToken, expiresAt: parsed.expiresAt };
+  } catch {
+    // A KV read failure (or corrupt JSON) degrades to "no cached token" —
+    // never lets a KV problem stop OAuth from being attempted. See module
+    // comment: this cache is an optimization, not a fail-closed gate.
+    return null;
+  }
+}
+
+async function writeKvTokenCache(kv, entry) {
+  if (!kv) return;
+  try {
+    await kv.put(KV_TOKEN_KEY, JSON.stringify(entry));
+  } catch {
+    // A write failure must never invalidate the token this call just
+    // legitimately obtained — the caller's memory cache is already set
+    // before this runs, and keeps working regardless of this outcome.
+  }
+}
+
+async function requestNewToken(env) {
   const clientId = env.TDX_CLIENT_ID;
   const clientSecret = env.TDX_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
-    throw new TdxAuthError(
-      'Missing TDX_CLIENT_ID or TDX_CLIENT_SECRET in the Worker environment'
-    );
+    throw new TdxAuthError('Missing TDX_CLIENT_ID or TDX_CLIENT_SECRET in the Worker environment');
   }
 
   const body = new URLSearchParams({
@@ -63,7 +126,9 @@ export async function getAccessToken(env) {
 
   if (!response.ok) {
     // Deliberately status-code only: the response body from the auth
-    // server is not included in case it ever echoes request parameters.
+    // server is not included in case it ever echoes request parameters
+    // (and definitely never client_id/client_secret, which this function
+    // never puts anywhere near an Error message to begin with).
     throw new TdxAuthError(`TDX token request failed with HTTP ${response.status}`);
   }
 
@@ -78,10 +143,58 @@ export async function getAccessToken(env) {
     throw new TdxAuthError('TDX token response did not include access_token');
   }
 
-  tokenCache = {
-    accessToken: data.access_token,
-    expiresAt: now + (Number(data.expires_in) > 0 ? Number(data.expires_in) * 1000 : 3_600_000),
-  };
+  // expiresAt is always derived from TDX's own expires_in — never a
+  // hardcoded assumed lifetime — falling back to a conservative 1 hour
+  // only if TDX's response is missing/invalid on that one field.
+  const expiresIn = Number(data.expires_in);
+  const expiresAt = Date.now() + (expiresIn > 0 ? expiresIn * 1000 : 3_600_000);
+  return { accessToken: data.access_token, expiresAt };
+}
 
-  return tokenCache.accessToken;
+async function acquireToken(env) {
+  const now = Date.now();
+
+  // A. this isolate's own memory.
+  if (isFresh(tokenCache, now)) {
+    lastTokenSource = 'memory';
+    return tokenCache.accessToken;
+  }
+
+  // B. shared TRAFFIC_KV cache (another isolate may have already
+  // refreshed it) — never reached if TRAFFIC_KV is unavailable/throws,
+  // see readKvTokenCache.
+  const kvEntry = await readKvTokenCache(env.TRAFFIC_KV);
+  if (isFresh(kvEntry, now)) {
+    tokenCache = kvEntry; // backfill this isolate's memory too
+    lastTokenSource = 'kv';
+    return kvEntry.accessToken;
+  }
+
+  // C. neither tier has a valid token -> the real OAuth request. At most
+  // one of these per getAccessToken() call, and getAccessToken's own
+  // stampede guard (tokenRefreshPromise) keeps concurrent callers in this
+  // isolate from each starting their own.
+  const fresh = await requestNewToken(env);
+  tokenCache = fresh;
+  lastTokenSource = 'oauth';
+  await writeKvTokenCache(env.TRAFFIC_KV, fresh); // best-effort; see writeKvTokenCache
+  return fresh.accessToken;
+}
+
+export async function getAccessToken(env) {
+  // Fast path: fresh memory, no promise machinery, no await at all.
+  const now = Date.now();
+  if (isFresh(tokenCache, now)) {
+    lastTokenSource = 'memory';
+    return tokenCache.accessToken;
+  }
+
+  // Stampede guard — see module comment.
+  if (tokenRefreshPromise) return tokenRefreshPromise;
+
+  tokenRefreshPromise = acquireToken(env).finally(() => {
+    tokenRefreshPromise = null;
+  });
+
+  return tokenRefreshPromise;
 }

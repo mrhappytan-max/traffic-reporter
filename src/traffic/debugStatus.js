@@ -19,6 +19,7 @@ import { runLineBroadcast } from './broadcastPipeline.js';
 import { formatTaipeiTime } from './broadcastHours.js';
 import { runPbsPipelinePreview } from '../pbs/pipeline.js';
 import { PBS_BROADCAST_ENABLED } from '../pbs/pbsConfig.js';
+import { getLastTdxTokenSource } from '../tdx/auth.js';
 
 // Safety cap so a runaway source can't blow up the response payload.
 const MAX_LISTED_EVENTS = 100;
@@ -50,6 +51,9 @@ export async function handleDebugStatus(env) {
     lastRunAt: summary.lastRunAt,
     currentTaipeiTime: formatTaipeiTime(now),
     tokenOk: summary.tokenOk,
+    // Diagnostic only, V1.2C.1 — which tier served the token this request
+    // (see src/tdx/auth.js). Never the token itself.
+    tdxTokenCache: getLastTdxTokenSource(),
     baselineInitialized: summary.baselineInitialized,
     kvAvailable: summary.kvAvailable,
     kvError: summary.kvError,

@@ -19,6 +19,19 @@ function createMockKV() {
   };
 }
 
+// V1.2C.1: getAccessToken() now legitimately writes a shared token cache to
+// TRAFFIC_KV (key 'tdx:oauth-token-v1') so that OTHER isolates — including
+// future /debug/status calls in a fresh isolate — don't have to re-hit TDX
+// OAuth. That's a deliberate, desired side effect of this feature, distinct
+// from "traffic state" (dedupe/notified/baseline/subscriptions). The
+// read-only tests below assert /debug/status never writes traffic state,
+// while still allowing (and asserting the shape of) that one auth-cache key.
+const TDX_TOKEN_CACHE_KEY = 'tdx:oauth-token-v1';
+
+function trafficStateKeyCount(kv) {
+  return [...kv.store.keys()].filter((k) => k !== TDX_TOKEN_CACHE_KEY).length;
+}
+
 // All within the configured Hsinchu range for 國道一號 (see hsinchuConfig.js)
 // so they survive the geo filter without any fixture juggling.
 function makeFreewayRaw(id, overrides = {}) {
@@ -143,7 +156,7 @@ test('Cron lifecycle: baseline -> stable -> new event -> content update -> times
   assert.equal(run5.pushableEventsCount, 0);
 });
 
-test('GET /debug/status is fully read-only: repeated calls never touch KV state', async () => {
+test('GET /debug/status is fully read-only: repeated calls never touch KV traffic state', async () => {
   const kv = createMockKV();
   const env = { TDX_CLIENT_ID: 'id', TDX_CLIENT_SECRET: 'secret', TRAFFIC_KV: kv };
   const state = { freewayEvents: [makeFreewayRaw('FRW-1'), makeFreewayRaw('FRW-2')] };
@@ -156,12 +169,18 @@ test('GET /debug/status is fully read-only: repeated calls never touch KV state'
   const r1 = await handleDebugStatus(env);
   const body1 = await r1.json();
   assert.equal(body1.baselineInitialized, false);
-  assert.equal(kv.store.size, 0); // still nothing written
+  // The very first call legitimately populates the shared TDX token cache
+  // (see V1.2C.1 comment above) — that's the ONLY key it may write.
+  assert.equal(trafficStateKeyCount(kv), 0);
+  assert.deepEqual([...kv.store.keys()], [TDX_TOKEN_CACHE_KEY]);
+  const tokenCacheAfterFirstCall = kv.store.get(TDX_TOKEN_CACHE_KEY);
 
   const r2 = await handleDebugStatus(env);
   const body2 = await r2.json();
   assert.equal(body2.baselineInitialized, false);
-  assert.equal(kv.store.size, 0); // still nothing written after a second call
+  assert.equal(trafficStateKeyCount(kv), 0); // still no traffic state written
+  // Second call reuses the cached token (memory tier) — doesn't re-write KV.
+  assert.equal(kv.store.get(TDX_TOKEN_CACHE_KEY), tokenCacheAfterFirstCall);
 
   // pushableEventsCount must be 0 pre-baseline in the preview too, mirroring
   // exactly what the real Cron run would do.
@@ -173,8 +192,8 @@ test('GET /debug/status is fully read-only: repeated calls never touch KV state'
   const sizeAfterBaseline = kv.store.size;
   assert.ok(sizeAfterBaseline > 0);
 
-  // ...and confirm /debug/status still never mutates state, even though it
-  // can now see (read-only) that the baseline exists.
+  // ...and confirm /debug/status still never mutates traffic state, even
+  // though it can now see (read-only) that the baseline exists.
   const r3 = await handleDebugStatus(env);
   const body3 = await r3.json();
   assert.equal(body3.baselineInitialized, true);

@@ -122,6 +122,16 @@ test('/debug/status has zero side effects: KV is byte-for-byte unchanged across 
     return tdxFetch(url, init);
   };
 
+  // V1.2C.1: the FIRST call legitimately populates the shared TDX token
+  // cache in TRAFFIC_KV ('tdx:oauth-token-v1') so other isolates (including
+  // future /debug/status calls) don't have to re-hit TDX OAuth. That's a
+  // deliberate, one-time side effect of this feature, distinct from
+  // "traffic state" (dedupe/notified/baseline/subscriptions) — so the
+  // byte-for-byte comparison below starts AFTER that first call, and this
+  // test still proves what it's meant to: repeated /debug/status calls are
+  // fully idempotent from then on, including for the token cache itself.
+  await handleDebugStatus(env);
+
   const snapshotBefore = JSON.stringify([...kv.store.entries()].sort());
 
   await handleDebugStatus(env);
