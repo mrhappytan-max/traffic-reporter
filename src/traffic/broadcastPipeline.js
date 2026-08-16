@@ -21,11 +21,13 @@ import {
   readNotifiedState,
   targetKey,
   targetNeedsNotification,
+  targetNeedsCongestionNotification,
   applyNotifiedTargets,
   removePrunedEvents,
   persistNotifiedState,
   computeFingerprint,
 } from './notified.js';
+import { clusterCongestionEvents } from './congestionCluster.js';
 import { formatEventMessage } from './messageFormat.js';
 import { pushLineMessage } from '../line/pushMessage.js';
 
@@ -54,6 +56,23 @@ function effectiveContentSince(event, { newUpdatedKeys, dedupeMapSnapshot, now }
   if (existing && existing.missingSince) return now; // reappeared this run
   if (existing && existing.lastSeenAt) return new Date(existing.lastSeenAt);
   return now;
+}
+
+/**
+ * Same idea as effectiveContentSince, but for a congestion cluster
+ * candidate: computed from the LIFECYCLE of its original member events
+ * (never the synthetic candidate itself, which didn't exist before this
+ * run), and conservatively takes the EARLIEST content-since among them.
+ * This means: if even one member of "the same traffic jam" predates a
+ * new subscriber's enabledAt, the whole cluster is treated as at least
+ * that old — so KM churn on the other members can never make an
+ * otherwise-old jam look like fresh content for the enabledAt backfill
+ * guard (see runLineBroadcast below). Never resets just because the
+ * union range grew/shrank on a later tick.
+ */
+function clusterContentSince(members, { newUpdatedKeys, dedupeMapSnapshot, now }) {
+  const perMember = members.map((member) => effectiveContentSince(member, { newUpdatedKeys, dedupeMapSnapshot, now }));
+  return perMember.reduce((earliest, d) => (d.getTime() < earliest.getTime() ? d : earliest), perMember[0] || now);
 }
 
 /**
@@ -134,7 +153,24 @@ export async function runLineBroadcast(
     : [];
   result.subscriptionsCount = targets.length;
 
-  const withWindow = allEvents.map((event) => ({ event, window: computeEffectiveWindow(event, now) }));
+  // V1.2C: cluster same-run congestion events into candidates BEFORE
+  // computing relevance/pending targets at all, so N overlapping
+  // congestion rows this Cron tick become exactly one candidate — never
+  // N separate pending-target computations. This is what stops "5
+  // overlapping congestion rows this tick -> 5 pushes this run" — see
+  // congestionCluster.js and the "同一 Cron 不准洗版" requirement.
+  // Non-congestion events (accident/construction/closure/control/alert/
+  // other) pass through completely untouched.
+  const { nonCongestionEvents, congestionClusters } = clusterCongestionEvents(allEvents);
+
+  const withWindow = [
+    ...nonCongestionEvents.map((event) => ({ event, window: computeEffectiveWindow(event, now), cluster: null })),
+    ...congestionClusters.map((cluster) => ({
+      event: cluster.candidate,
+      window: computeEffectiveWindow(cluster.candidate, now),
+      cluster,
+    })),
+  ];
   const relevant = withWindow.filter(({ window }) => isBroadcastRelevant(window, now));
   result.broadcastRelevantCount = relevant.length;
   result.activeNowCount = relevant.filter(({ window }) => new Date(window.effectiveStart).getTime() <= now.getTime()).length;
@@ -144,9 +180,33 @@ export async function runLineBroadcast(
   result.lineReady = !failClosed;
   if (failClosed) return result; // 0 push for every target, whether dry-run or real
 
-  // Per (event, target) pending list, honoring both the notified-fingerprint
-  // check and the enabledAt backfill guard.
-  const perEventPending = relevant.map(({ event, window }) => {
+  // Per (event, target) pending list. A congestion cluster uses a
+  // corridor-scoped notification key ("congestion:<road>:<direction>:
+  // <corridor>") plus a time-based cooldown
+  // (targetNeedsCongestionNotification, see notified.js) instead of the
+  // fingerprint-based check every other event type uses below — the
+  // whole point of clustering is that a congestion cluster's KM range is
+  // *expected* to shift every ~5 minutes without that being new
+  // information for a driver. Accident/construction/closure/control/
+  // alert/other keep the original fingerprint-based, no-cooldown logic
+  // completely unchanged, per the explicit "事故不要套壅塞冷卻" requirement.
+  const perEventPending = relevant.map(({ event, window, cluster }) => {
+    if (cluster) {
+      const eventKeyStr = cluster.notificationKey;
+      // Stored for record-keeping/debugging only — targetNeedsCongestionNotification
+      // never reads it, so it can never gate whether a congestion cluster gets pushed.
+      const fingerprint = computeFingerprint(event);
+      const contentSince = clusterContentSince(cluster.members, { newUpdatedKeys, dedupeMapSnapshot, now });
+
+      const pendingTargets = targets.filter((target) => {
+        if (!targetNeedsCongestionNotification(eventKeyStr, target, notifiedState.notifiedMap, now)) return false;
+        if (target.enabledAt && contentSince.getTime() < new Date(target.enabledAt).getTime()) return false;
+        return true;
+      });
+
+      return { event, window, eventKeyStr, fingerprint, pendingTargets };
+    }
+
     const eventKeyStr = eventKeyOf(event);
     const fingerprint = computeFingerprint(event);
     const contentSince = effectiveContentSince(event, { newUpdatedKeys, dedupeMapSnapshot, now });

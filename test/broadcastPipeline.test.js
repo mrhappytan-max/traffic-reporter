@@ -303,3 +303,293 @@ test('LINE push API 500 does not throw, is recorded as a structured error, and d
   const raw = JSON.stringify(result);
   assert.doesNotMatch(raw, /tok"/); // token itself never appears in the error/result payload
 });
+
+// =======================================================================
+// V1.2C — congestion clustering + 30-minute cooldown, end-to-end through
+// runLineBroadcast (not just the underlying congestionCluster.js /
+// notified.js unit tests).
+// =======================================================================
+
+function congestionEvent(overrides = {}) {
+  return {
+    source: 'freeway',
+    rawId: 'CONG-1',
+    type: 'congestion',
+    road: '國道一號',
+    direction: '北向',
+    startKM: '91K+000',
+    endKM: '82K+400',
+    description: '車多回堵',
+    updatedAt: '2026-08-15T10:50:00+08:00',
+    ...overrides,
+  };
+}
+
+test('8. same Cron tick, 4 overlapping 國1北向 congestion rows -> exactly 1 LINE push, not 4 ("不准洗版")', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLinePushFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+  const now = new Date('2026-08-15T10:50:00+08:00');
+
+  const events = [
+    congestionEvent({ rawId: 'N1', startKM: '83K+800', endKM: '82K+400' }),
+    congestionEvent({ rawId: 'N2', startKM: '91K+000', endKM: '82K+400' }),
+    congestionEvent({ rawId: 'N3', startKM: '89K+020', endKM: '82K+400' }),
+    congestionEvent({ rawId: 'N4', startKM: '90K+415', endKM: '86K+500' }),
+    congestionEvent({ rawId: 'N5', startKM: '91K+000', endKM: '90K+415' }),
+  ];
+
+  const result = await runLineBroadcast(env, { allEvents: events, dedupeAvailable: true, now });
+  assert.equal(result.broadcastRelevantCount, 1); // 5 rows collapsed into 1 cluster candidate
+  assert.equal(result.pushSucceeded, 1);
+  assert.equal(pushCalls.length, 1);
+  assert.match(pushCalls[0].body.messages[0].text, /竹北/);
+  assert.match(pushCalls[0].body.messages[0].text, /湖口/);
+});
+
+test('9. same road, different direction congestion never merges — 2 independent pushes', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLinePushFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+  const now = new Date('2026-08-15T10:50:00+08:00');
+
+  const events = [
+    congestionEvent({ rawId: 'N1', direction: '北向', startKM: '91K+000', endKM: '82K+400' }),
+    congestionEvent({ rawId: 'S1', direction: '南向', startKM: '83K+000', endKM: '91K+000' }),
+  ];
+
+  const result = await runLineBroadcast(env, { allEvents: events, dedupeAvailable: true, now });
+  assert.equal(result.broadcastRelevantCount, 2);
+  assert.equal(result.pushSucceeded, 2);
+  assert.equal(pushCalls.length, 2);
+});
+
+test('12-16. congestion cooldown through the full pipeline: notify once, then KM churn/rawId churn stays silent until 30 minutes pass', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLinePushFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+
+  const t0 = new Date('2026-08-15T10:50:00+08:00');
+
+  // 12. first time -> notify.
+  const first = await runLineBroadcast(env, {
+    allEvents: [congestionEvent({ startKM: '91K+000', endKM: '82K+400' })],
+    dedupeAvailable: true,
+    now: t0,
+  });
+  assert.equal(first.pushSucceeded, 1);
+
+  // 13. 5 minutes later, KM shrinks -> must NOT notify.
+  pushCalls.length = 0;
+  const t5 = new Date(t0.getTime() + 5 * 60 * 1000);
+  const at5 = await runLineBroadcast(env, {
+    allEvents: [congestionEvent({ startKM: '89K+000', endKM: '82K+400' })],
+    dedupeAvailable: true,
+    now: t5,
+  });
+  assert.equal(at5.pushSucceeded, 0);
+  assert.equal(pushCalls.length, 0);
+
+  // 14. 10 minutes later, TDX swapped the rawId -> still must NOT notify
+  // (this is the whole point of the corridor-based key, not source:rawId).
+  pushCalls.length = 0;
+  const t10 = new Date(t0.getTime() + 10 * 60 * 1000);
+  const at10 = await runLineBroadcast(env, {
+    allEvents: [congestionEvent({ rawId: 'CONG-DIFFERENT-ID', startKM: '86K+000', endKM: '87K+000' })],
+    dedupeAvailable: true,
+    now: t10,
+  });
+  assert.equal(at10.pushSucceeded, 0);
+  assert.equal(pushCalls.length, 0);
+
+  // 15. 25 minutes later, range changes again -> still NOT.
+  pushCalls.length = 0;
+  const t25 = new Date(t0.getTime() + 25 * 60 * 1000);
+  const at25 = await runLineBroadcast(env, {
+    allEvents: [congestionEvent({ startKM: '83K+000', endKM: '84K+000' })],
+    dedupeAvailable: true,
+    now: t25,
+  });
+  assert.equal(at25.pushSucceeded, 0);
+  assert.equal(pushCalls.length, 0);
+
+  // 16. 30 minutes later, still congestion -> eligible again.
+  pushCalls.length = 0;
+  const t30 = new Date(t0.getTime() + 30 * 60 * 1000);
+  const at30 = await runLineBroadcast(env, {
+    allEvents: [congestionEvent({ startKM: '91K+000', endKM: '82K+400' })],
+    dedupeAvailable: true,
+    now: t30,
+  });
+  assert.equal(at30.pushSucceeded, 1);
+  assert.equal(pushCalls.length, 1);
+});
+
+test('17. two different targets each get their own independent congestion cooldown', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLinePushFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+
+  const t0 = new Date('2026-08-15T10:50:00+08:00');
+  await runLineBroadcast(env, { allEvents: [congestionEvent()], dedupeAvailable: true, now: t0 });
+
+  // A second target subscribes 10 minutes later (their own enabledAt is
+  // in the past relative to t0 here so the backfill guard doesn't block
+  // them — this test is specifically about cooldown independence).
+  await setUserEnabled(kv, 'U2', true, ENROLLED_AT);
+  pushCalls.length = 0;
+  const t10 = new Date(t0.getTime() + 10 * 60 * 1000);
+  const result = await runLineBroadcast(env, { allEvents: [congestionEvent()], dedupeAvailable: true, now: t10 });
+
+  // U1 is still within its own cooldown; U2 has never been notified for
+  // this corridor at all -> gets notified now, independent of U1.
+  assert.equal(result.pushSucceeded, 1);
+  assert.equal(pushCalls.length, 1);
+});
+
+test('18. a target whose LINE push failed can still be retried next run; a successful target is not re-pushed', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  await setUserEnabled(kv, 'U2', true, ENROLLED_AT);
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+  const now = new Date('2026-08-15T10:50:00+08:00');
+
+  originalFetch = globalThis.fetch;
+  let call = 0;
+  globalThis.fetch = async (url, init) => {
+    call += 1;
+    const body = JSON.parse(init.body);
+    // Fail exactly the push aimed at U2, succeed U1.
+    if (body.to === 'U2') return new Response('fail', { status: 500 });
+    pushCalls.push({ url: String(url), body });
+    return new Response('{}', { status: 200 });
+  };
+  pushCalls = [];
+
+  const first = await runLineBroadcast(env, { allEvents: [congestionEvent()], dedupeAvailable: true, now });
+  assert.equal(first.pushAttempted, 2);
+  assert.equal(first.pushSucceeded, 1);
+
+  // Immediately retry (still within cooldown for U1, but U2 was never
+  // successfully notified, so U2 must still be pending).
+  pushCalls = [];
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    pushCalls.push({ url: String(url), body });
+    return new Response('{}', { status: 200 });
+  };
+  const retryNow = new Date(now.getTime() + 60 * 1000);
+  const second = await runLineBroadcast(env, { allEvents: [congestionEvent()], dedupeAvailable: true, now: retryNow });
+  assert.equal(second.pushSucceeded, 1); // only U2
+  assert.equal(pushCalls.length, 1);
+  assert.equal(pushCalls[0].body.to, 'U2');
+});
+
+test('19. accident fingerprint changes are NOT subject to the 30-minute congestion cooldown', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLinePushFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+  const now = new Date('2026-08-15T10:50:00+08:00');
+
+  await runLineBroadcast(env, { allEvents: [accidentEvent()], dedupeAvailable: true, now });
+
+  // 5 minutes later, a real content change (blockedLanes) -> must notify
+  // again immediately, unaffected by the congestion cooldown window.
+  pushCalls.length = 0;
+  const t5 = new Date(now.getTime() + 5 * 60 * 1000);
+  const result = await runLineBroadcast(env, {
+    allEvents: [accidentEvent({ blockedLanes: 2, description: '事故已排除一線道' })],
+    dedupeAvailable: true,
+    now: t5,
+  });
+  assert.equal(result.pushSucceeded, 1);
+  assert.equal(pushCalls.length, 1);
+});
+
+test('20. construction/closure/control events are unaffected by clustering or cooldown — original per-event fingerprint behavior', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLinePushFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+  const now = new Date('2026-08-15T10:50:00+08:00');
+
+  // construction is not a LIVE event type (only accident/congestion are —
+  // see effectiveWindow.js), so its relevance window comes from parsing a
+  // real Chinese date range out of the description, not from startTime.
+  const constructionEvent = {
+    source: 'highway',
+    rawId: 'HWY-CONST-1',
+    type: 'construction',
+    road: '台68線',
+    direction: '東向',
+    location: '5K附近',
+    description: '8月15日9時至12時施工', // covers 10:50 (`now` below) -> active now, not forecast
+    startTime: null,
+    endTime: null,
+    updatedAt: '2026-08-15T10:50:00+08:00',
+  };
+
+  const first = await runLineBroadcast(env, { allEvents: [constructionEvent], dedupeAvailable: true, now });
+  assert.equal(first.pushSucceeded, 1);
+
+  // Unchanged, 5 minutes later -> no re-push (ordinary dedup, not cooldown).
+  pushCalls.length = 0;
+  const unchanged = await runLineBroadcast(env, {
+    allEvents: [constructionEvent],
+    dedupeAvailable: true,
+    now: new Date(now.getTime() + 5 * 60 * 1000),
+  });
+  assert.equal(unchanged.pushSucceeded, 0);
+
+  // A real change (blockedLanes, part of the fingerprint) -> re-push
+  // immediately, no 30-minute wait required. Keeps the same parseable
+  // date-range description so effectiveWindow computation is unaffected —
+  // only the fingerprint-relevant field changes.
+  pushCalls.length = 0;
+  const changed = await runLineBroadcast(env, {
+    allEvents: [{ ...constructionEvent, blockedLanes: 1 }],
+    dedupeAvailable: true,
+    now: new Date(now.getTime() + 5 * 60 * 1000 + 1000),
+  });
+  assert.equal(changed.pushSucceeded, 1);
+});
+
+test('enabledAt backfill guard, cluster-aware: a corridor whose earliest member predates a new subscriber is not backfilled just because KM shifted', async () => {
+  const kv = createMockKV();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+
+  // Congestion first seen well in the past (baseline-seeded via
+  // dedupeMapSnapshot, as pipeline.js would report it).
+  const seenSince = new Date('2026-08-15T09:00:00+08:00').toISOString();
+  const dedupeMapSnapshot = { 'freeway:CONG-1': { fingerprint: 'whatever', lastSeenAt: seenSince, missingSince: null } };
+
+  // A brand-new subscriber joins AFTER the congestion started.
+  const enabledAt = new Date('2026-08-15T10:00:00+08:00');
+  await setUserEnabled(kv, 'U-NEW', true, enabledAt);
+
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLinePushFetch();
+
+  const now = new Date('2026-08-15T10:50:00+08:00'); // KM has since shifted several times, but the jam itself predates U-NEW
+  const result = await runLineBroadcast(env, {
+    allEvents: [congestionEvent({ rawId: 'CONG-1' })],
+    dedupeAvailable: true,
+    newUpdatedKeys: new Set(), // not new/updated this run
+    dedupeMapSnapshot,
+    now,
+  });
+
+  assert.equal(result.pushSucceeded, 0); // must not backfill old content to the new subscriber
+  assert.equal(pushCalls.length, 0);
+});

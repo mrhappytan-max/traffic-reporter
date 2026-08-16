@@ -4,10 +4,12 @@ import {
   readNotifiedState,
   targetKey,
   targetNeedsNotification,
+  targetNeedsCongestionNotification,
   applyNotifiedTargets,
   removePrunedEvents,
   persistNotifiedState,
   computeFingerprint,
+  CONGESTION_COOLDOWN_MS,
 } from '../src/traffic/notified.js';
 
 function createMockKV() {
@@ -104,4 +106,78 @@ test('readNotifiedState fails closed when TRAFFIC_KV is missing or throws', asyn
   };
   const broken = await readNotifiedState(brokenKv);
   assert.equal(broken.kvAvailable, false);
+});
+
+// --- V1.2C: congestion cooldown ---------------------------------------
+
+test('CONGESTION_COOLDOWN_MS is 30 minutes', () => {
+  assert.equal(CONGESTION_COOLDOWN_MS, 30 * 60 * 1000);
+});
+
+test('12. first time for a corridor -> needs notification', () => {
+  const key = 'congestion:國道一號:北向:83-91';
+  assert.equal(targetNeedsCongestionNotification(key, userA, {}, new Date('2026-08-16T10:50:00+08:00')), true);
+});
+
+test('13-15. within 30 minutes of the last notification -> never needs notification again, regardless of fingerprint', () => {
+  const key = 'congestion:國道一號:北向:83-91';
+  const t0 = new Date('2026-08-16T10:50:00+08:00');
+  const map = applyNotifiedTargets({}, key, 'fp-at-10:50', [userA], t0);
+
+  for (const minutesLater of [5, 10, 25]) {
+    const now = new Date(t0.getTime() + minutesLater * 60 * 1000);
+    assert.equal(
+      targetNeedsCongestionNotification(key, userA, map, now),
+      false,
+      `${minutesLater} minutes later should still be within cooldown`
+    );
+  }
+});
+
+test('a fingerprint change during the cooldown window still does not re-trigger notification (time-based, not content-based)', () => {
+  const key = 'congestion:國道一號:北向:83-91';
+  const t0 = new Date('2026-08-16T10:50:00+08:00');
+  const map = applyNotifiedTargets({}, key, 'fp-original', [userA], t0);
+  const tenMinLater = new Date(t0.getTime() + 10 * 60 * 1000);
+  // targetNeedsCongestionNotification doesn't even take a fingerprint —
+  // this documents that KM churn (a different fingerprint) is ignored.
+  assert.equal(targetNeedsCongestionNotification(key, userA, map, tenMinLater), false);
+});
+
+test('16. exactly at and past 30 minutes -> eligible again', () => {
+  const key = 'congestion:國道一號:北向:83-91';
+  const t0 = new Date('2026-08-16T10:50:00+08:00');
+  const map = applyNotifiedTargets({}, key, 'fp', [userA], t0);
+
+  const exactly30 = new Date(t0.getTime() + CONGESTION_COOLDOWN_MS);
+  assert.equal(targetNeedsCongestionNotification(key, userA, map, exactly30), true);
+
+  const past30 = new Date(t0.getTime() + CONGESTION_COOLDOWN_MS + 60 * 1000);
+  assert.equal(targetNeedsCongestionNotification(key, userA, map, past30), true);
+});
+
+test('17. different targets have fully independent cooldowns for the same corridor', () => {
+  const key = 'congestion:國道一號:北向:83-91';
+  const t0 = new Date('2026-08-16T10:50:00+08:00');
+  // Only userA notified at t0; groupB never notified.
+  const map = applyNotifiedTargets({}, key, 'fp', [userA], t0);
+
+  const fiveMinLater = new Date(t0.getTime() + 5 * 60 * 1000);
+  assert.equal(targetNeedsCongestionNotification(key, userA, map, fiveMinLater), false);
+  assert.equal(targetNeedsCongestionNotification(key, groupB, map, fiveMinLater), true);
+});
+
+test('a custom cooldownMs override is respected (for tests that need a different window)', () => {
+  const key = 'congestion:國道一號:北向:83-91';
+  const t0 = new Date('2026-08-16T10:50:00+08:00');
+  const map = applyNotifiedTargets({}, key, 'fp', [userA], t0);
+  const oneMinLater = new Date(t0.getTime() + 60 * 1000);
+  assert.equal(targetNeedsCongestionNotification(key, userA, map, oneMinLater, 30 * 1000), true); // 30s cooldown already elapsed
+  assert.equal(targetNeedsCongestionNotification(key, userA, map, oneMinLater, 5 * 60 * 1000), false); // 5min cooldown not yet elapsed
+});
+
+test('a corrupt/unparseable notifiedAt fails open (needs notification) rather than getting stuck silent forever', () => {
+  const key = 'congestion:國道一號:北向:83-91';
+  const map = { [key]: { targets: { [targetKey(userA)]: { fingerprint: 'fp', notifiedAt: 'not-a-date' } } } };
+  assert.equal(targetNeedsCongestionNotification(key, userA, map, new Date('2026-08-16T10:50:00+08:00')), true);
 });

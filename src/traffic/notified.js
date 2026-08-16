@@ -33,6 +33,17 @@ import { computeFingerprint } from './dedupe.js';
 
 const NOTIFIED_KEY = 'line:notified-state';
 
+// V1.2C: how long a target's most recent congestion notification for a
+// given corridor "covers" it, regardless of the reported KM range
+// wobbling every ~5 minutes (91K～82K -> 89K～82K -> ...). Congestion is
+// the only event type this applies to — see
+// targetNeedsCongestionNotification below and broadcastPipeline.js,
+// which never routes accident/construction/closure/control/alert/other
+// through this path. One named constant, not a magic number sprinkled
+// around — see project convention (e.g. dedupe.js's
+// ABSENCE_GRACE_PERIOD_MS).
+export const CONGESTION_COOLDOWN_MS = 30 * 60 * 1000;
+
 export function targetKey(target) {
   return `${target.kind}:${target.id}`;
 }
@@ -94,6 +105,30 @@ export function targetNeedsNotification(eventKeyStr, target, currentFingerprint,
   const targetRecord = eventRecord && eventRecord.targets ? eventRecord.targets[targetKey(target)] : undefined;
   if (!targetRecord) return true;
   return targetRecord.fingerprint !== currentFingerprint;
+}
+
+/**
+ * The congestion-specific counterpart to targetNeedsNotification — used
+ * ONLY for congestion notification keys ("congestion:<road>:<direction>:
+ * <corridor>", see congestionCluster.js). Deliberately time-based, not
+ * fingerprint-based: a congestion cluster's KM range is expected to shift
+ * every ~5 minutes without that being a "real" change a driver needs to
+ * hear about again, so unlike targetNeedsNotification this never compares
+ * fingerprints at all. It reuses the exact same stored
+ * `{ fingerprint, notifiedAt }` target record shape — no new KV schema,
+ * no new key namespace beyond the notification-key string itself — just
+ * a different read rule: "has it been at least CONGESTION_COOLDOWN_MS
+ * since this target was last notified for this corridor?".
+ */
+export function targetNeedsCongestionNotification(notificationKey, target, notifiedMap, now, cooldownMs = CONGESTION_COOLDOWN_MS) {
+  const eventRecord = notifiedMap[notificationKey];
+  const targetRecord = eventRecord && eventRecord.targets ? eventRecord.targets[targetKey(target)] : undefined;
+  if (!targetRecord || !targetRecord.notifiedAt) return true;
+
+  const notifiedAtMs = new Date(targetRecord.notifiedAt).getTime();
+  if (!Number.isFinite(notifiedAtMs)) return true; // corrupt/unreadable timestamp -> don't get stuck silent forever
+
+  return now.getTime() - notifiedAtMs >= cooldownMs;
 }
 
 /**
