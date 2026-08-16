@@ -5,8 +5,6 @@
 // TDX_SOURCE_AUDIT.md). Recalibrate using GET /debug/pbs's raw/stale
 // samples once deployed.
 
-export const PBS_ENDPOINT_URL = 'https://rtr.pbs.gov.tw/NMP103_PbsWS/resources/roadData/opendata';
-
 // Abort a single attempt if PBS hasn't responded within this long. Real
 // production Cloudflare Worker traffic showed the previous 8s timeout
 // tripping ("PBS request timed out after 8000ms") — raised to 15s.

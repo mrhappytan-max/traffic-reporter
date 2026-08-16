@@ -1,17 +1,5 @@
-// Full PBS pipeline: fetch -> normalize -> classify -> Hsinchu filter ->
-// lifecycle (active/cleared/stale) -> cross-source dedup against this
-// run's TDX events. Mirrors the TDX pipeline's preview/commit split:
-//
-//   - runPbsPipelinePreview: read-only, used by GET /debug/status and
-//     GET /debug/pbs. Never calls commitPbsLifecycleState.
-//   - runPbsPipelineAndCommit: used by the Cron scheduled handler.
-//
-// A PBS fetch/parse failure never throws out of this module and never
-// affects the TDX pipeline — see client.js/PbsFetchError.
-//
-// PBS_BROADCAST_ENABLED (pbsConfig.js) is false this round: callers
-// (scheduled.js/debugStatus.js) simply never pass PBS events into
-// runLineBroadcast — this module doesn't need to know about LINE at all.
+// PBS is an isolated, best-effort data source. Its relay failures never
+// propagate into TDX, LINE, or the scheduled handler.
 
 import { fetchPbsData } from './client.js';
 import { normalizePbsEvent } from './normalize.js';
@@ -30,32 +18,47 @@ async function runPbsCore(env, now) {
   let pbsError = null;
   let attempts = null;
   let durationMs = null;
+  let relayConfigured = false;
+  let relayOk = false;
+  let relayStatus = null;
+  let relayCache = null;
+  let relayUpstreamDurationMs = null;
 
   try {
-    const result = await fetchPbsData();
+    const result = await fetchPbsData(env);
     rawItems = result.items;
     attempts = result.attempts;
     durationMs = result.durationMs;
+    relayConfigured = result.relayConfigured;
+    relayOk = result.relayOk;
+    relayStatus = result.relayStatus;
+    relayCache = result.relayCache;
+    relayUpstreamDurationMs = result.relayUpstreamDurationMs;
   } catch (err) {
     pbsOk = false;
     pbsError = safeErrorMessage(err);
     attempts = typeof err.attempts === 'number' ? err.attempts : null;
     durationMs = typeof err.durationMs === 'number' ? err.durationMs : null;
+    relayConfigured = Boolean(err.relayConfigured);
+    relayOk = Boolean(err.relayOk);
+    relayStatus = typeof err.relayStatus === 'number' ? err.relayStatus : null;
+    relayCache = typeof err.relayCache === 'string' ? err.relayCache : null;
+    relayUpstreamDurationMs = typeof err.relayUpstreamDurationMs === 'number' ? err.relayUpstreamDurationMs : null;
   }
 
   const normalized = [];
   for (const raw of rawItems) {
-    if (!raw || typeof raw !== 'object') continue; // skip malformed records
+    if (!raw || typeof raw !== 'object') continue;
     try {
       normalized.push(normalizePbsEvent(raw));
     } catch {
-      // one bad record shouldn't drop the whole feed
+      // A malformed PBS record cannot fail the feed.
     }
   }
 
   const hsinchuFiltered = normalized.filter(isPbsEventHsinchuRelevant);
   const { clearedEvents, staleEvents, activeEvents, seenIds } = classifyPbsLifecycle(hsinchuFiltered, now);
-  const lifecycleState = await readPbsLifecycleState(env.TRAFFIC_KV); // read-only, always
+  const lifecycleState = await readPbsLifecycleState(env.TRAFFIC_KV);
 
   return {
     rawItems,
@@ -69,12 +72,17 @@ async function runPbsCore(env, now) {
     pbsError,
     attempts,
     durationMs,
+    relayConfigured,
+    relayOk,
+    relayStatus,
+    relayCache,
+    relayUpstreamDurationMs,
     lifecycleState,
   };
 }
 
 function buildSummary(core, tdxEvents, commitResult) {
-  const { rawItems, hsinchuFiltered, clearedEvents, staleEvents, activeEvents, pbsOk, pbsError, attempts, durationMs, lifecycleState } = core;
+  const { rawItems, hsinchuFiltered, clearedEvents, staleEvents, activeEvents, pbsOk, pbsError, attempts, durationMs, relayConfigured, relayOk, relayStatus, relayCache, relayUpstreamDurationMs, lifecycleState } = core;
   const { canonicalEvents, duplicatePbsEvents, uniquePbsEvents } = crossSourceDedup(activeEvents, tdxEvents);
 
   return {
@@ -82,6 +90,13 @@ function buildSummary(core, tdxEvents, commitResult) {
     pbsError,
     attempts,
     durationMs,
+    pbsTransport: 'vpc-relay',
+    relayConfigured,
+    relayOk,
+    relayStatus,
+    relayDurationMs: durationMs,
+    relayCache,
+    relayUpstreamDurationMs,
     kvAvailable: lifecycleState.kvAvailable,
     kvError: lifecycleState.kvError,
     committed: Boolean(commitResult && commitResult.committed),
@@ -91,8 +106,6 @@ function buildSummary(core, tdxEvents, commitResult) {
     activeCount: activeEvents.length,
     clearedCount: clearedEvents.length,
     staleCount: staleEvents.length,
-    // Final, post-cross-source-dedup count of PBS events that add unique
-    // information (not already represented by a matching TDX event).
     filteredCount: uniquePbsEvents.length,
     crossSourceDuplicateCount: duplicatePbsEvents.length,
     canonicalEventCount: canonicalEvents.length,
@@ -107,16 +120,13 @@ function buildSummary(core, tdxEvents, commitResult) {
   };
 }
 
-/** Read-only preview — GET /debug/status, GET /debug/pbs. Never writes to KV. */
 export async function runPbsPipelinePreview(env, { tdxEvents = [], now = new Date() } = {}) {
   const core = await runPbsCore(env, now);
   return buildSummary(core, tdxEvents, null);
 }
 
-/** Cron path — reads, classifies, and commits PBS lifecycle state if possible. */
 export async function runPbsPipelineAndCommit(env, { tdxEvents = [], now = new Date() } = {}) {
   const core = await runPbsCore(env, now);
-
   let commitResult = { committed: false, reason: 'kv-unavailable' };
   if (core.lifecycleState.kvAvailable) {
     commitResult = await commitPbsLifecycleState(
@@ -127,6 +137,5 @@ export async function runPbsPipelineAndCommit(env, { tdxEvents = [], now = new D
       now
     );
   }
-
   return buildSummary(core, tdxEvents, commitResult);
 }

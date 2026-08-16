@@ -1,19 +1,8 @@
-// Fetches the PBS (警察廣播電臺) real-time road-condition JSON. Official
-// JSON endpoint only — never the RoadAll.html page. No API key needed.
-// Isolated from TDX on purpose: a PBS outage must never affect TDX's own
-// fetch/normalize/dedupe/LINE-push pipeline, and vice versa.
-//
-// Retry policy: at most PBS_MAX_ATTEMPTS (2) total requests — the initial
-// attempt plus one retry. A retry only happens for timeout, network error,
-// or 5xx; a 4xx never retries (client-side/permanent errors won't fix
-// themselves by trying again). A short randomized backoff separates the
-// two attempts. Both `fetchPbsData`'s success return value and the
-// PbsFetchError thrown on total failure carry `attempts` and `durationMs`
-// so callers (pipeline.js -> /debug/pbs) can show exactly what happened.
+// Fetches real-time PBS road-condition data only through the private Windows
+// relay. A relay outage must never affect the independent TDX pipeline.
 
 import { extractArray } from '../tdx/extract.js';
 import {
-  PBS_ENDPOINT_URL,
   PBS_FETCH_TIMEOUT_MS,
   PBS_MAX_ATTEMPTS,
   PBS_RETRY_BACKOFF_MIN_MS,
@@ -21,12 +10,28 @@ import {
 } from './pbsConfig.js';
 
 export class PbsFetchError extends Error {
-  constructor(message, { status = null, attempts = null, durationMs = null } = {}) {
+  constructor(message, {
+    status = null,
+    attempts = null,
+    durationMs = null,
+    relayConfigured = false,
+    relayOk = false,
+    relayStatus = null,
+    relayCache = null,
+    relayUpstreamDurationMs = null,
+    retryable = true,
+  } = {}) {
     super(message);
     this.name = 'PbsFetchError';
     this.status = status;
     this.attempts = attempts;
     this.durationMs = durationMs;
+    this.relayConfigured = relayConfigured;
+    this.relayOk = relayOk;
+    this.relayStatus = relayStatus;
+    this.relayCache = relayCache;
+    this.relayUpstreamDurationMs = relayUpstreamDurationMs;
+    this.retryable = retryable;
   }
 }
 
@@ -38,68 +43,79 @@ function randomBackoffMs() {
   return PBS_RETRY_BACKOFF_MIN_MS + Math.random() * (PBS_RETRY_BACKOFF_MAX_MS - PBS_RETRY_BACKOFF_MIN_MS);
 }
 
-// 5xx and "no HTTP status at all" (timeout / network error) are
-// retryable; any other status (4xx) is not.
 function isRetryableFailure(err) {
-  if (err instanceof PbsFetchError && err.status != null) {
-    return err.status >= 500;
-  }
+  if (err instanceof PbsFetchError && typeof err.retryable === 'boolean') return err.retryable;
+  if (err instanceof PbsFetchError && err.status != null) return err.status >= 500;
   return true;
 }
 
-async function fetchOnce() {
+function parseDurationHeader(value) {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+async function fetchOnce(env) {
+  const relayConfigured = Boolean(env.PBS_RELAY_WINDOWS && env.PBS_RELAY_TOKEN);
+  if (!env.PBS_RELAY_WINDOWS) {
+    throw new PbsFetchError('PBS relay binding is not configured', { relayConfigured, retryable: false });
+  }
+  if (!env.PBS_RELAY_TOKEN) {
+    throw new PbsFetchError('PBS relay token is not configured', { relayConfigured, retryable: false });
+  }
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), PBS_FETCH_TIMEOUT_MS);
-
   let response;
+
   try {
-    response = await fetch(PBS_ENDPOINT_URL, {
-      headers: { Accept: 'application/json' },
+    response = await env.PBS_RELAY_WINDOWS.fetch('http://localhost:3000/pbs', {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${env.PBS_RELAY_TOKEN}`,
+      },
       signal: controller.signal,
     });
   } catch (err) {
     if (err && err.name === 'AbortError') {
-      throw new PbsFetchError(`PBS request timed out after ${PBS_FETCH_TIMEOUT_MS}ms`);
+      throw new PbsFetchError(`PBS relay request timed out after ${PBS_FETCH_TIMEOUT_MS}ms`, { relayConfigured });
     }
-    throw new PbsFetchError(`Network error calling PBS: ${err.message}`);
+    throw new PbsFetchError('PBS relay request failed', { relayConfigured });
   } finally {
     clearTimeout(timeoutId);
   }
 
   if (!response.ok) {
-    let bodySnippet = '';
-    try {
-      bodySnippet = (await response.text()).slice(0, 200);
-    } catch {
-      // ignore — body isn't required for the error to be useful
-    }
-    throw new PbsFetchError(
-      `PBS API responded with HTTP ${response.status} ${response.statusText}${bodySnippet ? `: ${bodySnippet}` : ''}`,
-      { status: response.status }
-    );
+    throw new PbsFetchError(`PBS relay responded with HTTP ${response.status}`, {
+      status: response.status,
+      relayConfigured,
+      relayStatus: response.status,
+      retryable: response.status >= 500,
+    });
   }
 
   let json;
   try {
     json = await response.json();
-  } catch (err) {
-    throw new PbsFetchError(`Failed to parse PBS JSON: ${err.message}`);
+  } catch {
+    throw new PbsFetchError('Failed to parse PBS relay JSON', {
+      relayConfigured,
+      relayOk: true,
+      relayStatus: response.status,
+    });
   }
 
-  // Defensive envelope handling, same pattern as TDX's extractArray — the
-  // exact wrapper shape (bare array vs {data:[...]}) isn't confirmed live
-  // in this session.
-  return extractArray(json, ['data', 'items', 'result', 'RoadData', 'roadData']);
+  return {
+    items: extractArray(json, ['data', 'items', 'result', 'RoadData', 'roadData']),
+    relayConfigured,
+    relayOk: true,
+    relayStatus: response.status,
+    relayCache: response.headers.get('x-pbs-relay-cache'),
+    relayUpstreamDurationMs: parseDurationHeader(response.headers.get('x-pbs-relay-upstream-duration-ms')),
+  };
 }
 
-/**
- * @returns {Promise<{ items: object[], attempts: number, durationMs: number }>}
- *   Throws PbsFetchError (with .attempts/.durationMs set) after
- *   PBS_MAX_ATTEMPTS failed attempts, or immediately on a non-retryable
- *   (4xx) failure. Callers must catch this and degrade gracefully (see
- *   pipeline.js), never let it propagate into the TDX pipeline.
- */
-export async function fetchPbsData() {
+export async function fetchPbsData(env) {
   const startedAt = Date.now();
   let lastError;
   let attemptsMade = 0;
@@ -107,12 +123,11 @@ export async function fetchPbsData() {
   for (let attempt = 1; attempt <= PBS_MAX_ATTEMPTS; attempt += 1) {
     attemptsMade = attempt;
     try {
-      const items = await fetchOnce();
-      return { items, attempts: attemptsMade, durationMs: Date.now() - startedAt };
+      const result = await fetchOnce(env);
+      return { ...result, attempts: attemptsMade, durationMs: Date.now() - startedAt };
     } catch (err) {
       lastError = err;
-      const canRetry = attempt < PBS_MAX_ATTEMPTS && isRetryableFailure(err);
-      if (!canRetry) break;
+      if (attempt >= PBS_MAX_ATTEMPTS || !isRetryableFailure(err)) break;
       await sleep(randomBackoffMs());
     }
   }

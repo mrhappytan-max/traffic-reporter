@@ -23,5 +23,11 @@
       "binding": "TRAFFIC_KV",
       "id": "a763ccea75b0481aa4da99fa43f8341a"
     }
+  ],
+  "vpc_services": [
+    {
+      "binding": "PBS_RELAY_WINDOWS",
+      "service_id": "01a008ab-4cc4-7c22-a747-4e27cdcc83c8"
+    }
   ]
 }
