@@ -9,17 +9,19 @@
   "triggers": {
     // Every 5 minutes, UTC (Cloudflare Cron Triggers are always UTC).
     "crons": ["*/5 * * * *"]
-  }
-  // NOTE: no `kv_namespaces` block here on purpose. TRAFFIC_KV was bound
-  // directly on the Worker via the Cloudflare dashboard rather than
-  // through this config. The code reads `env.TRAFFIC_KV` at runtime the
-  // same way it already reads TDX_CLIENT_ID/TDX_CLIENT_SECRET (Cloudflare
-  // Secrets configured outside this repo) — see src/traffic/dedupe.js.
-  //
-  // Caveat worth knowing: `wrangler deploy` treats this file as the full
-  // declarative binding set for the Worker. If a future deploy needs to
-  // touch other bindings, a dashboard-only binding not listed here could
-  // get dropped. If that ever happens, add:
-  //   "kv_namespaces": [{ "binding": "TRAFFIC_KV", "id": "<real-id>" }]
-  // with the real namespace ID from the dashboard.
+  },
+  // TRAFFIC_KV was originally bound only via the Cloudflare dashboard,
+  // which `wrangler deploy` silently dropped on the next deploy because
+  // this file is treated as the full declarative binding set (exactly
+  // the caveat this comment used to warn about). Declared explicitly now
+  // with the real namespace ID from the dashboard so it survives every
+  // deploy. TDX_CLIENT_ID/TDX_CLIENT_SECRET/LINE_CHANNEL_ACCESS_TOKEN/
+  // LINE_CHANNEL_SECRET remain Cloudflare Secrets configured outside this
+  // repo — see src/traffic/dedupe.js — and are unaffected by this change.
+  "kv_namespaces": [
+    {
+      "binding": "TRAFFIC_KV",
+      "id": "a763ccea75b0481aa4da99fa43f8341a"
+    }
+  ]
 }
