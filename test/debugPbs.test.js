@@ -29,7 +29,9 @@ test('GET /debug/pbs is read-only and exposes VPC relay diagnostics', async () =
   assert.equal(body.relayStatus, 200);
   assert.equal(body.relayCache, 'MISS');
   assert.equal(body.relayUpstreamDurationMs, 18);
-  assert.equal(body.pbsBroadcastEnabled, false);
+  // V1.4 Alpha: PBS_BROADCAST_ENABLED is now true (see pbsConfig.js) —
+  // this field just reflects the live constant, not a hardcoded value.
+  assert.equal(body.pbsBroadcastEnabled, true);
   assert.doesNotMatch(JSON.stringify(body), /debug-token/);
 });
 

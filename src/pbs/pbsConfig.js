@@ -44,10 +44,16 @@ export const CROSS_SOURCE_MAX_DISTANCE_METERS = 1000;
 export const CROSS_SOURCE_MAX_TIME_DIFF_MS = 15 * 60 * 1000; // ±15 minutes
 export const CROSS_SOURCE_MAX_KM_DIFF = 2; // km
 
-// Feature flag: PBS events are fetched/normalized/filtered/tracked this
-// round, but must never reach the LINE broadcast pipeline yet — see
-// broadcastPipeline.js callers in scheduled.js/debugStatus.js, which
-// simply never include PBS events in what they pass to runLineBroadcast.
-// This flag exists so that fact is explicit and greppable, and so a
-// future round can flip it in one place.
-export const PBS_BROADCAST_ENABLED = false;
+// Feature flag: whether PBS events (merged with TDX via
+// crossSourceDedup.mergeForBroadcast — see scheduled.js/debugStatus.js)
+// are allowed to reach the LINE broadcast pipeline. This is the single
+// on/off switch: when false, scheduled.js/debugStatus.js pass TDX's own
+// event list straight through, unchanged, and PBS is purely observational
+// (as it was through V1.3/the VPC relay rollout).
+//
+// V1.4 Alpha (single existing subscriber, see PROJECT context): flipped to
+// true. This does NOT change who receives anything — it only changes
+// WHAT the already-existing, already-enabled subscribers can receive
+// (TDX events, now merged with matching/unique active PBS events). No
+// subscription/target logic changes anywhere else.
+export const PBS_BROADCAST_ENABLED = true;

@@ -18,6 +18,7 @@ import { runTdxPipelinePreview } from './pipeline.js';
 import { runLineBroadcast } from './broadcastPipeline.js';
 import { formatTaipeiTime } from './broadcastHours.js';
 import { runPbsPipelinePreview } from '../pbs/pipeline.js';
+import { mergeForBroadcast } from '../pbs/crossSourceDedup.js';
 import { PBS_BROADCAST_ENABLED } from '../pbs/pbsConfig.js';
 import { getLastTdxTokenSource } from '../tdx/auth.js';
 
@@ -32,8 +33,20 @@ export async function handleDebugStatus(env) {
     [...summary.newEvents, ...summary.updatedEvents].map((e) => `${e.source}:${e.rawId}`)
   );
 
+  // PBS: fully separate, read-only preview (never writes KV, never calls
+  // LINE — runLineBroadcast below is always called with dryRun=true
+  // regardless of what's in `broadcastEvents`). Computed BEFORE the LINE
+  // preview so its cross-source dedup result can be folded in exactly the
+  // way the real Cron run (scheduled.js) does, keeping this preview
+  // truthful about what would actually be pushed.
+  const pbsSummary = await runPbsPipelinePreview(env, { tdxEvents: summary.allEvents, now });
+
+  const broadcastEvents = PBS_BROADCAST_ENABLED
+    ? mergeForBroadcast(summary.allEvents, pbsSummary.canonicalEvents || [], pbsSummary.uniquePbsEvents || [])
+    : summary.allEvents;
+
   const lineSummary = await runLineBroadcast(env, {
-    allEvents: summary.allEvents,
+    allEvents: broadcastEvents,
     dedupeAvailable: summary.kvAvailable,
     newUpdatedKeys,
     dedupeMapSnapshot: summary.dedupeMapSnapshot,
@@ -41,11 +54,6 @@ export async function handleDebugStatus(env) {
     now,
     dryRun: true,
   });
-
-  // PBS: fully separate, read-only preview (never writes KV, never
-  // touches LINE). tdxEvents is passed only so cross-source dedup counts
-  // are meaningful — PBS_BROADCAST_ENABLED stays false regardless.
-  const pbsSummary = await runPbsPipelinePreview(env, { tdxEvents: summary.allEvents, now });
 
   const body = {
     lastRunAt: summary.lastRunAt,
@@ -89,7 +97,9 @@ export async function handleDebugStatus(env) {
     lastLinePushAt: lineSummary.lastLinePushAt,
     lineErrors: lineSummary.lineErrors,
 
-    // PBS — observation-only this round (see pbsConfig.js).
+    // PBS — its own read-only stats; whether it's actually folded into
+    // the `broadcastRelevantCount`/`pendingTargetCount`/etc. LINE fields
+    // above depends on PBS_BROADCAST_ENABLED (see pbsConfig.js).
     pbsOk: pbsSummary.pbsOk,
     pbsRawCount: pbsSummary.rawCount,
     pbsHsinchuCount: pbsSummary.hsinchuCount,
