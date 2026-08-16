@@ -236,6 +236,109 @@ test('DNS-style failure (err.cause.code=ENOTFOUND) logs causeCode', async () => 
   assert.match(line, /causeCode=ENOTFOUND/);
 });
 
+// Regression test for the real bug fixed this round: fetch() resolving
+// successfully (headers arrive, response.ok===true) does NOT guarantee
+// the body finishes downloading cleanly — a connection reset mid-body
+// (ECONNRESET) or an abort firing while streaming a large payload must
+// be caught, classified, and logged exactly like a fetch()-level
+// failure, and must still be retried. Previously this class of failure
+// happened *after* the try/catch had already exited, so it escaped
+// unclassified and unlogged.
+function responseThatFailsDuringBodyRead(readError) {
+  return {
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    headers: { get: () => 'text/plain;charset=UTF-8' },
+    text: async () => {
+      throw readError;
+    },
+  };
+}
+
+test('a body-read failure after a successful fetch() (e.g. connection reset) is classified as a network error, logged, and retried', async () => {
+  const cap = captureConsoleLog();
+  let calls = 0;
+  let result;
+  try {
+    const fetchImpl = async () => {
+      calls += 1;
+      if (calls === 1) {
+        const err = new TypeError('terminated');
+        err.cause = Object.assign(new Error('read ECONNRESET'), { name: 'Error', code: 'ECONNRESET' });
+        return responseThatFailsDuringBodyRead(err);
+      }
+      return new Response('[{"UID":"recovered"}]', { status: 200 });
+    };
+    result = await fetchPbsUpstream({ fetchImpl, requestId: 'pbs-test-bodyread' });
+  } finally {
+    cap.restore();
+  }
+
+  // It recovered on retry — this alone proves the failure was properly
+  // classified as retryable (a plain uncaught exception would still
+  // have worked by accident via the generic isRetryable(err)=>true
+  // fallback, so the log assertions below are what actually prove the
+  // fix, not just this outcome).
+  assert.equal(result.attempts, 2);
+  assert.equal(calls, 2);
+
+  const errLine = cap.lines.find((l) => l.includes('[PBS] upstream network error') && l.includes('requestId=pbs-test-bodyread'));
+  assert.ok(errLine, 'expected a "[PBS] upstream network error" line for the body-read failure — this used to never be logged');
+  assert.match(errLine, /causeCode=ECONNRESET/);
+
+  const retryLine = cap.lines.find((l) => l.includes('[PBS] retry scheduled') && l.includes('requestId=pbs-test-bodyread'));
+  assert.ok(retryLine, 'expected a retry to be scheduled for the body-read failure');
+  assert.match(retryLine, /reason=network/);
+});
+
+test('a body-read failure on both attempts -> UpstreamError(code=network), attempts=2, no crash', async () => {
+  const fetchImpl = async () => {
+    const err = new TypeError('terminated');
+    err.cause = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+    return responseThatFailsDuringBodyRead(err);
+  };
+  await assert.rejects(
+    () => fetchPbsUpstream({ fetchImpl, requestId: 'pbs-test-bodyread-2' }),
+    (err) => {
+      assert.ok(err instanceof UpstreamError);
+      assert.equal(err.code, 'network');
+      assert.equal(err.causeCode, 'ECONNRESET');
+      assert.equal(err.attempts, 2);
+      return true;
+    }
+  );
+});
+
+test('an AbortError raised while reading the body (not just during connect) is classified as timeout', async () => {
+  const fetchImpl = async () => {
+    const err = new Error('The operation was aborted');
+    err.name = 'AbortError';
+    return responseThatFailsDuringBodyRead(err);
+  };
+  await assert.rejects(
+    () => fetchPbsUpstream({ fetchImpl, requestId: 'pbs-test-bodyread-timeout' }),
+    (err) => {
+      assert.ok(err instanceof UpstreamError);
+      assert.equal(err.code, 'timeout');
+      return true;
+    }
+  );
+});
+
+test('success is based purely on HTTP 2xx + a readable body — a text/plain content-type and a {"result":[...]} envelope never cause a failure', async () => {
+  // Mirrors the real PBS response exactly: Content-Type
+  // text/plain;charset=UTF-8, body wrapped as {"result":[...]}. This
+  // client must not inspect/validate either — it only proxies bytes.
+  const raw = '{"result":[{"UID":"1","road":"","direction":"西行","areaNm":"測試路段"}]}';
+  const fetchImpl = async () =>
+    new Response(raw, { status: 200, headers: { 'Content-Type': 'text/plain;charset=UTF-8' } });
+  const result = await fetchPbsUpstream({ fetchImpl });
+  assert.equal(result.rawText, raw); // byte-for-byte, envelope untouched
+  assert.equal(result.contentType, 'text/plain;charset=UTF-8');
+  assert.equal(result.attempts, 1);
+});
+
 test('5xx retry logs "[PBS] retry scheduled" with reason=5xx and a backoffMs', async () => {
   const cap = captureConsoleLog();
   try {

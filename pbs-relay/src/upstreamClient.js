@@ -90,13 +90,57 @@ async function fetchOnce(fetchImpl, url, timeoutMs, { requestId, attempt }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  let response;
+  // Bug fixed this round: the fetch() call and the response.text() body
+  // read used to be two separate steps, with only fetch() wrapped in
+  // try/catch and the abort timer cleared right after fetch() resolved.
+  // fetch() itself resolves as soon as HEADERS arrive — the body (here,
+  // a ~300KB JSON payload) streams in afterward. That meant:
+  //   1. A failure while reading the body (a reset connection mid-
+  //      download, an abort that should still apply while streaming,
+  //      etc.) was never caught here at all — it escaped as a raw,
+  //      unclassified error, with no [PBS] timeout/network-error log
+  //      line, no requestId, nothing actionable.
+  //   2. The 15s timeout stopped protecting the request the moment
+  //      headers arrived, instead of covering the full request
+  //      including the body — not the "15 second timeout" this was
+  //      documented as.
+  // Both are fixed by wrapping the fetch call AND the body read in the
+  // same try/catch/finally, so any failure in either phase gets the
+  // same timeout/network classification and logging, and the abort
+  // timer stays armed for the whole attempt.
   try {
-    response = await fetchImpl(url, {
+    const response = await fetchImpl(url, {
       headers: { Accept: 'application/json', 'User-Agent': USER_AGENT },
       signal: controller.signal,
     });
+
+    if (!response.ok) {
+      const durationMs = Date.now() - attemptStartedAt;
+      logUpstreamHttpError({ requestId, attempt, status: response.status, durationMs });
+      throw new UpstreamError(`PBS upstream responded with HTTP ${response.status} ${response.statusText}`, {
+        status: response.status,
+        code: 'http_status',
+      });
+    }
+
+    // Success is HTTP 2xx + a readable body — nothing else. In
+    // particular: the real PBS endpoint replies with
+    // `Content-Type: text/plain;charset=UTF-8` (not application/json)
+    // and wraps the array as `{"result":[...]}` rather than a bare
+    // array — neither of those is ever inspected/validated here, so
+    // neither can turn a genuinely successful response into a failure.
+    // contentType is captured purely for the diagnostic success log.
+    const contentType = response.headers.get('content-type');
+    // Raw text only — never JSON.parse + re-stringify. Fields, key
+    // order, and number formatting stay byte-for-byte whatever PBS
+    // sent, whatever shape it's wrapped in.
+    const rawText = await response.text();
+    const durationMs = Date.now() - attemptStartedAt;
+    logUpstreamSuccess({ requestId, attempt, status: response.status, durationMs, contentType });
+    return { rawText, contentType };
   } catch (err) {
+    if (err instanceof UpstreamError) throw err; // the !response.ok branch above already logged/classified this
+
     const durationMs = Date.now() - attemptStartedAt;
 
     if (err && err.name === 'AbortError') {
@@ -109,12 +153,13 @@ async function fetchOnce(fetchImpl, url, timeoutMs, { requestId, attempt }) {
       });
     }
 
-    // undici's fetch wraps DNS/TLS/connection-refused failures as
-    // `TypeError: fetch failed` with the real system error (with its own
-    // .name/.code, e.g. ENOTFOUND for DNS) on `err.cause`. Only these
-    // three primitive fields are ever read — never the whole error or
-    // cause object — so nothing beyond what's explicitly listed here can
-    // end up in a log line.
+    // undici's fetch wraps DNS/TLS/connection-refused/connection-reset
+    // failures as `TypeError: fetch failed` with the real system error
+    // (with its own .name/.code, e.g. ENOTFOUND for DNS, ECONNRESET for
+    // a dropped connection mid-body) on `err.cause`. Only these three
+    // primitive fields are ever read — never the whole error or cause
+    // object — so nothing beyond what's explicitly listed here can end
+    // up in a log line.
     const errorName = err && err.name ? err.name : null;
     const errorCode = err && err.code != null ? err.code : null;
     const cause = err && err.cause;
@@ -141,23 +186,6 @@ async function fetchOnce(fetchImpl, url, timeoutMs, { requestId, attempt }) {
   } finally {
     clearTimeout(timer);
   }
-
-  const durationMs = Date.now() - attemptStartedAt;
-
-  if (!response.ok) {
-    logUpstreamHttpError({ requestId, attempt, status: response.status, durationMs });
-    throw new UpstreamError(`PBS upstream responded with HTTP ${response.status} ${response.statusText}`, {
-      status: response.status,
-      code: 'http_status',
-    });
-  }
-
-  const contentType = response.headers.get('content-type');
-  // Raw text only — never JSON.parse + re-stringify. Fields, key order,
-  // and number formatting stay byte-for-byte whatever PBS sent.
-  const rawText = await response.text();
-  logUpstreamSuccess({ requestId, attempt, status: response.status, durationMs, contentType });
-  return { rawText, contentType };
 }
 
 /**
