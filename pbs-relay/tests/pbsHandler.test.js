@@ -5,6 +5,20 @@ import { createPbsCache, CACHE_TTL_MS } from '../src/cache.js';
 
 const TOKEN = 'test-relay-token';
 
+function captureConsoleLog() {
+  const lines = [];
+  const original = console.log;
+  console.log = (msg) => {
+    lines.push(String(msg));
+  };
+  return {
+    lines,
+    restore() {
+      console.log = original;
+    },
+  };
+}
+
 test('no Authorization header -> 401, upstream never called', async () => {
   const cache = createPbsCache();
   let called = false;
@@ -141,4 +155,156 @@ test('RELAY_TOKEN never appears in the response body or headers, on success or f
   const okFetch = async () => new Response('[{"UID":"1"}]', { status: 200 });
   const okRes = await handlePbsRequest({ cache, relayToken: TOKEN, authorizationHeader: `Bearer ${TOKEN}`, fetchImpl: okFetch });
   assert.doesNotMatch(JSON.stringify(okRes), new RegExp(TOKEN));
+});
+
+// --- diagnostic logging (this round's addition) -----------------------
+
+test('cache HIT is logged with the requestId, and request start/complete bracket it', async () => {
+  const cache = createPbsCache();
+  const raw = '[{"UID":"HIT-1"}]';
+  const fetchImpl = async () => new Response(raw, { status: 200 });
+  const t0 = 1_000_000;
+
+  await handlePbsRequest({ cache, relayToken: TOKEN, authorizationHeader: `Bearer ${TOKEN}`, fetchImpl, now: t0, requestId: 'pbs-h-1' });
+
+  const cap = captureConsoleLog();
+  try {
+    await handlePbsRequest({
+      cache,
+      relayToken: TOKEN,
+      authorizationHeader: `Bearer ${TOKEN}`,
+      fetchImpl,
+      now: t0 + 1000,
+      requestId: 'pbs-h-2',
+    });
+  } finally {
+    cap.restore();
+  }
+
+  assert.ok(cap.lines.some((l) => l.includes('[PBS] request start') && l.includes('requestId=pbs-h-2') && l.includes('cacheStatus=HIT')));
+  assert.ok(cap.lines.some((l) => l.includes('[PBS] cache HIT') && l.includes('requestId=pbs-h-2')));
+  assert.ok(
+    cap.lines.some((l) => l.includes('[PBS] request complete') && l.includes('requestId=pbs-h-2') && l.includes('cache=HIT') && l.includes('status=200'))
+  );
+});
+
+test('cache MISS is logged on a fresh fetch', async () => {
+  const cache = createPbsCache();
+  const fetchImpl = async () => new Response('[{"UID":"MISS-1"}]', { status: 200 });
+
+  const cap = captureConsoleLog();
+  try {
+    await handlePbsRequest({ cache, relayToken: TOKEN, authorizationHeader: `Bearer ${TOKEN}`, fetchImpl, requestId: 'pbs-h-miss' });
+  } finally {
+    cap.restore();
+  }
+
+  assert.ok(cap.lines.some((l) => l.includes('[PBS] request start') && l.includes('cacheStatus=MISS')));
+  assert.ok(cap.lines.some((l) => l.includes('[PBS] cache MISS') && l.includes('requestId=pbs-h-miss')));
+  assert.ok(cap.lines.some((l) => l.includes('[PBS] request complete') && l.includes('cache=MISS') && l.includes('status=200')));
+});
+
+test('STALE fallback is logged with cacheAgeMs when upstream fails but a cache exists', async () => {
+  const cache = createPbsCache();
+  const staleRaw = '[{"UID":"stale-1"}]';
+  const t0 = 1_000_000;
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    if (calls === 1) return new Response(staleRaw, { status: 200 });
+    return new Response('error', { status: 500 });
+  };
+  await handlePbsRequest({ cache, relayToken: TOKEN, authorizationHeader: `Bearer ${TOKEN}`, fetchImpl, now: t0, requestId: 'pbs-h-seed' });
+
+  const cap = captureConsoleLog();
+  try {
+    await handlePbsRequest({
+      cache,
+      relayToken: TOKEN,
+      authorizationHeader: `Bearer ${TOKEN}`,
+      fetchImpl,
+      now: t0 + CACHE_TTL_MS + 1,
+      requestId: 'pbs-h-stale',
+    });
+  } finally {
+    cap.restore();
+  }
+
+  assert.ok(cap.lines.some((l) => l.includes('[PBS] cache STALE') && l.includes('requestId=pbs-h-stale')));
+  const staleLine = cap.lines.find((l) => l.includes('[PBS] stale fallback'));
+  assert.ok(staleLine, 'expected a "[PBS] stale fallback" log line');
+  assert.match(staleLine, /requestId=pbs-h-stale/);
+  assert.match(staleLine, /cacheAgeMs=\d+/);
+  assert.ok(cap.lines.some((l) => l.includes('[PBS] request complete') && l.includes('cache=STALE') && l.includes('status=200')));
+});
+
+test('"[PBS] no fallback cache" is logged when upstream fails and nothing was ever cached', async () => {
+  const cache = createPbsCache();
+  const fetchImpl = async () => new Response('error', { status: 500 });
+
+  const cap = captureConsoleLog();
+  try {
+    await handlePbsRequest({ cache, relayToken: TOKEN, authorizationHeader: `Bearer ${TOKEN}`, fetchImpl, requestId: 'pbs-h-nofallback' });
+  } finally {
+    cap.restore();
+  }
+
+  assert.ok(cap.lines.some((l) => l.includes('[PBS] no fallback cache') && l.includes('requestId=pbs-h-nofallback')));
+  assert.ok(cap.lines.some((l) => l.includes('[PBS] request complete') && l.includes('cache=NONE') && l.includes('status=502')));
+});
+
+test('a 401 (bad token) never emits any [PBS] diagnostic log line', async () => {
+  const cache = createPbsCache();
+  const fetchImpl = async () => new Response('[]', { status: 200 });
+
+  const cap = captureConsoleLog();
+  try {
+    await handlePbsRequest({ cache, relayToken: TOKEN, authorizationHeader: 'Bearer wrong', fetchImpl });
+  } finally {
+    cap.restore();
+  }
+
+  assert.equal(
+    cap.lines.some((l) => l.includes('[PBS]')),
+    false
+  );
+});
+
+test('the real Authorization header value and RELAY_TOKEN never appear in any [PBS] log line', async () => {
+  const cache = createPbsCache();
+  const fetchImpl = async () => new Response('error', { status: 500 });
+
+  const cap = captureConsoleLog();
+  try {
+    await handlePbsRequest({ cache, relayToken: TOKEN, authorizationHeader: `Bearer ${TOKEN}`, fetchImpl, requestId: 'pbs-h-secret' });
+  } finally {
+    cap.restore();
+  }
+
+  assert.ok(cap.lines.length > 0, 'expected at least some log lines for this legitimate request');
+  for (const line of cap.lines) {
+    assert.doesNotMatch(line, new RegExp(TOKEN));
+    assert.doesNotMatch(line, /Bearer /);
+    assert.doesNotMatch(line, /Authorization/i);
+  }
+});
+
+test('logging never touches the 1000-record-scale payload itself — success body stays exactly the raw upstream text', async () => {
+  const cache = createPbsCache();
+  const bigArray = Array.from({ length: 1000 }, (_, i) => ({ UID: `PBS-${i}`, comment: `事件 ${i}` }));
+  const raw = JSON.stringify(bigArray);
+  const fetchImpl = async () => new Response(raw, { status: 200 });
+
+  const cap = captureConsoleLog();
+  let res;
+  try {
+    res = await handlePbsRequest({ cache, relayToken: TOKEN, authorizationHeader: `Bearer ${TOKEN}`, fetchImpl, requestId: 'pbs-h-bulk' });
+  } finally {
+    cap.restore();
+  }
+
+  assert.equal(res.body, raw); // byte-for-byte, unmodified
+  for (const line of cap.lines) {
+    assert.ok(line.length < 2000, `log line unexpectedly long (${line.length} chars) — looks like the payload got dumped`);
+  }
 });
