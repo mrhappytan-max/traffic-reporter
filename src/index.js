@@ -3,6 +3,7 @@ import { handleDebugStatus } from './traffic/debugStatus.js';
 import { runScheduledTdxSync } from './traffic/scheduled.js';
 import { handleLineWebhook } from './line/webhook.js';
 import { handleDebugPbs } from './pbs/debugPbs.js';
+import { handlePbsVpcProbe } from './pbs/vpcProbe.js';
 
 export default {
   async fetch(request, env) {
@@ -30,6 +31,10 @@ export default {
 
     if (url.pathname === '/debug/pbs' && request.method === 'GET') {
       return handleDebugPbs(env);
+    }
+
+    if (url.pathname === '/debug/pbs-vpc-probe' && request.method === 'GET') {
+      return handlePbsVpcProbe(env);
     }
 
     return new Response('Not Found', { status: 404 });
