@@ -15,7 +15,7 @@
 
 import { isWithinBroadcastHours } from './broadcastHours.js';
 import { computeEffectiveWindow } from './effectiveWindow.js';
-import { isBroadcastRelevant, isBroadcastEligibleType } from './broadcastRules.js';
+import { isBroadcastRelevant, getBroadcastEligibility } from './broadcastRules.js';
 import { readSubscriptions, persistSubscriptions } from './subscriptions.js';
 import {
   readNotifiedState,
@@ -109,12 +109,17 @@ export async function runLineBroadcast(
     enabledGroupsCount: 0,
     subscriptionsCount: 0,
     notifiedEventCount: 0,
-    // V1.5: how many of this run's events were excluded purely by type
-    // (pure congestion — see broadcastRules.js's isBroadcastEligibleType)
-    // before relevance/pending-target computation even started. Purely
-    // observational — GET /debug/status surfaces this so "congestion
-    // still fully visible in debug, never in LINE" stays verifiable.
+    // V1.5: how many of this run's events were excluded by the type/
+    // keyword eligibility gate (see broadcastRules.js's
+    // getBroadcastEligibility) before relevance/pending-target
+    // computation even started, broken down by WHY (ineligibleByReason
+    // keys: congestion-excluded, alert-excluded,
+    // construction-no-impact-keyword, other-no-anomaly-keyword,
+    // unrecognized-type). Purely observational — GET /debug/status
+    // surfaces both so every excluded event's data collection stays
+    // fully visible and its exclusion reason is verifiable.
     typeIneligibleCount: 0,
+    ineligibleByReason: {},
     broadcastRelevantCount: 0,
     activeNowCount: 0,
     futureWithin60MinCount: 0,
@@ -159,16 +164,28 @@ export async function runLineBroadcast(
     : [];
   result.subscriptionsCount = targets.length;
 
-  // V1.5: drop broadcast-ineligible-by-type events (pure congestion, see
-  // broadcastRules.js) FIRST — before clustering, before relevance, before
-  // anything else. This is a pure eligibility gate at the very entrance
-  // of the broadcast pipeline; it does not touch TDX/PBS's own
-  // fetch/normalize/classify/VD-validate stages at all (those already
-  // completed by the time `allEvents` gets here — see scheduled.js/
-  // debugStatus.js), so congestion data collection and its
-  // GET /debug/status visibility are completely unaffected.
-  const broadcastEligibleEvents = allEvents.filter(isBroadcastEligibleType);
+  // V1.5: whitelist/conditional eligibility gate FIRST — before
+  // clustering, before relevance, before anything else (see
+  // broadcastRules.js's getBroadcastEligibility for the actual rule:
+  // accident/closure/control always eligible; construction/other only
+  // with a matching impact/anomaly keyword; congestion/alert never).
+  // This is a pure gate at the very entrance of the broadcast pipeline;
+  // it does not touch TDX/PBS's own fetch/normalize/classify/VD-validate
+  // stages at all (those already completed by the time `allEvents` gets
+  // here — see scheduled.js/debugStatus.js), so every excluded event's
+  // data collection and GET /debug/status visibility are unaffected.
+  const broadcastEligibleEvents = [];
+  const ineligibleByReason = {};
+  for (const event of allEvents) {
+    const { eligible, reason } = getBroadcastEligibility(event);
+    if (eligible) {
+      broadcastEligibleEvents.push(event);
+    } else {
+      ineligibleByReason[reason] = (ineligibleByReason[reason] || 0) + 1;
+    }
+  }
   result.typeIneligibleCount = allEvents.length - broadcastEligibleEvents.length;
+  result.ineligibleByReason = ineligibleByReason;
 
   // V1.2C: cluster same-run congestion events into candidates BEFORE
   // computing relevance/pending targets at all, so N overlapping

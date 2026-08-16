@@ -241,7 +241,9 @@ test('forecast event crossing into the 60-minute window is pushed once, then not
     road: '台1線',
     direction: '南向',
     location: '90K附近',
-    description: '8月15日9時至10時施工', // starts at 09:00 today
+    // starts at 09:00 today; "車道封閉" required since V1.5 (construction
+    // only broadcasts with an impact keyword — see broadcastRules.js).
+    description: '8月15日9時至10時施工，車道封閉',
     updatedAt: '2026-08-15T08:00:00+08:00',
   };
 
@@ -502,7 +504,10 @@ test('20. construction/closure/control events are unaffected by clustering or co
     road: '台68線',
     direction: '東向',
     location: '5K附近',
-    description: '8月15日9時至12時施工', // covers 10:50 (`now` below) -> active now, not forecast
+    // covers 10:50 (`now` below) -> active now, not forecast; "車道封閉"
+    // is required since V1.5 (construction only broadcasts with an
+    // impact keyword — see broadcastRules.js).
+    description: '8月15日9時至12時施工，車道封閉',
     startTime: null,
     endTime: null,
     updatedAt: '2026-08-15T10:50:00+08:00',

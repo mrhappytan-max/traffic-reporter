@@ -186,3 +186,112 @@ test('7. PBS + TDX report the SAME accident -> exactly 1 LINE message (cross-sou
   assert.equal(result.pbs.canonicalEventCount, 1);
   assert.match(pushed[0], /🚨 交通事故/);
 });
+
+// --- V1.5 whitelist refinement: construction/other are now conditional, alert defaults off ---
+
+test('8. routine construction (no impact keyword) -> 0 LINE messages', async () => {
+  const env = await baseEnv();
+  const raw = freewayRaw({
+    EventID: 'FRW-CONST-ROUTINE', EventType: '施工',
+    Description: '8月15日8時至12時北向92K路面刨鋪施工',
+  });
+  const { pushed, result } = await withPushCapture(mockFetch({ freewayEvents: [raw] }), () => runScheduledTdxSync(env, NOW));
+
+  assert.equal(pushed.length, 0);
+  assert.equal(result.line.ineligibleByReason['construction-no-impact-keyword'], 1);
+});
+
+test('9. construction WITH an impact keyword (車道封閉) -> 1 LINE message', async () => {
+  const env = await baseEnv();
+  const raw = freewayRaw({
+    EventID: 'FRW-CONST-IMPACT', EventType: '施工',
+    Description: '8月15日8時至12時北向92K施工，車道封閉',
+  });
+  const { pushed, result } = await withPushCapture(mockFetch({ freewayEvents: [raw] }), () => runScheduledTdxSync(env, NOW));
+
+  assert.equal(pushed.length, 1);
+  assert.match(pushed[0], /🚧 道路施工/);
+  assert.equal(result.line.ineligibleByReason['construction-no-impact-keyword'] || 0, 0);
+});
+
+test('10. unrecognized "other" (no anomaly keyword) -> 0 LINE messages', async () => {
+  const env = await baseEnv();
+  const raw = freewayRaw({
+    EventID: 'FRW-OTHER-UNKNOWN', EventType: '其他',
+    Description: '8月15日8時至12時北向92K一般公告事項',
+  });
+  const { pushed, result } = await withPushCapture(mockFetch({ freewayEvents: [raw] }), () => runScheduledTdxSync(env, NOW));
+
+  assert.equal(pushed.length, 0);
+  assert.equal(result.line.ineligibleByReason['other-no-anomaly-keyword'], 1);
+});
+
+test('11. "other" with a recognized anomaly keyword (落石) -> 1 LINE message', async () => {
+  const env = await baseEnv();
+  const raw = freewayRaw({
+    EventID: 'FRW-OTHER-ROCKSLIDE', EventType: '其他',
+    Description: '8月15日8時至12時北向92K路段落石',
+  });
+  const { pushed } = await withPushCapture(mockFetch({ freewayEvents: [raw] }), () => runScheduledTdxSync(env, NOW));
+
+  assert.equal(pushed.length, 1);
+  assert.match(pushed[0], /ℹ️ 路況異常/);
+});
+
+test('12. bus alert -> 0 LINE messages by default (no longer broadcast-eligible)', async () => {
+  const env = await baseEnv();
+  const priorFetch = globalThis.fetch;
+  let pushed = [];
+  globalThis.fetch = async (url, init) => {
+    const href = String(url);
+    if (href.includes('api.line.me')) {
+      pushed.push(JSON.parse(init.body).messages[0].text);
+      return new Response('{}', { status: 200 });
+    }
+    if (href.includes('openid-connect/token')) return new Response(JSON.stringify({ access_token: 'tok', expires_in: 3600 }), { status: 200 });
+    if (href.includes('/RoadEvent/LiveEvent/Freeway') || href.includes('/RoadEvent/LiveEvent/Highway')) {
+      return new Response(JSON.stringify({ RoadEvents: [] }), { status: 200 });
+    }
+    if (href.includes('/Road/Traffic/Live/CMS')) return new Response(JSON.stringify({ CMSs: [] }), { status: 200 });
+    // NOTE: check HsinchuCounty BEFORE the plain Hsinchu check below —
+    // "/Bus/Alert/City/HsinchuCounty" also contains the substring
+    // "/Bus/Alert/City/Hsinchu", so the order matters.
+    if (href.includes('/Bus/Alert/City/HsinchuCounty')) return new Response(JSON.stringify({ Alerts: [] }), { status: 200 });
+    if (href.includes('/Bus/Alert/City/Hsinchu')) {
+      return new Response(
+        JSON.stringify({
+          Alerts: [{ AlertID: 'A-1', RouteID: '5路', RouteName: '5路', Title: '5路今日繞道行駛', Description: '5路今日繞道行駛，不停靠部分站點', PublishTime: '2026-08-15T08:00:00+08:00' }],
+        }),
+        { status: 200 }
+      );
+    }
+    throw new Error(`unexpected fetch: ${href}`);
+  };
+  let result;
+  try {
+    result = await runScheduledTdxSync(env, NOW);
+  } finally {
+    globalThis.fetch = priorFetch;
+  }
+
+  assert.equal(pushed.length, 0);
+  assert.equal(result.line.ineligibleByReason['alert-excluded'], 1);
+});
+
+test('13. ineligibleByReason breaks down multiple exclusion reasons correctly in one run', async () => {
+  const env = await baseEnv();
+  const events = [
+    freewayRaw({ EventID: 'FRW-CONG', EventType: '壅塞', Description: '北向92K壅塞' }),
+    freewayRaw({ EventID: 'FRW-ROUTINE-CONST', EventType: '施工', Description: '8月15日8時至12時路面刨鋪' }),
+    freewayRaw({ EventID: 'FRW-UNKNOWN-OTHER', EventType: '其他', Description: '8月15日8時至12時一般公告' }),
+    freewayRaw({ EventID: 'FRW-ACC-OK', EventType: '事故', Description: '北向92K車輛事故' }),
+  ];
+  const { pushed, result } = await withPushCapture(mockFetch({ freewayEvents: events }), () => runScheduledTdxSync(env, NOW));
+
+  assert.equal(pushed.length, 1);
+  assert.match(pushed[0], /🚨 交通事故/);
+  assert.equal(result.line.ineligibleByReason['congestion-excluded'], 1);
+  assert.equal(result.line.ineligibleByReason['construction-no-impact-keyword'], 1);
+  assert.equal(result.line.ineligibleByReason['other-no-anomaly-keyword'], 1);
+  assert.equal(result.line.typeIneligibleCount, 3);
+});
