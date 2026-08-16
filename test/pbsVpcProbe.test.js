@@ -20,11 +20,10 @@ test('PBS VPC probe checks health then PBS and returns only safe bounded fields'
 
   assert.deepEqual(calls.map((call) => call.url), [
     'http://pbs-relay.internal/health',
-    'http://pbs-relay.internal/pbs',
+    `http://pbs-relay.internal/pbs/${encodeURIComponent(secret)}`,
   ]);
-  assert.equal(calls[0].options.headers['X-PBS-Relay-Token'], undefined);
-  assert.equal(calls[1].options.headers['X-PBS-Relay-Token'], secret);
-  assert.equal(calls[1].options.headers.Authorization, undefined);
+  assert.deepEqual(calls[0].options.headers, { Accept: 'application/json' });
+  assert.deepEqual(calls[1].options.headers, { Accept: 'application/json' });
   assert.deepEqual(Object.keys(json).sort(), [
     'healthBody', 'healthOk', 'healthStatus', 'pbsBodyPreview', 'pbsOk', 'pbsStatus', 'relayConfigured',
   ].sort());

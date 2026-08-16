@@ -10,6 +10,11 @@ import { resolve as resolvePath } from 'node:path';
 import { createPbsCache } from './cache.js';
 import { handlePbsRequest } from './pbsHandler.js';
 
+function extractPbsPathToken(url) {
+  const match = /^\/pbs\/([^/?#]+)$/.exec(url);
+  return match ? match[1] : null;
+}
+
 export function createServer({ relayToken, fetchImpl = globalThis.fetch, cache = createPbsCache() } = {}) {
   return http.createServer(async (req, res) => {
     try {
@@ -19,11 +24,12 @@ export function createServer({ relayToken, fetchImpl = globalThis.fetch, cache =
         return;
       }
 
-      if (req.method === 'GET' && req.url === '/pbs') {
+      const pathToken = req.method === 'GET' ? extractPbsPathToken(req.url) : null;
+      if (req.method === 'GET' && pathToken !== null) {
         const result = await handlePbsRequest({
           cache,
           relayToken,
-          tokenHeader: req.headers['x-pbs-relay-token'],
+          pathToken,
           fetchImpl,
         });
         res.writeHead(result.status, result.headers);

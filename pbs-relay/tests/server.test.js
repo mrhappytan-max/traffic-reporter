@@ -31,21 +31,21 @@ test('GET /health -> 200 {ok:true}, no Authorization required', async () => {
   );
 });
 
-test('GET /pbs without Authorization -> 401', async () => {
+test('GET /pbs without path token -> 404', async () => {
   await withServer(
     async () => new Response('[]', { status: 200 }),
     async (base) => {
       const res = await fetch(`${base}/pbs`);
-      assert.equal(res.status, 401);
+      assert.equal(res.status, 404);
     }
   );
 });
 
-test('GET /pbs with a wrong custom token -> 401', async () => {
+test('GET /pbs with a wrong path token -> 401', async () => {
   await withServer(
     async () => new Response('[]', { status: 200 }),
     async (base) => {
-      const res = await fetch(`${base}/pbs`, { headers: { 'X-PBS-Relay-Token': 'totally-wrong' } });
+      const res = await fetch(`${base}/pbs/totally-wrong`);
       assert.equal(res.status, 401);
     }
   );
@@ -56,7 +56,7 @@ test('GET /pbs with the correct token -> 200, raw JSON passed through byte-for-b
   await withServer(
     async () => new Response(raw, { status: 200 }),
     async (base) => {
-      const res = await fetch(`${base}/pbs`, { headers: { 'X-PBS-Relay-Token': TOKEN } });
+      const res = await fetch(`${base}/pbs/${encodeURIComponent(TOKEN)}`);
       assert.equal(res.status, 200);
       assert.equal(res.headers.get('x-pbs-cache'), 'MISS');
       const text = await res.text();
@@ -91,7 +91,7 @@ test('GET /pbs end-to-end with the exact real PBS response shape (text/plain con
   await withServer(
     async () => new Response(raw, { status: 200, headers: { 'Content-Type': 'text/plain;charset=UTF-8' } }),
     async (base) => {
-      const res = await fetch(`${base}/pbs`, { headers: { 'X-PBS-Relay-Token': TOKEN } });
+      const res = await fetch(`${base}/pbs/${encodeURIComponent(TOKEN)}`);
       assert.equal(res.status, 200);
       assert.equal(res.headers.get('x-pbs-cache'), 'MISS');
       const text = await res.text();
@@ -116,7 +116,7 @@ test('RELAY_TOKEN never appears in any response body across the whole request/re
   await withServer(
     async () => new Response('error', { status: 500 }),
     async (base) => {
-      const res = await fetch(`${base}/pbs`, { headers: { 'X-PBS-Relay-Token': 'wrong-guess' } });
+      const res = await fetch(`${base}/pbs/wrong-guess`);
       const text = await res.text();
       assert.doesNotMatch(text, new RegExp(TOKEN));
     }

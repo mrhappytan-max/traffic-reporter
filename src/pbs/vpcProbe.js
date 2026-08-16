@@ -21,12 +21,10 @@ function errorPreview(error, token) {
 
 async function probe(binding, path, token) {
   try {
-    const response = await binding.fetch(`${PBS_RELAY_PROBE_BASE_URL}${path}`, {
-      headers: {
-        Accept: 'application/json',
-        ...(path === '/pbs' ? { 'X-PBS-Relay-Token': token } : {}),
-      },
-    });
+    const resource = path === '/pbs'
+      ? `${PBS_RELAY_PROBE_BASE_URL}/pbs/${encodeURIComponent(token)}`
+      : `${PBS_RELAY_PROBE_BASE_URL}${path}`;
+    const response = await binding.fetch(resource, { headers: { Accept: 'application/json' } });
     return {
       status: response.status,
       ok: response.ok,

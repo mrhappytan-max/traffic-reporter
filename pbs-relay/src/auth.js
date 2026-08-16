@@ -5,10 +5,16 @@
 
 import { timingSafeEqual } from 'node:crypto';
 
-export function isAuthorized(tokenHeader, relayToken) {
+export function isAuthorizedPathToken(encodedToken, relayToken) {
   if (!relayToken) return false; // RELAY_TOKEN not configured on this deploy
-  if (typeof tokenHeader !== 'string' || tokenHeader.length === 0) return false;
-  return safeCompare(tokenHeader, relayToken);
+  if (typeof encodedToken !== 'string' || encodedToken.length === 0) return false;
+  let token;
+  try {
+    token = decodeURIComponent(encodedToken);
+  } catch {
+    return false;
+  }
+  return safeCompare(token, relayToken);
 }
 
 // Constant-time comparison so a mismatched-length or mismatched-content

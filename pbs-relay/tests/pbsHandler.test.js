@@ -10,7 +10,7 @@ const TOKEN = 'test-relay-token';
 function handlePbsRequest(args) {
   return handlePbsRequestImpl({
     ...args,
-    tokenHeader: args.tokenHeader ?? (typeof args.authorizationHeader === 'string' && args.authorizationHeader.startsWith('Bearer ')
+    pathToken: args.pathToken ?? (typeof args.authorizationHeader === 'string' && args.authorizationHeader.startsWith('Bearer ')
       ? args.authorizationHeader.slice(7)
       : args.authorizationHeader),
   });

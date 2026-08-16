@@ -69,11 +69,9 @@ async function fetchOnce(env) {
   let response;
 
   try {
-    response = await env.PBS_RELAY_WINDOWS.fetch('http://pbs-relay.internal/pbs', {
-      headers: {
-        Accept: 'application/json',
-        'X-PBS-Relay-Token': env.PBS_RELAY_TOKEN,
-      },
+    const relayToken = encodeURIComponent(env.PBS_RELAY_TOKEN);
+    response = await env.PBS_RELAY_WINDOWS.fetch(`http://pbs-relay.internal/pbs/${relayToken}`, {
+      headers: { Accept: 'application/json' },
       signal: controller.signal,
     });
   } catch (err) {

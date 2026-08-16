@@ -22,9 +22,8 @@ test('fetchPbsData requests the PBS Windows VPC relay with the custom token head
     });
   }));
 
-  assert.equal(request.url, 'http://pbs-relay.internal/pbs');
-  assert.equal(request.options.headers['X-PBS-Relay-Token'], 'test-token');
-  assert.equal(request.options.headers.Authorization, undefined);
+  assert.equal(request.url, `http://pbs-relay.internal/pbs/${encodeURIComponent('test-token')}`);
+  assert.deepEqual(request.options.headers, { Accept: 'application/json' });
   assert.equal(result.items.length, 1);
   assert.equal(result.relayOk, true);
   assert.equal(result.relayCache, 'HIT');

@@ -8,13 +8,13 @@
 // (log.js) was added around the existing behavior.
 
 import { fetchPbsUpstream, UpstreamError } from './upstreamClient.js';
-import { isAuthorized } from './auth.js';
+import { isAuthorizedPathToken } from './auth.js';
 import { generateRequestId, logRequestStart, logCacheStatus, logStaleFallback, logNoFallbackCache, logRequestComplete } from './log.js';
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
-export async function handlePbsRequest({ cache, relayToken, tokenHeader, fetchImpl, now = Date.now(), requestId }) {
-  if (!isAuthorized(tokenHeader, relayToken)) {
+export async function handlePbsRequest({ cache, relayToken, pathToken, fetchImpl, now = Date.now(), requestId }) {
+  if (!isAuthorizedPathToken(pathToken, relayToken)) {
     // Unauthorized requests are never "legitimate" /pbs requests for
     // diagnostic purposes — no requestId, no [PBS] log lines, and (per
     // auth.js) the Authorization header itself is never logged anywhere.
