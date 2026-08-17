@@ -7,6 +7,7 @@ import { handlePbsVpcProbe } from './pbs/vpcProbe.js';
 import { handleHealth } from './traffic/health.js';
 import { requireAdminAuth, applyAdminSecurityHeaders } from './security/adminAuth.js';
 import { handleCctvProbe } from './tdx/cctvProbe.js';
+import { handleHsinchuCctvProbe, handleHsinchuCctvFrame } from './tdx/hsinchuCctvProbe.js';
 
 // V1.6.3 — Admin Protection: every human-facing admin/debug page requires
 // HTTP Basic Auth (see security/adminAuth.js). Centralized here on
@@ -20,6 +21,13 @@ import { handleCctvProbe } from './tdx/cctvProbe.js';
 // V1.7: /admin/cctv-probe joins this same set — a one-time-use, Admin
 // Auth-gated diagnostic endpoint (see tdx/cctvProbe.js). It does not
 // touch the real Cron/broadcast pipeline at all.
+//
+// V1.7 (next stage): /admin/cctv-hsinchu-probe (its own separate
+// one-time-use TDX call, see tdx/hsinchuCctvProbe.js) and its 5 fixed
+// frame paths /admin/cctv-hsinchu-frame/0..4 (each reads only a cached
+// KV candidate and fetches directly from freeway.gov.tw — 0 TDX calls,
+// enforced by that module's own import graph).
+const HSINCHU_FRAME_PATHS = Array.from({ length: 5 }, (_, i) => `/admin/cctv-hsinchu-frame/${i}`);
 const ADMIN_PATHS = new Set([
   '/health',
   '/debug/status',
@@ -27,6 +35,8 @@ const ADMIN_PATHS = new Set([
   '/debug/pbs',
   '/debug/pbs-vpc-probe',
   '/admin/cctv-probe',
+  '/admin/cctv-hsinchu-probe',
+  ...HSINCHU_FRAME_PATHS,
 ]);
 
 function routeAdminGet(pathname, env) {
@@ -36,6 +46,9 @@ function routeAdminGet(pathname, env) {
   if (pathname === '/debug/pbs-vpc-probe') return handlePbsVpcProbe(env);
   if (pathname === '/health') return handleHealth(env);
   if (pathname === '/admin/cctv-probe') return handleCctvProbe(env);
+  if (pathname === '/admin/cctv-hsinchu-probe') return handleHsinchuCctvProbe(env);
+  const frameIndex = HSINCHU_FRAME_PATHS.indexOf(pathname);
+  if (frameIndex !== -1) return handleHsinchuCctvFrame(env, frameIndex);
   return new Response('Not Found', { status: 404 });
 }
 
