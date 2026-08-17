@@ -453,3 +453,45 @@ test('no secrets ever appear in the probe page or frame error responses', async 
   assert.doesNotMatch(raw, new RegExp(TDX_CLIENT_SECRET));
   assert.doesNotMatch(raw, /Bearer\s+\S+/);
 });
+
+// --- CSP hotfix: the probe page's same-origin <img> tags must not be blocked ---
+
+test('CSP: /admin/cctv-hsinchu-probe HTML response includes img-src \'self\'', async () => {
+  const env = baseEnv();
+  const { fetchFn } = makeFetch();
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const res = await worker.fetch(authedRequest('/admin/cctv-hsinchu-probe'), env);
+  assert.equal(res.status, 200);
+  const csp = res.headers.get('Content-Security-Policy');
+  assert.match(csp, /img-src 'self'/);
+});
+
+test('CSP: /admin/cctv-hsinchu-probe response never allows img-src *', async () => {
+  const env = baseEnv();
+  const { fetchFn } = makeFetch();
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const res = await worker.fetch(authedRequest('/admin/cctv-hsinchu-probe'), env);
+  const csp = res.headers.get('Content-Security-Policy');
+  assert.doesNotMatch(csp, /img-src \*/);
+  assert.doesNotMatch(csp, /img-src[^;]*freeway\.gov\.tw/); // never allow the CCTV host directly either
+});
+
+test('CSP: the /admin/cctv-hsinchu-frame/N image/jpeg response never gets the HTML-only CSP header', async () => {
+  const env = baseEnv();
+  const setup = makeFetch();
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = setup.fetchFn;
+  await worker.fetch(authedRequest('/admin/cctv-hsinchu-probe'), env); // populates candidates KV
+
+  globalThis.fetch = async () =>
+    new Response(mjpegStreamThatHangsAfterFrame(), { status: 200, headers: { 'Content-Type': 'multipart/x-mixed-replace;boundary=--myboundary' } });
+
+  const res = await worker.fetch(authedRequest('/admin/cctv-hsinchu-frame/0'), env);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('Content-Type'), 'image/jpeg');
+  assert.equal(res.headers.get('Content-Security-Policy'), null);
+});

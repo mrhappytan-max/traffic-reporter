@@ -246,8 +246,18 @@ test('13. protected responses (200/401/503) all carry Cache-Control/Pragma/X-Rob
   const authed = await worker.fetch(getRequest('/health', { auth: basicAuthHeader(FIXED_USERNAME, ADMIN_PASSWORD) }), env);
   assert.equal(authed.status, 200);
   assertSecurityHeaders(authed);
-  // /health is HTML -> also gets the CSP.
-  assert.match(authed.headers.get('Content-Security-Policy'), /default-src 'none'/);
+  // /health is HTML -> also gets the CSP. V1.7 hotfix added img-src
+  // 'self' (for the Hsinchu CCTV probe page's same-origin <img> tags) —
+  // confirm /health's own CSP still carries every other original
+  // directive unchanged.
+  const csp = authed.headers.get('Content-Security-Policy');
+  assert.match(csp, /default-src 'none'/);
+  assert.match(csp, /style-src 'unsafe-inline'/);
+  assert.match(csp, /img-src 'self'/);
+  assert.doesNotMatch(csp, /img-src \*/);
+  assert.match(csp, /base-uri 'none'/);
+  assert.match(csp, /frame-ancestors 'none'/);
+  assert.match(csp, /form-action 'none'/);
 
   const misconfigured = await worker.fetch(getRequest('/debug/tdx'), baseEnv({ ADMIN_PASSWORD: undefined }));
   assert.equal(misconfigured.status, 503);

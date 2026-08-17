@@ -142,9 +142,21 @@ export async function requireAdminAuth(request, env) {
  * Applies the required security headers (see index.js's ADMIN_PATHS
  * wiring) to every protected admin/debug response — success, 401, AND
  * 503 alike. A GET-only, no-store, non-indexable, non-embeddable
- * response class throughout. HTML responses (only GET /health today)
- * additionally get a strict CSP — this project ships no external JS/CSS
- * on any admin page, so `default-src 'none'` never breaks anything.
+ * response class throughout. HTML responses (GET /health and, as of
+ * V1.7, GET /admin/cctv-hsinchu-probe) additionally get a strict CSP —
+ * this project ships no external JS/CSS on any admin page, so
+ * `default-src 'none'` never breaks anything.
+ *
+ * V1.7 hotfix: `img-src 'self'` added. The Hsinchu CCTV probe page
+ * embeds <img> tags pointing at its own SAME-ORIGIN frame endpoints
+ * (/admin/cctv-hsinchu-frame/0..4) — those were being blocked by the
+ * previous `default-src 'none'` with no img-src override. Deliberately
+ * `'self'` only, never `*` and never the freeway.gov.tw hostname
+ * directly: the browser must only ever load a CCTV image through this
+ * Worker's own frame endpoint (which fetches it server-side with its
+ * own hostname/size/timeout checks — see tdx/hsinchuCctvProbe.js),
+ * never as a direct cross-origin image load straight from
+ * freeway.gov.tw.
  *
  * Rebuilds the Response (rather than mutating `response.headers` in
  * place) so this is safe regardless of how the original Response was
@@ -161,7 +173,7 @@ export function applyAdminSecurityHeaders(response) {
   if ((headers.get('Content-Type') || '').includes('text/html')) {
     headers.set(
       'Content-Security-Policy',
-      "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+      "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
     );
   }
 
