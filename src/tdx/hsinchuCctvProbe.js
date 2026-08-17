@@ -51,12 +51,18 @@
 // never reach further just to fill the slot, and never exceed 4 cameras
 // total in this first pass.
 //
-// V1.8.1 hard rule (post-Production-testing fix): the four-quadrant
-// search runs ONLY over an "eligible mainline CCTV pool" — records
-// inside a service area/rest stop (服務區/休息站/服務站) are excluded
-// BEFORE distance ranking, never merely deprioritized after the fact.
-// See isServiceAreaCctv's own comment for the full rationale and why
-// LocationType's numeric semantics are deliberately NOT assumed.
+// V1.8.1/V1.8.2 hard rule (post-Production-testing fixes): the
+// four-quadrant search runs ONLY over an "eligible mainline CCTV pool"
+// — records for a device physically INSIDE a service area/rest stop
+// (服務區/休息站/服務站) are excluded BEFORE distance ranking, never
+// merely deprioritized after the fact. Detection keys off the device's
+// OWN identifier (CCTVID) and LocationType-as-literal-text only — NOT
+// RoadSection/RoadName, which describe a road segment that can
+// legitimately mention a service area as one of its endpoints without
+// the camera being inside it (a mainline camera near 湖口服務區 was a
+// real false-positive caught in V1.8.2). See isServiceAreaCctv's own
+// comment for the full rationale and why LocationType's numeric
+// semantics are deliberately NOT assumed.
 //
 // PRE-ARM guard (admin:cctv-hsinchu-probe-used:v1) — identical ordering
 // principle to tdx/cctvProbe.js's V1.7 fix:
@@ -176,41 +182,60 @@ function isTargetRoad(record) {
 }
 
 // V1.8.1 hard rule (post-Production-testing fix): a CCTV physically
-// inside a service area / rest stop (服務區/休息站/服務站 — e.g.
-// 湖口服務區, real-world observed at 86K+000 on 國道1號) must NEVER be
-// selected as an incident camera, no matter how close its KM is to the
-// incident. These cameras typically point at a parking lot, gas
-// station, or the service area's own internal road — not the freeway
-// mainline — so a nearby KM number does not mean mainline visibility.
-// See PROJECT_HANDOFF.md's V1.8 section for the full rationale.
+// physically INSIDE a service area / rest stop (服務區/休息站/服務站 —
+// e.g. a camera pointed at 湖口服務區's own parking lot or fuel station)
+// must NEVER be selected as an incident camera, no matter how close its
+// KM is to the incident — such a camera cannot be assumed to show the
+// freeway mainline at all. See PROJECT_HANDOFF.md's V1.8 section for
+// the full rationale.
 //
-// LocationType semantics could NOT be verified for this fix: TDX's live
-// API and documentation are both unreachable from this sandbox (network
-// egress to tdx.transportdata.tw is blocked), so this deliberately does
-// NOT hardcode any LocationType enum-value assumption ("不要猜
-// LocationType 數值代表什麼"). Instead it scans every string-valued
-// field on the raw TDX record (RoadSection, RoadName, LocationType if
-// it happens itself to be textual, or any other descriptive field) for
-// the keywords below — a guess-free check grounded in whatever the
-// field's own text actually says, that works regardless of which exact
-// field name carries the description in the real payload, and doesn't
-// silently stop working if TDX renames/adds a field. If a future round
-// confirms (from a real response) that LocationType is a reliable
-// numeric/enum service-area marker, prefer switching to that structured
-// check instead — ask before doing so, since it changes what "service
-// area" detection actually keys off.
+// V1.8.2 correction: the first version of this rule scanned EVERY
+// string-valued field on the record — including RoadSection — for the
+// keywords below. That was too broad and produced false positives: a
+// genuine MAINLINE camera's RoadSection can legitimately read something
+// like "湖口交流道-湖口服務區" or "湖口服務區-竹北交流道" (the service
+// area is simply one of the two endpoints describing which stretch of
+// mainline the camera covers) — mentioning a service area in a road
+// SEGMENT description is not the same as the camera being INSIDE that
+// service area. Excluding on RoadSection alone would have thrown out
+// real mainline cameras near 湖口服務區. Narrowed to the two fields that
+// actually identify what the DEVICE ITSELF is/is at, not what stretch
+// of road it covers:
+//   1. CCTVID/CCTVId/ID — device identifiers observed in the real
+//      Production feed encode the camera's own siting directly, e.g.
+//      `CCTV-N1-N-86-R-湖口(北)服務區-停車場-1` ("停車場" = parking lot)
+//      unambiguously names the camera's own location, not a road-segment
+//      description.
+//   2. LocationType — ONLY if its value is itself a literal, human-
+//      readable string that names a service area/rest stop (e.g. a
+//      value that IS "服務區"). This is not a numeric/enum assumption:
+//      TDX's live API and documentation are both unreachable from this
+//      development sandbox (network egress to tdx.transportdata.tw is
+//      blocked, reconfirmed this round via curl and WebFetch), so
+//      LocationType's actual value set has never been observed here —
+//      "不要猜 LocationType 數值代表什麼" is honored by only ever
+//      matching it as literal text, exactly like CCTVID, never as a
+//      guessed code.
+// RoadSection and RoadName are deliberately EXCLUDED from this check —
+// they describe a road SEGMENT (which may legitimately span or border a
+// service area) and are not reliable evidence the device itself is
+// inside one. If TDX ever exposes another field that reliably describes
+// the DEVICE's own siting (not the segment it covers), it can be added
+// here — but only with the same reasoning documented, never as a blanket
+// scan of every field again.
 //
-// Deliberately narrow: only 服務區/休息站/服務站. Interchanges, ramps,
-// system interchanges, tunnels, and bridges are NOT excluded by this
-// rule — whether those are appropriate for incident CCTV is a separate
-// decision, not part of this fix.
+// Deliberately narrow scope, unchanged from V1.8.1: only 服務區/休息站/
+// 服務站. Interchanges, ramps, system interchanges, tunnels, and bridges
+// are NOT excluded by this rule — a separate, not-yet-made decision.
 const SERVICE_AREA_KEYWORDS = ['服務區', '休息站', '服務站'];
 
 function isServiceAreaCctv(record) {
-  for (const value of Object.values(record)) {
-    if (typeof value !== 'string') continue;
-    if (SERVICE_AREA_KEYWORDS.some((keyword) => value.includes(keyword))) return true;
-  }
+  const deviceId = firstDefinedField(record, ['CCTVID', 'CCTVId', 'ID']);
+  if (typeof deviceId === 'string' && SERVICE_AREA_KEYWORDS.some((keyword) => deviceId.includes(keyword))) return true;
+
+  const locationType = record.LocationType;
+  if (typeof locationType === 'string' && SERVICE_AREA_KEYWORDS.some((keyword) => locationType.includes(keyword))) return true;
+
   return false;
 }
 

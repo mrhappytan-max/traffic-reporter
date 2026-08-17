@@ -292,19 +292,32 @@ test('2c. a quadrant with nothing within +/-4km is left null — never reaches f
   assert.match(html, /CCTV quadrants filled: 0 \/ 4/);
 });
 
-// --- 2d-2g: V1.8.1 hard rule — 服務區/休息站/服務站 CCTV must never be
-// selected as an incident camera, no matter how close its KM is. The
-// real-world case that surfaced this: 國1 82K+100 incident, N後 quadrant
-// picking 86K+000 "北上湖口服務區" over a legitimate mainline camera.
+// --- 2d-2i: V1.8.1/V1.8.2 hard rule — a CCTV physically INSIDE a
+// service area/rest stop (服務區/休息站/服務站) must never be selected
+// as an incident camera, no matter how close its KM is. The real-world
+// case that surfaced this: 國1 82K+100 incident, N後 quadrant picking a
+// camera sited AT 湖口服務區 over a legitimate mainline camera.
+//
+// V1.8.2 narrowed WHICH fields count as evidence, after review found the
+// V1.8.1 version (scanning every string field, including RoadSection)
+// produced false positives: a genuine mainline camera's RoadSection can
+// legitimately read "湖口交流道-湖口服務區" or "湖口服務區-竹北交流道"
+// (naming a service area as one endpoint of the ROAD SEGMENT the camera
+// covers) without the camera being inside that service area at all.
+// Detection now keys ONLY off CCTVID/ID (the device's own identifier —
+// real Production feed observed pattern:
+// CCTV-N1-N-86-R-湖口(北)服務區-停車場-1) and LocationType-as-literal-
+// text — never RoadSection/RoadName.
 
-test('2d. a service-area camera is excluded even though it is the single nearest candidate in its quadrant — a farther mainline camera is picked instead', async () => {
+test('2d. [regression A] a CCTVID that names the device\'s own service-area/parking-lot siting is excluded — a farther mainline camera in the same quadrant is picked instead', async () => {
   const env = baseEnv();
   const records = [
-    // N後 quadrant (N, km>82.1): the real-world case — 86K+000 "北上湖口服務區"
-    // (dist 3.9, the NEAREST candidate) must be excluded; a farther-but-
-    // still-within-+/-4km mainline camera (86K+050, dist 3.95) must win.
-    cctvRecord({ CCTVID: 'CCTV-HUKOU-SA', RoadDirection: 'N', LocationMile: '86K+000', RoadSection: '北上湖口服務區', VideoStreamURL: 'https://cctv1.freeway.gov.tw/hukou-sa.jpg' }), // dist 3.90, nearest, service area -> must be excluded
-    cctvRecord({ CCTVID: 'CCTV-MAINLINE-FAR', RoadDirection: 'N', LocationMile: '86K+050', VideoStreamURL: 'https://cctv2.freeway.gov.tw/mainline-far.jpg' }), // dist 3.95, farther, mainline -> must win once the SA one is excluded
+    // N後 quadrant (N, km>82.1): the real Production CCTVID pattern —
+    // "CCTV-N1-N-86-R-湖口(北)服務區-停車場-1" (dist 3.9, the NEAREST
+    // candidate) must be excluded; a farther-but-still-within-+/-4km
+    // mainline camera (86K+050, dist 3.95) must win.
+    cctvRecord({ CCTVID: 'CCTV-N1-N-86-R-湖口(北)服務區-停車場-1', RoadDirection: 'N', LocationMile: '86K+000', VideoStreamURL: 'https://cctv1.freeway.gov.tw/hukou-sa.jpg' }), // dist 3.90, nearest, CCTVID names the device as inside the service area -> excluded
+    cctvRecord({ CCTVID: 'CCTV-N1-N-86.050-M', RoadDirection: 'N', LocationMile: '86K+050', VideoStreamURL: 'https://cctv2.freeway.gov.tw/mainline-far.jpg' }), // dist 3.95, farther, mainline -> must win once the SA one is excluded
   ];
   const { fetchFn, tdxHits } = makeFetch({ cctvRecords: records });
   priorFetch = globalThis.fetch;
@@ -316,16 +329,92 @@ test('2d. a service-area camera is excluded even though it is the single nearest
   // metadata response — it must never add a second TDX call.
   assert.equal(tdxHits.filter((h) => h.kind === 'cctv-metadata').length, 1);
   const stored = JSON.parse(env.TRAFFIC_KV.store.get(CANDIDATES_KEY));
-  assert.equal(stored.candidates[3].cctvId, 'CCTV-MAINLINE-FAR'); // N後 slot
+  assert.equal(stored.candidates[3].cctvId, 'CCTV-N1-N-86.050-M'); // N後 slot
   const html = await res.text();
-  assert.doesNotMatch(html, /CCTV-HUKOU-SA/);
-  assert.doesNotMatch(html, /湖口服務區/);
+  assert.doesNotMatch(html, /湖口\(北\)服務區|停車場/);
 });
 
-test('2e. a quadrant whose only candidates within +/-4km are all service-area cameras is left null, never backfilled with one', async () => {
+test('2e. [regression B] a RoadSection that merely MENTIONS a service area as a road-segment endpoint does NOT exclude a genuine mainline camera', async () => {
   const env = baseEnv();
   const records = [
-    cctvRecord({ CCTVID: 'CCTV-SA-ONLY', RoadDirection: 'N', LocationMile: '86K+000', RoadSection: '北上湖口服務區', VideoStreamURL: 'https://cctv1.freeway.gov.tw/sa-only.jpg' }), // N, after, dist 3.9, service area -> excluded, N後 has nothing else
+    // S後 quadrant (S, km>82.1): mainline camera, RoadSection names the
+    // service area as the segment's END point ("interchange -> service
+    // area") — this must NOT trigger exclusion.
+    cctvRecord({ CCTVID: 'CCTV-N1-S-84.600-M', RoadDirection: 'S', LocationMile: '84K+600', RoadSection: '湖口交流道-湖口服務區', VideoStreamURL: 'https://cctv1.freeway.gov.tw/b.jpg' }), // dist 2.5, mainline -> must be KEPT and selected
+  ];
+  const { fetchFn } = makeFetch({ cctvRecords: records });
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const res = await worker.fetch(authedRequest('/admin/cctv-hsinchu-probe'), env);
+  assert.equal(res.status, 200);
+  const stored = JSON.parse(env.TRAFFIC_KV.store.get(CANDIDATES_KEY));
+  assert.equal(stored.candidates[1].cctvId, 'CCTV-N1-S-84.600-M'); // S後 slot — kept despite RoadSection mentioning 湖口服務區
+  const html = await res.text();
+  assert.match(html, /CCTV-N1-S-84\.600-M/);
+});
+
+test('2e2. [regression C, isolated] a mainline camera whose RoadSection starts with a service-area name (not just ends with one) is also kept eligible', async () => {
+  const env = baseEnv();
+  const records = [
+    // Same regression-C record as above, but placed within +/-4km of a
+    // DIFFERENT target-adjacent quadrant so we can directly observe it
+    // being selected rather than merely "not obviously excluded."
+    cctvRecord({ CCTVID: 'CCTV-N1-S-86.750-M', RoadDirection: 'S', LocationMile: '85K+800', RoadSection: '湖口服務區-竹北交流道', VideoStreamURL: 'https://cctv1.freeway.gov.tw/c.jpg' }), // S, after, dist 3.7 -> within +/-4km, must be picked
+  ];
+  const { fetchFn } = makeFetch({ cctvRecords: records });
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const res = await worker.fetch(authedRequest('/admin/cctv-hsinchu-probe'), env);
+  assert.equal(res.status, 200);
+  const stored = JSON.parse(env.TRAFFIC_KV.store.get(CANDIDATES_KEY));
+  assert.equal(stored.candidates[1].cctvId, 'CCTV-N1-S-86.750-M'); // S後 slot — kept despite RoadSection naming 湖口服務區
+});
+
+test('2f. [regression D] a service-area camera much closer than a mainline camera is still rejected — proximity never overrides the exclusion', async () => {
+  const env = baseEnv();
+  const records = [
+    // S後 quadrant (S, km>82.1): service-area camera (by CCTVID) at
+    // dist 0.1, mainline camera at dist 0.5.
+    cctvRecord({ CCTVID: 'CCTV-N1-S-82-R-南下服務區-停車場-1', RoadDirection: 'S', LocationMile: '82K+200', VideoStreamURL: 'https://cctv1.freeway.gov.tw/sa-verynear.jpg' }), // dist 0.1, nearest, service area by CCTVID -> excluded despite being nearest
+    cctvRecord({ CCTVID: 'CCTV-N1-S-82.600-M', RoadDirection: 'S', LocationMile: '82K+600', VideoStreamURL: 'https://cctv2.freeway.gov.tw/mainline-near.jpg' }), // dist 0.5, mainline -> must win
+  ];
+  const { fetchFn } = makeFetch({ cctvRecords: records });
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const res = await worker.fetch(authedRequest('/admin/cctv-hsinchu-probe'), env);
+  assert.equal(res.status, 200);
+  const stored = JSON.parse(env.TRAFFIC_KV.store.get(CANDIDATES_KEY));
+  assert.equal(stored.candidates[1].cctvId, 'CCTV-N1-S-82.600-M'); // S後 slot
+});
+
+test('2g. LocationType is honored ONLY as literal text naming a service area — never scanned on RoadSection/RoadName, never treated as a guessed enum code', async () => {
+  const env = baseEnv();
+  const records = [
+    // N前 quadrant (N, km<82.1). Deliberately: the excluded candidate is
+    // NEARER to the incident than the mainline one — if exclusion were
+    // broken, it (not CCTV-MAINLINE) would win.
+    cctvRecord({ CCTVID: 'CCTV-N1-N-81.800-X', RoadDirection: 'N', LocationMile: '81K+800', LocationType: '服務站', VideoStreamURL: 'https://cctv1.freeway.gov.tw/service-station.jpg' }), // dist 0.3 (nearer than mainline), LocationType is literal text '服務站' -> excluded
+    cctvRecord({ CCTVID: 'CCTV-N1-N-81.100-M', RoadDirection: 'N', LocationMile: '81K+100', RoadSection: '頭份交流道-頭份服務區', VideoStreamURL: 'https://cctv2.freeway.gov.tw/mainline.jpg' }), // dist 1.0 (farther, but only eligible one), RoadSection mentions a service area but CCTVID/LocationType don't -> must be KEPT
+  ];
+  const { fetchFn } = makeFetch({ cctvRecords: records });
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const res = await worker.fetch(authedRequest('/admin/cctv-hsinchu-probe'), env);
+  assert.equal(res.status, 200);
+  const stored = JSON.parse(env.TRAFFIC_KV.store.get(CANDIDATES_KEY));
+  assert.equal(stored.candidates[2].cctvId, 'CCTV-N1-N-81.100-M'); // N前 slot
+  const html = await res.text();
+  assert.doesNotMatch(html, /CCTV-N1-N-81\.800-X/);
+});
+
+test('2h. a quadrant whose only in-radius candidate is a service-area camera (by CCTVID) is left null, never backfilled with it', async () => {
+  const env = baseEnv();
+  const records = [
+    cctvRecord({ CCTVID: 'CCTV-N1-N-86-R-湖口(北)服務區-停車場-2', RoadDirection: 'N', LocationMile: '86K+000', VideoStreamURL: 'https://cctv1.freeway.gov.tw/sa-only.jpg' }), // N, after, dist 3.9, service area by CCTVID -> excluded, N後 has nothing else
   ];
   const { fetchFn } = makeFetch({ cctvRecords: records });
   priorFetch = globalThis.fetch;
@@ -336,47 +425,8 @@ test('2e. a quadrant whose only candidates within +/-4km are all service-area ca
   const stored = JSON.parse(env.TRAFFIC_KV.store.get(CANDIDATES_KEY));
   assert.equal(stored.candidates[3], null); // N後 stays empty — never filled with the service-area camera
   const html = await res.text();
-  assert.doesNotMatch(html, /CCTV-SA-ONLY|湖口服務區/);
+  assert.doesNotMatch(html, /湖口\(北\)服務區|停車場/);
   assert.match(html, /CCTV quadrants filled: 0 \/ 4/);
-});
-
-test('2f. a service-area camera much closer than a mainline camera is still rejected — proximity never overrides the exclusion', async () => {
-  const env = baseEnv();
-  const records = [
-    // S後 quadrant (S, km>82.1): service-area camera at dist 0.1, mainline at dist 0.5.
-    cctvRecord({ CCTVID: 'CCTV-SA-VERYNEAR', RoadDirection: 'S', LocationMile: '82K+200', RoadName: '國道1號', RoadSection: '南下服務區', VideoStreamURL: 'https://cctv1.freeway.gov.tw/sa-verynear.jpg' }), // dist 0.1, service area -> excluded despite being nearest
-    cctvRecord({ CCTVID: 'CCTV-MAINLINE-NEAR', RoadDirection: 'S', LocationMile: '82K+600', VideoStreamURL: 'https://cctv2.freeway.gov.tw/mainline-near.jpg' }), // dist 0.5, mainline -> must win
-  ];
-  const { fetchFn } = makeFetch({ cctvRecords: records });
-  priorFetch = globalThis.fetch;
-  globalThis.fetch = fetchFn;
-
-  const res = await worker.fetch(authedRequest('/admin/cctv-hsinchu-probe'), env);
-  assert.equal(res.status, 200);
-  const stored = JSON.parse(env.TRAFFIC_KV.store.get(CANDIDATES_KEY));
-  assert.equal(stored.candidates[1].cctvId, 'CCTV-MAINLINE-NEAR'); // S後 slot
-});
-
-test('2g. 休息站/服務站 keywords are excluded the same as 服務區, regardless of which field carries the text — and exclusion is load-bearing (the excluded candidates are the NEARER ones)', async () => {
-  const env = baseEnv();
-  const records = [
-    // N前 quadrant (N, km<82.1). Deliberately: both excluded candidates
-    // are NEARER to the incident than the mainline one — if exclusion
-    // were broken, one of them (not CCTV-MAINLINE) would win.
-    cctvRecord({ CCTVID: 'CCTV-SERVICE-STATION', RoadDirection: 'N', LocationMile: '81K+800', LocationType: '服務站', VideoStreamURL: 'https://cctv1.freeway.gov.tw/service-station.jpg' }), // dist 0.3 (nearest of the 3), keyword in LocationType (as literal text, not a guessed enum code) -> excluded
-    cctvRecord({ CCTVID: 'CCTV-REST-STOP', RoadDirection: 'N', LocationMile: '81K+500', RoadName: '國道1號 頭份休息站', VideoStreamURL: 'https://cctv2.freeway.gov.tw/rest-stop.jpg' }), // dist 0.6, keyword in RoadName -> excluded
-    cctvRecord({ CCTVID: 'CCTV-MAINLINE', RoadDirection: 'N', LocationMile: '81K+100', VideoStreamURL: 'https://cctv3.freeway.gov.tw/mainline.jpg' }), // dist 1.0 (farthest of the 3, but only eligible one) -> must win
-  ];
-  const { fetchFn } = makeFetch({ cctvRecords: records });
-  priorFetch = globalThis.fetch;
-  globalThis.fetch = fetchFn;
-
-  const res = await worker.fetch(authedRequest('/admin/cctv-hsinchu-probe'), env);
-  assert.equal(res.status, 200);
-  const stored = JSON.parse(env.TRAFFIC_KV.store.get(CANDIDATES_KEY));
-  assert.equal(stored.candidates[2].cctvId, 'CCTV-MAINLINE'); // N前 slot
-  const html = await res.text();
-  assert.doesNotMatch(html, /CCTV-SERVICE-STATION|CCTV-REST-STOP|服務站|休息站/);
 });
 
 // --- 3. refresh after completion uses KV, 0 TDX calls ---
