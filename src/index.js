@@ -23,11 +23,14 @@ import { handleHsinchuCctvProbe, handleHsinchuCctvFrame } from './tdx/hsinchuCct
 // touch the real Cron/broadcast pipeline at all.
 //
 // V1.7 (next stage): /admin/cctv-hsinchu-probe (its own separate
-// one-time-use TDX call, see tdx/hsinchuCctvProbe.js) and its 5 fixed
-// frame paths /admin/cctv-hsinchu-frame/0..4 (each reads only a cached
+// one-time-use TDX call, see tdx/hsinchuCctvProbe.js) and its 4 fixed
+// frame paths /admin/cctv-hsinchu-frame/0..3 (each reads only a cached
 // KV candidate and fetches directly from freeway.gov.tw — 0 TDX calls,
-// enforced by that module's own import graph).
-const HSINCHU_FRAME_PATHS = Array.from({ length: 5 }, (_, i) => `/admin/cctv-hsinchu-frame/${i}`);
+// enforced by that module's own import graph). Exactly 4, one per
+// quadrant (S前/S後/N前/N後) — the ratified four-quadrant selector caps
+// at 4 candidates, never more; see hsinchuCctvProbe.js's CANDIDATE_COUNT
+// and PROJECT_HANDOFF.md section 14.
+const HSINCHU_FRAME_PATHS = Array.from({ length: 4 }, (_, i) => `/admin/cctv-hsinchu-frame/${i}`);
 const ADMIN_PATHS = new Set([
   '/health',
   '/debug/status',

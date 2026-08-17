@@ -10,16 +10,37 @@
 // Three endpoints, three concerns, cleanly separated:
 //   - GET /admin/cctv-hsinchu-probe        — STEP 1+2+4: the ONE allowed
 //     TDX CCTV metadata call (only on the very first, never-attempted
-//     request), local KM-based filtering/ranking, persisting the top 5
+//     request), local four-quadrant selection, persisting up to 4
 //     candidates to KV, and rendering the mobile HTML page. On every
 //     later request it only ever reads the candidates KV — see below,
 //     this file's import graph makes a second TDX call structurally
 //     impossible once the guard is armed/completed.
-//   - GET /admin/cctv-hsinchu-frame/0..4    — STEP 3: fetches ONE JPEG
+//   - GET /admin/cctv-hsinchu-frame/0..3    — STEP 3: fetches ONE JPEG
 //     frame from the CCTV's own VideoStreamURL (a freeway.gov.tw MJPEG
 //     stream), never touching TDX at all. This handler does not import
 //     getAccessToken/fetchTdxJson/anything TDX-related — "0 TDX calls"
 //     is enforced by the import graph itself, not just by convention.
+//
+// V1.7 CCTV 四象限選鏡規則 / 4-camera cross-direction search — RATIFIED,
+// see PROJECT_HANDOFF.md section 14 for the full rationale. Supersedes
+// the earlier "nearest 5 CCTV by KM distance" approach. Given the fixed
+// incident point TARGET_KM, this module searches exactly 4 fixed
+// quadrants — never more, single first pass, never a second TDX call:
+//   1. S, km < TARGET_KM — nearest southbound camera BEFORE the incident.
+//   2. S, km > TARGET_KM — nearest southbound camera AFTER the incident.
+//   3. N, km < TARGET_KM — nearest northbound camera BEFORE the incident.
+//   4. N, km > TARGET_KM — nearest northbound camera AFTER the incident.
+// Rationale: national freeway PTZ CCTV units are steerable and are
+// frequently panned by 交控中心 to point at an incident regardless of
+// which carriageway they're physically mounted on — a southbound
+// incident may in practice be best seen by a northbound camera turned to
+// face across the median. A same-direction-only or plain-nearest-N
+// selector can silently miss the camera that actually shows the scene.
+// Distance strategy per quadrant, independently: prefer a candidate
+// within +/-2km of TARGET_KM; if none, widen to +/-4km for that quadrant
+// only; if still none, leave that quadrant empty (index stays null) —
+// never reach further just to fill the slot, and never exceed 4 cameras
+// total in this first pass.
 //
 // PRE-ARM guard (admin:cctv-hsinchu-probe-used:v1) — identical ordering
 // principle to tdx/cctvProbe.js's V1.7 fix:
@@ -30,10 +51,11 @@
 //   3. OAuth failure -> KV stays 'armed', locked, no auto-retry.
 //   4. The ONE CCTV metadata call. Failure -> KV stays 'armed', locked,
 //      no retry.
-//   5. Success -> filter/rank/select top 5 -> persist candidates (own
-//      key, 1h TTL) -> flip 'armed' -> 'completed'. If that last write
-//      fails, KV simply stays 'armed' (a failed put never partially
-//      commits) — still fully locked either way.
+//   5. Success -> four-quadrant select (at most 4 candidates, some slots
+//      possibly null) -> persist candidates (own key, 1h TTL) -> flip
+//      'armed' -> 'completed'. If that last write fails, KV simply stays
+//      'armed' (a failed put never partially commits) — still fully
+//      locked either way.
 // No auto-reset, no reset endpoint — a human must manually delete
 // admin:cctv-hsinchu-probe-used:v1 (and, if desired,
 // admin:cctv-hsinchu-candidates:v1) to run this again.
@@ -50,14 +72,28 @@ export const CANDIDATES_KEY = 'admin:cctv-hsinchu-candidates:v1';
 const CANDIDATES_TTL_SECONDS = 3600; // 1 hour
 
 // Full freeway CCTV list — deliberately NO $top here (unlike
-// tdx/cctvProbe.js's $top=1) because candidate selection needs to
-// compare across every 國道1號 record to find the 5 nearest to
-// TARGET_KM; filtering happens locally in this Worker, per spec.
+// tdx/cctvProbe.js's $top=1) because four-quadrant selection needs to
+// compare across every 國道1號 record to find the nearest candidate in
+// each of the 4 quadrants around TARGET_KM; filtering happens locally in
+// this Worker, per spec.
 const CCTV_URL = 'https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/CCTV/Freeway?$format=JSON';
 
 const TARGET_ROAD_ID = '000010';
 const TARGET_KM = 82.1; // 國道1號 82K+100
-const CANDIDATE_COUNT = 5;
+const NEAR_RADIUS_KM = 2; // preferred radius per quadrant
+const WIDE_RADIUS_KM = 4; // fallback radius per quadrant if the near radius is empty
+const CANDIDATE_COUNT = 4; // fixed: S-before, S-after, N-before, N-after — never more
+
+// Quadrant slot definitions, index-aligned with the persisted candidates
+// array and with /admin/cctv-hsinchu-frame/<index>. `direction` matches
+// against a normalized S/N form of the record's RoadDirection/Direction
+// field; `side` picks which side of TARGET_KM this slot covers.
+const QUADRANTS = [
+  { label: 'S前', direction: 'S', side: 'before' },
+  { label: 'S後', direction: 'S', side: 'after' },
+  { label: 'N前', direction: 'N', side: 'before' },
+  { label: 'N後', direction: 'N', side: 'after' },
+];
 
 const TRUSTED_IMAGE_HOST_SUFFIX = 'freeway.gov.tw';
 export const MAX_FRAME_BYTES = 2 * 1024 * 1024; // 2 MB
@@ -99,14 +135,28 @@ function isTargetRoad(record) {
   return typeof roadName === 'string' && /國道1號|國道一號/.test(roadName);
 }
 
+/** Normalizes a raw RoadDirection/Direction field value to 'S', 'N', or
+ * null (unrecognized). Accepts TDX's short codes ('S'/'N') as well as
+ * common textual variants defensively — TDX field content has been
+ * observed to vary in casing/verbosity across endpoints. */
+function normalizeDirection(rawDirection) {
+  if (typeof rawDirection !== 'string') return null;
+  const value = rawDirection.trim().toUpperCase();
+  if (value === 'S' || value === '南' || value === '南向' || value.startsWith('SOUTH')) return 'S';
+  if (value === 'N' || value === '北' || value === '北向' || value.startsWith('NORTH')) return 'N';
+  return null;
+}
+
 /**
- * Local filter + KM-distance ranking. Both directions kept — a PTZ
- * camera on the opposite carriageway may still be aimed at the incident
- * side, so direction is never used to exclude a candidate, only KM
- * distance decides the ranking, per spec.
+ * V1.7 four-quadrant selector — see module comment and
+ * PROJECT_HANDOFF.md section 14 for the ratified rule. Returns a fixed
+ * CANDIDATE_COUNT-length array, index-aligned to QUADRANTS (S前/S後/N前/
+ * N後); any quadrant with no eligible candidate within +/-WIDE_RADIUS_KM
+ * is `null` at that index — never omitted, never backfilled from another
+ * quadrant, never more than 4 entries total.
  */
-function selectNearestCandidates(records) {
-  const withDistance = [];
+function selectFourQuadrantCandidates(records) {
+  const usable = [];
   for (const record of records) {
     if (!isTargetRoad(record)) continue;
     const cctvId = firstDefinedField(record, ['CCTVID', 'CCTVId', 'ID']);
@@ -114,26 +164,43 @@ function selectNearestCandidates(records) {
     const locationMile = firstDefinedField(record, ['LocationMile']);
     if (!cctvId || !videoStreamUrl) continue; // unusable without an ID or an image URL
     const km = parseKM(locationMile);
-    if (km === null) continue; // can't rank without a parseable KM
-    withDistance.push({
+    if (km === null) continue; // can't place into a quadrant without a parseable KM
+    const direction = normalizeDirection(firstDefinedField(record, ['RoadDirection', 'Direction']));
+    if (direction === null) continue; // can't place into a quadrant without a known direction
+    usable.push({
       cctvId,
-      roadDirection: firstDefinedField(record, ['RoadDirection', 'Direction']),
+      roadDirection: direction,
       locationMile,
       positionLon: firstDefinedField(record, ['PositionLon']),
       positionLat: firstDefinedField(record, ['PositionLat']),
       videoStreamUrl,
+      km,
       distanceKm: Math.abs(km - TARGET_KM),
     });
   }
-  withDistance.sort((a, b) => a.distanceKm - b.distanceKm);
-  return withDistance.slice(0, CANDIDATE_COUNT);
+
+  return QUADRANTS.map((quadrant) => {
+    const inDirection = usable.filter((c) => c.roadDirection === quadrant.direction);
+    const inSide = inDirection.filter((c) => (quadrant.side === 'before' ? c.km < TARGET_KM : c.km > TARGET_KM));
+
+    const nearest = (maxRadiusKm) => {
+      const withinRadius = inSide.filter((c) => c.distanceKm <= maxRadiusKm);
+      if (withinRadius.length === 0) return null;
+      return withinRadius.reduce((best, c) => (c.distanceKm < best.distanceKm ? c : best));
+    };
+
+    return nearest(NEAR_RADIUS_KM) ?? nearest(WIDE_RADIUS_KM);
+  });
 }
 
 // Only these 6 fields are ever persisted — per spec, "只保存". distanceKm
 // is re-derived from locationMile at render time instead (same "derive
 // human-readable info at render time, not bake-time" convention this
-// project already uses — see health.js).
+// project already uses — see health.js). `null` (an empty quadrant slot)
+// passes through unchanged so the persisted array stays a fixed
+// CANDIDATE_COUNT-length, index-aligned-to-quadrant array.
 function toStorableCandidate(c) {
+  if (c === null) return null;
   return {
     cctvId: c.cctvId,
     roadDirection: c.roadDirection,
@@ -206,24 +273,35 @@ function renderPage(bodyHtml) {
 </html>`;
 }
 
+// Four fixed quadrant cards, index-aligned with QUADRANTS/CANDIDATE_COUNT
+// and /admin/cctv-hsinchu-frame/<index>. An empty quadrant is rendered
+// explicitly ("無符合鏡頭") rather than being silently skipped — per the
+// ratified rule (PROJECT_HANDOFF.md section 14), a missing camera is an
+// honest, visible result, not something to hide or backfill.
 function renderCandidateCards(candidates) {
-  return candidates
-    .map(
-      (c, i) => `<div class="card">
-    <h2>${i + 1}. ${escapeHtml(c.roadDirection || '未知方向')} / ${escapeHtml(c.locationMile || '未知里程')} / 距事故 ${candidateDistanceLabel(c)}</h2>
+  return QUADRANTS.map((quadrant, i) => {
+    const c = candidates[i];
+    if (!c) {
+      return `<div class="card">
+    <h2>${escapeHtml(quadrant.label)}</h2>
+    <p class="warn">此象限 &plusmn;${WIDE_RADIUS_KM}km 內無符合鏡頭。</p>
+  </div>`;
+    }
+    return `<div class="card">
+    <h2>${escapeHtml(quadrant.label)} / ${escapeHtml(c.locationMile || '未知里程')} / 距事故 ${candidateDistanceLabel(c)}</h2>
     <img src="/admin/cctv-hsinchu-frame/${i}" alt="CCTV ${escapeHtml(c.cctvId)}" loading="lazy">
-  </div>`
-    )
-    .join('\n');
+  </div>`;
+  }).join('\n');
 }
 
-function renderStats({ metadataCalls, candidateCount }) {
-  const note = `${candidateCount} 張 CCTV 圖片皆直接由高速公路局影像主機取得，未呼叫 TDX CCTV API。`;
+function renderStats({ metadataCalls, candidates }) {
+  const filledCount = candidates.filter(Boolean).length;
+  const note = `${filledCount} 張 CCTV 圖片皆直接由高速公路局影像主機取得，未呼叫 TDX CCTV API。`;
   return `<div class="card">
     <h2>統計</h2>
     <div class="stats">TDX CCTV metadata calls: ${metadataCalls}
-CCTV candidates: ${candidateCount}
-CCTV image fetches: ${candidateCount}
+CCTV quadrants filled: ${filledCount} / ${CANDIDATE_COUNT}
+CCTV image fetches: ${filledCount}
 CCTV image TDX Authorization: none
 CCTV image source: *.freeway.gov.tw</div>
     <p class="note">${escapeHtml(note)}</p>
@@ -260,7 +338,7 @@ export async function handleHsinchuCctvProbe(env) {
         200
       );
     }
-    return htmlResponse(renderPage(renderCandidateCards(candidates) + renderStats({ metadataCalls: 0, candidateCount: candidates.length })), 200);
+    return htmlResponse(renderPage(renderCandidateCards(candidates) + renderStats({ metadataCalls: 0, candidates })), 200);
   }
 
   // 1. PRE-ARM — write 'armed' BEFORE any TDX-related call at all.
@@ -297,7 +375,7 @@ export async function handleHsinchuCctvProbe(env) {
   }
 
   const records = Array.isArray(cctvJson) ? cctvJson : cctvJson.CCTVs || cctvJson.Data || [];
-  const candidates = selectNearestCandidates(records);
+  const candidates = selectFourQuadrantCandidates(records);
 
   await persistCandidates(env.TRAFFIC_KV, candidates, new Date());
 
@@ -310,14 +388,11 @@ export async function handleHsinchuCctvProbe(env) {
     // locked (0 TDX calls on every future request) — see module comment.
   }
 
-  if (candidates.length === 0) {
-    return htmlResponse(
-      renderPage('<div class="card"><p class="warn">No 國道1號 CCTV candidates found near 82K+100 in this response.</p></div>' + renderStats({ metadataCalls: 1, candidateCount: 0 })),
-      200
-    );
-  }
-
-  return htmlResponse(renderPage(renderCandidateCards(candidates) + renderStats({ metadataCalls: 1, candidateCount: candidates.length })), 200);
+  // Always render all 4 quadrant slots (renderCandidateCards already
+  // shows an explicit "no candidate" state per empty slot) — an all-empty
+  // result is still shown honestly rather than replaced with a single
+  // generic warning, per the ratified rule.
+  return htmlResponse(renderPage(renderCandidateCards(candidates) + renderStats({ metadataCalls: 1, candidates })), 200);
 }
 
 // --- STEP 3: single-frame MJPEG capture. Imports NOTHING TDX-related. ---

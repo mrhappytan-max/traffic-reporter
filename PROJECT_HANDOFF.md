@@ -214,3 +214,31 @@ Key rollback points if a specific round's change is suspect:
 - Don't re-investigate the VPC/Tunnel/PBS-relay-auth history (400s, 401s, token format) — it's solved. Only revisit if production actually shows a new failure there.
 - Don't flip `PBS_BROADCAST_ENABLED` or expand who's subscribed without explicit instruction — both are deliberate, narrow Alpha-stage choices.
 - Don't delete `congestionCluster.js`/`notified.js`'s congestion-cooldown code just because it's currently unreachable (§10 item 4).
+
+---
+
+## 14. V1.7 CCTV 四象限選鏡規則 (4-camera cross-direction search)
+
+**Status: ratified rule, official baseline for any future CCTV-selection implementation.** Supersedes the earlier "nearest 5 CCTV by KM distance" approach used in the V1.7 exploratory probes (`src/tdx/hsinchuCctvProbe.js`'s original `selectNearestCandidates`) — that approach is retired; do not reintroduce a plain nearest-N selector without being explicitly told to.
+
+**Why nearest-5 was wrong:** a plain KM-distance sort can return 5 cameras all facing the same direction, or all on one side of the incident, and can easily miss the camera that actually has eyes on the scene. National freeway PTZ CCTV units are steerable and are frequently panned by the 交控中心 to point at an incident regardless of which carriageway they're physically mounted on — a southbound (S) incident may in practice be best seen by a northbound (N) camera that's been turned to face across the median. Any selection rule that only looks at one direction, or only at "closest," can silently pick 5 cameras that never show the incident at all.
+
+**The rule**, given a fixed incident point `targetKm`:
+
+Search **exactly 4 fixed quadrants**, never more, in a single first pass:
+
+1. **S, km < targetKm** — nearest southbound camera *before* the incident (approaching from the low-KM side).
+2. **S, km > targetKm** — nearest southbound camera *after* the incident.
+3. **N, km < targetKm** — nearest northbound camera *before* the incident.
+4. **N, km > targetKm** — nearest northbound camera *after* the incident.
+
+Distance strategy per quadrant, applied independently:
+- Prefer a candidate within **±2 km** of `targetKm`.
+- If that quadrant has no candidate within ±2 km, widen to **±4 km** for that quadrant only.
+- If still nothing within ±4 km, **leave that quadrant empty** — never reach further just to fill the slot. A missing camera is honest; a camera 15km away mislabeled as "nearby" is not.
+
+Result: **at most 4 cameras**, one per quadrant, each quadrant independently empty-or-filled. Never fetch a 5th camera in this first pass. (A later round may add a second pass / fallback tier for empty quadrants — not part of this baseline; ask before adding one.)
+
+**Confirmed feasibility (V1.7 probe rounds, live-tested):** a CCTV's `VideoStreamURL` from TDX metadata is a direct `*.freeway.gov.tw` MJPEG stream; fetching a frame from it requires **no TDX Authorization header at all** and is a completely separate request from the TDX CCTV metadata API. So all 4 quadrant images together cost **zero additional TDX API calls** beyond the one metadata lookup that found their `VideoStreamURL`s in the first place — see `src/tdx/hsinchuCctvProbe.js`'s `extractFirstJpegFrame`/frame-endpoint design (hostname-allowlisted to `*.freeway.gov.tw`, https-only, 2MB/~5s caps, single-JPEG-then-stop) for the mechanics, which this rule reuses unchanged — only the *selection* logic changes from nearest-5 to four-quadrant.
+
+**Out of scope for this rule / do not bundle in:** AI incident recognition, LINE delivery of CCTV images, any change to the Cron schedule, any change to the real broadcast pipeline. This is a manual, Admin-Auth-gated diagnostic selection rule only, same one-time-use PRE-ARM TDX-quota guard as the rest of the V1.7 probe work (§ see `tdx/hsinchuCctvProbe.js`'s own module comment) — not wired into `scheduled.js`/`broadcastPipeline.js` in any way as of this writing.

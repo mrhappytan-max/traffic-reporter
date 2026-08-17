@@ -1,6 +1,12 @@
-// V1.7 next stage — GET /admin/cctv-hsinchu-probe + /admin/cctv-hsinchu-frame/0..4.
+// V1.7 next stage — GET /admin/cctv-hsinchu-probe + /admin/cctv-hsinchu-frame/0..3.
 // Exercises the real Worker entry point end to end. No real TDX or
 // Production calls anywhere in this file — every fetch is mocked.
+//
+// V1.7 CCTV 四象限選鏡規則 / 4-camera cross-direction search (see
+// PROJECT_HANDOFF.md section 14): candidates are selected into 4 fixed
+// quadrant slots — [0]=S前 (S, km<target), [1]=S後 (S, km>target),
+// [2]=N前 (N, km<target), [3]=N後 (N, km>target) — each independently
+// preferring +/-2km, widening to +/-4km only if empty, else left null.
 
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -53,15 +59,24 @@ function unauthedRequest(path) {
   return new Request(`https://traffic-reporter.example.workers.dev${path}`, { method: 'GET' });
 }
 
-// --- Mock CCTV metadata: 9 records, only 5 should survive filter+rank ---
+// --- Mock CCTV metadata for the four-quadrant selector (TARGET_KM=82.1) ---
+//
+// Quadrant outcomes deliberately exercise all 3 tiers:
+//   [0] S前 (S, km<82.1): CCTV-SB-NEAR (dist 0.1, within +/-2km) wins over
+//       CCTV-SB-FAR (dist 2.1, also S-before but farther) -> nearest-wins.
+//   [1] S後 (S, km>82.1): only CCTV-SA-WIDE (dist 3.4) exists -> nothing
+//       within +/-2km, widens to +/-4km and picks it.
+//   [2] N前 (N, km<82.1): only CCTV-NB-TOOFAR (dist 12.1) exists, which is
+//       beyond +/-4km -> quadrant is left null, never reached further.
+//   [3] N後 (N, km>82.1): CCTV-NA-NEAR (dist 1.4, within +/-2km) wins.
 
 function cctvRecord(overrides) {
   return {
     CCTVID: 'CCTV-DEFAULT',
     RoadID: '000010',
     RoadName: '國道1號',
-    RoadDirection: 'N',
-    LocationMile: '82K+020',
+    RoadDirection: 'S',
+    LocationMile: '82K+000',
     PositionLon: 120.9,
     PositionLat: 24.8,
     VideoStreamURL: 'https://cctv1.freeway.gov.tw/stream/default.jpg',
@@ -70,16 +85,19 @@ function cctvRecord(overrides) {
 }
 
 const MOCK_RECORDS = [
-  cctvRecord({ CCTVID: 'CCTV-A', LocationMile: '82K+020', VideoStreamURL: 'https://cctv1.freeway.gov.tw/a.jpg' }), // dist 0.08
-  cctvRecord({ CCTVID: 'CCTV-B', LocationMile: '82K+200', RoadDirection: 'S', VideoStreamURL: 'https://cctv2.freeway.gov.tw/b.jpg' }), // dist 0.10
-  cctvRecord({ CCTVID: 'CCTV-C', LocationMile: '81K+800', VideoStreamURL: 'https://cctv3.freeway.gov.tw/c.jpg' }), // dist 0.30
-  cctvRecord({ CCTVID: 'CCTV-D', LocationMile: '83K+000', VideoStreamURL: 'https://cctv4.freeway.gov.tw/d.jpg' }), // dist 0.90
-  cctvRecord({ CCTVID: 'CCTV-E', LocationMile: '80K+500', VideoStreamURL: 'https://cctv5.freeway.gov.tw/e.jpg' }), // dist 1.60
-  cctvRecord({ CCTVID: 'CCTV-F', LocationMile: '90K+000', VideoStreamURL: 'https://cctv6.freeway.gov.tw/f.jpg' }), // dist 7.90 -> excluded (6th nearest)
-  cctvRecord({ CCTVID: 'CCTV-G', RoadID: '000030', RoadName: '國道3號', LocationMile: '82K+000' }), // wrong road -> excluded
-  cctvRecord({ CCTVID: 'CCTV-H', LocationMile: '82K+050', VideoStreamURL: '' }), // no image URL -> excluded
-  cctvRecord({ CCTVID: 'CCTV-I', LocationMile: 'N/A', VideoStreamURL: 'https://cctv9.freeway.gov.tw/i.jpg' }), // unparseable KM -> excluded
+  cctvRecord({ CCTVID: 'CCTV-SB-NEAR', RoadDirection: 'S', LocationMile: '82K+000', VideoStreamURL: 'https://cctv1.freeway.gov.tw/sb-near.jpg' }), // S, before, dist 0.1 -> picked
+  cctvRecord({ CCTVID: 'CCTV-SB-FAR', RoadDirection: 'S', LocationMile: '80K+000', VideoStreamURL: 'https://cctv2.freeway.gov.tw/sb-far.jpg' }), // S, before, dist 2.1 -> excluded (not nearest)
+  cctvRecord({ CCTVID: 'CCTV-SA-WIDE', RoadDirection: 'S', LocationMile: '85K+500', VideoStreamURL: 'https://cctv3.freeway.gov.tw/sa-wide.jpg' }), // S, after, dist 3.4 -> picked via +/-4km widen
+  cctvRecord({ CCTVID: 'CCTV-NB-TOOFAR', RoadDirection: 'N', LocationMile: '70K+000', VideoStreamURL: 'https://cctv4.freeway.gov.tw/nb-toofar.jpg' }), // N, before, dist 12.1 -> excluded, slot left null
+  cctvRecord({ CCTVID: 'CCTV-NA-NEAR', RoadDirection: 'N', LocationMile: '83K+500', VideoStreamURL: 'https://cctv5.freeway.gov.tw/na-near.jpg' }), // N, after, dist 1.4 -> picked
+  cctvRecord({ CCTVID: 'CCTV-WRONGROAD', RoadID: '000030', RoadName: '國道3號', LocationMile: '82K+000', VideoStreamURL: 'https://cctv6.freeway.gov.tw/wrong.jpg' }), // wrong road -> excluded
+  cctvRecord({ CCTVID: 'CCTV-NOURL', LocationMile: '82K+050', VideoStreamURL: '' }), // no image URL -> excluded
+  cctvRecord({ CCTVID: 'CCTV-BADKM', LocationMile: 'N/A', VideoStreamURL: 'https://cctv7.freeway.gov.tw/badkm.jpg' }), // unparseable KM -> excluded
+  cctvRecord({ CCTVID: 'CCTV-NODIR', RoadDirection: 'X', LocationMile: '82K+000', VideoStreamURL: 'https://cctv8.freeway.gov.tw/nodir.jpg' }), // unrecognized direction -> excluded
 ];
+
+// Index-aligned to QUADRANTS: [S前, S後, N前, N後].
+const EXPECTED_QUADRANT_ORDER = ['CCTV-SB-NEAR', 'CCTV-SA-WIDE', null, 'CCTV-NA-NEAR'];
 
 function makeFetch({ cctvStatus = 200, cctvRecords = MOCK_RECORDS, tokenStatus = 200 } = {}) {
   const tdxHits = [];
@@ -196,9 +214,9 @@ test('1b. GET /admin/cctv-hsinchu-frame/0 with no Authorization -> 401, 0 TDX ca
   assert.equal(tdxHits.length, 0);
 });
 
-// --- 2. metadata called at most once, and selects the 5 nearest 國道1號 candidates ---
+// --- 2. metadata called at most once, and fills the 4 quadrant slots ---
 
-test('2. first legitimate run makes exactly 1 CCTV metadata call and selects the 5 nearest 國道1號 candidates in order', async () => {
+test('2. first legitimate run makes exactly 1 CCTV metadata call and selects the four-quadrant candidates (S前/S後/N前/N後) in order', async () => {
   const env = baseEnv();
   const { fetchFn, tdxHits } = makeFetch();
   priorFetch = globalThis.fetch;
@@ -209,23 +227,69 @@ test('2. first legitimate run makes exactly 1 CCTV metadata call and selects the
   assert.equal(tdxHits.filter((h) => h.kind === 'cctv-metadata').length, 1);
 
   const html = await res.text();
-  const order = ['CCTV-A', 'CCTV-B', 'CCTV-C', 'CCTV-D', 'CCTV-E'];
-  // All 5 candidates rendered as image tags pointing at frame endpoints 0-4.
-  for (let i = 0; i < 5; i += 1) {
-    assert.match(html, new RegExp(`/admin/cctv-hsinchu-frame/${i}`));
-  }
+  // Filled quadrant slots (0, 1, 3) rendered as image tags pointing at
+  // their frame endpoint; the empty quadrant (2, N前) has no image tag.
+  assert.match(html, /\/admin\/cctv-hsinchu-frame\/0/);
+  assert.match(html, /\/admin\/cctv-hsinchu-frame\/1/);
+  assert.doesNotMatch(html, /\/admin\/cctv-hsinchu-frame\/2/);
+  assert.match(html, /\/admin\/cctv-hsinchu-frame\/3/);
   // Excluded records never leak into the page.
-  assert.doesNotMatch(html, /CCTV-F|CCTV-G|CCTV-H|CCTV-I/);
+  assert.doesNotMatch(html, /CCTV-SB-FAR|CCTV-NB-TOOFAR|CCTV-WRONGROAD|CCTV-NOURL|CCTV-BADKM|CCTV-NODIR/);
+  // All 4 quadrant labels are visible, including the empty one.
+  assert.match(html, /S前/);
+  assert.match(html, /S後/);
+  assert.match(html, /N前/);
+  assert.match(html, /N後/);
+  assert.match(html, /無符合鏡頭/); // the empty N前 slot is shown explicitly, not omitted
   assert.match(html, /TDX CCTV metadata calls: 1/);
-  assert.match(html, /CCTV candidates: 5/);
+  assert.match(html, /CCTV quadrants filled: 3 \/ 4/);
 
   const storedRaw = env.TRAFFIC_KV.store.get(CANDIDATES_KEY);
   const stored = JSON.parse(storedRaw);
-  assert.deepEqual(stored.candidates.map((c) => c.cctvId), order);
-  // Only the 6 allowed fields are persisted.
+  assert.equal(stored.candidates.length, 4);
+  assert.deepEqual(stored.candidates.map((c) => (c ? c.cctvId : null)), EXPECTED_QUADRANT_ORDER);
+  // Only the 6 allowed fields are persisted on each filled slot; the empty
+  // slot is persisted as a literal null, not omitted.
   for (const c of stored.candidates) {
+    if (c === null) continue;
     assert.deepEqual(Object.keys(c).sort(), ['cctvId', 'locationMile', 'positionLat', 'positionLon', 'roadDirection', 'videoStreamUrl'].sort());
   }
+  assert.equal(stored.candidates[2], null);
+});
+
+// --- 2b/2c: distance-tier boundaries, isolated from the other quadrants ---
+
+test('2b. a quadrant with nothing within +/-2km widens to +/-4km and picks the nearest candidate there', async () => {
+  const env = baseEnv();
+  const records = [
+    cctvRecord({ CCTVID: 'CCTV-WIDEN-HIT', RoadDirection: 'S', LocationMile: '85K+900', VideoStreamURL: 'https://cctv1.freeway.gov.tw/widen-hit.jpg' }), // S, after, dist 3.8 -> within +/-4km
+  ];
+  const { fetchFn } = makeFetch({ cctvRecords: records });
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const res = await worker.fetch(authedRequest('/admin/cctv-hsinchu-probe'), env);
+  assert.equal(res.status, 200);
+  const stored = JSON.parse(env.TRAFFIC_KV.store.get(CANDIDATES_KEY));
+  assert.equal(stored.candidates[1].cctvId, 'CCTV-WIDEN-HIT'); // S後 slot
+});
+
+test('2c. a quadrant with nothing within +/-4km is left null — never reaches further to fill the slot', async () => {
+  const env = baseEnv();
+  const records = [
+    cctvRecord({ CCTVID: 'CCTV-TOO-FAR', RoadDirection: 'N', LocationMile: '77K+000', VideoStreamURL: 'https://cctv1.freeway.gov.tw/too-far.jpg' }), // N, before, dist 5.1 -> beyond +/-4km
+  ];
+  const { fetchFn } = makeFetch({ cctvRecords: records });
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const res = await worker.fetch(authedRequest('/admin/cctv-hsinchu-probe'), env);
+  assert.equal(res.status, 200);
+  const stored = JSON.parse(env.TRAFFIC_KV.store.get(CANDIDATES_KEY));
+  assert.deepEqual(stored.candidates, [null, null, null, null]); // N前 (and every other quadrant) stays empty
+  const html = await res.text();
+  assert.doesNotMatch(html, /CCTV-TOO-FAR/);
+  assert.match(html, /CCTV quadrants filled: 0 \/ 4/);
 });
 
 // --- 3. refresh after completion uses KV, 0 TDX calls ---
@@ -245,12 +309,12 @@ test('3. after completion, refreshing the probe page reads candidates from KV ->
   assert.equal(res2.status, 200);
   assert.equal(second.tdxHits.length, 0);
   const html2 = await res2.text();
-  assert.match(html2, /CCTV candidates: 5/);
+  assert.match(html2, /CCTV quadrants filled: 3 \/ 4/);
 });
 
-// --- 4. all 5 frame endpoints make 0 TDX calls ---
+// --- 4. all filled frame endpoints make 0 TDX calls; the empty quadrant 404s ---
 
-test('4. all 5 /admin/cctv-hsinchu-frame/N endpoints make 0 TDX calls', async () => {
+test('4. all filled /admin/cctv-hsinchu-frame/N endpoints make 0 TDX calls; the empty quadrant slot 404s', async () => {
   const env = baseEnv();
   const setup = makeFetch();
   priorFetch = globalThis.fetch;
@@ -267,12 +331,30 @@ test('4. all 5 /admin/cctv-hsinchu-frame/N endpoints make 0 TDX calls', async ()
     return new Response(mjpegStreamThatHangsAfterFrame(), { status: 200, headers: { 'Content-Type': 'multipart/x-mixed-replace;boundary=--myboundary' } });
   };
 
-  for (let i = 0; i < 5; i += 1) {
+  // Filled slots: 0 (S前), 1 (S後), 3 (N後).
+  for (const i of [0, 1, 3]) {
     const res = await worker.fetch(authedRequest(`/admin/cctv-hsinchu-frame/${i}`), env);
     assert.equal(res.status, 200);
     assert.equal(res.headers.get('Content-Type'), 'image/jpeg');
   }
+  // Empty slot: 2 (N前) — 404, never fetched.
+  const emptyRes = await worker.fetch(authedRequest('/admin/cctv-hsinchu-frame/2'), env);
+  assert.equal(emptyRes.status, 404);
   assert.equal(frameHits.length, 0);
+});
+
+test('4b. /admin/cctv-hsinchu-frame/4 (a 5th slot) is not a registered route — the hard 4-camera cap', async () => {
+  const env = baseEnv();
+  const setup = makeFetch();
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = setup.fetchFn;
+  await worker.fetch(authedRequest('/admin/cctv-hsinchu-probe'), env);
+
+  globalThis.fetch = async () => {
+    throw new Error('must never fetch for an out-of-range frame index');
+  };
+  const res = await worker.fetch(authedRequest('/admin/cctv-hsinchu-frame/4'), env);
+  assert.equal(res.status, 404);
 });
 
 // --- 5. frame request carries no Authorization header ---
