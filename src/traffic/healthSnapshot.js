@@ -31,6 +31,23 @@
 //     `status` — a quiet Cron tick with nothing broadcast-worthy is
 //     completely normal, not unhealthy. Only actual TDX/PBS/LINE/KV
 //     failure signals participate in the computation below.
+//
+// V1.6.1 addition — "資料來源與 TDX 用量瘦身": TDX (國道+省道 only, see
+// ../tdx/sources.js) is no longer fetched every Cron tick, only every 2nd
+// tick during 08:00–22:00 Asia/Taipei (see tdxSchedule.js); PBS still
+// writes this snapshot every tick, 24/7. A tick that did NOT attempt a
+// TDX fetch (skipped-by-schedule, or night-sleep) must NEVER be read as a
+// TDX failure — see the requirement "TDX skipped/sleeping 不得因此降級".
+// Handled by carrying the `tdx` block FORWARD unchanged from the previous
+// snapshot whenever this tick didn't fetch — only `tdx.scheduledThisRun`/
+// `tdx.sleeping` themselves reflect THIS tick; `tdx.tokenOk`/
+// `successfulSourceCount`/`totalSourceCount`/`sources`/`lastFetchedAt`
+// always reflect the LAST REAL TDX fetch, however long ago that was. This
+// is also why TDX must NOT reuse health.js's whole-snapshot 10/15-minute
+// staleness rule (that rule is about the Cron itself being alive, still
+// valid since PBS keeps generatedAt fresh every 10 min) — TDX positions
+// itself only via lastFetchedAt/scheduledThisRun/sleeping, deliberately
+// with no separate auto-escalating threshold of its own.
 
 const HEALTH_SNAPSHOT_KEY = 'health:snapshot:v1';
 
@@ -54,7 +71,8 @@ function computeStatus({ kvAvailable, lineReady, tdxAllFailed, tdxAnyFailed, pbs
  * Pure — no I/O, no wall-clock reads beyond the `now` passed in.
  *
  * @param {object} summary - TDX pipeline summary (see pipeline.js's
- *   buildSummary) — as already computed this Cron run.
+ *   buildSummary, or scheduled.js's own skipped-tick fallback shape) — as
+ *   already computed this Cron run.
  * @param {object} pbsSummary - PBS pipeline summary (see pbs/pipeline.js)
  *   — as already computed this Cron run. May be the minimal
  *   `{ pbsOk: false, ... }` fallback shape scheduled.js uses when the PBS
@@ -62,18 +80,68 @@ function computeStatus({ kvAvailable, lineReady, tdxAllFailed, tdxAnyFailed, pbs
  * @param {object} lineSummary - broadcastPipeline.js's runLineBroadcast
  *   result — as already computed this Cron run.
  * @param {Date} now
+ * @param {'scheduled'|'skipped-by-schedule'|'night-sleep'} [tdxScheduleState]
+ *   - V1.6.1, see tdxSchedule.js. Defaults to 'scheduled' so every
+ *   existing/direct caller (all tests that build a snapshot from a real
+ *   fetch) keeps computing the `tdx` block from `summary` unchanged.
+ * @param {object|null} [previousTdx] - the `tdx` block from the
+ *   PREVIOUSLY persisted snapshot (see readHealthSnapshot), used to carry
+ *   real TDX health forward on a tick that didn't fetch. null/undefined
+ *   on the very first snapshot ever (nothing to carry forward yet).
  */
-export function buildHealthSnapshot({ summary, pbsSummary, lineSummary, now = new Date() }) {
-  const tdxSources = (summary.sources || []).map((s) => ({
-    source: s.source,
-    label: s.label,
-    ok: Boolean(s.ok),
-    httpStatus: typeof s.status === 'number' ? s.status : null,
-  }));
-  const successfulSourceCount = tdxSources.filter((s) => s.ok).length;
-  const totalSourceCount = tdxSources.length;
-  const tdxAllFailed = totalSourceCount > 0 && successfulSourceCount === 0;
-  const tdxAnyFailed = successfulSourceCount < totalSourceCount;
+export function buildHealthSnapshot({
+  summary,
+  pbsSummary,
+  lineSummary,
+  now = new Date(),
+  tdxScheduleState = 'scheduled',
+  previousTdx = null,
+}) {
+  const scheduledThisRun = tdxScheduleState === 'scheduled';
+  const sleeping = tdxScheduleState === 'night-sleep';
+
+  let tdx;
+  if (scheduledThisRun) {
+    const tdxSources = (summary.sources || []).map((s) => ({
+      source: s.source,
+      label: s.label,
+      ok: Boolean(s.ok),
+      httpStatus: typeof s.status === 'number' ? s.status : null,
+    }));
+    tdx = {
+      tokenOk: Boolean(summary.tokenOk),
+      successfulSourceCount: tdxSources.filter((s) => s.ok).length,
+      totalSourceCount: tdxSources.length,
+      sources: tdxSources,
+      lastFetchedAt: now.toISOString(),
+      scheduledThisRun: true,
+      sleeping: false,
+    };
+  } else {
+    // This tick did not attempt a TDX fetch at all — carry the LAST REAL
+    // fetch's health forward untouched (see module comment above). Only
+    // scheduledThisRun/sleeping themselves reflect THIS tick.
+    const prior = previousTdx || {};
+    tdx = {
+      tokenOk: prior.tokenOk ?? null,
+      successfulSourceCount: prior.successfulSourceCount ?? 0,
+      totalSourceCount: prior.totalSourceCount ?? 0,
+      sources: prior.sources ?? [],
+      lastFetchedAt: prior.lastFetchedAt ?? null,
+      scheduledThisRun: false,
+      sleeping,
+    };
+  }
+
+  // Derived from the (possibly carried-forward) `tdx` block above, NEVER
+  // from whether THIS tick happened to fetch — a skip/sleep tick reuses
+  // whatever the last real fetch's health was, so it can only ever show
+  // degraded/critical if that LAST REAL fetch genuinely had a problem.
+  // totalSourceCount===0 (no real fetch yet at all, e.g. moments after a
+  // fresh deploy) is treated as "unknown", not "failed" — same reasoning
+  // as skip/sleep: absence of data must never be misread as bad data.
+  const tdxAllFailed = tdx.totalSourceCount > 0 && tdx.successfulSourceCount === 0;
+  const tdxAnyFailed = tdx.totalSourceCount > 0 && tdx.successfulSourceCount < tdx.totalSourceCount;
 
   const pbsFailed = !pbsSummary.pbsOk;
 
@@ -91,16 +159,11 @@ export function buildHealthSnapshot({ summary, pbsSummary, lineSummary, now = ne
   });
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2, // V1.6.1: tdx.lastFetchedAt/scheduledThisRun/sleeping, pbs.lastFetchedAt added
     generatedAt: now.toISOString(),
     status,
 
-    tdx: {
-      tokenOk: Boolean(summary.tokenOk),
-      successfulSourceCount,
-      totalSourceCount,
-      sources: tdxSources,
-    },
+    tdx,
 
     pbs: {
       ok: Boolean(pbsSummary.pbsOk),
@@ -111,6 +174,10 @@ export function buildHealthSnapshot({ summary, pbsSummary, lineSummary, now = ne
       activeCount: pbsSummary.activeCount ?? 0,
       clearedCount: pbsSummary.clearedCount ?? 0,
       staleCount: pbsSummary.staleCount ?? 0,
+      // PBS runs unconditionally every Cron tick (24/7, no schedule gate
+      // — see scheduled.js), so this is always "now": PBS just attempted
+      // a fetch this tick, whether or not it succeeded.
+      lastFetchedAt: now.toISOString(),
     },
 
     line: {

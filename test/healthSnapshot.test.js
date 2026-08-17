@@ -57,8 +57,97 @@ const NOW = new Date('2026-08-17T09:05:00+08:00');
 test('all healthy -> status normal', () => {
   const snapshot = buildHealthSnapshot({ summary: healthySummary(), pbsSummary: healthyPbsSummary(), lineSummary: healthyLineSummary(), now: NOW });
   assert.equal(snapshot.status, 'normal');
-  assert.equal(snapshot.schemaVersion, 1);
+  assert.equal(snapshot.schemaVersion, 2);
   assert.equal(snapshot.generatedAt, NOW.toISOString());
+});
+
+// --- V1.6.1: tdxScheduleState / carry-forward (see tdxSchedule.js) ---
+
+test('tdxScheduleState defaults to "scheduled" -> tdx block computed fresh from summary, as before', () => {
+  const snapshot = buildHealthSnapshot({ summary: healthySummary(), pbsSummary: healthyPbsSummary(), lineSummary: healthyLineSummary(), now: NOW });
+  assert.equal(snapshot.tdx.scheduledThisRun, true);
+  assert.equal(snapshot.tdx.sleeping, false);
+  assert.equal(snapshot.tdx.lastFetchedAt, NOW.toISOString());
+  assert.equal(snapshot.tdx.successfulSourceCount, 5);
+  assert.equal(snapshot.tdx.totalSourceCount, 5);
+});
+
+test('skipped-by-schedule tick with a previous healthy snapshot -> tdx health carried forward unchanged, status stays normal', () => {
+  const previousTdx = {
+    tokenOk: true,
+    successfulSourceCount: 2,
+    totalSourceCount: 2,
+    sources: tdxSources().slice(0, 2),
+    lastFetchedAt: '2026-08-17T09:00:00.000Z',
+    scheduledThisRun: true,
+    sleeping: false,
+  };
+  const snapshot = buildHealthSnapshot({
+    summary: healthySummary({ sources: [] }), // this tick made no TDX calls at all
+    pbsSummary: healthyPbsSummary(),
+    lineSummary: healthyLineSummary(),
+    now: NOW,
+    tdxScheduleState: 'skipped-by-schedule',
+    previousTdx,
+  });
+  assert.equal(snapshot.tdx.scheduledThisRun, false);
+  assert.equal(snapshot.tdx.sleeping, false);
+  assert.equal(snapshot.tdx.tokenOk, true);
+  assert.equal(snapshot.tdx.successfulSourceCount, 2);
+  assert.equal(snapshot.tdx.totalSourceCount, 2);
+  assert.equal(snapshot.tdx.lastFetchedAt, '2026-08-17T09:00:00.000Z'); // carried, NOT this tick's `now`
+  assert.equal(snapshot.status, 'normal');
+});
+
+test('night-sleep tick with a previous healthy snapshot -> tdx health carried forward unchanged, status stays normal', () => {
+  const previousTdx = {
+    tokenOk: true, successfulSourceCount: 2, totalSourceCount: 2, sources: [],
+    lastFetchedAt: '2026-08-17T21:40:00.000Z', scheduledThisRun: true, sleeping: false,
+  };
+  const snapshot = buildHealthSnapshot({
+    summary: healthySummary({ sources: [] }),
+    pbsSummary: healthyPbsSummary(),
+    lineSummary: healthyLineSummary(),
+    now: NOW,
+    tdxScheduleState: 'night-sleep',
+    previousTdx,
+  });
+  assert.equal(snapshot.tdx.sleeping, true);
+  assert.equal(snapshot.tdx.scheduledThisRun, false);
+  assert.equal(snapshot.tdx.successfulSourceCount, 2);
+  assert.equal(snapshot.status, 'normal');
+});
+
+test('skipped tick carrying forward a PREVIOUSLY FAILED TDX fetch -> stays degraded (a skip must not silently heal a real failure either)', () => {
+  const previousTdx = {
+    tokenOk: true, successfulSourceCount: 1, totalSourceCount: 2,
+    sources: [{ source: 'freeway', label: '國道', ok: false, httpStatus: 429 }, { source: 'highway', label: '省道', ok: true, httpStatus: 200 }],
+    lastFetchedAt: '2026-08-17T09:00:00.000Z', scheduledThisRun: true, sleeping: false,
+  };
+  const snapshot = buildHealthSnapshot({
+    summary: healthySummary({ sources: [] }),
+    pbsSummary: healthyPbsSummary(),
+    lineSummary: healthyLineSummary(),
+    now: NOW,
+    tdxScheduleState: 'skipped-by-schedule',
+    previousTdx,
+  });
+  assert.equal(snapshot.status, 'degraded');
+});
+
+test('skipped tick with NO previous snapshot at all (very first ticks after deploy) -> unknown, not critical', () => {
+  const snapshot = buildHealthSnapshot({
+    summary: healthySummary({ sources: [] }),
+    pbsSummary: healthyPbsSummary(),
+    lineSummary: healthyLineSummary(),
+    now: NOW,
+    tdxScheduleState: 'skipped-by-schedule',
+    previousTdx: null,
+  });
+  assert.equal(snapshot.tdx.tokenOk, null);
+  assert.equal(snapshot.tdx.totalSourceCount, 0);
+  assert.equal(snapshot.tdx.lastFetchedAt, null);
+  assert.equal(snapshot.status, 'normal'); // "unknown" must never look like "failed"
 });
 
 test('KV unavailable -> critical, regardless of everything else being fine', () => {

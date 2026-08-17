@@ -93,6 +93,15 @@ function mockTdxFetch(state) {
   };
 }
 
+// V1.6.1: runScheduledTdxSync now gates its TDX fetch to a schedule
+// (minute 00/20/40, 08:00-22:00 Asia/Taipei — see tdxSchedule.js). This
+// file exercises pipeline.js/dedupe.js logic through the Cron entry
+// point without caring about wall-clock cadence at all, so every call
+// below now passes this single fixed, schedule-aligned timestamp instead
+// of relying on the real clock (which would non-deterministically skip
+// TDX depending on when the test suite happens to run).
+const NOW = new Date('2026-08-15T09:00:00+08:00');
+
 let originalFetch;
 
 afterEach(() => {
@@ -109,7 +118,7 @@ test('Cron lifecycle: baseline -> stable -> new event -> content update -> times
   globalThis.fetch = mockTdxFetch(state);
 
   // 1) First-ever Cron run: 10 pre-existing events must NOT flood as new.
-  const run1 = await runScheduledTdxSync(env);
+  const run1 = await runScheduledTdxSync(env, NOW);
   assert.equal(run1.baselineInitialized, true);
   assert.equal(run1.baselineSeedCount, 10);
   assert.equal(run1.newEventsCount, 0);
@@ -117,7 +126,7 @@ test('Cron lifecycle: baseline -> stable -> new event -> content update -> times
   assert.equal(run1.pushableEventsCount, 0);
 
   // 2) Second run, identical data: nothing new, nothing updated.
-  const run2 = await runScheduledTdxSync(env);
+  const run2 = await runScheduledTdxSync(env, NOW);
   assert.equal(run2.newEventsCount, 0);
   assert.equal(run2.updatedEventsCount, 0);
   assert.equal(run2.duplicateCount, 10);
@@ -125,7 +134,7 @@ test('Cron lifecycle: baseline -> stable -> new event -> content update -> times
 
   // 3) Third run: one genuinely new rawId added.
   state.freewayEvents = [...state.freewayEvents, makeFreewayRaw('FRW-11')];
-  const run3 = await runScheduledTdxSync(env);
+  const run3 = await runScheduledTdxSync(env, NOW);
   assert.equal(run3.newEventsCount, 1);
   assert.equal(run3.updatedEventsCount, 0);
   assert.equal(run3.pushableEventsCount, 1);
@@ -135,7 +144,7 @@ test('Cron lifecycle: baseline -> stable -> new event -> content update -> times
   state.freewayEvents = state.freewayEvents.map((e) =>
     e.EventID === 'FRW-1' ? makeFreewayRaw('FRW-1', { Description: '北向92K事故已排除，車道恢復通行' }) : e
   );
-  const run4 = await runScheduledTdxSync(env);
+  const run4 = await runScheduledTdxSync(env, NOW);
   assert.equal(run4.newEventsCount, 0);
   assert.equal(run4.updatedEventsCount, 1);
   assert.equal(run4.pushableEventsCount, 1);
@@ -150,7 +159,7 @@ test('Cron lifecycle: baseline -> stable -> new event -> content update -> times
         })
       : e
   );
-  const run5 = await runScheduledTdxSync(env);
+  const run5 = await runScheduledTdxSync(env, NOW);
   assert.equal(run5.newEventsCount, 0);
   assert.equal(run5.updatedEventsCount, 0);
   assert.equal(run5.pushableEventsCount, 0);
@@ -188,7 +197,7 @@ test('GET /debug/status is fully read-only: repeated calls never touch KV traffi
   assert.equal(body2.pushableEventsCount, 0);
 
   // Now actually establish the baseline via the real Cron path...
-  await runScheduledTdxSync(env);
+  await runScheduledTdxSync(env, NOW);
   const sizeAfterBaseline = kv.store.size;
   assert.ok(sizeAfterBaseline > 0);
 
@@ -298,7 +307,7 @@ test('after baseline is established, a fresh pipeline call ("restart") does not 
   originalFetch = globalThis.fetch;
   globalThis.fetch = mockTdxFetch(state);
 
-  await runScheduledTdxSync(env); // establishes baseline
+  await runScheduledTdxSync(env, NOW); // establishes baseline
 
   // Simulate a Worker cold start / redeploy: dedupe.js has no in-memory
   // cache, so calling the pipeline fresh (same KV, new function calls,

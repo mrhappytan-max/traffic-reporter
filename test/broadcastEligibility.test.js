@@ -238,12 +238,22 @@ test('11. "other" with a recognized anomaly keyword (落石) -> 1 LINE message',
   assert.match(pushed[0], /ℹ️ 路況異常/);
 });
 
-test('12. bus alert -> 0 LINE messages by default (no longer broadcast-eligible)', async () => {
+// V1.6.1: Bus Alert (both Hsinchu city and county) is no longer fetched
+// by the scheduled Cron at all (see scheduled.js's PRODUCTION_TDX_SOURCE_IDS)
+// — so a live TDX bus alert can no longer even reach the eligibility gate
+// via this path. The 'alert-excluded' rule itself is still fully covered
+// at the unit level in broadcastRules.test.js. This test now verifies the
+// V1.6.1 guarantee directly: the Cron never requests either Bus Alert
+// endpoint, and (as a trivial consequence) never pushes anything from
+// bus alert data even if the endpoint were somehow reached.
+test('12. bus alert endpoints are never requested by the Cron -> 0 LINE messages (Bus Alert retired from scheduling, V1.6.1)', async () => {
   const env = await baseEnv();
   const priorFetch = globalThis.fetch;
   let pushed = [];
+  const requestedUrls = [];
   globalThis.fetch = async (url, init) => {
     const href = String(url);
+    requestedUrls.push(href);
     if (href.includes('api.line.me')) {
       pushed.push(JSON.parse(init.body).messages[0].text);
       return new Response('{}', { status: 200 });
@@ -252,19 +262,8 @@ test('12. bus alert -> 0 LINE messages by default (no longer broadcast-eligible)
     if (href.includes('/RoadEvent/LiveEvent/Freeway') || href.includes('/RoadEvent/LiveEvent/Highway')) {
       return new Response(JSON.stringify({ RoadEvents: [] }), { status: 200 });
     }
-    if (href.includes('/Road/Traffic/Live/CMS')) return new Response(JSON.stringify({ CMSs: [] }), { status: 200 });
-    // NOTE: check HsinchuCounty BEFORE the plain Hsinchu check below —
-    // "/Bus/Alert/City/HsinchuCounty" also contains the substring
-    // "/Bus/Alert/City/Hsinchu", so the order matters.
-    if (href.includes('/Bus/Alert/City/HsinchuCounty')) return new Response(JSON.stringify({ Alerts: [] }), { status: 200 });
-    if (href.includes('/Bus/Alert/City/Hsinchu')) {
-      return new Response(
-        JSON.stringify({
-          Alerts: [{ AlertID: 'A-1', RouteID: '5路', RouteName: '5路', Title: '5路今日繞道行駛', Description: '5路今日繞道行駛，不停靠部分站點', PublishTime: '2026-08-15T08:00:00+08:00' }],
-        }),
-        { status: 200 }
-      );
-    }
+    // Deliberately NO handler for CMS/Bus Alert here — if the Cron ever
+    // requests them again, this throws and fails the test loudly.
     throw new Error(`unexpected fetch: ${href}`);
   };
   let result;
@@ -274,8 +273,11 @@ test('12. bus alert -> 0 LINE messages by default (no longer broadcast-eligible)
     globalThis.fetch = priorFetch;
   }
 
+  assert.ok(!requestedUrls.some((u) => u.includes('/Bus/Alert/City/Hsinchu')));
+  assert.ok(!requestedUrls.some((u) => u.includes('/Bus/Alert/City/HsinchuCounty')));
+  assert.ok(!requestedUrls.some((u) => u.includes('/Road/Traffic/Live/CMS')));
   assert.equal(pushed.length, 0);
-  assert.equal(result.line.ineligibleByReason['alert-excluded'], 1);
+  assert.equal(result.line.ineligibleByReason['alert-excluded'] || 0, 0);
 });
 
 test('13. ineligibleByReason breaks down multiple exclusion reasons correctly in one run', async () => {

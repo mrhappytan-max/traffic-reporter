@@ -2,6 +2,16 @@
 // 97K+700 accident was notified twice, 10 minutes apart, with no real
 // change a driver could see on LINE. Exercises the real Cron path
 // (runScheduledTdxSync) end to end for the 9 required scenarios.
+//
+// V1.6.1 note: runScheduledTdxSync now only fetches TDX on a minute
+// 00/20/40 mark (see tdxSchedule.js) — the second-tick timestamps below
+// were shifted from the original repro's exact minutes onto the nearest
+// such mark so each scenario's second Cron tick still actually fetches
+// TDX (17:30->17:40, 17:28->17:40, 17:25->17:40, 17:50->18:00). No
+// scenario here depends on the exact elapsed minutes — only on relative
+// ordering and staying well under the 60-minute suppression/relevance
+// windows (see incidentSuppression.js / broadcastRules.js) — so this
+// preserves every test's original intent.
 
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -90,7 +100,7 @@ test('1. same accident, only updatedAt changed 10 min later -> 1 LINE total (the
   assert.equal(r1720.pushed.length, 1);
 
   const tdxFetch1730 = mockFetch({ freewayEvents: [accidentRaw({ LastUpdateTime: '2026-08-16T17:24:00+08:00' })] });
-  const r1730 = await withPushCapture(tdxFetch1730, () => runScheduledTdxSync(env, new Date('2026-08-16T17:30:00+08:00')));
+  const r1730 = await withPushCapture(tdxFetch1730, () => runScheduledTdxSync(env, new Date('2026-08-16T17:40:00+08:00')));
   assert.equal(r1730.pushed.length, 0);
   assert.equal(r1730.result.line.incidentSuppressedCount, 1);
 });
@@ -105,12 +115,12 @@ test('2. same accident, description wording changed (police-handling note added)
 
   const second = await withPushCapture(
     mockFetch({ freewayEvents: [accidentRaw({ Description: '南向97K處車輛事故，外側車道封閉，警方處理中' })] }),
-    () => runScheduledTdxSync(env, new Date('2026-08-16T17:30:00+08:00'))
+    () => runScheduledTdxSync(env, new Date('2026-08-16T17:40:00+08:00'))
   );
   assert.equal(second.pushed.length, 0);
 });
 
-test('3. same accident, NEW rawId within 10 min, same road/direction/KM -> 1 LINE total', async () => {
+test('3. same accident, NEW rawId shortly after (same road/direction/KM) -> 1 LINE total', async () => {
   const env = await envWithSubscriber();
   const first = await withPushCapture(
     mockFetch({ freewayEvents: [accidentRaw({ EventID: 'FRW-97700-1' })] }),
@@ -121,7 +131,7 @@ test('3. same accident, NEW rawId within 10 min, same road/direction/KM -> 1 LIN
   // TDX reissues under a brand-new EventID for the same real accident.
   const second = await withPushCapture(
     mockFetch({ freewayEvents: [accidentRaw({ EventID: 'FRW-97700-2-REISSUED' })] }),
-    () => runScheduledTdxSync(env, new Date('2026-08-16T17:28:00+08:00'))
+    () => runScheduledTdxSync(env, new Date('2026-08-16T17:40:00+08:00'))
   );
   assert.equal(second.pushed.length, 0);
 });
@@ -152,12 +162,12 @@ test('4. PBS + TDX report the SAME accident across DIFFERENT Cron ticks -> 1 LIN
   };
   const second = await withPushCapture(
     mockFetch({ freewayEvents: [] }),
-    () => runScheduledTdxSync(env, new Date('2026-08-16T17:30:00+08:00'))
+    () => runScheduledTdxSync(env, new Date('2026-08-16T17:40:00+08:00'))
   );
   assert.equal(second.pushed.length, 0);
 });
 
-test('5. same accident, still unchanged 30 minutes later -> still 1 LINE total', async () => {
+test('5. same accident, still unchanged 40 minutes later -> still 1 LINE total', async () => {
   const env = await envWithSubscriber();
   const first = await withPushCapture(
     mockFetch({ freewayEvents: [accidentRaw()] }),
@@ -167,7 +177,7 @@ test('5. same accident, still unchanged 30 minutes later -> still 1 LINE total',
 
   const second = await withPushCapture(
     mockFetch({ freewayEvents: [accidentRaw({ LastUpdateTime: '2026-08-16T17:48:00+08:00' })] }),
-    () => runScheduledTdxSync(env, new Date('2026-08-16T17:50:00+08:00')) // +30 min
+    () => runScheduledTdxSync(env, new Date('2026-08-16T18:00:00+08:00')) // +40 min (shifted onto a 20-min schedule mark, still well under the 60-min relevance/suppression window)
   );
   assert.equal(second.pushed.length, 0);
 });
@@ -192,11 +202,11 @@ test('6. accident escalates to road closure -> second notification allowed', asy
           // requirement as this project's other closure/construction
           // tests (see broadcastEligibility.test.js #4).
           Description: '8月16日17時至18時南向97K處車輛事故，道路全線封閉，請改道',
-          LastUpdateTime: '2026-08-16T17:28:00+08:00',
+          LastUpdateTime: '2026-08-16T17:40:00+08:00',
         }),
       ],
     }),
-    () => runScheduledTdxSync(env, new Date('2026-08-16T17:30:00+08:00'))
+    () => runScheduledTdxSync(env, new Date('2026-08-16T17:40:00+08:00'))
   );
   assert.equal(second.pushed.length, 1);
   assert.match(second.pushed[0], /🚧 道路封閉/);
@@ -222,8 +232,8 @@ test('7. blocked lanes materially increase -> second notification allowed', asyn
   assert.equal(first.pushed.length, 1);
 
   const second = await withPushCapture(
-    mockFetch({ freewayEvents: [accidentRaw({ Impact: { BlockedLanes: 3 }, LastUpdateTime: '2026-08-16T17:28:00+08:00' })] }),
-    () => runScheduledTdxSync(env, new Date('2026-08-16T17:30:00+08:00'))
+    mockFetch({ freewayEvents: [accidentRaw({ Impact: { BlockedLanes: 3 }, LastUpdateTime: '2026-08-16T17:40:00+08:00' })] }),
+    () => runScheduledTdxSync(env, new Date('2026-08-16T17:40:00+08:00'))
   );
   assert.equal(second.pushed.length, 1);
   assert.equal(second.result.line.materialRebroadcastCount, 1);
@@ -242,7 +252,7 @@ test('8. genuinely different accident, same road/direction, sufficiently differe
   // hsinchuConfig.js — but well beyond INCIDENT_MAX_KM_DIFF), minutes later.
   const second = await withPushCapture(
     mockFetch({ freewayEvents: [accidentRaw({ EventID: 'FRW-B', Location: { FreeExpressHighway: { Road: '國道一號', Direction: '南向', StartKM: '85K+000', EndKM: '85K+000' } } })] }),
-    () => runScheduledTdxSync(env, new Date('2026-08-16T17:25:00+08:00'))
+    () => runScheduledTdxSync(env, new Date('2026-08-16T17:40:00+08:00'))
   );
   assert.equal(second.pushed.length, 1);
 });

@@ -12,6 +12,14 @@ function safeErrorMessage(err) {
 }
 
 /**
+ * @param {object} env
+ * @param {object} [options]
+ * @param {string[]} [options.sourceIds] - V1.6.1: when given, only fetch
+ *   these SOURCES ids (see sources.js's PRODUCTION_TDX_SOURCE_IDS) —
+ *   used by the Cron path to stop scheduling CMS/Bus Alert entirely.
+ *   Omitted (the default) fetches all 5, unchanged — GET /debug/tdx and
+ *   GET /debug/status both call this with no options and keep their full
+ *   existing behavior.
  * @returns {{ tokenOk: boolean, results: Array<{
  *   source: string, label: string, ok: boolean, count: number,
  *   normalizedCount: number, rawCount: number, durationMs: number,
@@ -24,7 +32,7 @@ function safeErrorMessage(err) {
  * `normalizedCount` = successfully-parsed count *before* that filter, for
  * /debug/status's normalizedCount vs. hsinchuFilteredCount distinction.
  */
-export async function fetchAllSources(env) {
+export async function fetchAllSources(env, { sourceIds } = {}) {
   let accessToken = null;
   let tokenError = null;
 
@@ -34,8 +42,10 @@ export async function fetchAllSources(env) {
     tokenError = safeErrorMessage(err);
   }
 
+  const sourcesToFetch = sourceIds ? SOURCES.filter((s) => sourceIds.includes(s.id)) : SOURCES;
+
   const results = await Promise.all(
-    SOURCES.map(async (source) => {
+    sourcesToFetch.map(async (source) => {
       const startedAt = Date.now();
 
       if (!accessToken) {

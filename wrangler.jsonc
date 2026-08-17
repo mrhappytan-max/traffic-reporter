@@ -7,8 +7,16 @@
     "enabled": true
   },
   "triggers": {
-    // Every 5 minutes, UTC (Cloudflare Cron Triggers are always UTC).
-    "crons": ["*/5 * * * *"]
+    // V1.6.1: every 10 minutes, UTC (Cloudflare Cron Triggers are always
+    // UTC; UTC minutes == Asia/Taipei minutes since Taipei is a fixed
+    // UTC+8 offset). PBS runs every tick (24/7). TDX (國道+省道 only —
+    // see src/tdx/sources.js's PRODUCTION_TDX_SOURCE_IDS) is further
+    // gated INSIDE the scheduled handler to only every 2nd tick
+    // (minute 00/20/40) and only 08:00–21:59:59 Asia/Taipei — see
+    // src/traffic/tdxSchedule.js. Deliberately still just ONE Cron
+    // trigger, not two competing schedules — "不要建立兩套互相複雜的
+    // Cron".
+    "crons": ["*/10 * * * *"]
   },
   // TRAFFIC_KV was originally bound only via the Cloudflare dashboard,
   // which `wrangler deploy` silently dropped on the next deploy because

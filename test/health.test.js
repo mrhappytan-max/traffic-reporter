@@ -22,20 +22,21 @@ function kv(initial) {
 
 function baseSnapshot(overrides = {}) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     status: 'normal',
     tdx: {
       tokenOk: true,
-      successfulSourceCount: 5,
-      totalSourceCount: 5,
+      successfulSourceCount: 2,
+      totalSourceCount: 2,
       sources: [
         { source: 'freeway', label: '國道即時道路事件', ok: true, httpStatus: 200 },
         { source: 'highway', label: '省道即時道路事件', ok: true, httpStatus: 200 },
-        { source: 'cms', label: '新竹市 CMS 即時看板', ok: true, httpStatus: 200 },
-        { source: 'bus-hsinchu', label: '新竹市公車營運通阻', ok: true, httpStatus: 200 },
-        { source: 'bus-hsinchu-county', label: '新竹縣公車營運通阻', ok: true, httpStatus: 200 },
       ],
+      // V1.6.1
+      lastFetchedAt: new Date().toISOString(),
+      scheduledThisRun: true,
+      sleeping: false,
     },
     pbs: { ok: true, relayOk: true, relayStatus: 200, rawCount: 1000, hsinchuCount: 27, activeCount: 5, clearedCount: 15, staleCount: 7 },
     line: { ready: true, enabledUsersCount: 1, enabledGroupsCount: 0, pushAttempted: 0, pushSucceeded: 0, partialPushFailures: 0, lastLinePushAt: null },
@@ -167,15 +168,15 @@ test('HTML output never leaks token/secret/userId/groupId/Authorization substrin
   const snapshot = baseSnapshot({
     tdx: {
       tokenOk: false,
-      successfulSourceCount: 3,
-      totalSourceCount: 5,
+      successfulSourceCount: 0,
+      totalSourceCount: 2,
       sources: [
         { source: 'freeway', label: '國道即時道路事件', ok: false, httpStatus: 429 },
         { source: 'highway', label: '省道即時道路事件', ok: false, httpStatus: 401 },
-        { source: 'cms', label: '新竹市 CMS 即時看板', ok: true, httpStatus: 200 },
-        { source: 'bus-hsinchu', label: '新竹市公車營運通阻', ok: true, httpStatus: 200 },
-        { source: 'bus-hsinchu-county', label: '新竹縣公車營運通阻', ok: true, httpStatus: 200 },
       ],
+      lastFetchedAt: new Date().toISOString(),
+      scheduledThisRun: true,
+      sleeping: false,
     },
     pbs: { ok: false, relayOk: false, relayStatus: 502, rawCount: 0, hsinchuCount: 0, activeCount: 0, clearedCount: 0, staleCount: 0 },
     line: { ready: false, enabledUsersCount: 2, enabledGroupsCount: 1, pushAttempted: 3, pushSucceeded: 1, partialPushFailures: 2, lastLinePushAt: new Date().toISOString() },
@@ -188,6 +189,51 @@ test('HTML output never leaks token/secret/userId/groupId/Authorization substrin
   assert.doesNotMatch(html, /Authorization/i);
   // Also guard against accidental literal secret-shaped values leaking in
   assert.doesNotMatch(html, /Bearer\s+\S+/i);
+});
+
+// --- V1.6.1: TDX schedule state rendering ---
+
+test('tdx.scheduledThisRun=true -> "本輪已擷取" shown', async () => {
+  const snapshot = baseSnapshot({
+    tdx: { tokenOk: true, successfulSourceCount: 2, totalSourceCount: 2, sources: [], lastFetchedAt: new Date().toISOString(), scheduledThisRun: true, sleeping: false },
+  });
+  const res = await handleHealth({ TRAFFIC_KV: kv(snapshot) });
+  const html = await res.text();
+  assert.match(html, /本輪已擷取/);
+});
+
+test('tdx skipped-by-schedule (scheduledThisRun=false, sleeping=false) -> "本輪略過" shown, page stays normal', async () => {
+  const snapshot = baseSnapshot({
+    status: 'normal',
+    tdx: { tokenOk: true, successfulSourceCount: 2, totalSourceCount: 2, sources: [], lastFetchedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(), scheduledThisRun: false, sleeping: false },
+  });
+  const res = await handleHealth({ TRAFFIC_KV: kv(snapshot) });
+  const html = await res.text();
+  assert.equal(res.status, 200);
+  assert.match(html, /本輪略過/);
+  assert.match(html, /正常/);
+});
+
+test('tdx.sleeping=true -> "夜間休眠" shown, never degrades the page on its own', async () => {
+  const snapshot = baseSnapshot({
+    status: 'normal',
+    tdx: { tokenOk: true, successfulSourceCount: 2, totalSourceCount: 2, sources: [], lastFetchedAt: new Date().toISOString(), scheduledThisRun: false, sleeping: true },
+  });
+  const res = await handleHealth({ TRAFFIC_KV: kv(snapshot) });
+  const html = await res.text();
+  assert.equal(res.status, 200);
+  assert.match(html, /夜間休眠/);
+  assert.match(html, /🟢/);
+});
+
+test('tdx.tokenOk=null (no real fetch yet) -> "尚無資料", not "異常"', async () => {
+  const snapshot = baseSnapshot({
+    tdx: { tokenOk: null, successfulSourceCount: 0, totalSourceCount: 0, sources: [], lastFetchedAt: null, scheduledThisRun: false, sleeping: false },
+  });
+  const res = await handleHealth({ TRAFFIC_KV: kv(snapshot) });
+  const html = await res.text();
+  assert.match(html, /尚無資料/);
+  assert.doesNotMatch(html, /狀態<\/span><span class="pill pill-bad">異常/);
 });
 
 test('KV read throwing -> treated as missing snapshot, safe 503, no throw out of handleHealth', async () => {

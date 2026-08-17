@@ -74,6 +74,18 @@ export const SOURCES = [
   },
 ];
 
+// V1.6.1 — "資料來源與 TDX 用量瘦身": the production Cron (scheduled.js)
+// now only ever fetches these two sources — CMS/Bus Alert (Hsinchu city
+// and county) are retired from all SCHEDULED fetching, never proving
+// broadcast-worthy in practice, and VD is separately no longer called for
+// congestion validation at all (see congestionValidation.js's module
+// comment / scheduled.js — V1.5 already excludes pure congestion from
+// broadcast, so VD confirmation serves no production purpose anymore).
+// CMS/Bus Alert definitions above are NOT deleted — GET /debug/tdx and
+// GET /debug/status (on-demand, human-triggered, never scheduled) still
+// fetch all 5 sources unchanged, for diagnostic purposes.
+export const PRODUCTION_TDX_SOURCE_IDS = ['freeway', 'highway'];
+
 /**
  * Fetch + normalize a single source. Throws (TdxApiError) on transport/HTTP
  * failure so the caller can report it per-source; never throws for a

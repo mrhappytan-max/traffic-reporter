@@ -1,7 +1,16 @@
 // End-to-end: TDX RoadEvent (or PBS) reports congestion -> real Cron path
-// (runScheduledTdxSync) -> VD speed confirmation -> actual LINE message
-// text. Complements the unit-level tests in congestionSeverity.test.js,
-// vdSpeed.test.js, and congestionValidation.test.js.
+// (runScheduledTdxSync) -> actual LINE message text. Complements the
+// unit-level tests in congestionSeverity.test.js, vdSpeed.test.js, and
+// congestionValidation.test.js.
+//
+// V1.6.1 update: the Cron path no longer calls applyCongestionSeverityValidation
+// at all (no VD API call happens here anymore — see scheduled.js's module
+// comment; V1.5 already excludes every congestion event from broadcast
+// regardless of severity, so VD confirmation had no production purpose
+// left). Every test below still passes unmodified: they all assert
+// `pushed.length === 0` for congestion, which now holds even more
+// directly (VD is never even invoked). Kept as regression coverage that
+// a congestion event — VD-confirmed or not — can never reach LINE.
 
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';

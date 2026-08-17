@@ -15,8 +15,8 @@
 import { fetchAllSources } from '../tdx/fetchAll.js';
 import { readDedupeState, classifyEvents, commitDedupeState } from './dedupe.js';
 
-async function runCore(env) {
-  const { tokenOk, results } = await fetchAllSources(env);
+async function runCore(env, { sourceIds } = {}) {
+  const { tokenOk, results } = await fetchAllSources(env, { sourceIds });
   const allEvents = results.flatMap((r) => r.events);
   const sourceHealth = Object.fromEntries(results.map((r) => [r.source, r.ok]));
   const dedupeState = await readDedupeState(env.TRAFFIC_KV); // read-only, always
@@ -121,9 +121,14 @@ function buildSummary(core, commitResult) {
   };
 }
 
-/** Read-only preview — GET /debug/status. Never writes to KV. */
-export async function runTdxPipelinePreview(env) {
-  const core = await runCore(env);
+/**
+ * Read-only preview — GET /debug/status. Never writes to KV.
+ * @param {object} env
+ * @param {object} [options] - see fetchAllSources' `sourceIds`. Always
+ *   called with no options (full 5 sources) from GET /debug/status.
+ */
+export async function runTdxPipelinePreview(env, options = {}) {
+  const core = await runCore(env, options);
   return buildSummary(core, null);
 }
 
@@ -132,9 +137,13 @@ export async function runTdxPipelinePreview(env) {
  * `now` defaults to the real clock; tests pass an explicit Date so
  * multi-hour scenarios (source outages, absence windows) don't need to
  * sleep.
+ * @param {object} [options] - see fetchAllSources' `sourceIds`. V1.6.1:
+ *   scheduled.js passes PRODUCTION_TDX_SOURCE_IDS (freeway+highway only)
+ *   here; every other caller (tests calling this directly) keeps the
+ *   default (all 5 sources), unchanged.
  */
-export async function runTdxPipelineAndCommit(env, now = new Date()) {
-  const core = await runCore(env);
+export async function runTdxPipelineAndCommit(env, now = new Date(), options = {}) {
+  const core = await runCore(env, options);
 
   let commitResult = { committed: false, reason: 'kv-unavailable' };
   if (core.dedupeState.kvAvailable) {

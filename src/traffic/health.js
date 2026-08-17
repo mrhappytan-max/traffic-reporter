@@ -62,6 +62,30 @@ function yesNo(bool) {
   return bool ? '正常' : '異常';
 }
 
+// V1.6.1: tdx.tokenOk is tri-state now — null means "no real TDX fetch
+// has happened yet at all" (e.g. moments after a fresh deploy, before the
+// first scheduled tick), which is "unknown", not "異常" — see
+// healthSnapshot.js's module comment on why this must never look like a
+// failure.
+function tdxTokenLabel(tokenOk) {
+  if (tokenOk === null || tokenOk === undefined) return '尚無資料';
+  return yesNo(tokenOk);
+}
+function tdxTokenPillClass(tokenOk) {
+  if (tokenOk === null || tokenOk === undefined) return 'pill-unknown';
+  return tokenOk ? 'pill-ok' : 'pill-bad';
+}
+
+// V1.6.1: TDX (國道+省道) is fetched at most every 20 minutes, only
+// 08:00–22:00 Asia/Taipei (see tdxSchedule.js) — this describes what THIS
+// tick actually did, purely informational, never affects page color/tier
+// (see healthSnapshot.js — a skip/sleep tick never changes `status`).
+function describeTdxRunState({ scheduledThisRun, sleeping }) {
+  if (sleeping) return '🌙 夜間休眠中（22:00–08:00 不擷取）';
+  if (scheduledThisRun) return '✅ 本輪已擷取';
+  return '⏭️ 本輪略過（PBS 專用時段，每 20 分鐘才擷取一次 TDX）';
+}
+
 /**
  * Layers snapshot AGE on top of the snapshot's own `status` — this can
  * only be known at read time (see healthSnapshot.js). Also what quietly
@@ -96,7 +120,7 @@ function renderMissingSnapshotPage(now) {
     statusLabel: meta.label,
     generatedAtLabel: '（無資料）',
     staleNotice: null,
-    body: `<div class="card"><p>尚未有健康快照，等待下一次 Cron 執行（每 5 分鐘一次）。</p></div>`,
+    body: `<div class="card"><p>尚未有健康快照，等待下一次 Cron 執行（每 10 分鐘一次）。</p></div>`,
     now,
   });
 }
@@ -162,6 +186,7 @@ function renderPage({ statusMeta, statusLabel, generatedAtLabel, staleNotice, bo
   }
   .pill-ok { background: #e6f6ea; color: #1a7f37; }
   .pill-bad { background: #fdecec; color: #c31c1c; }
+  .pill-unknown { background: #eef0f3; color: #555; }
   .source-list { margin: 0; padding: 0; list-style: none; }
   .source-list li {
     display: flex;
@@ -216,9 +241,11 @@ function renderSnapshotBody(snapshot) {
 
   return `
   <div class="card">
-    <h2>TDX</h2>
-    <div class="row"><span class="label">狀態</span><span class="pill ${tdx.tokenOk ? 'pill-ok' : 'pill-bad'}">${yesNo(tdx.tokenOk)}</span></div>
+    <h2>TDX（國道／省道）</h2>
+    <div class="row"><span class="label">狀態</span><span class="pill ${tdxTokenPillClass(tdx.tokenOk)}">${tdxTokenLabel(tdx.tokenOk)}</span></div>
     <div class="row"><span class="label">成功資料源</span><span class="value">${tdx.successfulSourceCount} / ${tdx.totalSourceCount}</span></div>
+    <div class="row"><span class="label">本輪執行狀態</span><span class="value">${escapeHtml(describeTdxRunState(tdx))}</span></div>
+    <div class="row"><span class="label">最近一次擷取時間</span><span class="value">${tdx.lastFetchedAt ? escapeHtml(formatTaipeiTime(new Date(tdx.lastFetchedAt))) : '尚無資料'}</span></div>
     <ul class="source-list">${tdxSourcesHtml}</ul>
   </div>
 

@@ -2,8 +2,12 @@
 // keeps running around the clock (fetch/normalize/baseline/dedup) — this
 // only gates the push step, see broadcastPipeline.js.
 
-/** Asia/Taipei is a fixed UTC+8 offset (no DST) — safe to hard-code. */
-function toTaipeiParts(date) {
+/**
+ * Asia/Taipei is a fixed UTC+8 offset (no DST) — safe to hard-code.
+ * Exported (V1.6.1) so tdxSchedule.js can reuse the exact same wall-clock
+ * conversion for its own minute-of-hour check, rather than re-deriving it.
+ */
+export function toTaipeiParts(date) {
   const shifted = new Date(date.getTime() + 8 * 60 * 60 * 1000);
   return {
     year: shifted.getUTCFullYear(),
