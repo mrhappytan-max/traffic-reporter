@@ -132,5 +132,15 @@ export async function handleDebugStatus(env) {
     pbsBroadcastEnabled: PBS_BROADCAST_ENABLED,
   };
 
-  return Response.json(body, { status: summary.tokenOk ? 200 : 502 });
+  // Response.json()'s Content-Type header behavior across runtimes isn't
+  // guaranteed to honor a custom charset override, and mobile browsers
+  // opening this URL directly (no explicit charset) were mis-rendering
+  // the Chinese text as mojibake — so this is spelled out explicitly via
+  // a plain Response instead, which is unambiguous everywhere.
+  return new Response(JSON.stringify(body, null, 2), {
+    status: summary.tokenOk ? 200 : 502,
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    },
+  });
 }
