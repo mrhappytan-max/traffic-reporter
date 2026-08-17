@@ -24,6 +24,7 @@ import { buildHealthSnapshot, persistHealthSnapshot, readHealthSnapshot } from '
 import { getTdxScheduleState } from './tdxSchedule.js';
 import { readDedupeState } from './dedupe.js';
 import { PRODUCTION_TDX_SOURCE_IDS } from '../tdx/sources.js';
+import { persistProductionTdxEventCache, readProductionTdxEventCache } from './tdxEventCache.js';
 
 /**
  * Shape-compatible with pipeline.js's buildSummary() output (every field
@@ -86,9 +87,38 @@ export async function runScheduledTdxSync(env, now = new Date()) {
       `failedSources=${summary.failedSources.map((f) => f.source).join(',') || 'none'}`
   );
 
+  // V1.6.2: persist a small cache of THIS run's TDX events so a later
+  // PBS-only tick can still cross-source-dedup against them — see
+  // tdxEventCache.js. Only written on a genuinely successful scheduled
+  // fetch (at least one source ok); own try/catch, same isolation
+  // principle as every other side-effect in this function.
+  if (tdxScheduleState === 'scheduled' && summary.sources.some((s) => s.ok)) {
+    try {
+      const cacheCommit = await persistProductionTdxEventCache(env.TRAFFIC_KV, summary.allEvents, now);
+      if (!cacheCommit.committed) console.error(`[cron][tdx-cache] write failed: ${cacheCommit.reason} ${cacheCommit.error ?? ''}`);
+    } catch (err) {
+      console.error(`[cron][tdx-cache] write failed: ${err && err.message}`);
+    }
+  }
+
   const newUpdatedKeys = new Set(
     [...summary.newEvents, ...summary.updatedEvents].map((e) => `${e.source}:${e.rawId}`)
   );
+
+  // V1.6.2: what to feed PBS's own crossSourceDedup MATCHING step (see
+  // pbs/crossSourceDedup.js) — THIS run's fresh TDX events when scheduled
+  // (unchanged from before), otherwise the cached last-successful-fetch
+  // events (empty if stale/missing — see tdxEventCache.js's 30-min
+  // cutoff). This is used ONLY inside PBS's own pipeline for matching; it
+  // never feeds dedupe.js's TDX new/updated classification (that already
+  // happened above, entirely from `summary`, before this point) and is
+  // NOT what gets passed to mergeForBroadcast below (that still only
+  // ever receives THIS run's real summary.allEvents) — so a PBS event
+  // that matches a CACHED (not-this-run) TDX event is correctly dropped
+  // from this run's broadcast entirely (already reported once when TDX
+  // itself saw it), never re-broadcast as new.
+  const tdxEventsForPbsDedup =
+    tdxScheduleState === 'scheduled' ? summary.allEvents : (await readProductionTdxEventCache(env.TRAFFIC_KV, now)).events;
 
   // PBS runs BEFORE the LINE broadcast now (V1.4: PBS+TDX merge, Alpha),
   // so its cross-source dedup result can be folded into what actually
@@ -100,7 +130,7 @@ export async function runScheduledTdxSync(env, now = new Date()) {
   // tick, 24/7, regardless of tdxScheduleState.
   let pbsSummary;
   try {
-    pbsSummary = await runPbsPipelineAndCommit(env, { tdxEvents: summary.allEvents, now });
+    pbsSummary = await runPbsPipelineAndCommit(env, { tdxEvents: tdxEventsForPbsDedup, now });
     console.log(
       `[cron][pbs] pbsOk=${pbsSummary.pbsOk} pbsError=${pbsSummary.pbsError ?? 'none'} ` +
         `kvAvailable=${pbsSummary.kvAvailable} committed=${pbsSummary.committed} ` +

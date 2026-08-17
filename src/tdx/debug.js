@@ -1,12 +1,18 @@
-// GET /debug/tdx — fetches all 5 sources and reports, per source, how many
-// records were found, a small sample, and any error. Never touches KV/D1
-// and never schedules anything; this is a one-shot fetch for manual/CI
-// verification.
+// GET /debug/tdx — fetches the production TDX sources and reports, per
+// source, how many records were found, a small sample, and any error.
+// Never touches KV/D1 and never schedules anything; this is a one-shot
+// fetch for manual/CI verification.
+//
+// V1.6.2: restricted to PRODUCTION_TDX_SOURCE_IDS (freeway+highway) —
+// CMS/Bus Alert are retired from production entirely (see V1.6.1) and
+// must not be quietly re-fetched just because a human opens this debug
+// URL. At most 2 TDX data calls per request.
 
 import { fetchAllSources } from './fetchAll.js';
+import { PRODUCTION_TDX_SOURCE_IDS } from './sources.js';
 
 export async function handleDebugTdx(env) {
-  const { tokenOk, results } = await fetchAllSources(env);
+  const { tokenOk, results } = await fetchAllSources(env, { sourceIds: PRODUCTION_TDX_SOURCE_IDS });
 
   const sources = results.map((r) => ({
     source: r.source,

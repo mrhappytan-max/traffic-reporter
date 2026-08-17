@@ -21,14 +21,17 @@ import { runPbsPipelinePreview } from '../pbs/pipeline.js';
 import { mergeForBroadcast } from '../pbs/crossSourceDedup.js';
 import { PBS_BROADCAST_ENABLED } from '../pbs/pbsConfig.js';
 import { getLastTdxTokenSource } from '../tdx/auth.js';
-import { applyCongestionSeverityValidation } from './congestionValidation.js';
+import { PRODUCTION_TDX_SOURCE_IDS } from '../tdx/sources.js';
 
 // Safety cap so a runaway source can't blow up the response payload.
 const MAX_LISTED_EVENTS = 100;
 
 export async function handleDebugStatus(env) {
   const now = new Date();
-  const summary = await runTdxPipelinePreview(env);
+  // V1.6.2: restricted to PRODUCTION_TDX_SOURCE_IDS (freeway+highway) —
+  // CMS/Bus Alert are retired from production entirely (V1.6.1); opening
+  // this URL must cost at most 2 TDX data calls, never 5.
+  const summary = await runTdxPipelinePreview(env, { sourceIds: PRODUCTION_TDX_SOURCE_IDS });
 
   const newUpdatedKeys = new Set(
     [...summary.newEvents, ...summary.updatedEvents].map((e) => `${e.source}:${e.rawId}`)
@@ -42,19 +45,18 @@ export async function handleDebugStatus(env) {
   // truthful about what would actually be pushed.
   const pbsSummary = await runPbsPipelinePreview(env, { tdxEvents: summary.allEvents, now });
 
-  const mergedEvents = PBS_BROADCAST_ENABLED
+  const broadcastEvents = PBS_BROADCAST_ENABLED
     ? mergeForBroadcast(summary.allEvents, pbsSummary.canonicalEvents || [], pbsSummary.uniquePbsEvents || [])
     : summary.allEvents;
 
-  // Same lazy/fail-safe congestion-severity confirmation as the real
-  // Cron run (see scheduled.js/congestionValidation.js) — still entirely
-  // read-only (only ever reads TDX VD data, changes nothing in KV).
-  let broadcastEvents = mergedEvents;
-  try {
-    broadcastEvents = await applyCongestionSeverityValidation(mergedEvents, env);
-  } catch {
-    // Preview only — leave severity unchanged, same as scheduled.js.
-  }
+  // V1.6.2: congestion severity validation (an extra TDX VD API call) is
+  // no longer previewed here either — same reasoning as the real Cron
+  // path (see scheduled.js's V1.6.1 comment): V1.5 already excludes every
+  // congestion event from broadcast regardless of severity, so this
+  // preview isn't worth spending 2 more TDX API calls on. Opening this
+  // URL now costs at most 2 TDX data calls (freeway+highway), never
+  // 5–7. congestionValidation.js/vdSpeed.js remain intact and fully
+  // covered by their own unit tests.
 
   const lineSummary = await runLineBroadcast(env, {
     allEvents: broadcastEvents,
