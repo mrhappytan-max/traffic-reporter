@@ -23,28 +23,34 @@
 //   └────────────┴────────────┘
 //
 // A quadrant with no candidate (the ratified rule's "leave it empty")
-// renders as an explicit "NO CAMERA" placeholder tile; a candidate whose
-// frame fetch failed (timeout, too-large, etc.) renders as "NO SIGNAL" —
+// renders as an explicit "無符合鏡頭" placeholder tile; a candidate whose
+// frame fetch failed (timeout, too-large, etc.) renders as "暫無畫面" —
 // visually distinct states, matching the frame endpoint's own
 // null-vs-failed distinction. One or more successful frames is enough to
 // produce a valid collage; only when ALL 4 quadrants have no image at
 // all does this module report `ok: false` — see composeQuadrantCollage's
 // doc comment.
 //
-// Labels are ASCII-only — see bitmapFont.js's module comment for why
-// (no CJK glyphs are embedded in this round).
+// V1.8.3 — labels are Traditional Chinese, per instruction ("讓計程車／
+// 營業車司機在 LINE 上一眼就看懂"). See bitmapFont.js's module comment
+// for the CJK glyph set and why it's hand-authored rather than a
+// font-rasterization pipeline.
 
-import { drawText, measureText, GLYPH_HEIGHT } from './bitmapFont.js';
+import { drawText, measureText, LINE_HEIGHT } from './bitmapFont.js';
 
 export const COLLAGE_WIDTH = 1200;
 export const COLLAGE_HEIGHT = 900;
 // Exported for tests — lets test code compute exact per-quadrant sample
 // coordinates from the real layout instead of duplicating magic numbers.
-export const HEADER_HEIGHT = 80;
+// Sized for the larger 16px-tall CJK/digit glyphs (vs. the old 7px-tall
+// ASCII-only font) — both HEADER_HEIGHT and LABEL_HEIGHT grew from V1.8
+// to keep the bigger text comfortably spaced, per instruction ("標題文
+// 字不要太小").
+export const HEADER_HEIGHT = 100;
 export const CELL_WIDTH = COLLAGE_WIDTH / 2; // 600
-export const CELL_HEIGHT = (COLLAGE_HEIGHT - HEADER_HEIGHT) / 2; // 410
-const LABEL_HEIGHT = 90;
-export const IMAGE_AREA_HEIGHT = CELL_HEIGHT - LABEL_HEIGHT; // 320
+export const CELL_HEIGHT = (COLLAGE_HEIGHT - HEADER_HEIGHT) / 2; // 400
+const LABEL_HEIGHT = 110;
+export const IMAGE_AREA_HEIGHT = CELL_HEIGHT - LABEL_HEIGHT; // 290
 
 // Fixed quadrant grid positions, index-aligned with the V1.7 four-
 // quadrant candidate order [S前, S後, N前, N後] — never reordered.
@@ -130,14 +136,14 @@ function drawImageCover(destPixels, destWidth, destHeight, destX, destY, boxWidt
 
 function drawPlaceholderTile(pixels, canvasWidth, canvasHeight, x, y, w, h, label, isFailure) {
   fillRect(pixels, canvasWidth, canvasHeight, x, y, w, h, isFailure ? COLOR.failedTileBg : COLOR.emptyTileBg);
-  drawTextCentered(pixels, canvasWidth, canvasHeight, label, x + w / 2, y + h / 2 - GLYPH_HEIGHT * 1.5, 3, isFailure ? COLOR.failedTileText : COLOR.emptyTileText);
+  drawTextCentered(pixels, canvasWidth, canvasHeight, label, x + w / 2, y + h / 2 - Math.round((LINE_HEIGHT * 3) / 2), 3, isFailure ? COLOR.failedTileText : COLOR.emptyTileText);
 }
 
 /**
  * @param {Array<{
- *   slotLabel: string,          // e.g. 'S BEFORE' — fixed per quadrant, ASCII only
- *   locationLabel: string|null, // e.g. '82K+020' — null when the quadrant has no candidate
- *   distanceLabel: string|null, // e.g. '0.08KM' — null when unavailable
+ *   slotLabel: string,          // e.g. '南前' — fixed per quadrant, Traditional Chinese
+ *   locationLabel: string|null, // e.g. '82K+900' — null when the quadrant has no candidate
+ *   distanceLabel: string|null, // e.g. '0.800' — just the number, 3 decimals; null when unavailable
  *   jpegBytes: Uint8Array|ArrayBuffer|null,
  *   status: 'ok'|'empty'|'failed',
  * }>} cells - EXACTLY 4 entries, index-aligned [S前, S後, N前, N後]. A
@@ -175,16 +181,17 @@ export async function composeQuadrantCollage(cells, options) {
   const pixels = new Uint8ClampedArray(COLLAGE_WIDTH * COLLAGE_HEIGHT * 4);
   fillRect(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, 0, 0, COLLAGE_WIDTH, COLLAGE_HEIGHT, COLOR.pageBg);
 
-  // Header.
+  // Header. Title at scale 3 (48px-tall glyphs) — deliberately large,
+  // per instruction ("標題文字不要太小") — subtitle at scale 2 (32px).
   fillRect(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, 0, 0, COLLAGE_WIDTH, HEADER_HEIGHT, COLOR.headerBg);
-  drawText(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, titleLine, 16, 12, 4, COLOR.headerTitle);
-  drawText(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, subtitleLine, 16, 48, 3, COLOR.headerSubtitle);
+  drawText(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, titleLine, 16, 10, 3, COLOR.headerTitle);
+  drawText(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, subtitleLine, 16, 60, 2, COLOR.headerSubtitle);
 
   // The real source of truth for "how many quadrants actually produced
   // a usable image" — counted only when decode (AND the subsequent
   // draw) genuinely succeeds, never from fetch status alone. A cell can
   // fetch a 200 response that isn't actually a valid/decodable JPEG;
-  // that must render as a "NO SIGNAL" placeholder and must NOT count
+  // that must render as a "暫無畫面" placeholder and must NOT count
   // toward filledCount, exactly like an outright fetch failure.
   let successfulDecodedFrames = 0;
 
@@ -208,22 +215,23 @@ export async function composeQuadrantCollage(cells, options) {
         // whole collage (see module comment: 1-4 successes still
         // produce a valid collage) — but it does NOT count toward
         // successfulDecodedFrames.
-        drawPlaceholderTile(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, cellX, imageY, CELL_WIDTH, IMAGE_AREA_HEIGHT, 'NO SIGNAL', true);
+        drawPlaceholderTile(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, cellX, imageY, CELL_WIDTH, IMAGE_AREA_HEIGHT, '暫無畫面', true);
       }
     } else if (cell.status === 'failed') {
-      drawPlaceholderTile(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, cellX, imageY, CELL_WIDTH, IMAGE_AREA_HEIGHT, 'NO SIGNAL', true);
+      drawPlaceholderTile(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, cellX, imageY, CELL_WIDTH, IMAGE_AREA_HEIGHT, '暫無畫面', true);
     } else {
-      drawPlaceholderTile(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, cellX, imageY, CELL_WIDTH, IMAGE_AREA_HEIGHT, 'NO CAMERA', false);
+      drawPlaceholderTile(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, cellX, imageY, CELL_WIDTH, IMAGE_AREA_HEIGHT, '無符合鏡頭', false);
     }
 
-    // Label bar.
+    // Label bar. Quadrant name (南前/南後/北前/北後) at scale 3, one
+    // combined info line "82K+900 / 距事故 0.800 公里" at scale 2 below
+    // it — a single line per instruction ("避免塞太多資訊"), not the
+    // separate location/distance lines V1.8 originally used.
     fillRect(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, cellX, labelY, CELL_WIDTH, LABEL_HEIGHT, COLOR.labelBg);
-    drawText(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, cell.slotLabel, cellX + 14, labelY + 10, 3, COLOR.labelText);
+    drawText(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, cell.slotLabel, cellX + 14, labelY + 6, 3, COLOR.labelText);
     if (cell.locationLabel) {
-      drawText(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, cell.locationLabel, cellX + 14, labelY + 40, 2, COLOR.labelSubtext);
-    }
-    if (cell.distanceLabel) {
-      drawText(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, cell.distanceLabel, cellX + 14, labelY + 64, 2, COLOR.labelSubtext);
+      const infoLine = cell.distanceLabel ? `${cell.locationLabel} / 距事故 ${cell.distanceLabel} 公里` : cell.locationLabel;
+      drawText(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, infoLine, cellX + 14, labelY + 62, 2, COLOR.labelSubtext);
     }
   }
 

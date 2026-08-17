@@ -1,6 +1,7 @@
-// V1.8 — src/cctv/collage.js: pure compositing engine tests. Uses the
-// REAL @jsquash/jpeg WASM codecs (via src/cctv/jpegCodec.js) — no
-// mocking of decode/encode — since this module has zero TDX/KV/fetch
+// V1.8/V1.8.3 — src/cctv/collage.js: pure compositing engine tests. Uses
+// the REAL @jsquash/jpeg WASM codecs (via test/testJpegCodec.js's
+// Node-compatible loader — see that file's module comment) — no mocking
+// of decode/encode — since this module has zero TDX/KV/fetch
 // dependencies of its own; every test here is a real JPEG round-trip.
 
 import { test } from 'node:test';
@@ -103,7 +104,7 @@ test('2. quadrants render in the fixed ratified order: index0=top-left, index1=t
 
 // --- 3. one failure -> the rest still succeed, failed cell shows a placeholder ---
 
-test('3. one quadrant failed -> the other 3 still render; the failed cell shows the "NO SIGNAL" placeholder', async () => {
+test('3. one quadrant failed -> the other 3 still render; the failed cell shows the "暫無畫面" placeholder', async () => {
   const cells = [
     baseCell({ status: 'ok', jpegBytes: await makeSolidJpeg(200, 150, RED) }),
     baseCell({ status: 'failed', locationLabel: '85K+500', distanceLabel: '3.40KM' }),
@@ -122,7 +123,7 @@ test('3. one quadrant failed -> the other 3 still render; the failed cell shows 
 
 // --- 4. quadrant = null (empty) -> "NO CAMERA" placeholder, visually distinct from a failure ---
 
-test('4. an empty quadrant (no candidate) shows the distinct "NO CAMERA" placeholder background', async () => {
+test('4. an empty quadrant (no candidate) shows the distinct "無符合鏡頭" placeholder background', async () => {
   const cells = [
     baseCell({ status: 'ok', jpegBytes: await makeSolidJpeg(200, 150, RED) }),
     baseCell({ status: 'ok', jpegBytes: await makeSolidJpeg(200, 150, GREEN) }),
@@ -230,9 +231,11 @@ test('9. regression: drawText with a fractional y renders in the correct column,
     data[i * 4 + 2] = 240;
     data[i * 4 + 3] = 255;
   }
-  // Intentionally fractional y (mirrors collage.js's own
-  // `y + h/2 - GLYPH_HEIGHT*1.5` label math, which always ends in .5).
-  drawText(data, width, height, 'A', 900, 100.5, 4, [255, 0, 0, 255]);
+  // Intentionally fractional y (mirrors collage.js's own placeholder
+  // label math, which can end in .5). '8' is a digit glyph (present in
+  // the V1.8.3 font's ASCII16 table) — any glyph with at least one lit
+  // pixel works for this test.
+  drawText(data, width, height, '8', 900, 100.5, 4, [255, 0, 0, 255]);
 
   // The glyph must land in the RIGHT half (x >= 600) — never wrap into
   // the left half the way the pre-fix bug did.
@@ -249,4 +252,48 @@ test('9. regression: drawText with a fractional y renders in the correct column,
   }
   assert.equal(litPixelInRightHalf, true, 'expected the glyph to render in the right half');
   assert.equal(litPixelInLeftHalf, false, 'the glyph must never wrap into the left half');
+});
+
+// --- 10. V1.8.3: every CJK glyph this round's display text actually
+// uses must render as a real shape — never a blank box, never silently
+// dropped. This is the automatable half of "中文 glyph 不可出現空白方塊
+// 或亂碼" (a rendered "garbled" glyph isn't something a pixel-count
+// assertion alone can rule out — that was verified visually, by
+// rendering the real proof sheet and the real mixed-text strings this
+// round produces and inspecting them — but "did every character
+// actually draw SOMETHING, and is no two characters drawing the exact
+// same shape" is directly testable and is exactly what this covers).
+
+test('10. every CJK character used by V1.8.3 display text renders a non-blank, distinct glyph', async () => {
+  const { drawText: draw } = await import('../src/cctv/bitmapFont.js');
+  // The exact closed character set this round's display text needs:
+  // title ("國1 …附近監視畫面"), quadrant labels (南前/南後/北前/北後),
+  // the combined info line ("距事故 … 公里"), and the two placeholders
+  // (無符合鏡頭 / 暫無畫面).
+  const REQUIRED_CHARS = '國附近監視畫面更新南前後北距事故公里無符合鏡頭暫'.split('');
+  assert.equal(REQUIRED_CHARS.length, 24, 'sanity check on the required character count');
+
+  const shapes = new Map();
+  for (const ch of REQUIRED_CHARS) {
+    const width = 16;
+    const height = 16;
+    const data = new Uint8ClampedArray(width * height * 4);
+    draw(data, width, height, ch, 0, 0, 1, [255, 255, 255, 255]);
+    let litCount = 0;
+    let signature = '';
+    for (let i = 0; i < width * height; i += 1) {
+      const lit = data[i * 4] === 255 ? '1' : '0';
+      signature += lit;
+      if (lit === '1') litCount += 1;
+    }
+    assert.ok(litCount > 0, `character "${ch}" rendered as a completely blank box`);
+    // A real 16x16 CJK glyph should have a reasonable amount of ink —
+    // catches a glyph that's accidentally almost-empty (e.g. a single
+    // stray pixel from a typo) without requiring exact stroke fidelity.
+    assert.ok(litCount >= 8, `character "${ch}" rendered suspiciously few pixels (${litCount}) — likely a broken glyph`);
+    if (shapes.has(signature)) {
+      assert.fail(`character "${ch}" renders IDENTICALLY to "${shapes.get(signature)}" — glyphs must be visually distinct`);
+    }
+    shapes.set(signature, ch);
+  }
 });

@@ -108,10 +108,12 @@ function loadProductionJpegCodec() {
   return import('../cctv/jpegCodecWorker.js');
 }
 
-// ASCII-only quadrant labels for the V1.8 collage image (see
-// bitmapFont.js's module comment for why no CJK glyphs are embedded).
-// Index-aligned with QUADRANTS below — never reordered.
-const ASCII_QUADRANT_LABELS = ['S BEFORE', 'S AFTER', 'N BEFORE', 'N AFTER'];
+// V1.8.3 — Traditional Chinese quadrant labels for the collage image
+// (see bitmapFont.js's module comment for the hand-authored CJK glyph
+// set). Index-aligned with QUADRANTS below — never reordered; this is
+// purely a display-string change, not a selection-logic change.
+// Exported for direct unit testing (image text isn't OCR-able).
+export const CJK_QUADRANT_LABELS = ['南前', '南後', '北前', '北後'];
 
 export const PROBE_USED_KEY = 'admin:cctv-hsinchu-probe-used:v1';
 export const CANDIDATES_KEY = 'admin:cctv-hsinchu-candidates:v1';
@@ -354,10 +356,31 @@ function candidateDistanceLabel(candidate) {
   return km === null ? '未知' : `${Math.abs(km - TARGET_KM).toFixed(3)} 公里`;
 }
 
-/** ASCII-only distance label for the V1.8 collage image, e.g. "0.10KM". */
-function candidateDistanceLabelAscii(candidate) {
+/** Bare distance number (3 decimals, per instruction "距離固定顯示 3 位
+ * 小數"), for the V1.8.3 collage image's combined info line — collage.js
+ * wraps this with "距事故 … 公里" itself, so this returns just the
+ * number, e.g. "0.080", "0.800", "1.000". Exported for direct unit
+ * testing (image text isn't OCR-able, so pure string builders like this
+ * one are tested directly rather than via pixel inspection). */
+export function candidateDistanceLabelForCollage(candidate) {
   const km = parseKM(candidate.locationMile);
-  return km === null ? null : `${Math.abs(km - TARGET_KM).toFixed(2)}KM`;
+  return km === null ? null : Math.abs(km - TARGET_KM).toFixed(3);
+}
+
+/**
+ * Builds the collage's Traditional-Chinese title/subtitle lines, e.g.
+ * titleLine "國1 82K+100 附近監視畫面", subtitleLine "更新 21:00" —
+ * per instruction, replacing the earlier ASCII "NH1 82K+100 CCTV" /
+ * "UPDATED HH:MM". Exported and taking `now` as a parameter so it's
+ * directly unit-testable with a fixed Date, without needing to OCR the
+ * rendered collage image.
+ */
+export function buildCollageHeaderLines(now) {
+  const { hour, minute } = toTaipeiParts(now);
+  return {
+    titleLine: `國1 ${formatKmAscii(TARGET_KM)} 附近監視畫面`,
+    subtitleLine: `更新 ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+  };
 }
 
 /** Formats a KM float as TDX-style ASCII, e.g. 82.1 -> "82K+100". */
@@ -706,12 +729,12 @@ export async function handleHsinchuCctvCollage(env, codecOverride) {
 
   const cells = QUADRANTS.map((quadrant, i) => {
     const candidate = candidates[i];
-    const slotLabel = ASCII_QUADRANT_LABELS[i];
+    const slotLabel = CJK_QUADRANT_LABELS[i];
     if (!candidate) {
       return { slotLabel, locationLabel: null, distanceLabel: null, jpegBytes: null, status: 'empty' };
     }
     const locationLabel = candidate.locationMile || null;
-    const distanceLabel = candidateDistanceLabelAscii(candidate);
+    const distanceLabel = candidateDistanceLabelForCollage(candidate);
     const frame = frameResults[i];
     if (frame && frame.ok) {
       return { slotLabel, locationLabel, distanceLabel, jpegBytes: frame.bytes, status: 'ok' };
@@ -719,9 +742,7 @@ export async function handleHsinchuCctvCollage(env, codecOverride) {
     return { slotLabel, locationLabel, distanceLabel, jpegBytes: null, status: 'failed' };
   });
 
-  const { hour, minute } = toTaipeiParts(new Date());
-  const titleLine = `NH1 ${formatKmAscii(TARGET_KM)} CCTV`;
-  const subtitleLine = `UPDATED ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  const { titleLine, subtitleLine } = buildCollageHeaderLines(new Date());
 
   // Only load a real codec when there's at least one fetched frame to
   // decode — composeQuadrantCollage's own pre-check short-circuits to

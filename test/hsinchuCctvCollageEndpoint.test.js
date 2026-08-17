@@ -1,4 +1,10 @@
-// V1.8 — GET /admin/cctv-hsinchu-collage.
+// V1.8/V1.8.3 — GET /admin/cctv-hsinchu-collage.
+//
+// V1.8.3 fully Traditional-Chinese-izes the collage's display text
+// (title, quadrant labels, per-cell info line, placeholders) — selection
+// logic, TDX calls, fetch concurrency, and the collage endpoint's own
+// orchestration are all unchanged; see tests 13-17 below for the new
+// display-text coverage.
 //
 // Error/boundary paths (Admin Auth, missing KV, all-fetches-fail,
 // all-quadrants-empty, missing binding) exercise the real Worker entry
@@ -33,7 +39,14 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { resetTdxTokenCache } from '../src/tdx/auth.js';
 import worker from '../src/index.js';
-import { PROBE_USED_KEY, CANDIDATES_KEY, handleHsinchuCctvCollage } from '../src/tdx/hsinchuCctvProbe.js';
+import {
+  PROBE_USED_KEY,
+  CANDIDATES_KEY,
+  handleHsinchuCctvCollage,
+  buildCollageHeaderLines,
+  candidateDistanceLabelForCollage,
+  CJK_QUADRANT_LABELS,
+} from '../src/tdx/hsinchuCctvProbe.js';
 import { decodeJpeg, encodeJpeg } from './testJpegCodec.js';
 
 const TEST_CODEC = { decodeJpeg, encodeJpeg };
@@ -331,4 +344,33 @@ test('12. missing TRAFFIC_KV binding -> 503, 0 fetches', async () => {
   const res = await worker.fetch(authedRequest('/admin/cctv-hsinchu-collage'), env);
   assert.equal(res.status, 503);
   assert.equal(fetchCalls, 0);
+});
+
+// --- V1.8.3: Traditional-Chinese display text — pure string builders,
+// tested directly rather than via OCR on the rendered image (see
+// buildCollageHeaderLines/candidateDistanceLabelForCollage/
+// CJK_QUADRANT_LABELS's own doc comments in hsinchuCctvProbe.js). ---
+
+test('13. title is "國1 82K+100 附近監視畫面"', () => {
+  const { titleLine } = buildCollageHeaderLines(new Date('2026-08-17T13:00:00Z')); // 21:00 Asia/Taipei
+  assert.equal(titleLine, '國1 82K+100 附近監視畫面');
+});
+
+test('14. subtitle is "更新 HH:MM" in Asia/Taipei', () => {
+  const { subtitleLine } = buildCollageHeaderLines(new Date('2026-08-17T13:00:00Z')); // 21:00 Asia/Taipei
+  assert.equal(subtitleLine, '更新 21:00');
+});
+
+test('15. quadrant labels are exactly 南前/南後/北前/北後, in that fixed order', () => {
+  assert.deepEqual(CJK_QUADRANT_LABELS, ['南前', '南後', '北前', '北後']);
+});
+
+test('16. distance is always formatted to exactly 3 decimal places', () => {
+  assert.equal(candidateDistanceLabelForCollage({ locationMile: '82K+020' }), '0.080');
+  assert.equal(candidateDistanceLabelForCollage({ locationMile: '82K+900' }), '0.800');
+  assert.equal(candidateDistanceLabelForCollage({ locationMile: '81K+100' }), '1.000');
+});
+
+test('17. an unparseable locationMile yields a null distance label (never a broken/garbage string)', () => {
+  assert.equal(candidateDistanceLabelForCollage({ locationMile: 'N/A' }), null);
 });
