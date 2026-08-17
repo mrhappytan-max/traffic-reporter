@@ -13,5 +13,8 @@
   },
   "devDependencies": {
     "wrangler": "^4.123.0"
+  },
+  "dependencies": {
+    "@jsquash/jpeg": "^1.6.0"
   }
 }

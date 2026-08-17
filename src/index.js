@@ -7,7 +7,7 @@ import { handlePbsVpcProbe } from './pbs/vpcProbe.js';
 import { handleHealth } from './traffic/health.js';
 import { requireAdminAuth, applyAdminSecurityHeaders } from './security/adminAuth.js';
 import { handleCctvProbe } from './tdx/cctvProbe.js';
-import { handleHsinchuCctvProbe, handleHsinchuCctvFrame } from './tdx/hsinchuCctvProbe.js';
+import { handleHsinchuCctvProbe, handleHsinchuCctvFrame, handleHsinchuCctvCollage } from './tdx/hsinchuCctvProbe.js';
 
 // V1.6.3 — Admin Protection: every human-facing admin/debug page requires
 // HTTP Basic Auth (see security/adminAuth.js). Centralized here on
@@ -30,6 +30,12 @@ import { handleHsinchuCctvProbe, handleHsinchuCctvFrame } from './tdx/hsinchuCct
 // quadrant (S前/S後/N前/N後) — the ratified four-quadrant selector caps
 // at 4 candidates, never more; see hsinchuCctvProbe.js's CANDIDATE_COUNT
 // and PROJECT_HANDOFF.md section 14.
+//
+// V1.8: /admin/cctv-hsinchu-collage composes those same (up to) 4
+// frames into a single 2x2 collage JPEG — read-only against the
+// candidates KV, 0 TDX calls, never triggers the probe above. See
+// tdx/hsinchuCctvProbe.js's handleHsinchuCctvCollage and
+// PROJECT_HANDOFF.md's V1.8 section.
 const HSINCHU_FRAME_PATHS = Array.from({ length: 4 }, (_, i) => `/admin/cctv-hsinchu-frame/${i}`);
 const ADMIN_PATHS = new Set([
   '/health',
@@ -39,6 +45,7 @@ const ADMIN_PATHS = new Set([
   '/debug/pbs-vpc-probe',
   '/admin/cctv-probe',
   '/admin/cctv-hsinchu-probe',
+  '/admin/cctv-hsinchu-collage',
   ...HSINCHU_FRAME_PATHS,
 ]);
 
@@ -50,6 +57,7 @@ function routeAdminGet(pathname, env) {
   if (pathname === '/health') return handleHealth(env);
   if (pathname === '/admin/cctv-probe') return handleCctvProbe(env);
   if (pathname === '/admin/cctv-hsinchu-probe') return handleHsinchuCctvProbe(env);
+  if (pathname === '/admin/cctv-hsinchu-collage') return handleHsinchuCctvCollage(env);
   const frameIndex = HSINCHU_FRAME_PATHS.indexOf(pathname);
   if (frameIndex !== -1) return handleHsinchuCctvFrame(env, frameIndex);
   return new Response('Not Found', { status: 404 });

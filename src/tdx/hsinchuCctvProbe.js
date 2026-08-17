@@ -20,6 +20,15 @@
 //     stream), never touching TDX at all. This handler does not import
 //     getAccessToken/fetchTdxJson/anything TDX-related — "0 TDX calls"
 //     is enforced by the import graph itself, not just by convention.
+//   - GET /admin/cctv-hsinchu-collage       — V1.8: composes the (up to)
+//     4 quadrant frames into a single 2x2 collage JPEG (see
+//     cctv/collage.js). Strictly read-only against the candidates KV —
+//     never triggers /admin/cctv-hsinchu-probe, never rebuilds the
+//     candidate list, and (like the frame endpoint above) never calls
+//     getAccessToken/fetchTdxJson: 0 TDX calls, same guarantee, same
+//     reasoning. If the candidates KV is absent/expired, responds with a
+//     clear "CCTV candidate cache unavailable" message rather than
+//     silently calling TDX to repopulate it.
 //
 // V1.7 CCTV 四象限選鏡規則 / 4-camera cross-direction search — RATIFIED,
 // see PROJECT_HANDOFF.md section 14 for the full rationale. Supersedes
@@ -66,6 +75,14 @@
 import { getAccessToken } from './auth.js';
 import { fetchTdxJson, TdxApiError } from './client.js';
 import { parseKM } from '../traffic/roadSectionLabel.js';
+import { toTaipeiParts } from '../traffic/broadcastHours.js';
+import { composeQuadrantCollage } from '../cctv/collage.js';
+import { decodeJpeg, encodeJpeg } from '../cctv/jpegCodec.js';
+
+// ASCII-only quadrant labels for the V1.8 collage image (see
+// bitmapFont.js's module comment for why no CJK glyphs are embedded).
+// Index-aligned with QUADRANTS below — never reordered.
+const ASCII_QUADRANT_LABELS = ['S BEFORE', 'S AFTER', 'N BEFORE', 'N AFTER'];
 
 export const PROBE_USED_KEY = 'admin:cctv-hsinchu-probe-used:v1';
 export const CANDIDATES_KEY = 'admin:cctv-hsinchu-candidates:v1';
@@ -241,6 +258,19 @@ async function readCandidates(kv) {
 function candidateDistanceLabel(candidate) {
   const km = parseKM(candidate.locationMile);
   return km === null ? '未知' : `${Math.abs(km - TARGET_KM).toFixed(3)} 公里`;
+}
+
+/** ASCII-only distance label for the V1.8 collage image, e.g. "0.10KM". */
+function candidateDistanceLabelAscii(candidate) {
+  const km = parseKM(candidate.locationMile);
+  return km === null ? null : `${Math.abs(km - TARGET_KM).toFixed(2)}KM`;
+}
+
+/** Formats a KM float as TDX-style ASCII, e.g. 82.1 -> "82K+100". */
+function formatKmAscii(km) {
+  const whole = Math.floor(km);
+  const meters = Math.round((km - whole) * 1000);
+  return `${whole}K+${String(meters).padStart(3, '0')}`;
 }
 
 function renderPage(bodyHtml) {
@@ -526,5 +556,75 @@ export async function handleHsinchuCctvFrame(env, index) {
   return new Response(result.bytes, {
     status: 200,
     headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store' },
+  });
+}
+
+// --- V1.8: STEP 5 — compose the 4 quadrant frames into one collage. ---
+// Strictly read-only against the candidates KV; never touches TDX (no
+// getAccessToken/fetchTdxJson import above is ever called from this
+// function), never triggers the probe, never rebuilds the candidate
+// list. See module comment and PROJECT_HANDOFF.md's V1.8 section.
+
+/**
+ * Fetches all (up to 4) candidate frames in parallel — capped at 4 by
+ * construction (exactly one fetch attempt per quadrant slot, never
+ * more) — and composes them into a single 2x2 collage JPEG via
+ * cctv/collage.js. One or more successful frames is enough to produce a
+ * valid collage; only when every quadrant has neither a candidate nor a
+ * successfully fetched frame does this respond without an image.
+ */
+export async function handleHsinchuCctvCollage(env) {
+  if (env.TRAFFIC_KV === undefined) {
+    return jsonResponse({ status: 'error', message: 'TRAFFIC_KV binding not configured.' }, 503);
+  }
+
+  const candidates = await readCandidates(env.TRAFFIC_KV);
+  if (!candidates) {
+    return jsonResponse({ status: 'error', message: 'CCTV candidate cache unavailable' }, 404);
+  }
+
+  const frameResults = await Promise.all(
+    candidates.map(async (candidate) => {
+      if (!candidate) return null;
+      try {
+        return await extractFirstJpegFrame(candidate.videoStreamUrl);
+      } catch {
+        // extractFirstJpegFrame never throws in practice (every failure
+        // path returns a typed {ok:false,...} result) — this catch is
+        // defense-in-depth only, so one unexpected error can never take
+        // down the whole collage (see module comment: 1-4 successes
+        // still produce a valid collage).
+        return { ok: false, reason: 'stream-error' };
+      }
+    })
+  );
+
+  const cells = QUADRANTS.map((quadrant, i) => {
+    const candidate = candidates[i];
+    const slotLabel = ASCII_QUADRANT_LABELS[i];
+    if (!candidate) {
+      return { slotLabel, locationLabel: null, distanceLabel: null, jpegBytes: null, status: 'empty' };
+    }
+    const locationLabel = candidate.locationMile || null;
+    const distanceLabel = candidateDistanceLabelAscii(candidate);
+    const frame = frameResults[i];
+    if (frame && frame.ok) {
+      return { slotLabel, locationLabel, distanceLabel, jpegBytes: frame.bytes, status: 'ok' };
+    }
+    return { slotLabel, locationLabel, distanceLabel, jpegBytes: null, status: 'failed' };
+  });
+
+  const { hour, minute } = toTaipeiParts(new Date());
+  const titleLine = `NH1 ${formatKmAscii(TARGET_KM)} CCTV`;
+  const subtitleLine = `UPDATED ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+
+  const result = await composeQuadrantCollage(cells, { decodeJpeg, encodeJpeg, titleLine, subtitleLine });
+  if (!result.ok) {
+    return jsonResponse({ status: 'error', message: 'No CCTV footage available for any quadrant.' }, 502);
+  }
+
+  return new Response(result.bytes, {
+    status: 200,
+    headers: { 'Content-Type': result.contentType, 'Cache-Control': 'no-store' },
   });
 }
