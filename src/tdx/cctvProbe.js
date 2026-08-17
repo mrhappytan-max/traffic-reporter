@@ -6,24 +6,46 @@
 // real Cron/broadcast pipeline, and this module is never imported by
 // scheduled.js or any broadcast code path.
 //
-// Guardrails enforced by construction, not by discipline:
-//   - A KV one-time-use flag (admin:cctv-probe-used:v1, own isolated
-//     key, same TRAFFIC_KV namespace as everything else in this
-//     project) is checked FIRST, before any TDX call at all (not even
-//     token acquisition). Once a metadata call has ever succeeded, every
-//     later invocation short-circuits to "Probe already completed" with
-//     zero TDX calls — a browser refresh or repeat curl can never spend
-//     a second unit of quota. If the KV read itself fails, this fails
-//     CLOSED (refuses to proceed) rather than risk re-spending quota
-//     with no way to record it.
+// PRE-ARM design (this round's fix — see the round's own comment below
+// for why): the guiding principle is "寧可一次測試失敗，也不能因
+// refresh/retry 意外再次消耗 TDX" — a test that fails safely is fine; a
+// test that silently re-spends quota on a browser refresh is not.
+//
+// admin:cctv-probe-used:v1 (own isolated KV key, same TRAFFIC_KV
+// namespace as everything else in this project) has three states:
+//   - (absent)  — never attempted. The only state that proceeds to TDX.
+//   - 'armed'   — an attempt is in flight or failed partway through.
+//     LOCKED. No further TDX calls, ever, until a human manually
+//     deletes this KV key — there is deliberately no auto-reset and no
+//     /admin/cctv-probe-reset endpoint.
+//   - 'completed' — the CCTV metadata call genuinely succeeded once.
+//     LOCKED, same as 'armed' (0 further TDX calls), but reported with
+//     different, clearer wording.
+//
+// Ordering, enforced by construction:
+//   1. Read the KV state. 'armed' or 'completed' -> stop immediately,
+//      0 TDX calls (not even token acquisition).
+//   2. (absent) -> write 'armed' BEFORE doing anything TDX-related at
+//      all, including getAccessToken(). If this write itself fails,
+//      fail closed with 503 — 0 TDX calls, no retry.
+//   3. Only after 'armed' is durably written does getAccessToken() run.
+//      If OAuth fails, KV stays 'armed' — never auto-cleared, never
+//      auto-retried. The probe is now permanently locked until a human
+//      resets it.
+//   4. Only after OAuth succeeds does the ONE allowed CCTV metadata
+//      call happen. If it fails, same as step 3: KV stays 'armed',
+//      locked, no retry.
+//   5. Only after the metadata call genuinely succeeds does KV flip
+//      'armed' -> 'completed'. If THAT write itself fails, the KV value
+//      simply remains 'armed' (a failed put never partially commits) —
+//      still fully locked, still 0 TDX calls on the next request either
+//      way. Reported via `completionWriteFailed: true`, but this never
+//      re-opens the guard.
+//
+// Also still true from the original design:
 //   - Exactly one call to the CCTV metadata endpoint per invocation — a
-//     single fetchTdxJson() call, no loop, no retry, no pagination, no
-//     second CCTV, no VD/CMS/Bus Alert call anywhere in this module.
-//   - The one-time-use flag is written ONLY after that metadata call
-//     has genuinely succeeded — a failed attempt (network error, 429,
-//     etc.) leaves the flag unset, so a legitimate retry attempt later
-//     is still possible (but each such attempt is, again, capped at
-//     exactly one call).
+//     single fetchTdxJson() call, no loop, no pagination, no second
+//     CCTV, no VD/CMS/Bus Alert call anywhere in this module.
 //   - The image URL fetch (STEP 2) sends NO Authorization header at
 //     all, never re-calls the CCTV metadata endpoint, and never
 //     acquires a new/another TDX token — it is a completely separate,
@@ -172,69 +194,100 @@ function buildVerdict(step2) {
 }
 
 export async function handleCctvProbe(env) {
-  // 0. One-time-use guard — checked BEFORE any TDX call whatsoever
-  // (including token acquisition). KV read failure fails CLOSED: we
-  // refuse to proceed rather than risk spending quota with no way to
-  // record it afterward.
-  let alreadyUsed;
-  try {
-    alreadyUsed = (await env.TRAFFIC_KV?.get(CCTV_PROBE_USED_KEY)) === 'completed';
-  } catch {
-    return jsonResponse(
-      { status: 'error', stage: 'kv-guard', message: 'Could not verify one-time-use state; refusing to call TDX.' },
-      503
-    );
-  }
+  // 0. Read the current KV state — BEFORE any TDX call whatsoever
+  // (including token acquisition). A read failure fails CLOSED: refuse
+  // to proceed rather than risk spending quota with no way to track it.
   if (env.TRAFFIC_KV === undefined) {
     return jsonResponse(
       { status: 'error', stage: 'kv-guard', message: 'TRAFFIC_KV binding not configured; refusing to call TDX.' },
       503
     );
   }
-  if (alreadyUsed) {
-    return jsonResponse({ status: 'already-completed', message: 'Probe already completed' }, 200);
+
+  let state;
+  try {
+    state = await env.TRAFFIC_KV.get(CCTV_PROBE_USED_KEY);
+  } catch {
+    return jsonResponse(
+      { status: 'error', stage: 'kv-guard', message: 'Could not verify one-time-use state; refusing to call TDX.' },
+      503
+    );
   }
 
-  // 1. OAuth token — reuses the project's existing cache-first flow
+  if (state === 'armed') {
+    return jsonResponse(
+      { status: 'locked', message: 'Probe locked; a previous attempt has already been armed. Manual reset required.' },
+      200
+    );
+  }
+  if (state === 'completed') {
+    return jsonResponse({ status: 'already-completed', message: 'Probe already completed.' }, 200);
+  }
+
+  // 1. PRE-ARM — write 'armed' BEFORE any TDX-related call at all,
+  // including token acquisition. If this write itself fails, fail
+  // closed: 0 TDX calls, no retry, nothing proceeds.
+  try {
+    await env.TRAFFIC_KV.put(CCTV_PROBE_USED_KEY, 'armed');
+  } catch {
+    return jsonResponse(
+      { status: 'error', stage: 'pre-arm', message: 'Could not arm the one-time-use guard; refusing to call TDX.' },
+      503
+    );
+  }
+
+  // 2. OAuth token — reuses the project's existing cache-first flow
   // (memory -> KV -> real OAuth). Separate from the CCTV metadata call
   // budget, same convention as every other TDX-calling code path in
   // this project (see tdx/fetchAll.js's tokenOk vs. per-source calls).
-  // Never surfaced in any response below.
+  // Never surfaced in any response below. On failure, KV stays 'armed'
+  // — never auto-cleared, never auto-retried; a human must delete
+  // admin:cctv-probe-used:v1 to try again.
   let accessToken;
   try {
     accessToken = await getAccessToken(env);
   } catch (err) {
     return jsonResponse(
-      { status: 'error', stage: 'oauth', cctvMetadataCalls: 0, error: err && err.message ? err.message : 'TDX token acquisition failed' },
+      {
+        status: 'locked',
+        stage: 'oauth',
+        cctvMetadataCalls: 0,
+        message: 'probe locked after failed attempt; manual reset required',
+        error: err && err.message ? err.message : 'TDX token acquisition failed',
+      },
       502
     );
   }
 
-  // 2. STEP 1 — the ONE allowed CCTV metadata call. No retry on failure.
+  // 3. STEP 1 — the ONE allowed CCTV metadata call. No retry on
+  // failure. On failure, KV stays 'armed' — same manual-reset-only
+  // policy as the OAuth failure path above.
   let cctvJson;
   try {
     cctvJson = await fetchTdxJson(CCTV_URL, accessToken, { source: 'cctv-probe' });
   } catch (err) {
     return jsonResponse(
       {
-        status: 'error',
+        status: 'locked',
         stage: 'cctv-metadata',
         cctvMetadataCalls: 1,
         httpStatus: err instanceof TdxApiError ? err.status : null,
+        message: 'probe locked after failed attempt; manual reset required',
         error: err && err.message ? err.message : 'TDX CCTV metadata request failed',
       },
       502
     );
   }
 
-  // Metadata call genuinely succeeded — mark the one-time-use guard NOW,
-  // before anything else, so a later failure in this same request (e.g.
-  // the image fetch below) can never leave the guard looking "unused".
-  let markCompletedOk = true;
+  // Metadata call genuinely succeeded — flip armed -> completed. If
+  // THIS write itself fails, the KV value simply stays 'armed' (a
+  // failed put never partially commits an old value) — still fully
+  // locked, still 0 TDX calls on the next request either way.
+  let completionWriteFailed = false;
   try {
     await env.TRAFFIC_KV.put(CCTV_PROBE_USED_KEY, 'completed');
   } catch {
-    markCompletedOk = false; // best-effort — see module comment
+    completionWriteFailed = true; // see comment above — the guard is still intact regardless
   }
 
   const records = Array.isArray(cctvJson) ? cctvJson : cctvJson.CCTVs || cctvJson.Data || [];
@@ -246,7 +299,7 @@ export async function handleCctvProbe(env) {
       {
         status: 'ok',
         cctvMetadataCalls: 1,
-        markCompletedOk,
+        completionWriteFailed,
         topLevelFields,
         recordCount: records.length,
         message: 'No CCTV records returned in this response — nothing further to probe.',
@@ -292,7 +345,7 @@ export async function handleCctvProbe(env) {
     {
       status: 'ok',
       cctvMetadataCalls: 1,
-      markCompletedOk,
+      completionWriteFailed,
       step1,
       step2,
       step3,
