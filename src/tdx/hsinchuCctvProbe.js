@@ -77,7 +77,23 @@ import { fetchTdxJson, TdxApiError } from './client.js';
 import { parseKM } from '../traffic/roadSectionLabel.js';
 import { toTaipeiParts } from '../traffic/broadcastHours.js';
 import { composeQuadrantCollage } from '../cctv/collage.js';
-import { decodeJpeg, encodeJpeg } from '../cctv/jpegCodec.js';
+
+// cctv/jpegCodecWorker.js does a top-level `import ... from '*.wasm'` —
+// the only WASM-loading mechanism Cloudflare Workers actually supports
+// (see that file's module comment). Plain Node has no ESM loader for
+// `.wasm` files, and every test file in this project imports
+// src/index.js (which imports this file) at the top level — so a static
+// top-level import of jpegCodecWorker.js here would break the ENTIRE
+// test suite the instant any test file loads, not just the new
+// collage tests. Loaded lazily instead, via dynamic import() ONLY
+// inside handleHsinchuCctvCollage, and only when actually needed (see
+// below) — merely parsing/loading this file never touches it. Tests
+// exercise the real orchestration logic either via the `codecOverride`
+// parameter (see handleHsinchuCctvCollage's own doc comment) or via
+// paths that never need a codec at all (0 successful fetches).
+function loadProductionJpegCodec() {
+  return import('../cctv/jpegCodecWorker.js');
+}
 
 // ASCII-only quadrant labels for the V1.8 collage image (see
 // bitmapFont.js's module comment for why no CJK glyphs are embedded).
@@ -569,11 +585,22 @@ export async function handleHsinchuCctvFrame(env, index) {
  * Fetches all (up to 4) candidate frames in parallel — capped at 4 by
  * construction (exactly one fetch attempt per quadrant slot, never
  * more) — and composes them into a single 2x2 collage JPEG via
- * cctv/collage.js. One or more successful frames is enough to produce a
- * valid collage; only when every quadrant has neither a candidate nor a
- * successfully fetched frame does this respond without an image.
+ * cctv/collage.js. One or more successfully DECODED frames is enough to
+ * produce a valid collage (collage.js's own successfulDecodedFrames
+ * count is the source of truth — a 200 response that isn't actually a
+ * valid JPEG does not count); only when every quadrant has neither a
+ * candidate nor a usable frame does this respond without an image.
+ *
+ * @param {object} env
+ * @param {{decodeJpeg: Function, encodeJpeg: Function}} [codecOverride] —
+ *   TEST-ONLY. Production (index.js's routeAdminGet) never passes this;
+ *   the real Workers WASM codec is lazily loaded on demand (see
+ *   loadProductionJpegCodec above). Tests that need a real decoded
+ *   image pass test/testJpegCodec.js's Node-compatible codec here
+ *   instead of going through the real `.wasm` import, which plain Node
+ *   cannot load — see this file's module comment.
  */
-export async function handleHsinchuCctvCollage(env) {
+export async function handleHsinchuCctvCollage(env, codecOverride) {
   if (env.TRAFFIC_KV === undefined) {
     return jsonResponse({ status: 'error', message: 'TRAFFIC_KV binding not configured.' }, 503);
   }
@@ -618,7 +645,16 @@ export async function handleHsinchuCctvCollage(env) {
   const titleLine = `NH1 ${formatKmAscii(TARGET_KM)} CCTV`;
   const subtitleLine = `UPDATED ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 
-  const result = await composeQuadrantCollage(cells, { decodeJpeg, encodeJpeg, titleLine, subtitleLine });
+  // Only load a real codec when there's at least one fetched frame to
+  // decode — composeQuadrantCollage's own pre-check short-circuits to
+  // ok:false/no-frames without ever calling decodeJpeg/encodeJpeg when
+  // nothing fetched successfully, so there's no need to pay the WASM
+  // init cost (or, in tests with no override, hit the Node-incompatible
+  // dynamic import) for a request that can't produce an image anyway.
+  const anyFetchedOk = cells.some((c) => c.status === 'ok' && c.jpegBytes);
+  const codec = anyFetchedOk ? codecOverride || (await loadProductionJpegCodec()) : { decodeJpeg: undefined, encodeJpeg: undefined };
+
+  const result = await composeQuadrantCollage(cells, { decodeJpeg: codec.decodeJpeg, encodeJpeg: codec.encodeJpeg, titleLine, subtitleLine });
   if (!result.ok) {
     return jsonResponse({ status: 'error', message: 'No CCTV footage available for any quadrant.' }, 502);
   }

@@ -1,9 +1,27 @@
-// V1.8 — GET /admin/cctv-hsinchu-collage. Exercises the real Worker
-// entry point end to end (worker.fetch), matching this project's
-// established testing convention. Every CCTV frame fetch is mocked; the
-// JPEG codec itself is real (@jsquash/jpeg via src/cctv/jpegCodec.js —
-// pure JS/WASM, no mocking needed, no network). No real TDX or
-// Production calls anywhere in this file.
+// V1.8 — GET /admin/cctv-hsinchu-collage.
+//
+// Error/boundary paths (Admin Auth, missing KV, all-fetches-fail,
+// all-quadrants-empty, missing binding) exercise the real Worker entry
+// point end to end (worker.fetch) — none of those paths ever reach
+// hasAnySuccess=true, so they never touch the Workers-only WASM codec
+// (see tdx/hsinchuCctvProbe.js's module comment) and run fine under
+// plain Node.
+//
+// Paths that produce a REAL collage image call handleHsinchuCctvCollage
+// directly with test/testJpegCodec.js's Node-compatible codec override
+// — plain Node cannot load src/cctv/jpegCodecWorker.js's `.wasm` import
+// (the genuine Cloudflare Workers WASM-loading mechanism), so those
+// specific tests deliberately bypass worker.fetch()'s routing layer for
+// the codec only. Admin Auth itself is still fully covered by test 1
+// (401) plus tests 2/6/7/12, which all authenticate successfully via
+// worker.fetch() and reach the handler (proven by getting handler-level
+// 404/502/503 responses, not a 401) — so the auth boundary is exercised
+// even though the "produces an image" tests don't re-prove it.
+//
+// Every CCTV frame fetch is mocked; the JPEG codec itself is real
+// (@jsquash/jpeg, via the Node-side test codec) — no mocking of
+// decode/encode, no network. No real TDX or Production calls anywhere
+// in this file.
 //
 // This endpoint is strictly read-only against the candidates KV — it
 // must never trigger /admin/cctv-hsinchu-probe, never write
@@ -15,8 +33,10 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { resetTdxTokenCache } from '../src/tdx/auth.js';
 import worker from '../src/index.js';
-import { PROBE_USED_KEY, CANDIDATES_KEY } from '../src/tdx/hsinchuCctvProbe.js';
-import { encodeJpeg } from '../src/cctv/jpegCodec.js';
+import { PROBE_USED_KEY, CANDIDATES_KEY, handleHsinchuCctvCollage } from '../src/tdx/hsinchuCctvProbe.js';
+import { decodeJpeg, encodeJpeg } from './testJpegCodec.js';
+
+const TEST_CODEC = { decodeJpeg, encodeJpeg };
 
 const FIXED_USERNAME = 'admin';
 const ADMIN_PASSWORD = 'test-admin-pass-collage';
@@ -135,13 +155,10 @@ test('3. all 4 candidates succeed -> a single image/jpeg collage, 0 TDX calls, a
     return new Response(await makeSolidJpeg(100, 100, [80, 140, 200]), { status: 200 });
   };
 
-  const res = await worker.fetch(authedRequest('/admin/cctv-hsinchu-collage'), env);
+  const res = await handleHsinchuCctvCollage(env, TEST_CODEC);
   assert.equal(res.status, 200);
   assert.equal(res.headers.get('Content-Type'), 'image/jpeg');
-  // applyAdminSecurityHeaders (security/adminAuth.js) sets the final
-  // Cache-Control on every admin response, including this one — see
-  // index.js's routeAdminGet wiring.
-  assert.match(res.headers.get('Cache-Control'), /no-store/);
+  assert.equal(res.headers.get('Cache-Control'), 'no-store');
   assert.equal(tdxHit, false);
   assert.ok(fetchCount <= 4, `expected at most 4 image fetches, got ${fetchCount}`);
   const bytes = new Uint8Array(await res.arrayBuffer());
@@ -162,7 +179,7 @@ test('4. one candidate frame fetch fails -> the other 3 still succeed and a coll
     return new Response(await makeSolidJpeg(100, 100, [80, 140, 200]), { status: 200 });
   };
 
-  const res = await worker.fetch(authedRequest('/admin/cctv-hsinchu-collage'), env);
+  const res = await handleHsinchuCctvCollage(env, TEST_CODEC);
   assert.equal(res.status, 200);
   assert.equal(res.headers.get('Content-Type'), 'image/jpeg');
 });
@@ -175,7 +192,7 @@ test('5. a null (empty) quadrant slot alongside successful ones still produces a
   priorFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(await makeSolidJpeg(100, 100, [80, 140, 200]), { status: 200 });
 
-  const res = await worker.fetch(authedRequest('/admin/cctv-hsinchu-collage'), env);
+  const res = await handleHsinchuCctvCollage(env, TEST_CODEC);
   assert.equal(res.status, 200);
   assert.equal(res.headers.get('Content-Type'), 'image/jpeg');
 });
@@ -223,7 +240,7 @@ test('8. CCTV frame fetches never include an Authorization header', async () => 
     return new Response(await makeSolidJpeg(100, 100, [80, 140, 200]), { status: 200 });
   };
 
-  const res = await worker.fetch(authedRequest('/admin/cctv-hsinchu-collage'), env);
+  const res = await handleHsinchuCctvCollage(env, TEST_CODEC);
   assert.equal(res.status, 200);
   assert.equal(sawAnyFreewayCall, true);
   assert.equal(sawAuthHeader, false);
@@ -249,7 +266,7 @@ test('9. a candidate URL outside *.freeway.gov.tw is rejected (treated as failed
     return new Response(await makeSolidJpeg(100, 100, [80, 140, 200]), { status: 200 });
   };
 
-  const res = await worker.fetch(authedRequest('/admin/cctv-hsinchu-collage'), env);
+  const res = await handleHsinchuCctvCollage(env, TEST_CODEC);
   assert.equal(res.status, 200); // the other 3 quadrants still succeed
   assert.equal(sawEvilCall, false);
 });
@@ -290,7 +307,7 @@ test('11. the collage response never contains ADMIN_PASSWORD, TDX secrets, or ra
   priorFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(await makeSolidJpeg(100, 100, [80, 140, 200]), { status: 200 });
 
-  const res = await worker.fetch(authedRequest('/admin/cctv-hsinchu-collage'), env);
+  const res = await handleHsinchuCctvCollage(env, TEST_CODEC);
   assert.equal(res.status, 200);
   const bytes = Buffer.from(await res.arrayBuffer());
   const asLatin1 = bytes.toString('latin1'); // scan raw bytes for any leaked ASCII secret text

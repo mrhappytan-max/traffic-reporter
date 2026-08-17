@@ -160,8 +160,15 @@ export async function composeQuadrantCollage(cells, options) {
   }
   const { decodeJpeg, encodeJpeg, titleLine = '', subtitleLine = '', quality = 85 } = options;
 
-  const filledCount = cells.filter((c) => c.status === 'ok' && c.jpegBytes).length;
-  if (filledCount === 0) {
+  // Cheap pre-check on fetch status alone, BEFORE touching decodeJpeg at
+  // all — lets a caller with nothing fetched skip loading/providing a
+  // codec entirely (see hsinchuCctvProbe.js's lazy production-codec
+  // loading). This is NOT the final filledCount: a cell can fetch fine
+  // and still fail to decode, and that must not count as "filled" —
+  // see successfulDecodedFrames below, which is the real source of
+  // truth for whether a usable collage was produced.
+  const anyFetchedOk = cells.some((c) => c.status === 'ok' && c.jpegBytes);
+  if (!anyFetchedOk) {
     return { ok: false, reason: 'no-frames', filledCount: 0 };
   }
 
@@ -172,6 +179,14 @@ export async function composeQuadrantCollage(cells, options) {
   fillRect(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, 0, 0, COLLAGE_WIDTH, HEADER_HEIGHT, COLOR.headerBg);
   drawText(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, titleLine, 16, 12, 4, COLOR.headerTitle);
   drawText(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, subtitleLine, 16, 48, 3, COLOR.headerSubtitle);
+
+  // The real source of truth for "how many quadrants actually produced
+  // a usable image" — counted only when decode (AND the subsequent
+  // draw) genuinely succeeds, never from fetch status alone. A cell can
+  // fetch a 200 response that isn't actually a valid/decodable JPEG;
+  // that must render as a "NO SIGNAL" placeholder and must NOT count
+  // toward filledCount, exactly like an outright fetch failure.
+  let successfulDecodedFrames = 0;
 
   for (let i = 0; i < 4; i += 1) {
     const cell = cells[i];
@@ -186,11 +201,13 @@ export async function composeQuadrantCollage(cells, options) {
         const bytes = cell.jpegBytes instanceof Uint8Array ? cell.jpegBytes : new Uint8Array(cell.jpegBytes);
         const decoded = await decodeJpeg(bytes);
         drawImageCover(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, cellX, imageY, CELL_WIDTH, IMAGE_AREA_HEIGHT, decoded);
+        successfulDecodedFrames += 1;
       } catch {
         // A frame that fetched OK but fails to decode is treated the
         // same as a fetch failure — never lets one bad JPEG break the
         // whole collage (see module comment: 1-4 successes still
-        // produce a valid collage).
+        // produce a valid collage) — but it does NOT count toward
+        // successfulDecodedFrames.
         drawPlaceholderTile(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, cellX, imageY, CELL_WIDTH, IMAGE_AREA_HEIGHT, 'NO SIGNAL', true);
       }
     } else if (cell.status === 'failed') {
@@ -210,6 +227,16 @@ export async function composeQuadrantCollage(cells, options) {
     }
   }
 
+  // Only now — after actually attempting to decode every fetched frame
+  // — do we know whether this is a real collage or 4 placeholders
+  // wearing a JPEG extension. All 4 candidates fetching a 200 response
+  // that turns out to be undecodable must behave exactly like all 4
+  // fetches failing outright: no image, reason 'no-frames'. Never
+  // encode/return a collage built entirely from placeholders.
+  if (successfulDecodedFrames === 0) {
+    return { ok: false, reason: 'no-frames', filledCount: 0 };
+  }
+
   // Thin separators between the 4 cells (and around the outer edge) so
   // adjacent photos of differing brightness don't visually bleed together.
   const SEP = 3;
@@ -217,5 +244,5 @@ export async function composeQuadrantCollage(cells, options) {
   fillRect(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, 0, HEADER_HEIGHT + CELL_HEIGHT - Math.floor(SEP / 2), COLLAGE_WIDTH, SEP, COLOR.gridLine);
 
   const encoded = await encodeJpeg({ data: pixels, width: COLLAGE_WIDTH, height: COLLAGE_HEIGHT }, { quality });
-  return { ok: true, bytes: encoded, contentType: 'image/jpeg', filledCount };
+  return { ok: true, bytes: encoded, contentType: 'image/jpeg', filledCount: successfulDecodedFrames };
 }

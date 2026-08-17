@@ -14,7 +14,7 @@ import {
   CELL_HEIGHT,
   IMAGE_AREA_HEIGHT,
 } from '../src/cctv/collage.js';
-import { decodeJpeg, encodeJpeg } from '../src/cctv/jpegCodec.js';
+import { decodeJpeg, encodeJpeg } from './testJpegCodec.js';
 import { drawText } from '../src/cctv/bitmapFont.js';
 
 async function makeSolidJpeg(width, height, rgb) {
@@ -171,6 +171,30 @@ test('7. an undecodable jpegBytes value degrades that one cell to a placeholder 
   const decoded = await decodeJpeg(new Uint8Array(result.bytes));
   assertColorClose(sampleImageAreaPixel(decoded, 0), FAILED_TILE_BG, 'undecodable frame degrades to the failed-tile placeholder');
   assertColorClose(sampleImageAreaPixel(decoded, 1), GREEN, 'the other good frame still renders');
+});
+
+// --- 7b. regression: 4 fetched OK but 0 decode successfully -> no fake collage ---
+//
+// Root-caused post-review: filledCount was originally computed from
+// fetch status alone, BEFORE decode was ever attempted — so "4 fetched
+// OK, 4 undecodable" could still return ok:true/filledCount:4 with a
+// collage that was actually 4 "NO SIGNAL" placeholders wearing a JPEG
+// extension. composeQuadrantCollage must gate on REAL decode success
+// (successfulDecodedFrames), never on fetch status.
+
+test('7b. regression: all 4 candidates fetched OK but ALL 4 fail to decode -> ok:false, no collage produced (not a fake all-placeholder image)', async () => {
+  const notActuallyJpeg = new Uint8Array([0xff, 0xd8, 1, 2, 3]); // has the SOI marker but is not a real JPEG
+  const cells = [
+    baseCell({ status: 'ok', jpegBytes: notActuallyJpeg }),
+    baseCell({ status: 'ok', jpegBytes: notActuallyJpeg }),
+    baseCell({ status: 'ok', jpegBytes: notActuallyJpeg }),
+    baseCell({ status: 'ok', jpegBytes: notActuallyJpeg }),
+  ];
+  const result = await composeQuadrantCollage(cells, { decodeJpeg, encodeJpeg, titleLine: 'T', subtitleLine: 'S' });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'no-frames');
+  assert.equal(result.filledCount, 0);
+  assert.equal(result.bytes, undefined);
 });
 
 // --- 8. output size stays well under the <=5MB guideline ---

@@ -9,7 +9,8 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "start": "wrangler dev",
-    "test": "node --test"
+    "test": "node --test",
+    "smoke:wasm": "node scripts/wranglerSmoke/runWasmSmoke.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.123.0"
