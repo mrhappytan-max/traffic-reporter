@@ -51,6 +51,13 @@
 // never reach further just to fill the slot, and never exceed 4 cameras
 // total in this first pass.
 //
+// V1.8.1 hard rule (post-Production-testing fix): the four-quadrant
+// search runs ONLY over an "eligible mainline CCTV pool" — records
+// inside a service area/rest stop (服務區/休息站/服務站) are excluded
+// BEFORE distance ranking, never merely deprioritized after the fact.
+// See isServiceAreaCctv's own comment for the full rationale and why
+// LocationType's numeric semantics are deliberately NOT assumed.
+//
 // PRE-ARM guard (admin:cctv-hsinchu-probe-used:v1) — identical ordering
 // principle to tdx/cctvProbe.js's V1.7 fix:
 //   1. Read KV state before any TDX call at all. 'armed' or 'completed'
@@ -168,6 +175,45 @@ function isTargetRoad(record) {
   return typeof roadName === 'string' && /國道1號|國道一號/.test(roadName);
 }
 
+// V1.8.1 hard rule (post-Production-testing fix): a CCTV physically
+// inside a service area / rest stop (服務區/休息站/服務站 — e.g.
+// 湖口服務區, real-world observed at 86K+000 on 國道1號) must NEVER be
+// selected as an incident camera, no matter how close its KM is to the
+// incident. These cameras typically point at a parking lot, gas
+// station, or the service area's own internal road — not the freeway
+// mainline — so a nearby KM number does not mean mainline visibility.
+// See PROJECT_HANDOFF.md's V1.8 section for the full rationale.
+//
+// LocationType semantics could NOT be verified for this fix: TDX's live
+// API and documentation are both unreachable from this sandbox (network
+// egress to tdx.transportdata.tw is blocked), so this deliberately does
+// NOT hardcode any LocationType enum-value assumption ("不要猜
+// LocationType 數值代表什麼"). Instead it scans every string-valued
+// field on the raw TDX record (RoadSection, RoadName, LocationType if
+// it happens itself to be textual, or any other descriptive field) for
+// the keywords below — a guess-free check grounded in whatever the
+// field's own text actually says, that works regardless of which exact
+// field name carries the description in the real payload, and doesn't
+// silently stop working if TDX renames/adds a field. If a future round
+// confirms (from a real response) that LocationType is a reliable
+// numeric/enum service-area marker, prefer switching to that structured
+// check instead — ask before doing so, since it changes what "service
+// area" detection actually keys off.
+//
+// Deliberately narrow: only 服務區/休息站/服務站. Interchanges, ramps,
+// system interchanges, tunnels, and bridges are NOT excluded by this
+// rule — whether those are appropriate for incident CCTV is a separate
+// decision, not part of this fix.
+const SERVICE_AREA_KEYWORDS = ['服務區', '休息站', '服務站'];
+
+function isServiceAreaCctv(record) {
+  for (const value of Object.values(record)) {
+    if (typeof value !== 'string') continue;
+    if (SERVICE_AREA_KEYWORDS.some((keyword) => value.includes(keyword))) return true;
+  }
+  return false;
+}
+
 /** Normalizes a raw RoadDirection/Direction field value to 'S', 'N', or
  * null (unrecognized). Accepts TDX's short codes ('S'/'N') as well as
  * common textual variants defensively — TDX field content has been
@@ -189,9 +235,16 @@ function normalizeDirection(rawDirection) {
  * quadrant, never more than 4 entries total.
  */
 function selectFourQuadrantCandidates(records) {
+  // Step 1: build the eligible MAINLINE CCTV pool first — wrong-road and
+  // service-area records are excluded here, BEFORE any distance
+  // comparison happens. This ordering is deliberate and required: if
+  // exclusion happened AFTER picking "nearest," a nearby service-area
+  // camera could still win a quadrant before being caught — see
+  // isServiceAreaCctv's module comment.
   const usable = [];
   for (const record of records) {
     if (!isTargetRoad(record)) continue;
+    if (isServiceAreaCctv(record)) continue; // 服務區/休息站/服務站 — never a mainline incident camera, regardless of KM proximity
     const cctvId = firstDefinedField(record, ['CCTVID', 'CCTVId', 'ID']);
     const videoStreamUrl = firstDefinedField(record, ['VideoStreamURL']);
     const locationMile = firstDefinedField(record, ['LocationMile']);
