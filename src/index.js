@@ -4,6 +4,7 @@ import { runScheduledTdxSync } from './traffic/scheduled.js';
 import { handleLineWebhook } from './line/webhook.js';
 import { handleDebugPbs } from './pbs/debugPbs.js';
 import { handlePbsVpcProbe } from './pbs/vpcProbe.js';
+import { handleHealth } from './traffic/health.js';
 
 export default {
   async fetch(request, env) {
@@ -35,6 +36,13 @@ export default {
 
     if (url.pathname === '/debug/pbs-vpc-probe' && request.method === 'GET') {
       return handlePbsVpcProbe(env);
+    }
+
+    // V1.6: human-facing health page — reads ONLY the snapshot the last
+    // Cron run wrote (health:snapshot:v1). Never calls TDX/PBS/LINE,
+    // unlike /debug/status/tdx/pbs above — see health.js.
+    if (url.pathname === '/health' && request.method === 'GET') {
+      return handleHealth(env);
     }
 
     return new Response('Not Found', { status: 404 });

@@ -13,6 +13,7 @@ import { runPbsPipelineAndCommit } from '../pbs/pipeline.js';
 import { mergeForBroadcast } from '../pbs/crossSourceDedup.js';
 import { PBS_BROADCAST_ENABLED } from '../pbs/pbsConfig.js';
 import { applyCongestionSeverityValidation } from './congestionValidation.js';
+import { buildHealthSnapshot, persistHealthSnapshot } from './healthSnapshot.js';
 
 export async function runScheduledTdxSync(env, now = new Date()) {
   const summary = await runTdxPipelineAndCommit(env, now);
@@ -101,6 +102,22 @@ export async function runScheduledTdxSync(env, now = new Date()) {
       `partialFailures=${lineSummary.partialPushFailures} ` +
       `errors=${lineSummary.lineErrors.length ? lineSummary.lineErrors.join('; ') : 'none'}`
   );
+
+  // V1.6: write a compact health snapshot for GET /health, using ONLY
+  // what this run already computed above — no extra TDX/PBS/LINE calls.
+  // Own try/catch: a bug here must never break the Cron run itself, same
+  // isolation principle as the PBS/congestion-validation steps above. If
+  // this write itself fails, the snapshot already in KV just keeps
+  // aging — /health's own staleness check (see health.js) is what
+  // correctly surfaces that as critical, no separate "write failed" flag
+  // needed here.
+  try {
+    const healthSnapshot = buildHealthSnapshot({ summary, pbsSummary, lineSummary, now });
+    const commit = await persistHealthSnapshot(env.TRAFFIC_KV, healthSnapshot);
+    if (!commit.committed) console.error(`[cron][health] snapshot write failed: ${commit.reason} ${commit.error ?? ''}`);
+  } catch (err) {
+    console.error(`[cron][health] snapshot build/write failed: ${err && err.message}`);
+  }
 
   return { ...summary, line: lineSummary, pbs: pbsSummary };
 }
