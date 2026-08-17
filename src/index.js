@@ -6,6 +6,7 @@ import { handleDebugPbs } from './pbs/debugPbs.js';
 import { handlePbsVpcProbe } from './pbs/vpcProbe.js';
 import { handleHealth } from './traffic/health.js';
 import { requireAdminAuth, applyAdminSecurityHeaders } from './security/adminAuth.js';
+import { handleCctvProbe } from './tdx/cctvProbe.js';
 
 // V1.6.3 — Admin Protection: every human-facing admin/debug page requires
 // HTTP Basic Auth (see security/adminAuth.js). Centralized here on
@@ -15,7 +16,18 @@ import { requireAdminAuth, applyAdminSecurityHeaders } from './security/adminAut
 // POST /webhook (LINE's own signature verification) and the Cron
 // scheduled handler below are intentionally NOT in this set — neither is
 // a human browsing this Worker, and Basic Auth would break both.
-const ADMIN_PATHS = new Set(['/health', '/debug/status', '/debug/tdx', '/debug/pbs', '/debug/pbs-vpc-probe']);
+//
+// V1.7: /admin/cctv-probe joins this same set — a one-time-use, Admin
+// Auth-gated diagnostic endpoint (see tdx/cctvProbe.js). It does not
+// touch the real Cron/broadcast pipeline at all.
+const ADMIN_PATHS = new Set([
+  '/health',
+  '/debug/status',
+  '/debug/tdx',
+  '/debug/pbs',
+  '/debug/pbs-vpc-probe',
+  '/admin/cctv-probe',
+]);
 
 function routeAdminGet(pathname, env) {
   if (pathname === '/debug/tdx') return handleDebugTdx(env);
@@ -23,6 +35,7 @@ function routeAdminGet(pathname, env) {
   if (pathname === '/debug/pbs') return handleDebugPbs(env);
   if (pathname === '/debug/pbs-vpc-probe') return handlePbsVpcProbe(env);
   if (pathname === '/health') return handleHealth(env);
+  if (pathname === '/admin/cctv-probe') return handleCctvProbe(env);
   return new Response('Not Found', { status: 404 });
 }
 
