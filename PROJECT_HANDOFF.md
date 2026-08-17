@@ -126,7 +126,7 @@ Configured as Cloudflare Secrets (outside this repo, set via dashboard/`wrangler
 - `TDX_CLIENT_ID`, `TDX_CLIENT_SECRET` — TDX OAuth client credentials.
 - `LINE_CHANNEL_ACCESS_TOKEN`, `LINE_CHANNEL_SECRET` — LINE Messaging API.
 - `PBS_RELAY_TOKEN` — path-token auth for the Windows PBS Relay (appended to the request path, see `src/pbs/client.js`).
-- `ADMIN_USERNAME`, `ADMIN_PASSWORD` — V1.6.3, HTTP Basic Auth credentials gating every admin/debug GET endpoint (`/health`, `/debug/status`, `/debug/tdx`, `/debug/pbs`, `/debug/pbs-vpc-probe`) — see `src/security/adminAuth.js`. If either is missing, those endpoints fail closed with 503 (never become public).
+- `ADMIN_PASSWORD` — V1.6.3, HTTP Basic Auth password gating every admin/debug GET endpoint (`/health`, `/debug/status`, `/debug/tdx`, `/debug/pbs`, `/debug/pbs-vpc-probe`) — see `src/security/adminAuth.js`. The username is a fixed constant (`admin`) in code, not a Secret. If `ADMIN_PASSWORD` is missing, those endpoints fail closed with 503 (never become public). No first-run setup page, no Cookie session, no password ever stored in KV.
 
 If any of these are missing, the affected subsystem fails closed (see §5) — the Worker itself never crashes.
 
@@ -149,7 +149,7 @@ Never assume a key not in this table exists — `grep -rn "_KEY = " src/` to dou
 
 ## 8. Debug endpoints (all read-only, all safe to hit repeatedly)
 
-**V1.6.3: every endpoint below, plus `GET /health`, now requires HTTP Basic Auth** (`ADMIN_USERNAME`/`ADMIN_PASSWORD`, see §6) — see `src/security/adminAuth.js`. Auth is checked before any handler runs, so an unauthenticated request never reaches TDX/PBS/KV. `POST /webhook` and the Cron `scheduled()` handler are unaffected (never gated by admin auth).
+**V1.6.3: every endpoint below, plus `GET /health`, now requires HTTP Basic Auth** (username `admin`, password from the `ADMIN_PASSWORD` Secret — see §6, `src/security/adminAuth.js`). Auth is checked before any handler runs, so an unauthenticated request never reaches TDX/PBS/KV. `POST /webhook` and the Cron `scheduled()` handler are unaffected (never gated by admin auth).
 
 - `GET /debug/status` — the full pipeline preview: TDX fetch/normalize/dedupe stats, `sourceHealth`, the LINE broadcast-readiness fields (`broadcastRelevantCount`, `typeIneligibleCount`, `ineligibleByReason`, `pendingTargetCount`, `lineReady`, ...), PBS stats (`pbsOk`, `pbsActiveCount`/`pbsClearedCount`/`pbsStaleCount`, `crossSourceDuplicateCount`, `canonicalEventCount`), `tdxTokenCache` (which tier served the token — never the token itself). **This is the primary tool for diagnosing "why didn't/did this event broadcast."**
 - `GET /debug/tdx` — raw per-source TDX fetch results (freeway/highway/cms/bus-hsinchu/bus-hsinchu-county), independent of PBS/broadcast logic.

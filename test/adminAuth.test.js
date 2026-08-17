@@ -1,13 +1,17 @@
 // V1.6.3 — Admin Protection. Exercises the real Worker entry point
 // (src/index.js's default export) end to end, since that's where the
 // admin auth gate actually lives — see security/adminAuth.js.
+//
+// Final V1.6.3 shape: username is a fixed constant ("admin"), the ONLY
+// Cloudflare Secret is ADMIN_PASSWORD — no first-run setup page, no
+// Cookie session, no password ever stored in KV.
 
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { resetTdxTokenCache } from '../src/tdx/auth.js';
 import worker from '../src/index.js';
 
-const ADMIN_USERNAME = 'test-admin-user-9f3a';
+const FIXED_USERNAME = 'admin';
 const ADMIN_PASSWORD = 'test-admin-pass-7c1e';
 
 function kv(initial) {
@@ -28,7 +32,6 @@ function kv(initial) {
 
 function baseEnv(overrides = {}) {
   return {
-    ADMIN_USERNAME,
     ADMIN_PASSWORD,
     TRAFFIC_KV: kv(),
     ...overrides,
@@ -83,7 +86,7 @@ test('1. GET /health with no Authorization header -> 401', async () => {
 
 test('2. GET /health with wrong password -> 401', async () => {
   const env = baseEnv();
-  const res = await worker.fetch(getRequest('/health', { auth: basicAuthHeader(ADMIN_USERNAME, 'wrong-password') }), env);
+  const res = await worker.fetch(getRequest('/health', { auth: basicAuthHeader(FIXED_USERNAME, 'wrong-password') }), env);
   assert.equal(res.status, 401);
 });
 
@@ -95,9 +98,9 @@ test('2b. GET /health with wrong username -> 401', async () => {
 
 // --- 3. /health, correct credentials -> proceeds into the real handler ---
 
-test('3. GET /health with correct credentials -> proceeds into handleHealth (200 with a snapshot present)', async () => {
+test('3. GET /health with correct credentials (admin + ADMIN_PASSWORD) -> proceeds into handleHealth (200 with a snapshot present)', async () => {
   const env = baseEnv({ TRAFFIC_KV: kv({ 'health:snapshot:v1': JSON.stringify(healthySnapshot()) }) });
-  const res = await worker.fetch(getRequest('/health', { auth: basicAuthHeader(ADMIN_USERNAME, ADMIN_PASSWORD) }), env);
+  const res = await worker.fetch(getRequest('/health', { auth: basicAuthHeader(FIXED_USERNAME, ADMIN_PASSWORD) }), env);
   assert.equal(res.status, 200);
   const html = await res.text();
   assert.match(html, /路況播報員/);
@@ -105,7 +108,7 @@ test('3. GET /health with correct credentials -> proceeds into handleHealth (200
 
 test('3b. GET /health with correct credentials but no snapshot yet -> 503 from handleHealth itself (auth passed, this is the handler behaving normally)', async () => {
   const env = baseEnv(); // empty KV -> no snapshot
-  const res = await worker.fetch(getRequest('/health', { auth: basicAuthHeader(ADMIN_USERNAME, ADMIN_PASSWORD) }), env);
+  const res = await worker.fetch(getRequest('/health', { auth: basicAuthHeader(FIXED_USERNAME, ADMIN_PASSWORD) }), env);
   assert.equal(res.status, 503);
   const html = await res.text();
   assert.match(html, /尚未有健康快照/); // handleHealth's own "no snapshot" page, not the auth 503
@@ -157,8 +160,8 @@ test('7. GET /debug/pbs-vpc-probe with no auth -> 401 and never touches the VPC 
 
 // --- 8. POST /webhook does NOT require Basic Auth ---
 
-test('8. POST /webhook is not gated by admin auth (works with no ADMIN_USERNAME/PASSWORD configured at all)', async () => {
-  const env = { TRAFFIC_KV: kv(), LINE_CHANNEL_SECRET: undefined }; // no ADMIN_* at all
+test('8. POST /webhook is not gated by admin auth (works with no ADMIN_PASSWORD configured at all)', async () => {
+  const env = { TRAFFIC_KV: kv(), LINE_CHANNEL_SECRET: undefined }; // no ADMIN_PASSWORD at all
   const req = new Request('https://traffic-reporter.example.workers.dev/webhook', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -168,15 +171,15 @@ test('8. POST /webhook is not gated by admin auth (works with no ADMIN_USERNAME/
   // No LINE_CHANNEL_SECRET configured -> signature check fails (401 from
   // verifyLineSignature), but critically: no WWW-Authenticate challenge,
   // proving this never went through requireAdminAuth (which would have
-  // returned 503 here since ADMIN_USERNAME/PASSWORD are also unset).
+  // returned 503 here since ADMIN_PASSWORD is also unset).
   assert.equal(res.headers.get('WWW-Authenticate'), null);
   assert.notEqual(res.status, 503);
 });
 
 // --- 9. Cron scheduled handler is unaffected by admin auth ---
 
-test('9. scheduled() runs without ADMIN_USERNAME/ADMIN_PASSWORD configured at all', async () => {
-  const env = { TRAFFIC_KV: kv() }; // no ADMIN_*, no TDX/PBS/LINE config either
+test('9. scheduled() runs without ADMIN_PASSWORD configured at all', async () => {
+  const env = { TRAFFIC_KV: kv() }; // no ADMIN_PASSWORD, no TDX/PBS/LINE config either
   priorFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     if (String(url).includes('openid-connect/token')) return new Response('unauthorized', { status: 401 });
@@ -188,30 +191,28 @@ test('9. scheduled() runs without ADMIN_USERNAME/ADMIN_PASSWORD configured at al
   await waited; // should resolve without throwing
 });
 
-// --- 10/11. Missing ADMIN_USERNAME or ADMIN_PASSWORD -> 503 fail closed ---
+// --- 10/11. Missing ADMIN_PASSWORD -> 503 fail closed ---
 
-test('10. ADMIN_USERNAME missing -> protected endpoints fail closed with 503', async () => {
-  const env = baseEnv({ ADMIN_USERNAME: undefined });
+test('10. ADMIN_PASSWORD missing -> protected endpoints fail closed with 503', async () => {
+  const env = baseEnv({ ADMIN_PASSWORD: undefined });
   const res = await worker.fetch(getRequest('/health', { auth: basicAuthHeader('whatever', 'whatever') }), env);
   assert.equal(res.status, 503);
   const body = await res.text();
   assert.match(body, /Admin authentication is not configured/);
 });
 
-test('11. ADMIN_PASSWORD missing -> protected endpoints fail closed with 503', async () => {
+test('11. ADMIN_PASSWORD missing -> every protected endpoint fails closed with 503, not just /health', async () => {
   const env = baseEnv({ ADMIN_PASSWORD: undefined });
-  const res = await worker.fetch(getRequest('/debug/status', { auth: basicAuthHeader('whatever', 'whatever') }), env);
-  assert.equal(res.status, 503);
+  for (const path of ['/health', '/debug/status', '/debug/tdx', '/debug/pbs', '/debug/pbs-vpc-probe']) {
+    const res = await worker.fetch(getRequest(path), env); // no Authorization header at all
+    assert.equal(res.status, 503, `expected 503 for ${path}`);
+  }
 });
 
-test('10b/11b. missing admin secrets -> 503 even WITH correct-looking credentials supplied, and even without any Authorization header at all', async () => {
-  const envNoUser = baseEnv({ ADMIN_USERNAME: undefined });
-  const res1 = await worker.fetch(getRequest('/debug/tdx'), envNoUser); // no auth header at all
-  assert.equal(res1.status, 503);
-
-  const envNoPass = baseEnv({ ADMIN_PASSWORD: undefined });
-  const res2 = await worker.fetch(getRequest('/debug/pbs'), envNoPass);
-  assert.equal(res2.status, 503);
+test('10b. ADMIN_PASSWORD missing -> 503 even WITH a correct-looking username/wrong-guess password supplied', async () => {
+  const env = baseEnv({ ADMIN_PASSWORD: undefined });
+  const res = await worker.fetch(getRequest('/debug/tdx', { auth: basicAuthHeader(FIXED_USERNAME, 'anything') }), env);
+  assert.equal(res.status, 503);
 });
 
 // --- 12. 401 responses carry WWW-Authenticate ---
@@ -242,13 +243,13 @@ test('13. protected responses (200/401/503) all carry Cache-Control/Pragma/X-Rob
   assert.equal(unauthed.status, 401);
   assertSecurityHeaders(unauthed);
 
-  const authed = await worker.fetch(getRequest('/health', { auth: basicAuthHeader(ADMIN_USERNAME, ADMIN_PASSWORD) }), env);
+  const authed = await worker.fetch(getRequest('/health', { auth: basicAuthHeader(FIXED_USERNAME, ADMIN_PASSWORD) }), env);
   assert.equal(authed.status, 200);
   assertSecurityHeaders(authed);
   // /health is HTML -> also gets the CSP.
   assert.match(authed.headers.get('Content-Security-Policy'), /default-src 'none'/);
 
-  const misconfigured = await worker.fetch(getRequest('/debug/tdx'), baseEnv({ ADMIN_USERNAME: undefined }));
+  const misconfigured = await worker.fetch(getRequest('/debug/tdx'), baseEnv({ ADMIN_PASSWORD: undefined }));
   assert.equal(misconfigured.status, 503);
   assertSecurityHeaders(misconfigured);
 });
@@ -262,26 +263,25 @@ test('13b. JSON debug endpoints do NOT get the HTML-only CSP header', async () =
   assert.equal(res.headers.get('Content-Security-Policy'), null);
 });
 
-// --- 14. ADMIN_USERNAME/ADMIN_PASSWORD never leak into responses or logs ---
+// --- 14. ADMIN_PASSWORD never leaks into responses or logs ---
 
-test('14. ADMIN_USERNAME/ADMIN_PASSWORD never appear in any response body across success/401/503', async () => {
+test('14. ADMIN_PASSWORD never appears in any response body across success/401/503', async () => {
   const env = baseEnv({ TRAFFIC_KV: kv({ 'health:snapshot:v1': JSON.stringify(healthySnapshot()) }) });
 
   const responses = await Promise.all([
     worker.fetch(getRequest('/health'), env), // 401
-    worker.fetch(getRequest('/health', { auth: basicAuthHeader(ADMIN_USERNAME, 'wrong') }), env), // 401
-    worker.fetch(getRequest('/health', { auth: basicAuthHeader(ADMIN_USERNAME, ADMIN_PASSWORD) }), env), // 200
-    worker.fetch(getRequest('/debug/tdx'), baseEnv({ ADMIN_USERNAME: undefined })), // 503
+    worker.fetch(getRequest('/health', { auth: basicAuthHeader(FIXED_USERNAME, 'wrong') }), env), // 401
+    worker.fetch(getRequest('/health', { auth: basicAuthHeader(FIXED_USERNAME, ADMIN_PASSWORD) }), env), // 200
+    worker.fetch(getRequest('/debug/tdx'), baseEnv({ ADMIN_PASSWORD: undefined })), // 503
   ]);
 
   for (const res of responses) {
     const body = await res.text();
-    assert.doesNotMatch(body, new RegExp(ADMIN_USERNAME));
     assert.doesNotMatch(body, new RegExp(ADMIN_PASSWORD));
   }
 });
 
-test('14b. ADMIN_USERNAME/ADMIN_PASSWORD never appear in console.log/console.error output', async () => {
+test('14b. ADMIN_PASSWORD never appears in console.log/console.error output', async () => {
   const env = baseEnv({ TRAFFIC_KV: kv({ 'health:snapshot:v1': JSON.stringify(healthySnapshot()) }) });
   const logged = [];
   const originalLog = console.log;
@@ -290,15 +290,14 @@ test('14b. ADMIN_USERNAME/ADMIN_PASSWORD never appear in console.log/console.err
   console.error = (...args) => logged.push(args.join(' '));
   try {
     await worker.fetch(getRequest('/health'), env);
-    await worker.fetch(getRequest('/health', { auth: basicAuthHeader(ADMIN_USERNAME, 'wrong-pass') }), env);
-    await worker.fetch(getRequest('/health', { auth: basicAuthHeader(ADMIN_USERNAME, ADMIN_PASSWORD) }), env);
-    await worker.fetch(getRequest('/debug/tdx'), baseEnv({ ADMIN_USERNAME: undefined }));
+    await worker.fetch(getRequest('/health', { auth: basicAuthHeader(FIXED_USERNAME, 'wrong-pass') }), env);
+    await worker.fetch(getRequest('/health', { auth: basicAuthHeader(FIXED_USERNAME, ADMIN_PASSWORD) }), env);
+    await worker.fetch(getRequest('/debug/tdx'), baseEnv({ ADMIN_PASSWORD: undefined }));
   } finally {
     console.log = originalLog;
     console.error = originalError;
   }
   const allLogs = logged.join('\n');
-  assert.doesNotMatch(allLogs, new RegExp(ADMIN_USERNAME));
   assert.doesNotMatch(allLogs, new RegExp(ADMIN_PASSWORD));
 });
 
@@ -309,7 +308,7 @@ test('15. query-string credentials (?token=/?password=/?user=) never bypass Basi
   const attempts = [
     `/health?token=${encodeURIComponent(ADMIN_PASSWORD)}`,
     `/health?password=${encodeURIComponent(ADMIN_PASSWORD)}`,
-    `/health?user=${encodeURIComponent(ADMIN_USERNAME)}&pass=${encodeURIComponent(ADMIN_PASSWORD)}`,
+    `/health?user=${encodeURIComponent(FIXED_USERNAME)}&pass=${encodeURIComponent(ADMIN_PASSWORD)}`,
     `/debug/status?admin_token=${encodeURIComponent(ADMIN_PASSWORD)}`,
   ];
   for (const path of attempts) {

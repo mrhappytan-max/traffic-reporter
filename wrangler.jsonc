@@ -27,12 +27,14 @@
   // LINE_CHANNEL_SECRET remain Cloudflare Secrets configured outside this
   // repo — see src/traffic/dedupe.js — and are unaffected by this change.
   //
-  // V1.6.3: ADMIN_USERNAME/ADMIN_PASSWORD (HTTP Basic Auth for GET
-  // /health, /debug/status, /debug/tdx, /debug/pbs, /debug/pbs-vpc-probe
-  // — see src/security/adminAuth.js) are ALSO Cloudflare Secrets
-  // configured outside this repo (`wrangler secret put`), never declared
-  // here — this file never carries real credential values, only
-  // bindings/IDs that are not secret on their own.
+  // V1.6.3: ADMIN_PASSWORD (HTTP Basic Auth for GET /health,
+  // /debug/status, /debug/tdx, /debug/pbs, /debug/pbs-vpc-probe — see
+  // src/security/adminAuth.js) is ALSO a Cloudflare Secret configured
+  // outside this repo (`wrangler secret put`), never declared here —
+  // this file never carries real credential values, only bindings/IDs
+  // that are not secret on their own. The admin username is a fixed
+  // constant ("admin") in code, not a Secret — no first-run setup page,
+  // no Cookie session, no password ever stored in KV.
   "kv_namespaces": [
     {
       "binding": "TRAFFIC_KV",

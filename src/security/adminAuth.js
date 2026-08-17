@@ -6,11 +6,12 @@
 // handler: neither is a human browsing this Worker, and Basic Auth would
 // break both.
 //
-// Credentials come ONLY from env.ADMIN_USERNAME / env.ADMIN_PASSWORD —
-// Cloudflare Secrets configured outside this repo (`wrangler secret
-// put`), never wrangler.jsonc, never committed. If either is missing,
-// requireAdminAuth fails closed with 503 — a missing Secret must never
-// silently turn an admin page public.
+// Final V1.6.3 shape: the username is a fixed constant ("admin") — no
+// first-run setup page, no per-account username, no Cookie session, no
+// password ever stored in KV. The ONLY Cloudflare Secret is
+// env.ADMIN_PASSWORD (`wrangler secret put`, never wrangler.jsonc, never
+// committed). If it's missing, requireAdminAuth fails closed with 503 —
+// a missing Secret must never silently turn an admin page public.
 //
 // Minimal by design: HTTP Basic Auth only, no login page, no cookies, no
 // JWT, no query-string token fallback (query strings end up in access
@@ -25,6 +26,7 @@
 // handler at all (0 KV reads, 0 TDX calls, 0 PBS calls, by construction).
 
 const REALM = 'Traffic Reporter Admin';
+const ADMIN_USERNAME = 'admin'; // fixed by design — see module comment
 
 function bufferToHex(buffer) {
   return [...new Uint8Array(buffer)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -106,15 +108,14 @@ function misconfiguredResponse() {
  * @returns {Promise<Response|null>} a Response to return immediately
  *   (401 or 503) when access must be denied, or null when the request is
  *   authorized and the caller should proceed to its handler. Never
- *   throws. Never logs, echoes, or otherwise surfaces ADMIN_USERNAME/
- *   ADMIN_PASSWORD or the request's supplied credentials anywhere.
+ *   throws. Never logs, echoes, or otherwise surfaces ADMIN_PASSWORD or
+ *   the request's supplied credentials anywhere.
  */
 export async function requireAdminAuth(request, env) {
-  const expectedUsername = env.ADMIN_USERNAME;
   const expectedPassword = env.ADMIN_PASSWORD;
 
   // Fail closed — a missing Secret must never make this endpoint public.
-  if (!expectedUsername || !expectedPassword) {
+  if (!expectedPassword) {
     return misconfiguredResponse();
   }
 
@@ -124,9 +125,11 @@ export async function requireAdminAuth(request, env) {
   // Evaluate BOTH comparisons unconditionally (no `&&` short-circuit)
   // before deciding — a correct username with a wrong password must take
   // the same code path/time as a wrong username, never revealing "which
-  // half" was correct via response content OR control flow.
+  // half" was correct via response content OR control flow. The username
+  // is a fixed public constant (not a secret), but it's still compared
+  // via the same constant-time path for consistency/simplicity.
   const [usernameOk, passwordOk] = await Promise.all([
-    credentialMatches(credentials.username, expectedUsername),
+    credentialMatches(credentials.username, ADMIN_USERNAME),
     credentialMatches(credentials.password, expectedPassword),
   ]);
 
