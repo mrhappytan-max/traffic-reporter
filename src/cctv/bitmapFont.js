@@ -1,511 +1,82 @@
-// V1.8.3 — a minimal, self-contained bitmap font for labeling the CCTV
-// collage image (src/cctv/collage.js), now fully Traditional-Chinese —
-// so a taxi/for-hire driver can read the label at a glance in LINE,
-// exactly per this round's instruction ("讓計程車／營業車司機在 LINE 上
-// 一眼就看懂").
+// V1.8.3 — bitmap font for labeling the CCTV collage image
+// (src/cctv/collage.js), rendering Traditional Chinese so a taxi/for-
+// hire driver can read the label at a glance in LINE ("讓計程車／營業車
+// 司機在 LINE 上一眼就看懂").
 //
-// Two glyph tables at a SHARED row height (16px), so mixed CJK+ASCII
+// CORRECTION (post-Production-visual-review): the first version of this
+// font hand-authored 16x16 1-bit CJK glyphs by hand, character by
+// character. Production visual review found the result insufficiently
+// legible — a real font conveys stroke shape, proportion, and (critically)
+// anti-aliased edges in ways a手繪 16x16 bitmap cannot approximate at a
+// glance, no matter how many correction passes it goes through. Rather
+// than continue hand-tuning individual glyphs, this file now blits
+// PRE-RASTERIZED grayscale alpha masks produced from a real font — see
+// src/cctv/generated/cjkGlyphRaster.js's module comment for exactly how
+// (Playwright + a real headless Chromium canvas rendering 'Noto Sans TC'
+// at development/build time; only the resulting per-character alpha
+// masks are committed, never the font file itself, never as a runtime
+// dependency, never shipped to Production in any form). The closed
+// 24-character CJK set this round's text needs is unchanged:
+// 國附近監視畫面更新南前後北距事故公里無符合鏡頭暫 — plus digits 0-9,
+// K, +, :, /, ., space, all rendered through the SAME real-font pipeline
+// (not hand-drawn) so mixed CJK+digit text has consistent, matching
+// anti-aliasing rather than crisp hand-drawn digits next to a different
+// glyph style.
+//
+// Two raster tables at a SHARED row height (32px), so mixed CJK+ASCII
 // text (e.g. "82K+900 / 距事故 0.800 公里") lines up on one baseline —
 // the standard "full-width CJK / half-width Latin" convention used by
 // any monospace font that mixes the two:
-//   - CJK_GLYPHS: 16x16 ("full-width") — the exact closed set of
-//     characters this round's display text needs, no more:
-//     國附近監視畫面更新南前後北距事故公里無符合鏡頭暫 (24 characters).
-//   - ASCII16_GLYPHS: 8x16 ("half-width") — digits 0-9, K, +, :, /, .,
-//     space. Sized so 2 half-width glyphs occupy the same horizontal
-//     span as 1 full-width glyph, matching normal CJK+Latin monospace
-//     proportions.
+//   - CJK_RASTER: 32x32 ("full-width") — the 24-character set above.
+//   - HALF_RASTER: 16x32 ("half-width") — digits 0-9, K, +, :, /, .,
+//     space.
 //
-// Why hand-authored bitmap glyphs instead of a font-rasterization
-// pipeline: per instruction, evaluated against Workers' actual
-// constraints — no browser screenshot, no external image service, no
-// Windows Relay, must not break the existing @jsquash/jpeg WASM
-// compatibility (see cctv/jpegCodecWorker.js), must not let bundle
-// size/CPU run away. A WASM SVG-rasterizer + a subsetted CJK font would
-// add another 1-3MB and real CPU per request; this closed 24-character
-// set instead costs about 1KB of plain JS data and zero additional
-// dependencies, zero additional WASM modules, zero additional CPU
-// beyond the same per-pixel fill loop already used for ASCII. The
-// tradeoff: these are intentionally simplified dot-matrix-style glyphs
-// (16x16 is far below full CJK-font stroke fidelity), not calligraphy —
-// legible at a glance, especially given every string that uses them is
-// one of a handful of fixed, repeated phrases (南前/南後/北前/北後,
-// "距事故 …公里", 無符合鏡頭, 暫無畫面), which gives real-world
-// recognition a large head start over reading an isolated character
-// cold. Every glyph below was authored and visually verified — rendered
-// to real JPEGs (both an isolated per-glyph proof sheet and the actual
-// mixed-text strings this round produces) and inspected — not shipped
-// on faith. See PROJECT_HANDOFF.md's V1.8 section for the before/after
-// and the verification process.
+// Runtime cost: this module only ever decodes base64 -> bytes (`atob` +
+// a byte loop) and alpha-blends pixels into the destination RGBA buffer
+// — no font parsing, no TTF/OTF decoding, no WASM, at Worker runtime.
+// Every glyph's raw alpha bytes are memoized (decoded once per glyph,
+// lazily, on first use) rather than decoded on every drawText() call.
 //
-// Each glyph is authored as N rows of chars ('#' = lit, '.' = blank) —
-// plain ASCII art, so every glyph's shape can be read directly off the
-// source instead of decoded from a packed byte table.
+// See PROJECT_HANDOFF.md's V1.8.3 section for the full before/after,
+// the rasterization pipeline, and the licensing note (Noto Sans TC is
+// OFL-1.1 licensed — the alpha-mask *data* derived from it, containing
+// no font program/hinting/outline data, is committed here).
 
-export const LINE_HEIGHT = 16; // shared row height for both tables
-export const FULL_WIDTH = 16; // CJK glyph width
-export const HALF_WIDTH = 8; // ASCII/digit glyph width
+import { CJK_RASTER, HALF_RASTER } from './generated/cjkGlyphRaster.js';
 
-const CJK_GLYPHS = {
-  '國': [
-    '################',
-    '#..............#',
-    '#..............#',
-    '#....######....#',
-    '#......##......#',
-    '#......##......#',
-    '#....######....#',
-    '#......##.#....#',
-    '#......##..#...#',
-    '#....######....#',
-    '#......##......#',
-    '#......##......#',
-    '#..............#',
-    '#..............#',
-    '#..............#',
-    '################',
-  ],
-  '附': [
-    '.##.............',
-    '.#.#............',
-    '.#.#....####....',
-    '.#.#....#..#....',
-    '.#.#....####....',
-    '.#.#............',
-    '.#.#....##......',
-    '.#......#.......',
-    '.#......#.......',
-    '.#.....###......',
-    '.#......#.......',
-    '.#......#.......',
-    '.#......#.......',
-    '.#.....###......',
-    '.#..............',
-    '................',
-  ],
-  '近': [
-    '..........##....',
-    '..........##....',
-    '.########.##....',
-    '..........##....',
-    '..........##....',
-    '..#.......##....',
-    '...#............',
-    '..#.............',
-    '.#..............',
-    '#...............',
-    '#...............',
-    '#...............',
-    '#######.........',
-    '......#.........',
-    '................',
-    '................',
-  ],
-  '監': [
-    '.##.....##......',
-    '.##.....##......',
-    '.############...',
-    '.#..........#...',
-    '.############...',
-    '.##.....##......',
-    '................',
-    '################',
-    '#..............#',
-    '#..............#',
-    '#..............#',
-    '#..............#',
-    '#..............#',
-    '################',
-    '................',
-    '................',
-  ],
-  '視': [
-    '..###...........',
-    '...#....########',
-    '.#####..#......#',
-    '...#....#......#',
-    '...#....########',
-    '................',
-    '################',
-    '#......#......#.',
-    '#......#......#.',
-    '################',
-    '.......#........',
-    '......###.......',
-    '.....#.#.#......',
-    '....#..#..#.....',
-    '...#...#...#....',
-    '................',
-  ],
-  '畫': [
-    '................',
-    '.##########.....',
-    '.#........#.....',
-    '.#.######.#.....',
-    '.#.#....#.#.....',
-    '.#.#....#.#.....',
-    '.#.######.#.....',
-    '.#........#.....',
-    '.##########.....',
-    '......#.........',
-    '......#.........',
-    '################',
-    '................',
-    '................',
-    '................',
-    '................',
-  ],
-  '面': [
-    '################',
-    '#..............#',
-    '#......##......#',
-    '#.############.#',
-    '#.#..........#.#',
-    '#.#..##......#.#',
-    '#.#..##......#.#',
-    '#.#..........#.#',
-    '#.############.#',
-    '#......##......#',
-    '#......##......#',
-    '#......##......#',
-    '#......##......#',
-    '#..............#',
-    '#..............#',
-    '################',
-  ],
-  '更': [
-    '.....######.....',
-    '................',
-    '.###########....',
-    '.#.........#....',
-    '.#..#####..#....',
-    '.#..#...#..#....',
-    '.###########....',
-    '......#.........',
-    '......#.........',
-    '......#.........',
-    '.....###........',
-    '....#...#.......',
-    '...#.....#......',
-    '..#.......#.....',
-    '.#.........#....',
-    '#...........#...',
-  ],
-  '新': [
-    '..###...........',
-    '...#............',
-    '.#####..#####...',
-    '...#....#...#...',
-    '.######.#####...',
-    '.#..#...#...#...',
-    '.#..#...#####...',
-    '.######.#...#...',
-    '...#....#####...',
-    '...#....#...#...',
-    '#######.#...#...',
-    '...#....#####...',
-    '...#....#...#...',
-    '..###...#...#...',
-    '.#.#.#..#####...',
-    '#..#..#.........',
-  ],
-  '南': [
-    '.......##.......',
-    '.....########...',
-    '.....#......#...',
-    '.....#.##...#...',
-    '.....#.##...#...',
-    '.....########...',
-    '.....#.##...#...',
-    '.....#.##...#...',
-    '.....#.##...#...',
-    '.....########...',
-    '.......##.......',
-    '.......##.......',
-    '.......##.......',
-    '.......##.......',
-    '.......##.......',
-    '......####......',
-  ],
-  '前': [
-    '....#......#....',
-    '...#........#...',
-    '.############...',
-    '.#..........#...',
-    '.#..######..#...',
-    '.#..#....#..#...',
-    '.############...',
-    '............#...',
-    '....##......#...',
-    '....##......#...',
-    '..#.##..#.##....',
-    '..#.##..#.##....',
-    '..#.##..#.##....',
-    '..#.##..#.##....',
-    '..#.##..#.##....',
-    '..###...###.....',
-  ],
-  '後': [
-    '.##.............',
-    '.#..............',
-    '.#......##......',
-    '################',
-    '.#......##......',
-    '.#......##.##...',
-    '.#......##.##...',
-    '.#......########',
-    '.#......##.....#',
-    '.#......##.....#',
-    '.#......########',
-    '.#......##......',
-    '.#......##......',
-    '.#.....####.....',
-    '.#....##..##....',
-    '.#...##....##...',
-  ],
-  '北': [
-    '................',
-    '..##........##..',
-    '..##........##..',
-    '..##........##..',
-    '..##........##..',
-    '..##.....#..##..',
-    '..##....##..##..',
-    '..##...##...##..',
-    '..######....##..',
-    '..##........##..',
-    '..##........##..',
-    '..##........##..',
-    '..##........##..',
-    '..##........##..',
-    '................',
-    '................',
-  ],
-  '距': [
-    '.#####..........',
-    '.#...#..########',
-    '.#...#..#......#',
-    '.#####..#..###.#',
-    '.#...#..#..#.#.#',
-    '######..#..###.#',
-    '#....#..#......#',
-    '#.####..########',
-    '#.#..#..#......#',
-    '#.####..#..###.#',
-    '..#.....#..#.#.#',
-    '..#.....#..###.#',
-    '..#.....#......#',
-    '..#.....########',
-    '..#.............',
-    '.###............',
-  ],
-  '事': [
-    '.......#........',
-    '.###########....',
-    '.......#........',
-    '..######........',
-    '.......#........',
-    '.###########....',
-    '.......#........',
-    '.......#........',
-    '.###########....',
-    '.......#........',
-    '.......#........',
-    '.......#........',
-    '.......#........',
-    '.......#........',
-    '......##........',
-    '.....#..........',
-  ],
-  '故': [
-    '.######.........',
-    '.#....#.#....#..',
-    '.######..#..#...',
-    '.#....#...##....',
-    '.######..#..#...',
-    '.#....#.#....#..',
-    '................',
-    '................',
-    '................',
-    '................',
-    '................',
-    '................',
-    '................',
-    '................',
-    '................',
-    '................',
-  ],
-  '公': [
-    '.......#........',
-    '......#.#.......',
-    '.....#...#......',
-    '....#.....#.....',
-    '...#.......#....',
-    '..#.........#...',
-    '................',
-    '......###.......',
-    '.....#...#......',
-    '.....#...#......',
-    '......###.......',
-    '................',
-    '................',
-    '................',
-    '................',
-    '................',
-  ],
-  '里': [
-    '................',
-    '.############...',
-    '.#....#.....#...',
-    '.#....#.....#...',
-    '.#####.######...',
-    '.#....#.....#...',
-    '.#....#.....#...',
-    '.############...',
-    '......#.........',
-    '......#.........',
-    '######.######...',
-    '......#.........',
-    '......#.........',
-    '......#.........',
-    '......#.........',
-    '.############...',
-  ],
-  '無': [
-    '.......##.......',
-    '..#############.',
-    '.......##.......',
-    '.....########...',
-    '.......##.......',
-    '..#############.',
-    '.......##.......',
-    '.....########...',
-    '................',
-    '.##############.',
-    '................',
-    '................',
-    '#..#...#...#...#',
-    '#..#...#...#...#',
-    '#..#...#...#...#',
-    '#..#...#...#...#',
-  ],
-  '符': [
-    '..##....##......',
-    '..##....##......',
-    '................',
-    '.#####..........',
-    '.#...#..........',
-    '.#####..#####...',
-    '.#...#..#...#...',
-    '######..#####...',
-    '.#......#...#...',
-    '.#......#####...',
-    '.#......#...#...',
-    '.#......#####...',
-    '.#..............',
-    '.#..............',
-    '.#..............',
-    '#...............',
-  ],
-  '合': [
-    '.......#........',
-    '......#.#.......',
-    '.....#...#......',
-    '....#.....#.....',
-    '...#.......#....',
-    '..#.........#...',
-    '.#...........#..',
-    '................',
-    '.############...',
-    '.#..........#...',
-    '.#..........#...',
-    '.############...',
-    '................',
-    '................',
-    '................',
-    '................',
-  ],
-  '鏡': [
-    '....##..........',
-    '...####.........',
-    '..######........',
-    '.#..##..#####...',
-    '################',
-    '...##...#...#...',
-    '...##...#####...',
-    '###########.....',
-    '...##...#####...',
-    '...##...#...#...',
-    '...##...#####...',
-    '...##...#...#...',
-    '...##...#####...',
-    '...##...#...#...',
-    '...##...#####...',
-    '................',
-  ],
-  '頭': [
-    '.####...........',
-    '.#..#...........',
-    '.####...........',
-    '.#..#...........',
-    '#####...........',
-    '................',
-    '################',
-    '#......#.......#',
-    '#......#.......#',
-    '#......#.......#',
-    '################',
-    '...#........#...',
-    '..#..........#..',
-    '.#............#.',
-    '#..............#',
-    '................',
-  ],
-  '暫': [
-    '.####...#####...',
-    '.#..#..#.....#..',
-    '.####..#.###.#..',
-    '.#..#..#.....#..',
-    '.####..#######..',
-    '................',
-    '.####...........',
-    '................',
-    '.############...',
-    '.#..........#...',
-    '.#..........#...',
-    '.#....##....#...',
-    '.#....##....#...',
-    '.#..........#...',
-    '.############...',
-    '................',
-  ],
-};
+export const LINE_HEIGHT = 32; // shared row height for both tables
+export const FULL_WIDTH = 32; // CJK glyph width
+export const HALF_WIDTH = 16; // ASCII/digit glyph width
 
-const ASCII16_GLYPHS = {
-  '0': ['........', '.######.', '.#....#.', '.#....#.', '.#....#.', '.#....#.', '.#....#.', '.#....#.', '.#....#.', '.#....#.', '.#....#.', '.#....#.', '.#....#.', '.######.', '........', '........'],
-  '1': ['........', '...##...', '..###...', '...##...', '...##...', '...##...', '...##...', '...##...', '...##...', '...##...', '...##...', '...##...', '...##...', '.######.', '........', '........'],
-  '2': ['........', '.######.', '#......#', '.......#', '.......#', '......#.', '.....#..', '....#...', '...#....', '..#.....', '.#......', '#.......', '#......#', '########', '........', '........'],
-  '3': ['........', '.######.', '#......#', '.......#', '.......#', '.....##.', '.....##.', '.......#', '.......#', '.......#', '.......#', '#......#', '.######.', '........', '........', '........'],
-  '4': ['........', '.....##.', '....##..', '...##...', '..##.##.', '.##..##.', '##...##.', '########', '.....##.', '.....##.', '.....##.', '.....##.', '.....##.', '........', '........', '........'],
-  '5': ['........', '########', '#.......', '#.......', '#.......', '#######.', '.......#', '.......#', '.......#', '.......#', '.......#', '#......#', '.######.', '........', '........', '........'],
-  '6': ['........', '..####..', '.#......', '#.......', '#.......', '#.####..', '##....#.', '#......#', '#......#', '#......#', '#......#', '.#....#.', '..####..', '........', '........', '........'],
-  '7': ['........', '########', '.......#', '......#.', '.....#..', '....#...', '...#....', '..#.....', '..#.....', '..#.....', '..#.....', '..#.....', '..#.....', '........', '........', '........'],
-  '8': ['........', '.######.', '#......#', '#......#', '#......#', '.######.', '#......#', '#......#', '#......#', '#......#', '#......#', '#......#', '.######.', '........', '........', '........'],
-  '9': ['........', '.######.', '#......#', '#......#', '#......#', '#......#', '.#######', '.......#', '.......#', '.......#', '.......#', '......#.', '..####..', '........', '........', '........'],
-  K: ['........', '#......#', '#.....#.', '#....#..', '#...#...', '#..#....', '#.#.....', '##......', '#.#.....', '#..#....', '#...#...', '#....#..', '#.....#.', '........', '........', '........'],
-  '+': ['........', '........', '........', '...##...', '...##...', '...##...', '.######.', '.######.', '...##...', '...##...', '...##...', '........', '........', '........', '........', '........'],
-  ':': ['........', '........', '...##...', '...##...', '........', '........', '........', '........', '........', '...##...', '...##...', '........', '........', '........', '........', '........'],
-  '/': ['........', '.......#', '......#.', '......#.', '.....#..', '.....#..', '....#...', '....#...', '...#....', '...#....', '..#.....', '..#.....', '.#......', '.#......', '........', '........'],
-  '.': ['........', '........', '........', '........', '........', '........', '........', '........', '........', '........', '........', '..##....', '..##....', '........', '........', '........'],
-  ' ': ['........', '........', '........', '........', '........', '........', '........', '........', '........', '........', '........', '........', '........', '........', '........', '........'],
-};
+function base64ToBytes(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
 
-/** Returns {rows, width} for `char` — full-width (16) if it's a known
- * CJK glyph, half-width (8) otherwise. Unrecognized characters fall
- * back to a blank half-width space rather than throwing. */
+// Lazily decoded, memoized per glyph — avoids paying the atob() cost for
+// glyphs a given collage never actually uses (e.g. digits '3'/'5'/'7'
+// might never appear in a given request's LocationMile/distance values).
+const decodedCache = new Map();
+
+function decodedAlpha(entry) {
+  let bytes = decodedCache.get(entry);
+  if (!bytes) {
+    bytes = base64ToBytes(entry.alphaBase64);
+    decodedCache.set(entry, bytes);
+  }
+  return bytes;
+}
+
+/** Returns {alpha, width, height} for `char` — full-width (32) if it's
+ * a known CJK glyph, half-width (16) otherwise. Unrecognized characters
+ * fall back to a blank half-width space rather than throwing. */
 function glyphFor(char) {
-  if (CJK_GLYPHS[char]) return { rows: CJK_GLYPHS[char], width: FULL_WIDTH };
-  return { rows: ASCII16_GLYPHS[char] ?? ASCII16_GLYPHS[' '], width: HALF_WIDTH };
+  const cjkEntry = CJK_RASTER[char];
+  if (cjkEntry) return { alpha: decodedAlpha(cjkEntry), width: cjkEntry.width, height: cjkEntry.height };
+  const halfEntry = HALF_RASTER[char] ?? HALF_RASTER[' '];
+  return { alpha: decodedAlpha(halfEntry), width: halfEntry.width, height: halfEntry.height };
 }
 
 /** Width in device pixels of `text` rendered at the given integer `scale`. */
@@ -518,14 +89,19 @@ export function measureText(text, scale) {
 /**
  * Draws `text` onto an RGBA Uint8ClampedArray `pixels` (canvasWidth x
  * canvasHeight) at top-left (x, y), scaled up by integer `scale`. Mixes
- * full-width CJK and half-width ASCII/digit glyphs on one baseline.
- * Unrecognized characters render as blank space rather than throwing.
- * Pixels outside the canvas bounds are silently skipped.
+ * full-width CJK and half-width ASCII/digit glyphs on one baseline,
+ * alpha-blending each glyph's rasterized mask into the destination
+ * (nearest-neighbor scaling of the mask itself — the mask was rasterized
+ * at a fixed size, so `scale` blows up each mask pixel into a scale x
+ * scale block, same as the project's existing nearest-neighbor image
+ * blit in collage.js's drawImageCover). Unrecognized characters render
+ * as blank space rather than throwing. Pixels outside the canvas bounds
+ * are silently skipped.
  *
  * `scale` MUST be a positive integer — never trust a fractional scale
- * here. This was root-caused twice in this project now: a fractional
- * pixel coordinate can silently corrupt the render instead of failing
- * loudly (`idx = (py * canvasWidth + px) * 4` can land on a
+ * here. This was root-caused twice in this project already: a
+ * fractional pixel coordinate can silently corrupt the render instead
+ * of failing loudly (`idx = (py * canvasWidth + px) * 4` can land on a
  * perfectly valid-looking INTEGER idx whenever the fractional part of
  * py times canvasWidth is itself a whole number, wrapping the write
  * into a totally different row/column) — see PROJECT_HANDOFF.md's V1.8
@@ -537,24 +113,30 @@ export function drawText(pixels, canvasWidth, canvasHeight, text, x, y, scale, c
   if (!Number.isInteger(scale) || scale <= 0) {
     throw new Error(`drawText: scale must be a positive integer, got ${scale}`);
   }
-  const [r, g, b, a = 255] = color;
+  const [r, g, b] = color;
   let cursorX = Math.round(x);
   const startY = Math.round(y);
   for (const char of String(text)) {
-    const { rows, width } = glyphFor(char);
-    for (let row = 0; row < LINE_HEIGHT; row += 1) {
+    const { alpha, width, height } = glyphFor(char);
+    for (let row = 0; row < height; row += 1) {
       for (let col = 0; col < width; col += 1) {
-        if (rows[row][col] !== '#') continue;
+        const a = alpha[row * width + col];
+        if (a === 0) continue;
+        const alphaFrac = a / 255;
         for (let sy = 0; sy < scale; sy += 1) {
           for (let sx = 0; sx < scale; sx += 1) {
             const px = cursorX + col * scale + sx;
             const py = startY + row * scale + sy;
             if (px < 0 || px >= canvasWidth || py < 0 || py >= canvasHeight) continue;
             const idx = (py * canvasWidth + px) * 4;
-            pixels[idx] = r;
-            pixels[idx + 1] = g;
-            pixels[idx + 2] = b;
-            pixels[idx + 3] = a;
+            // Alpha-blend onto whatever is already there (the tile/
+            // header background), rather than a hard overwrite — this
+            // is what gives the anti-aliased glyph edges their smooth
+            // look instead of a jagged 1-bit outline.
+            pixels[idx] = Math.round(pixels[idx] * (1 - alphaFrac) + r * alphaFrac);
+            pixels[idx + 1] = Math.round(pixels[idx + 1] * (1 - alphaFrac) + g * alphaFrac);
+            pixels[idx + 2] = Math.round(pixels[idx + 2] * (1 - alphaFrac) + b * alphaFrac);
+            pixels[idx + 3] = 255;
           }
         }
       }

@@ -32,9 +32,32 @@
 // doc comment.
 //
 // V1.8.3 — labels are Traditional Chinese, per instruction ("讓計程車／
-// 營業車司機在 LINE 上一眼就看懂"). See bitmapFont.js's module comment
-// for the CJK glyph set and why it's hand-authored rather than a
-// font-rasterization pipeline.
+// 營業車司機在 LINE 上一眼就看懂"). See bitmapFont.js's module comment:
+// after a Production visual-review rejection of an initial hand-drawn
+// 16x16 CJK glyph attempt, labels are now rendered from real
+// font-rasterized (Noto Sans TC) grayscale alpha-mask glyphs — genuinely
+// anti-aliased, not hand-authored — pre-baked at build time into
+// generated/cjkGlyphRaster.js.
+//
+// Layout constants below were recalculated for the real font's 32px-tall
+// glyphs (vs. the old hand-drawn font's 16px-tall glyphs — a doubling)
+// and re-validated by rendering full-size + phone-thumbnail-downsampled
+// (375px-wide) proof images and inspecting both, per instruction ("正常
+// 手機縮放觀看仍能快速辨識，不是放大才能猜出文字") — not just picked by
+// eye at native 1200x900 resolution, which would overstate legibility at
+// the size this actually gets viewed on a phone. Two takeaways from that
+// process shaped the numbers here: (1) primary text (title, quadrant
+// label) reads reliably at a phone thumbnail size at scale 2 (64px-tall
+// glyphs) — scale 1 is too small to read at a glance, scale 3 wastes
+// space this real (non-hand-drawn) font doesn't need; (2) secondary text
+// (subtitle, the combined location/distance info line) is legible at
+// scale 1 specifically BECAUSE the real font's anti-aliasing holds up at
+// small sizes in a way the old hand-drawn 1-bit glyphs never did — this
+// is what actually fixed the "距事故/無符合鏡頭 難以辨識" complaint, not
+// just making everything bigger. Scale 2 does NOT fit the info line's
+// width budget (measured overflow past the 600px cell at scale 2 for the
+// longest sample string) so scale 1 there is both the legible AND the
+// only-fitting choice.
 
 import { drawText, measureText, LINE_HEIGHT } from './bitmapFont.js';
 
@@ -42,15 +65,11 @@ export const COLLAGE_WIDTH = 1200;
 export const COLLAGE_HEIGHT = 900;
 // Exported for tests — lets test code compute exact per-quadrant sample
 // coordinates from the real layout instead of duplicating magic numbers.
-// Sized for the larger 16px-tall CJK/digit glyphs (vs. the old 7px-tall
-// ASCII-only font) — both HEADER_HEIGHT and LABEL_HEIGHT grew from V1.8
-// to keep the bigger text comfortably spaced, per instruction ("標題文
-// 字不要太小").
-export const HEADER_HEIGHT = 100;
+export const HEADER_HEIGHT = 120;
 export const CELL_WIDTH = COLLAGE_WIDTH / 2; // 600
-export const CELL_HEIGHT = (COLLAGE_HEIGHT - HEADER_HEIGHT) / 2; // 400
-const LABEL_HEIGHT = 110;
-export const IMAGE_AREA_HEIGHT = CELL_HEIGHT - LABEL_HEIGHT; // 290
+export const CELL_HEIGHT = (COLLAGE_HEIGHT - HEADER_HEIGHT) / 2; // 390
+const LABEL_HEIGHT = 116;
+export const IMAGE_AREA_HEIGHT = CELL_HEIGHT - LABEL_HEIGHT; // 274
 
 // Fixed quadrant grid positions, index-aligned with the V1.7 four-
 // quadrant candidate order [S前, S後, N前, N後] — never reordered.
@@ -181,11 +200,13 @@ export async function composeQuadrantCollage(cells, options) {
   const pixels = new Uint8ClampedArray(COLLAGE_WIDTH * COLLAGE_HEIGHT * 4);
   fillRect(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, 0, 0, COLLAGE_WIDTH, COLLAGE_HEIGHT, COLOR.pageBg);
 
-  // Header. Title at scale 3 (48px-tall glyphs) — deliberately large,
-  // per instruction ("標題文字不要太小") — subtitle at scale 2 (32px).
+  // Header. Title at scale 2 (64px-tall real-font glyphs — see the
+  // module comment's layout-validation note) — subtitle at scale 1
+  // (32px), both against the phone-thumbnail-legible sizes established
+  // there.
   fillRect(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, 0, 0, COLLAGE_WIDTH, HEADER_HEIGHT, COLOR.headerBg);
-  drawText(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, titleLine, 16, 10, 3, COLOR.headerTitle);
-  drawText(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, subtitleLine, 16, 60, 2, COLOR.headerSubtitle);
+  drawText(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, titleLine, 16, 12, 2, COLOR.headerTitle);
+  drawText(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, subtitleLine, 16, 84, 1, COLOR.headerSubtitle);
 
   // The real source of truth for "how many quadrants actually produced
   // a usable image" — counted only when decode (AND the subsequent
@@ -223,15 +244,20 @@ export async function composeQuadrantCollage(cells, options) {
       drawPlaceholderTile(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, cellX, imageY, CELL_WIDTH, IMAGE_AREA_HEIGHT, '無符合鏡頭', false);
     }
 
-    // Label bar. Quadrant name (南前/南後/北前/北後) at scale 3, one
-    // combined info line "82K+900 / 距事故 0.800 公里" at scale 2 below
-    // it — a single line per instruction ("避免塞太多資訊"), not the
-    // separate location/distance lines V1.8 originally used.
+    // Label bar. Quadrant name (南前/南後/北前/北後) at scale 2 (64px),
+    // one combined info line "82K+900 / 距事故 0.800 公里" at scale 1
+    // (32px) below it — a single line per instruction ("避免塞太多資
+    // 訊"), not separate location/distance lines. Scale 1 here is not a
+    // downgrade from the old scale-2 hand-drawn info line: it's the
+    // scale validated (see module comment) to both read clearly at
+    // phone-thumbnail size on the real font AND fit the info line's
+    // width budget (scale 2 overflows the 600px cell for the longest
+    // sample string).
     fillRect(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, cellX, labelY, CELL_WIDTH, LABEL_HEIGHT, COLOR.labelBg);
-    drawText(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, cell.slotLabel, cellX + 14, labelY + 6, 3, COLOR.labelText);
+    drawText(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, cell.slotLabel, cellX + 14, labelY + 8, 2, COLOR.labelText);
     if (cell.locationLabel) {
       const infoLine = cell.distanceLabel ? `${cell.locationLabel} / 距事故 ${cell.distanceLabel} 公里` : cell.locationLabel;
-      drawText(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, infoLine, cellX + 14, labelY + 62, 2, COLOR.labelSubtext);
+      drawText(pixels, COLLAGE_WIDTH, COLLAGE_HEIGHT, infoLine, cellX + 14, labelY + 78, 1, COLOR.labelSubtext);
     }
   }
 

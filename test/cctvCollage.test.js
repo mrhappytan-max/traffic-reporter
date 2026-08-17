@@ -254,18 +254,24 @@ test('9. regression: drawText with a fractional y renders in the correct column,
   assert.equal(litPixelInLeftHalf, false, 'the glyph must never wrap into the left half');
 });
 
-// --- 10. V1.8.3: every CJK glyph this round's display text actually
-// uses must render as a real shape — never a blank box, never silently
-// dropped. This is the automatable half of "中文 glyph 不可出現空白方塊
-// 或亂碼" (a rendered "garbled" glyph isn't something a pixel-count
-// assertion alone can rule out — that was verified visually, by
-// rendering the real proof sheet and the real mixed-text strings this
-// round produces and inspecting them — but "did every character
-// actually draw SOMETHING, and is no two characters drawing the exact
-// same shape" is directly testable and is exactly what this covers).
+// --- 10. V1.8.3 CORRECTION: every CJK glyph this round's display text
+// actually uses must be a real, non-blank, distinct RASTERIZED glyph —
+// sourced from generated/cjkGlyphRaster.js's real-font (Noto Sans TC)
+// alpha-mask data, not the discarded hand-drawn 16x16 1-bit font. This
+// asserts directly against the raw alpha-mask bytes (not blended pixel
+// color), because the whole point of this correction is that glyph
+// edges are now continuous/anti-aliased grayscale, not binary — an
+// exact-255-channel pixel check (the old test's approach) would silently
+// pass while missing most of a real glyph's edge pixels. "Is every
+// character legible" is NOT something a pixel-count assertion can prove
+// on its own (see this round's PROJECT_HANDOFF.md note) — that was
+// verified visually via the real JPEG proof sheet and full collage
+// preview sent for review; this test covers the automatable half: did
+// the build-time rasterization actually produce real, distinct ink for
+// every character this round's text needs, with none silently blank.
 
-test('10. every CJK character used by V1.8.3 display text renders a non-blank, distinct glyph', async () => {
-  const { drawText: draw } = await import('../src/cctv/bitmapFont.js');
+test('10. every CJK character used by V1.8.3 display text has a real, distinct, non-blank rasterized glyph', async () => {
+  const { CJK_RASTER } = await import('../src/cctv/generated/cjkGlyphRaster.js');
   // The exact closed character set this round's display text needs:
   // title ("國1 …附近監視畫面"), quadrant labels (南前/南後/北前/北後),
   // the combined info line ("距事故 … 公里"), and the two placeholders
@@ -273,27 +279,56 @@ test('10. every CJK character used by V1.8.3 display text renders a non-blank, d
   const REQUIRED_CHARS = '國附近監視畫面更新南前後北距事故公里無符合鏡頭暫'.split('');
   assert.equal(REQUIRED_CHARS.length, 24, 'sanity check on the required character count');
 
-  const shapes = new Map();
+  const seenAlpha = new Map();
   for (const ch of REQUIRED_CHARS) {
-    const width = 16;
-    const height = 16;
+    const entry = CJK_RASTER[ch];
+    assert.ok(entry, `character "${ch}" is missing from the committed raster table`);
+    assert.equal(entry.width, 32, `character "${ch}" has an unexpected raster width`);
+    assert.equal(entry.height, 32, `character "${ch}" has an unexpected raster height`);
+
+    const alphaBytes = Buffer.from(entry.alphaBase64, 'base64');
+    assert.equal(alphaBytes.length, entry.width * entry.height, `character "${ch}" alpha byte length doesn't match its declared dimensions`);
+
+    // Real Noto Sans TC glyphs in this set cover roughly 280-475 of the
+    // 1024 pixels at >25/255 alpha; 150 is a generous floor that still
+    // catches an accidentally near-blank glyph without requiring exact
+    // stroke fidelity.
+    let inkCount = 0;
+    for (const byte of alphaBytes) if (byte > 25) inkCount += 1;
+    assert.ok(inkCount >= 150, `character "${ch}" has suspiciously little ink (${inkCount} px of ${alphaBytes.length}) — likely a broken raster`);
+
+    if (seenAlpha.has(entry.alphaBase64)) {
+      assert.fail(`character "${ch}" rasterizes IDENTICALLY to "${seenAlpha.get(entry.alphaBase64)}" — glyphs must be visually distinct`);
+    }
+    seenAlpha.set(entry.alphaBase64, ch);
+  }
+});
+
+// --- 10b. companion end-to-end check: the actual drawText() production
+// pipeline (base64 decode -> alpha blend) renders every required
+// character (CJK and half-width alike) onto a real canvas without
+// throwing and without leaving it blank — catches a char-to-raster
+// lookup bug (e.g. a typo'd map key) that 10's direct-data check alone
+// wouldn't, since 10 only inspects the raster table, never drawText().
+
+test('10b. drawText renders every required CJK and half-width character onto a real canvas, producing visible (non-background) pixels', async () => {
+  const REQUIRED_CHARS = '國附近監視畫面更新南前後北距事故公里無符合鏡頭暫0123456789K+:/.'.split('');
+  const width = 64;
+  const height = 64;
+  const bg = [20, 24, 32];
+  for (const ch of REQUIRED_CHARS) {
     const data = new Uint8ClampedArray(width * height * 4);
-    draw(data, width, height, ch, 0, 0, 1, [255, 255, 255, 255]);
-    let litCount = 0;
-    let signature = '';
     for (let i = 0; i < width * height; i += 1) {
-      const lit = data[i * 4] === 255 ? '1' : '0';
-      signature += lit;
-      if (lit === '1') litCount += 1;
+      data[i * 4] = bg[0];
+      data[i * 4 + 1] = bg[1];
+      data[i * 4 + 2] = bg[2];
+      data[i * 4 + 3] = 255;
     }
-    assert.ok(litCount > 0, `character "${ch}" rendered as a completely blank box`);
-    // A real 16x16 CJK glyph should have a reasonable amount of ink —
-    // catches a glyph that's accidentally almost-empty (e.g. a single
-    // stray pixel from a typo) without requiring exact stroke fidelity.
-    assert.ok(litCount >= 8, `character "${ch}" rendered suspiciously few pixels (${litCount}) — likely a broken glyph`);
-    if (shapes.has(signature)) {
-      assert.fail(`character "${ch}" renders IDENTICALLY to "${shapes.get(signature)}" — glyphs must be visually distinct`);
+    drawText(data, width, height, ch, 4, 4, 1, [255, 255, 255, 255]);
+    let changedPixels = 0;
+    for (let i = 0; i < width * height; i += 1) {
+      if (data[i * 4] !== bg[0] || data[i * 4 + 1] !== bg[1] || data[i * 4 + 2] !== bg[2]) changedPixels += 1;
     }
-    shapes.set(signature, ch);
+    assert.ok(changedPixels > 0, `character "${ch}" produced no visible pixels via drawText`);
   }
 });
