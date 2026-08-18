@@ -273,15 +273,21 @@ const USAGE_CONTEXT_LABELS = {
   other: '其他',
 };
 
-// V1.8.6.1 — Production's own source display is intentionally narrowed
-// to just the two sources actually fetched live (freeway/highway) — cms/
-// bus-hsinchu/bus-hsinchu-county were retired from Production in V1.6.1
-// and have never been fetched by the real Cron path since. The backend
-// ledger buckets for all 3 are NOT removed (see usageLedger.js's
-// KNOWN_SOURCE_BUCKETS) — still recorded if any context calls them (e.g.
-// a full 5-source /debug/tdx), surfaced separately below as a retired-
-// source anomaly, never silently dropped.
-const PRODUCTION_SOURCE_LABELS = { freeway: '國道', highway: '省道' };
+// V1.8.6.2 — "TDX 來源（今日）" shows TDX API SOURCE usage (what actually
+// consumes TDX quota), not call CONTEXT — 國道/省道/CCTV metadata are the
+// three TDX sources this project ever fetches, confirmed against TDX's own
+// backend accounting. Reads `today.bySource` (the marginal total across
+// EVERY context — Production, Debug, Admin alike), deliberately NOT the
+// `byContextSource['production-cron']` slice used before V1.8.6.2 — a
+// person checking "how much TDX quota did today actually use" needs the
+// real total regardless of which code path made the call. Always renders
+// all three rows, even at 0 — see the task's own "三列固定顯示" requirement.
+// CCTV here is ONLY TDX CCTV metadata (cctv-probe/cctv-hsinchu-probe, via
+// fetchTdxJson -> bySource.cctv, see usageLedger.js) — the actual LINE
+// CCTV image fetch is a *.freeway.gov.tw MJPEG frame grab (see
+// hsinchuCctvProbe.js's handleHsinchuCctvFrame — "0 TDX calls"), not a TDX
+// API call, and must never be folded in here — untouched by this round.
+const TDX_SOURCE_LABELS = { freeway: '國道', highway: '省道', cctv: 'CCTV' };
 
 const RETIRED_SOURCE_LABELS = { cms: 'CMS', 'bus-hsinchu': '公車市', 'bus-hsinchu-county': '公車縣' };
 
@@ -404,16 +410,21 @@ function renderTdxUsageBody(summary, now) {
     : '';
   const provisionalBadge = pendingCalibrationGap ? '（暫估）' : '';
 
-  // --- 來源拆解（今日） ---
-  // "Production" reads ONLY the production-cron slice of the 2D
-  // byContextSource breakdown, never the marginal `bySource` total
-  // (which also includes whatever a human's /debug/status or
-  // /debug/tdx call added for the same source buckets).
-  const todayProductionSource = (today.byContextSource && today.byContextSource['production-cron']) || {};
-  const productionSourceRows = Object.entries(PRODUCTION_SOURCE_LABELS)
-    .map(([key, label]) => `<li><span>${escapeHtml(label)}</span><span>${todayProductionSource[key] || 0}</span></li>`)
+  // --- TDX 來源（今日） ---
+  // V1.8.6.2: this is a SOURCE breakdown (what TDX API resource was hit),
+  // not a CONTEXT breakdown (which call path hit it) — reads `bySource`
+  // directly, mixing every context on purpose. Always all 3 rows, even at
+  // 0 — see the top-of-file V1.8.6.2 comment above TDX_SOURCE_LABELS.
+  const todaySourceRows = Object.entries(TDX_SOURCE_LABELS)
+    .map(([key, label]) => `<li><span>${escapeHtml(label)}</span><span>${(today.bySource && today.bySource[key]) || 0}</span></li>`)
     .join('');
 
+  // --- 呼叫情境（今日，進階） ---
+  // CONTEXT breakdown (Production Cron / Debug Status / Debug TDX / Admin
+  // CCTV) — a separate axis from the source breakdown above, moved into
+  // 進階資訊 per V1.8.6.2 so it never sits in the same visual layer as TDX
+  // 來源. The 今日 card's own "Production XX 次 / 人工額外 XX 次" rows
+  // already cover the common case at a glance.
   const manualNonZero = Object.entries(USAGE_CONTEXT_LABELS).filter(([key]) => ((today.byContext && today.byContext[key]) || 0) > 0);
   const manualRowsHtml =
     manualNonZero.length > 0
@@ -495,11 +506,9 @@ function renderTdxUsageBody(summary, now) {
   </div>
 
   <div class="card">
-    <h2>來源拆解（今日）</h2>
-    <p class="hint" style="margin:0 0 8px;">Production</p>
-    <ul class="source-list">${productionSourceRows}</ul>
-    <p class="hint" style="margin:10px 0 8px;">人工 / 管理</p>
-    ${manualRowsHtml}
+    <h2>TDX 來源（今日）</h2>
+    <ul class="source-list">${todaySourceRows}</ul>
+    <p class="hint">國道／省道即時道路事件與 CCTV metadata 皆為實際消耗 TDX 額度的資料來源（依 TDX 官方後台確認）；不分呼叫情境，Production／Debug／Admin 呼叫同一來源皆計入同一列。</p>
   </div>
 
   ${retiredWarningHtml}
@@ -522,6 +531,11 @@ function renderTdxUsageBody(summary, now) {
       <div class="row"><span class="label">OAuth 真實刷新（今日）</span><span class="value">${today.oauthRequests || 0} 次</span></div>
       <div class="row"><span class="label">OAuth 真實刷新（本月）</span><span class="value">${monthTotals.oauthRequests} 次</span></div>
       <p class="hint">估算流量為「本地估算傳輸量」，可能與 TDX 官方傳輸量口徑不同（壓縮／計費方式可能不同），僅供長期校正參考。點數換算：${TDX_CALLS_PER_POINT} 次呼叫 = 1 點，${TDX_TRAFFIC_MB_PER_POINT}MB 傳輸 = 1 點，皆為「本地估算點數」，非官方帳務。</p>
+    </div>
+    <div style="margin-top:12px;">
+      <h3>呼叫情境（今日）</h3>
+      <p class="hint" style="margin:0 0 8px;">Production Cron／Debug Status／Debug TDX／Admin CCTV 是「呼叫情境」，與上方「TDX 來源」是不同的分類軸，僅供除錯參考。</p>
+      ${manualRowsHtml}
     </div>
     <div style="margin-top:12px;">
       <h3>TDX 官方歷史參考（非本機統計）</h3>
