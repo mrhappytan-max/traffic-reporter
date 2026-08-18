@@ -138,13 +138,24 @@ const CANDIDATES_TTL_SECONDS = 3600; // 1 hour
 
 // Full freeway CCTV list — deliberately NO $top here (unlike
 // tdx/cctvProbe.js's $top=1) because four-quadrant selection needs to
-// compare across every 國道1號 record to find the nearest candidate in
-// each of the 4 quadrants around TARGET_KM; filtering happens locally in
-// this Worker, per spec.
-const CCTV_URL = 'https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/CCTV/Freeway?$format=JSON';
+// compare across every record on the target road to find the nearest
+// candidate in each of the 4 quadrants around the target KM; filtering
+// happens locally in this Worker, per spec. Exported so
+// cctv/dynamicCollage.js's shared metadata cache fetches the exact same
+// endpoint — never a second, possibly-drifting URL literal.
+export const CCTV_URL = 'https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/CCTV/Freeway?$format=JSON';
 
-const TARGET_ROAD_ID = '000010';
-const TARGET_KM = 82.1; // 國道1號 82K+100
+// V1.8.5: exported (with the road-name pattern alongside it) so
+// cctv/dynamicCollage.js's per-accident CCTV_SUPPORTED_ROADS registry can
+// reuse the SAME Production-confirmed 國道一號 CCTV RoadID/RoadName match
+// this module has used since V1.7, rather than re-deriving/guessing a
+// second copy of it. These three (TARGET_ROAD_ID/TARGET_ROAD_NAME_PATTERN/
+// TARGET_KM) remain this module's own DEFAULTS for the fixed-target admin
+// probe/collage/publish-test endpoints below — unchanged behavior for
+// every existing caller.
+export const TARGET_ROAD_ID = '000010';
+export const TARGET_ROAD_NAME_PATTERN = /國道1號|國道一號/;
+export const TARGET_KM = 82.1; // 國道1號 82K+100
 const NEAR_RADIUS_KM = 2; // preferred radius per quadrant
 const WIDE_RADIUS_KM = 4; // fallback radius per quadrant if the near radius is empty
 const CANDIDATE_COUNT = 4; // fixed: S-before, S-after, N-before, N-after — never more
@@ -193,11 +204,16 @@ function escapeHtml(value) {
     .replace(/"/g, '&quot;');
 }
 
-function isTargetRoad(record) {
-  const roadId = firstDefinedField(record, ['RoadID', 'RoadId']);
-  if (roadId === TARGET_ROAD_ID) return true;
+// V1.8.5: parameterized (was hardcoded to the fixed 國道一號 test
+// target) so selectFourQuadrantCandidates below can match against ANY
+// road this app has a confirmed CCTV roadId/roadNamePattern for — see
+// cctv/dynamicCollage.js's CCTV_SUPPORTED_ROADS. Defaults preserve the
+// exact original behavior for every existing (fixed-target) caller.
+function isTargetRoad(record, { roadId = TARGET_ROAD_ID, roadNamePattern = TARGET_ROAD_NAME_PATTERN } = {}) {
+  const recordRoadId = firstDefinedField(record, ['RoadID', 'RoadId']);
+  if (recordRoadId === roadId) return true;
   const roadName = firstDefinedField(record, ['RoadName']);
-  return typeof roadName === 'string' && /國道1號|國道一號/.test(roadName);
+  return typeof roadName === 'string' && roadNamePattern.test(roadName);
 }
 
 // V1.8.1 hard rule (post-Production-testing fix): a CCTV physically
@@ -277,8 +293,20 @@ function normalizeDirection(rawDirection) {
  * N後); any quadrant with no eligible candidate within +/-WIDE_RADIUS_KM
  * is `null` at that index — never omitted, never backfilled from another
  * quadrant, never more than 4 entries total.
+ *
+ * V1.8.5: `roadId`/`roadNamePattern`/`targetKm` are now parameters (were
+ * hardcoded module constants) so this SAME selector — same four-quadrant
+ * rule, same ±2km/±4km/null distance strategy, same service-area
+ * exclusion, completely unchanged — can be reused for a dynamic
+ * accident's own road/KM (see cctv/dynamicCollage.js) instead of only
+ * ever running against the fixed 國道一號 82K+100 test target. Defaults
+ * preserve the exact original fixed-target behavior for every existing
+ * caller (handleHsinchuCctvProbe below).
  */
-function selectFourQuadrantCandidates(records) {
+export function selectFourQuadrantCandidates(
+  records,
+  { roadId = TARGET_ROAD_ID, roadNamePattern = TARGET_ROAD_NAME_PATTERN, targetKm = TARGET_KM } = {}
+) {
   // Step 1: build the eligible MAINLINE CCTV pool first — wrong-road and
   // service-area records are excluded here, BEFORE any distance
   // comparison happens. This ordering is deliberate and required: if
@@ -287,7 +315,7 @@ function selectFourQuadrantCandidates(records) {
   // isServiceAreaCctv's module comment.
   const usable = [];
   for (const record of records) {
-    if (!isTargetRoad(record)) continue;
+    if (!isTargetRoad(record, { roadId, roadNamePattern })) continue;
     if (isServiceAreaCctv(record)) continue; // 服務區/休息站/服務站 — never a mainline incident camera, regardless of KM proximity
     const cctvId = firstDefinedField(record, ['CCTVID', 'CCTVId', 'ID']);
     const videoStreamUrl = firstDefinedField(record, ['VideoStreamURL']);
@@ -305,13 +333,13 @@ function selectFourQuadrantCandidates(records) {
       positionLat: firstDefinedField(record, ['PositionLat']),
       videoStreamUrl,
       km,
-      distanceKm: Math.abs(km - TARGET_KM),
+      distanceKm: Math.abs(km - targetKm),
     });
   }
 
   return QUADRANTS.map((quadrant) => {
     const inDirection = usable.filter((c) => c.roadDirection === quadrant.direction);
-    const inSide = inDirection.filter((c) => (quadrant.side === 'before' ? c.km < TARGET_KM : c.km > TARGET_KM));
+    const inSide = inDirection.filter((c) => (quadrant.side === 'before' ? c.km < targetKm : c.km > targetKm));
 
     const nearest = (maxRadiusKm) => {
       const withinRadius = inSide.filter((c) => c.distanceKm <= maxRadiusKm);
@@ -368,9 +396,9 @@ async function readCandidates(kv) {
   }
 }
 
-function candidateDistanceLabel(candidate) {
+function candidateDistanceLabel(candidate, targetKm = TARGET_KM) {
   const km = parseKM(candidate.locationMile);
-  return km === null ? '未知' : `${Math.abs(km - TARGET_KM).toFixed(3)} 公里`;
+  return km === null ? '未知' : `${Math.abs(km - targetKm).toFixed(3)} 公里`;
 }
 
 /** Bare distance number (3 decimals, per instruction "距離固定顯示 3 位
@@ -378,10 +406,15 @@ function candidateDistanceLabel(candidate) {
  * wraps this with "距事故 … 公里" itself, so this returns just the
  * number, e.g. "0.080", "0.800", "1.000". Exported for direct unit
  * testing (image text isn't OCR-able, so pure string builders like this
- * one are tested directly rather than via pixel inspection). */
-export function candidateDistanceLabelForCollage(candidate) {
+ * one are tested directly rather than via pixel inspection).
+ *
+ * V1.8.5: `targetKm` is now a parameter (default TARGET_KM preserves the
+ * fixed-target admin endpoints' original behavior) so a dynamic
+ * accident's own KM can be used instead — see cctv/dynamicCollage.js.
+ */
+export function candidateDistanceLabelForCollage(candidate, targetKm = TARGET_KM) {
   const km = parseKM(candidate.locationMile);
-  return km === null ? null : Math.abs(km - TARGET_KM).toFixed(3);
+  return km === null ? null : Math.abs(km - targetKm).toFixed(3);
 }
 
 /**
@@ -391,11 +424,20 @@ export function candidateDistanceLabelForCollage(candidate) {
  * "UPDATED HH:MM". Exported and taking `now` as a parameter so it's
  * directly unit-testable with a fixed Date, without needing to OCR the
  * rendered collage image.
+ *
+ * V1.8.5: `roadShortName`/`targetKm` are now optional overrides
+ * (defaults '國1'/TARGET_KM preserve the exact original fixed-target
+ * title for every existing admin-endpoint caller) so a dynamic accident
+ * can render its OWN road/KM instead — e.g. "國3 95K+200 附近監視畫面"
+ * — see cctv/dynamicCollage.js. This function itself has no opinion on
+ * which roads are "supported"; that decision lives entirely in the
+ * caller (dynamicCollage.js's CCTV_SUPPORTED_ROADS / fail-closed
+ * eligibility check) — never guessed here.
  */
-export function buildCollageHeaderLines(now) {
+export function buildCollageHeaderLines(now, { roadShortName = '國1', targetKm = TARGET_KM } = {}) {
   const { hour, minute } = toTaipeiParts(now);
   return {
-    titleLine: `國1 ${formatKmAscii(TARGET_KM)} 附近監視畫面`,
+    titleLine: `${roadShortName} ${formatKmAscii(targetKm)} 附近監視畫面`,
     subtitleLine: `更新 ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
   };
 }
@@ -700,18 +742,15 @@ export async function handleHsinchuCctvFrame(env, index) {
 // list. See module comment and PROJECT_HANDOFF.md's V1.8 section.
 
 /**
- * Shared collage-compose core, extracted in V1.8.4 so
- * GET /admin/cctv-hsinchu-collage (V1.8) and the new
- * GET /admin/cctv-hsinchu-publish-test (V1.8.4) can never drift into
- * fetching/composing the collage differently — both call this one
- * function. Fetches all (up to 4) candidate frames in parallel — capped
- * at 4 by construction (exactly one fetch attempt per quadrant slot,
- * never more) — and composes them into a single 2x2 collage JPEG via
- * cctv/collage.js. One or more successfully DECODED frames is enough to
- * produce a valid collage (collage.js's own successfulDecodedFrames
- * count is the source of truth — a 200 response that isn't actually a
- * valid JPEG does not count); only when every quadrant has neither a
- * candidate nor a usable frame does this fail.
+ * Shared collage-compose core, extracted in V1.8.4 (and further split in
+ * V1.8.5 — see composeCollageFromCandidates below) so
+ * GET /admin/cctv-hsinchu-collage (V1.8), GET
+ * /admin/cctv-hsinchu-publish-test (V1.8.4), AND the new dynamic
+ * per-accident broadcast path (V1.8.5 — see cctv/dynamicCollage.js) can
+ * never drift into fetching/composing the collage differently — all
+ * three ultimately call composeCollageFromCandidates. This function
+ * itself is specifically the FIXED-TARGET admin flow: reads the
+ * one-time-probe's CANDIDATES_KEY cache, then delegates.
  *
  * @param {object} env
  * @param {{decodeJpeg: Function, encodeJpeg: Function}} [codecOverride] —
@@ -733,6 +772,35 @@ export async function composeCollageFromCache(env, codecOverride) {
     return { ok: false, reason: 'no-cache', message: 'CCTV candidate cache unavailable' };
   }
 
+  return composeCollageFromCandidates(candidates, buildCollageHeaderLines(new Date()), { codecOverride });
+}
+
+/**
+ * The actual fetch-frames-and-compose core (extracted out of
+ * composeCollageFromCache in V1.8.5 so a caller with its OWN
+ * dynamically-selected candidates — not the fixed-target admin probe's
+ * KV cache — can reuse the exact same frame-fetch/cell-building/
+ * composeQuadrantCollage orchestration; see
+ * cctv/dynamicCollage.js:prepareCctvImageForEvent). Fetches all (up to
+ * 4) candidate frames in parallel — capped at 4 by construction (exactly
+ * one fetch attempt per quadrant slot, never more) — and composes them
+ * into a single 2x2 collage JPEG via cctv/collage.js. One or more
+ * successfully DECODED frames is enough to produce a valid collage
+ * (collage.js's own successfulDecodedFrames count is the source of
+ * truth — a 200 response that isn't actually a valid JPEG does not
+ * count); only when every quadrant has neither a candidate nor a usable
+ * frame does this fail.
+ *
+ * @param {Array} candidates - EXACTLY 4 entries, index-aligned to
+ *   QUADRANTS, `null` for an empty slot — same shape
+ *   selectFourQuadrantCandidates returns (after toStorableCandidate,
+ *   i.e. {cctvId, roadDirection, locationMile, videoStreamUrl, ...}).
+ * @param {{titleLine: string, subtitleLine: string}} headerLines - see
+ *   buildCollageHeaderLines.
+ * @param {{targetKm?: number, codecOverride?: {decodeJpeg,encodeJpeg}}} [options]
+ * @returns {Promise<{ok:true, bytes:ArrayBuffer, contentType:'image/jpeg'}|{ok:false, reason:'no-frames', message:string}>}
+ */
+export async function composeCollageFromCandidates(candidates, headerLines, { targetKm = TARGET_KM, codecOverride } = {}) {
   const frameResults = await Promise.all(
     candidates.map(async (candidate) => {
       if (!candidate) return null;
@@ -756,15 +824,13 @@ export async function composeCollageFromCache(env, codecOverride) {
       return { slotLabel, locationLabel: null, distanceLabel: null, jpegBytes: null, status: 'empty' };
     }
     const locationLabel = candidate.locationMile || null;
-    const distanceLabel = candidateDistanceLabelForCollage(candidate);
+    const distanceLabel = candidateDistanceLabelForCollage(candidate, targetKm);
     const frame = frameResults[i];
     if (frame && frame.ok) {
       return { slotLabel, locationLabel, distanceLabel, jpegBytes: frame.bytes, status: 'ok' };
     }
     return { slotLabel, locationLabel, distanceLabel, jpegBytes: null, status: 'failed' };
   });
-
-  const { titleLine, subtitleLine } = buildCollageHeaderLines(new Date());
 
   // Only load a real codec when there's at least one fetched frame to
   // decode — composeQuadrantCollage's own pre-check short-circuits to
@@ -775,7 +841,12 @@ export async function composeCollageFromCache(env, codecOverride) {
   const anyFetchedOk = cells.some((c) => c.status === 'ok' && c.jpegBytes);
   const codec = anyFetchedOk ? codecOverride || (await loadProductionJpegCodec()) : { decodeJpeg: undefined, encodeJpeg: undefined };
 
-  const result = await composeQuadrantCollage(cells, { decodeJpeg: codec.decodeJpeg, encodeJpeg: codec.encodeJpeg, titleLine, subtitleLine });
+  const result = await composeQuadrantCollage(cells, {
+    decodeJpeg: codec.decodeJpeg,
+    encodeJpeg: codec.encodeJpeg,
+    titleLine: headerLines.titleLine,
+    subtitleLine: headerLines.subtitleLine,
+  });
   if (!result.ok) {
     return { ok: false, reason: 'no-frames', message: 'No CCTV footage available for any quadrant.' };
   }

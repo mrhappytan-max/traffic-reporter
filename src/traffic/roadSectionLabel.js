@@ -283,4 +283,11 @@ export function getRoadShortName(road) {
   return ROAD_SHORT_NAME[road] || String(road);
 }
 
-export { parseKM };
+// V1.8.5: exported so cctv/dynamicCollage.js can resolve a RoadEvent's
+// free-text `road` field (which may be any of "國道1號"/"中山高"/"國道
+// 一號"/etc — see ROAD_ALIASES above) to the SAME canonical road key this
+// module already uses for section labels/corridor ids, rather than
+// re-implementing a second, parallel road-name parser. Returns null for
+// any road this module doesn't have a curated entry for — the caller
+// must treat that as "can't reliably place this event," never guess.
+export { resolveRoadKey, parseKM };

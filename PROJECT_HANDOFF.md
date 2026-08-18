@@ -346,3 +346,53 @@ Result: **at most 4 cameras**, one per quadrant, each quadrant independently emp
 **Verification — visual proof, not just "glyph !== glyph" (explicit instruction: "不要只做「glyph 不相同」測試"):** a dedicated JPEG proof sheet was rendered through the real production `bitmapFont.js`/`collage.js` code path containing every string the instruction listed (title, subtitle, all 4 quadrant labels, all 3 example distance-info lines, both placeholders), plus a full realistic 1200×900 collage preview generated through the actual `composeQuadrantCollage()` production function (not a standalone mockup). **Both were also downsampled to 375px-wide (phone-thumbnail scale) and re-inspected at that size** — the requirement was legibility "正常手機縮放觀看仍能快速辨識，不是放大才能猜出文字," which native-resolution inspection alone cannot confirm.
 
 `test/cctvCollage.test.js`'s test 10 was rewritten to match the new format: it now asserts directly against the raw `CJK_RASTER` alpha-mask data (correct dimensions, sufficient ink coverage per character, no two characters byte-identical) rather than inspecting exact-255 blended pixel color — the old check's binary assumption doesn't hold for genuinely anti-aliased glyphs, where most edge pixels carry partial alpha. A new companion test 10b exercises the real `drawText()` pipeline end-to-end (base64 decode → alpha blend) for every required character, catching a character-to-raster lookup bug that a direct-data-only check wouldn't.
+
+---
+
+## V1.8.5 — Dynamic per-accident CCTV + LINE「事故文字 + 1 張四宮格」
+
+**Goal:** wire the V1.8/V1.8.3/V1.8.4 CCTV collage pipeline into the REAL LINE broadcast, without ever sending the wrong location's CCTV image. Until this round, `hsinchuCctvProbe.js`'s four-quadrant selector had only ever run against one fixed test target (國道一號 82K+100). Naively importing that fixed target into `broadcastPipeline.js` would have attached that same 82K+100 image to every accident's LINE message, regardless of where the accident actually was — this round exists specifically to prevent that.
+
+**Scope, explicit:** only `type==='accident'` events get CCTV enrichment attempted. Not closure/control/construction/other/congestion/alert/PBS-only — "先把事故做好." Real LINE push for TEXT was already live (pre-existing); this round adds the IMAGE, sent in the SAME LINE API call as the text.
+
+### Dynamic road/KM resolution — reuse, not reinvent
+
+- **KM**: `cctv/dynamicCollage.js`'s `eventTargetKm(event)` uses ONLY the structured `startKM`/`endKM` fields `tdx/normalize.js` already populates from TDX's own `StartKM`/`EndKM` (already TDX-formatted `"NNK+NNN"` strings), parsed via `traffic/roadSectionLabel.js`'s existing, already-tested `parseKM`. Target KM = midpoint of start/end when both present, else whichever one parses. **Never reads `description`/free text for a KM guess.** No reliable KM → `no-reliable-km` → text-only.
+- **Road**: `resolveRoadKey(event.road)` — the SAME alias-resolution table (`國道1號`/`中山高`/`中山高速公路`/etc → canonical `國道一號`) already used throughout this app for corridor/section-label logic, now also exported from `roadSectionLabel.js`. An event whose road doesn't resolve at all → `unresolvable-road` → text-only.
+- **CCTV_SUPPORTED_ROADS** (`dynamicCollage.js`) is a closed, tiny registry — **only `國道一號`** — because its CCTV `RoadID` (`'000010'`) and `RoadName` pattern are the only ones ever independently confirmed against a real Production TDX CCTV/Freeway response (V1.7). No other freeway's CCTV RoadID has ever been observed from this dev sandbox (TDX egress is blocked here). A resolved-but-unsupported road (e.g. 國道三號, which V1.7/V1.8's `roadSectionLabel.js` DOES know for section labels, but which has no confirmed CCTV RoadID) → `unsupported-road` → text-only. Adding a road here requires confirming its real CCTV RoadID from an actual Production response first — never guessed from "the numbering probably matches."
+
+### Selector generalization — same algorithm, now parameterized
+
+`hsinchuCctvProbe.js`'s `selectFourQuadrantCandidates(records, {roadId, roadNamePattern, targetKm})` (was hardcoded module constants) and its extracted `composeCollageFromCandidates(candidates, headerLines, {targetKm, codecOverride})` are the SAME four-quadrant rule (±2km→±4km→null per quadrant, max 4 cameras, service-area exclusion via `isServiceAreaCctv` — completely untouched) and the SAME collage renderer (`cctv/collage.js`, untouched) — just no longer hardcoded to 82.1K. Every existing fixed-target admin endpoint (`/admin/cctv-hsinchu-probe`, `-collage`, `-publish-test`) keeps its exact original behavior via default parameter values (`TARGET_ROAD_ID`/`TARGET_ROAD_NAME_PATTERN`/`TARGET_KM`, now exported). `buildCollageHeaderLines(now, {roadShortName, targetKm})` similarly defaults to `'國1'`/`TARGET_KM` for those callers, and takes the accident's own road/KM for the dynamic path — e.g. a 國3 accident (once/if ever supported) would read "國3 95K+200 附近監視畫面."
+
+### CCTV metadata cache — shared, not per-accident
+
+`cctv:freeway-metadata:v1` on `TRAFFIC_KV`, 6h TTL. Cache hit → 0 TDX calls. Cache miss → 1 TDX call, normalized, cached. Within one Cron tick, N accidents share **at most 1** TDX CCTV metadata call via `runCache` — a plain `{}` object `broadcastPipeline.js` creates once per `runLineBroadcast` call and threads into every `prepareCctvImageForEvent` call; the first accident to need metadata stores the still-pending Promise on `runCache.metadataPromise`, every later accident this tick awaits that same Promise. Deliberately request-scoped, not module-global state (avoids cross-invocation staleness). KV's eventual consistency is explicitly ACCEPTABLE here — unlike the R2-backed published-image URL (V1.8.4), this cache never needs read-after-write.
+
+### R2 publish — unchanged from V1.8.4
+
+Same `CCTV_IMAGES` binding, same `cctv/published-image/<opaque-id>.jpg` key shape, same 128-bit opaque id, same 15-minute code-enforced `expiresAt` check on every read (never HTTP caching, never R2 lifecycle alone — R2's own 1-day lifecycle rule, confirmed enabled in Production, is a backstop only). Nothing in `publishedImage.js` changed this round.
+
+### LINE transport — one call, text+image together
+
+`line/pushMessage.js`: `pushLineMessages(env, to, messages)` is now the core (arbitrary LINE message array, 1 HTTP request); `pushLineMessage(env, to, text)` is a thin wrapper — `pushLineMessages(env, to, [{type:'text',text}])`, byte-for-byte the same request body it always sent, so no existing caller/test needed to change. `broadcastPipeline.js` builds `messages` as `[text]` or `[text, image]` **before** the per-target push loop and sends the exact same `messages` array to every pending target for that event — **one LINE API call per target, never a separate second call for the image.** A text-then-image two-call sequence was explicitly rejected: a second call failing after the first succeeded would leave notified-state semantics ambiguous (was this target notified or not), and risks a duplicate text send on a naive retry.
+
+### Fail-closed CCTV, per instruction — CCTV failure is never a LINE failure
+
+`prepareCctvImageForEvent` fails closed at every stage: `not-accident`/`not-freeway-source`/`unresolvable-road`/`unsupported-road`/`no-reliable-km` (eligibility), `no-r2-binding`, `tdx-auth-failed`/`tdx-fetch-failed` (metadata), `no-camera` (0 quadrants filled), `no-frames` (all 4 frame fetches/decodes failed), `r2-publish-failed`. **Every single one of these just means `messages` stays text-only** — computed and awaited entirely BEFORE the per-target push loop, so a CCTV failure can never partially-send, never delay the text, never mark the event failed, never duplicate the text, and never touches `notified-state` on its own (only the actual LINE push result does that, exactly as before this round).
+
+### Multi-target: compose/publish once, share the URL
+
+CCTV prep runs once per EVENT (not per target) — structurally, because it sits above the `for (const target of pendingTargets)` loop in `broadcastPipeline.js`, computed into a local `messages` variable that every target in that inner loop then reuses unchanged. Verified in `test/broadcastCctvIntegration.test.js`'s test 15: 3 targets (2 users + 1 group) on the same event → exactly 1 CCTV metadata call, exactly 1 R2 `put`, and all 3 LINE payloads carry the identical `imageUrl`.
+
+### Interaction with V1.5.1 incident suppression / fingerprinting — untouched, verified compatible
+
+- A suppressed re-tick (`resolveIncidentNotifications` → `suppressed:true`, same real incident, no material change) already yields `pendingTargets:[]` — CCTV prep is gated on `pendingTargets.length > 0`, so a suppressed tick triggers **zero** CCTV work, automatically (no special-case code needed).
+- A material escalation (type change, new closure signal, more blocked lanes) yields non-empty `pendingTargets` again on its own — CCTV is freely recomposed/republished at that point, a brand-new image with a brand-new opaque id, exactly as intended ("material escalation 允許 rebroadcast 時：可重新產一次新的 CCTV collage") — again with zero special-case code, just the natural consequence of `pendingTargets` being non-empty.
+- `notified.js`'s `computeNotificationFingerprint(event)` is derived purely from `type`/`road`/`direction`/`startKM`/`endKM`/`blockedLanes`/closure-signal — **never touched by this round, never fed anything CCTV/image-URL-derived.** The image URL's own randomness (a fresh opaque id every compose) therefore can never make an otherwise-identical event look "new."
+
+### `GET /debug/status` — still 0 side effects
+
+`resolveCctvEligibility(event)` is pure/synchronous/zero-I/O, so `result.cctvEligibleAccidentCount` is computed and populated even under `dryRun=true` (before the `if (dryRun) return result` early-return) — a legitimate stat, not a side effect. `result.cctvImagesAttachedCount`/`cctvSkippedByReason` are only ever populated on the real (non-dryRun) push path, since only that path actually attempts `prepareCctvImageForEvent`. `dryRun` never calls TDX CCTV metadata, never fetches a CCTV frame, never writes to R2, never calls LINE — enforced by construction (the CCTV block lives entirely after the dryRun early-return), verified in `test/broadcastCctvIntegration.test.js`'s test 22.
+
+**Out of scope this round, unchanged:** `broadcastPipeline.js`'s non-CCTV logic, `scheduled.js`, Cron, PBS, `tdxSchedule.js`, `cctv/collage.js` (renderer), AI incident recognition, real LINE push testing, Production deploy, Production TDX probe.

@@ -52,18 +52,29 @@
   // which is unacceptable for incident-time delivery. No Secret/API
   // token is required for an R2 Worker binding.
   //
-  // NOT YET CREATED in Production as of this commit — this declares the
-  // binding only. Before this branch can be deployed, a human must
-  // create the bucket once (`wrangler r2 bucket create
-  // traffic-reporter-cctv-images`, or via the Cloudflare dashboard);
-  // `wrangler deploy` does not create R2 buckets itself. Bucket name
-  // below is a suggestion, not yet verified against a real bucket.
+  // CONFIRMED created in Production (post-V1.8.4): bucket enabled, R2
+  // lifecycle rule set to auto-delete objects after 1 day — a backstop
+  // ONLY, never what determines a published-image URL's validity; that's
+  // still enforced entirely in code from each object's own
+  // customMetadata.expiresAt on every read (see publishedImage.js).
   "r2_buckets": [
     {
       "binding": "CCTV_IMAGES",
       "bucket_name": "traffic-reporter-cctv-images"
     }
   ],
+  // V1.8.5: PUBLIC_BASE_URL — this Worker's own public HTTPS origin, NOT
+  // a secret (LINE's servers already need to fetch from it with zero
+  // credential — see cctv/publishedImage.js). Needed because the dynamic
+  // per-accident CCTV image URL (cctv/dynamicCollage.js) is built from
+  // the Cron scheduled handler, which has no incoming Request to derive
+  // an origin from the way the Admin HTTP endpoints do (see
+  // hsinchuCctvProbe.js's handleHsinchuCctvPublishTest). Code falls back
+  // to this exact value if the var is ever absent/misconfigured, so a
+  // missing var degrades safely rather than producing a broken URL.
+  "vars": {
+    "PUBLIC_BASE_URL": "https://traffic-reporter.mr-happytan.workers.dev"
+  },
   "vpc_services": [
     {
       "binding": "PBS_RELAY_WINDOWS",

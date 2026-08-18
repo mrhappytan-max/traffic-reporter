@@ -12,6 +12,15 @@
 //
 // Fail-closed: a missing token, unavailable subscriptions, or unavailable
 // notified-state all result in 0 pushes for every target, never a guess.
+//
+// V1.8.5: type==='accident' events additionally get a best-effort CCTV
+// collage image attached (see cctv/dynamicCollage.js) — composed/
+// published at most once per event, sent in the SAME LINE API request as
+// the text (never a second call), and completely non-blocking: any CCTV
+// failure at any stage falls back to the exact text-only push this
+// pipeline always did. See the per-event loop below for the integration
+// point and dynamicCollage.js's module comment for the full fail-closed
+// rationale.
 
 import { isWithinBroadcastHours } from './broadcastHours.js';
 import { computeEffectiveWindow } from './effectiveWindow.js';
@@ -29,12 +38,13 @@ import {
 } from './notified.js';
 import { clusterCongestionEvents } from './congestionCluster.js';
 import { formatEventMessage } from './messageFormat.js';
-import { pushLineMessage } from '../line/pushMessage.js';
+import { pushLineMessages } from '../line/pushMessage.js';
 import {
   readIncidentSuppressionState,
   resolveIncidentNotifications,
   persistIncidentSuppressionState,
 } from './incidentSuppression.js';
+import { resolveCctvEligibility, prepareCctvImageForEvent } from '../cctv/dynamicCollage.js';
 
 function safeErrorMessage(err) {
   if (err && typeof err.message === 'string') return err.message;
@@ -94,6 +104,12 @@ function clusterContentSince(members, { newUpdatedKeys, dedupeMapSnapshot, now }
  *   pruned this run; their notified-state entries are removed too.
  * @param {Date} [options.now]
  * @param {boolean} [options.dryRun]
+ * @param {{decodeJpeg,encodeJpeg}} [options.cctvCodecOverride] - TEST-ONLY,
+ *   threaded through to cctv/dynamicCollage.js's prepareCctvImageForEvent
+ *   (see that module's doc comment) so a test can exercise a genuinely
+ *   successful CCTV compose without hitting the real Workers-only `.wasm`
+ *   import, which plain Node cannot load. Production (scheduled.js) never
+ *   passes this.
  */
 export async function runLineBroadcast(
   env,
@@ -105,6 +121,7 @@ export async function runLineBroadcast(
     prunedKeys = [],
     now = new Date(),
     dryRun = false,
+    cctvCodecOverride,
   }
 ) {
   const result = {
@@ -136,6 +153,17 @@ export async function runLineBroadcast(
     incidentSuppressedCount: 0,
     incidentSuppressedByReason: {},
     materialRebroadcastCount: 0,
+    // V1.8.5 — dynamic per-accident CCTV image enrichment (see
+    // cctv/dynamicCollage.js). cctvEligibleAccidentCount is a PURE,
+    // zero-I/O count (resolveCctvEligibility never touches TDX/KV/R2) —
+    // computed and populated even under dryRun, per instruction
+    // ("dryRun 可以新增純統計欄位"). cctvImagesAttachedCount/
+    // cctvSkippedByReason are the REAL outcome and are only ever
+    // populated on the actual (non-dryRun) push path below, since they
+    // require actually attempting the CCTV pipeline.
+    cctvEligibleAccidentCount: 0,
+    cctvImagesAttachedCount: 0,
+    cctvSkippedByReason: {},
     broadcastRelevantCount: 0,
     activeNowCount: 0,
     futureWithin60MinCount: 0,
@@ -242,6 +270,10 @@ export async function runLineBroadcast(
 
   const accidentRelevant = relevant.filter(({ event, cluster }) => !cluster && event.type === 'accident');
   const otherRelevant = relevant.filter(({ event, cluster }) => cluster || event.type !== 'accident');
+
+  // Pure, zero-I/O — safe (and populated) under dryRun too; see the
+  // cctvEligibleAccidentCount field comment above.
+  result.cctvEligibleAccidentCount = accidentRelevant.filter(({ event }) => resolveCctvEligibility(event).eligible).length;
 
   const { results: incidentResults, nextIncidentsByGroup } = resolveIncidentNotifications(
     accidentRelevant.map(({ event }) => event),
@@ -360,6 +392,13 @@ export async function runLineBroadcast(
     return result;
   }
 
+  // V1.8.5 — shared, per-Cron-run CCTV metadata cache/in-flight-promise
+  // memo (see cctv/dynamicCollage.js's getFreewayCctvMetadata doc
+  // comment): created ONCE here, threaded into every accident's
+  // prepareCctvImageForEvent call below, so N accidents this tick share
+  // at most 1 TDX CCTV metadata call — never N.
+  const cctvRunCache = {};
+
   for (const { event, window, eventKeyStr, fingerprint, pendingTargets } of perEventPending) {
     if (pendingTargets.length === 0) continue;
 
@@ -368,12 +407,39 @@ export async function runLineBroadcast(
     const minutesUntilStart = forecast ? Math.max(1, Math.round((startMs - now.getTime()) / 60000)) : null;
     const text = formatEventMessage(event, { forecast, minutesUntilStart });
 
+    // V1.8.5 — CCTV image enrichment: composed/published AT MOST ONCE
+    // per event, BEFORE the per-target push loop, so every pending
+    // target for this event shares the exact same imageUrl (never
+    // re-composed/re-published per target). Only ever attempted for
+    // type==='accident' — see dynamicCollage.js's resolveCctvEligibility
+    // for the full fail-closed gate (freeway source, a road with a
+    // Production-confirmed CCTV mapping, a reliable KM). ANY failure at
+    // any stage (ineligible, metadata unavailable, 0 cameras, all frame
+    // fetches failed, encode/compose failure, R2 publish failure) simply
+    // means `messages` stays text-only — this is never treated as a push
+    // failure, never blocks/delays the text, never touches
+    // notified-state on its own.
+    let messages = [{ type: 'text', text }];
+    if (event.type === 'accident') {
+      const cctv = await prepareCctvImageForEvent(env, event, cctvRunCache, cctvCodecOverride);
+      if (cctv.ok) {
+        result.cctvImagesAttachedCount += 1;
+        messages = [{ type: 'text', text }, { type: 'image', originalContentUrl: cctv.imageUrl, previewImageUrl: cctv.imageUrl }];
+      } else {
+        result.cctvSkippedByReason[cctv.reason] = (result.cctvSkippedByReason[cctv.reason] || 0) + 1;
+      }
+    }
+
     const successfulTargets = [];
     // Best-effort per target — one target's failure never blocks another.
+    // Exactly ONE LINE API call per target, carrying `messages` as built
+    // above (text-only, or text+image) — never a separate second call
+    // for the image; see pushMessage.js's module comment for why a
+    // text-then-image two-call sequence was rejected.
     for (const target of pendingTargets) {
       result.pushAttempted += 1;
       try {
-        await pushLineMessage(env, target.id, text);
+        await pushLineMessages(env, target.id, messages);
         successfulTargets.push(target);
         result.pushSucceeded += 1;
       } catch (err) {
