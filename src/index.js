@@ -7,7 +7,8 @@ import { handlePbsVpcProbe } from './pbs/vpcProbe.js';
 import { handleHealth } from './traffic/health.js';
 import { requireAdminAuth, applyAdminSecurityHeaders } from './security/adminAuth.js';
 import { handleCctvProbe } from './tdx/cctvProbe.js';
-import { handleHsinchuCctvProbe, handleHsinchuCctvFrame, handleHsinchuCctvCollage } from './tdx/hsinchuCctvProbe.js';
+import { handleHsinchuCctvProbe, handleHsinchuCctvFrame, handleHsinchuCctvCollage, handleHsinchuCctvPublishTest } from './tdx/hsinchuCctvProbe.js';
+import { handlePublicCctvImage } from './cctv/publishedImage.js';
 
 // V1.6.3 — Admin Protection: every human-facing admin/debug page requires
 // HTTP Basic Auth (see security/adminAuth.js). Centralized here on
@@ -36,6 +37,15 @@ import { handleHsinchuCctvProbe, handleHsinchuCctvFrame, handleHsinchuCctvCollag
 // candidates KV, 0 TDX calls, never triggers the probe above. See
 // tdx/hsinchuCctvProbe.js's handleHsinchuCctvCollage and
 // PROJECT_HANDOFF.md's V1.8 section.
+//
+// V1.8.4: /admin/cctv-hsinchu-publish-test composes that same collage
+// and publishes it to KV under a short-lived opaque id (see
+// cctv/publishedImage.js), still Admin-Auth-gated like every other path
+// in this Set — it does NOT call LINE. The public GET /cctv/image/:id
+// route it feeds is handled entirely separately below, deliberately
+// OUTSIDE this Set/Admin Basic Auth: LINE's servers cannot carry our
+// Authorization header, so that route's security is opaque-id entropy +
+// short TTL, not auth — see cctv/publishedImage.js's module comment.
 const HSINCHU_FRAME_PATHS = Array.from({ length: 4 }, (_, i) => `/admin/cctv-hsinchu-frame/${i}`);
 const ADMIN_PATHS = new Set([
   '/health',
@@ -46,10 +56,13 @@ const ADMIN_PATHS = new Set([
   '/admin/cctv-probe',
   '/admin/cctv-hsinchu-probe',
   '/admin/cctv-hsinchu-collage',
+  '/admin/cctv-hsinchu-publish-test',
   ...HSINCHU_FRAME_PATHS,
 ]);
 
-function routeAdminGet(pathname, env) {
+const PUBLIC_CCTV_IMAGE_PREFIX = '/cctv/image/';
+
+function routeAdminGet(pathname, env, request) {
   if (pathname === '/debug/tdx') return handleDebugTdx(env);
   if (pathname === '/debug/status') return handleDebugStatus(env);
   if (pathname === '/debug/pbs') return handleDebugPbs(env);
@@ -58,6 +71,7 @@ function routeAdminGet(pathname, env) {
   if (pathname === '/admin/cctv-probe') return handleCctvProbe(env);
   if (pathname === '/admin/cctv-hsinchu-probe') return handleHsinchuCctvProbe(env);
   if (pathname === '/admin/cctv-hsinchu-collage') return handleHsinchuCctvCollage(env);
+  if (pathname === '/admin/cctv-hsinchu-publish-test') return handleHsinchuCctvPublishTest(env, request);
   const frameIndex = HSINCHU_FRAME_PATHS.indexOf(pathname);
   if (frameIndex !== -1) return handleHsinchuCctvFrame(env, frameIndex);
   return new Response('Not Found', { status: 404 });
@@ -80,7 +94,18 @@ export default {
     if (request.method === 'GET' && ADMIN_PATHS.has(url.pathname)) {
       const denied = await requireAdminAuth(request, env);
       if (denied) return applyAdminSecurityHeaders(denied);
-      return applyAdminSecurityHeaders(await routeAdminGet(url.pathname, env));
+      return applyAdminSecurityHeaders(await routeAdminGet(url.pathname, env, request));
+    }
+
+    // V1.8.4 — public, deliberately UNAUTHENTICATED image read path (see
+    // cctv/publishedImage.js's module comment for why: LINE's servers
+    // cannot carry our Admin Basic Auth). NOT in ADMIN_PATHS, NOT routed
+    // through requireAdminAuth/applyAdminSecurityHeaders — this handler
+    // sets its own minimal headers. Security is the opaque id's entropy
+    // plus a short KV TTL, never auth or URL obscurity.
+    if (request.method === 'GET' && url.pathname.startsWith(PUBLIC_CCTV_IMAGE_PREFIX)) {
+      const id = url.pathname.slice(PUBLIC_CCTV_IMAGE_PREFIX.length);
+      return handlePublicCctvImage(env, id);
     }
 
     if (url.pathname === '/webhook' && request.method === 'POST') {

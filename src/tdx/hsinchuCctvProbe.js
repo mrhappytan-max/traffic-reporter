@@ -7,7 +7,7 @@
 // throughout this project (dedupe.js vs. notified.js vs. pbs lifecycle
 // vs. tdxEventCache.js, etc.).
 //
-// Three endpoints, three concerns, cleanly separated:
+// Four endpoints, four concerns, cleanly separated:
 //   - GET /admin/cctv-hsinchu-probe        — STEP 1+2+4: the ONE allowed
 //     TDX CCTV metadata call (only on the very first, never-attempted
 //     request), local four-quadrant selection, persisting up to 4
@@ -29,6 +29,17 @@
 //     reasoning. If the candidates KV is absent/expired, responds with a
 //     clear "CCTV candidate cache unavailable" message rather than
 //     silently calling TDX to repopulate it.
+//   - GET /admin/cctv-hsinchu-publish-test — V1.8.4: composes the same
+//     collage (via the shared composeCollageFromCache — never a
+//     second, divergent orchestration path) and publishes the JPEG to
+//     KV under a fresh opaque id (see cctv/publishedImage.js), returning
+//     a short-lived public HTTPS URL a future LINE Messaging API call
+//     could use directly. 0 TDX calls, same guarantee as the collage
+//     endpoint above. Never calls LINE. See cctv/publishedImage.js's
+//     module comment for the public GET /cctv/image/:id read path this
+//     feeds — that route lives in a separate module and is deliberately
+//     NOT in ADMIN_PATHS, since LINE's servers cannot carry our Basic
+//     Auth.
 //
 // V1.7 CCTV 四象限選鏡規則 / 4-camera cross-direction search — RATIFIED,
 // see PROJECT_HANDOFF.md section 14 for the full rationale. Supersedes
@@ -90,6 +101,7 @@ import { fetchTdxJson, TdxApiError } from './client.js';
 import { parseKM } from '../traffic/roadSectionLabel.js';
 import { toTaipeiParts } from '../traffic/broadcastHours.js';
 import { composeQuadrantCollage } from '../cctv/collage.js';
+import { publishCollageImage } from '../cctv/publishedImage.js';
 
 // cctv/jpegCodecWorker.js does a top-level `import ... from '*.wasm'` —
 // the only WASM-loading mechanism Cloudflare Workers actually supports
@@ -683,32 +695,37 @@ export async function handleHsinchuCctvFrame(env, index) {
 // list. See module comment and PROJECT_HANDOFF.md's V1.8 section.
 
 /**
- * Fetches all (up to 4) candidate frames in parallel — capped at 4 by
- * construction (exactly one fetch attempt per quadrant slot, never
- * more) — and composes them into a single 2x2 collage JPEG via
+ * Shared collage-compose core, extracted in V1.8.4 so
+ * GET /admin/cctv-hsinchu-collage (V1.8) and the new
+ * GET /admin/cctv-hsinchu-publish-test (V1.8.4) can never drift into
+ * fetching/composing the collage differently — both call this one
+ * function. Fetches all (up to 4) candidate frames in parallel — capped
+ * at 4 by construction (exactly one fetch attempt per quadrant slot,
+ * never more) — and composes them into a single 2x2 collage JPEG via
  * cctv/collage.js. One or more successfully DECODED frames is enough to
  * produce a valid collage (collage.js's own successfulDecodedFrames
  * count is the source of truth — a 200 response that isn't actually a
  * valid JPEG does not count); only when every quadrant has neither a
- * candidate nor a usable frame does this respond without an image.
+ * candidate nor a usable frame does this fail.
  *
  * @param {object} env
  * @param {{decodeJpeg: Function, encodeJpeg: Function}} [codecOverride] —
- *   TEST-ONLY. Production (index.js's routeAdminGet) never passes this;
- *   the real Workers WASM codec is lazily loaded on demand (see
- *   loadProductionJpegCodec above). Tests that need a real decoded
- *   image pass test/testJpegCodec.js's Node-compatible codec here
- *   instead of going through the real `.wasm` import, which plain Node
- *   cannot load — see this file's module comment.
+ *   TEST-ONLY. Production callers never pass this; the real Workers WASM
+ *   codec is lazily loaded on demand (see loadProductionJpegCodec
+ *   above). Tests that need a real decoded image pass
+ *   test/testJpegCodec.js's Node-compatible codec here instead of going
+ *   through the real `.wasm` import, which plain Node cannot load — see
+ *   this file's module comment.
+ * @returns {Promise<{ok:true, bytes:ArrayBuffer, contentType:'image/jpeg'}|{ok:false, reason:'no-kv'|'no-cache'|'no-frames', message:string}>}
  */
-export async function handleHsinchuCctvCollage(env, codecOverride) {
+export async function composeCollageFromCache(env, codecOverride) {
   if (env.TRAFFIC_KV === undefined) {
-    return jsonResponse({ status: 'error', message: 'TRAFFIC_KV binding not configured.' }, 503);
+    return { ok: false, reason: 'no-kv', message: 'TRAFFIC_KV binding not configured.' };
   }
 
   const candidates = await readCandidates(env.TRAFFIC_KV);
   if (!candidates) {
-    return jsonResponse({ status: 'error', message: 'CCTV candidate cache unavailable' }, 404);
+    return { ok: false, reason: 'no-cache', message: 'CCTV candidate cache unavailable' };
   }
 
   const frameResults = await Promise.all(
@@ -755,11 +772,60 @@ export async function handleHsinchuCctvCollage(env, codecOverride) {
 
   const result = await composeQuadrantCollage(cells, { decodeJpeg: codec.decodeJpeg, encodeJpeg: codec.encodeJpeg, titleLine, subtitleLine });
   if (!result.ok) {
-    return jsonResponse({ status: 'error', message: 'No CCTV footage available for any quadrant.' }, 502);
+    return { ok: false, reason: 'no-frames', message: 'No CCTV footage available for any quadrant.' };
   }
 
-  return new Response(result.bytes, {
+  return { ok: true, bytes: result.bytes, contentType: result.contentType };
+}
+
+const COMPOSE_FAILURE_STATUS = { 'no-kv': 503, 'no-cache': 404, 'no-frames': 502 };
+
+export async function handleHsinchuCctvCollage(env, codecOverride) {
+  const composed = await composeCollageFromCache(env, codecOverride);
+  if (!composed.ok) {
+    return jsonResponse({ status: 'error', message: composed.message }, COMPOSE_FAILURE_STATUS[composed.reason] ?? 502);
+  }
+  return new Response(composed.bytes, {
     status: 200,
-    headers: { 'Content-Type': result.contentType, 'Cache-Control': 'no-store' },
+    headers: { 'Content-Type': composed.contentType, 'Cache-Control': 'no-store' },
   });
+}
+
+// --- V1.8.4: publish the composed collage to a short-lived, opaque,
+// unauthenticated public URL (see cctv/publishedImage.js) — a future
+// LINE Messaging API image message can reference the URL directly
+// without ever carrying our Admin Basic Auth (LINE cannot attach it).
+// Admin-Auth-gated (see index.js's ADMIN_PATHS) — this endpoint does NOT
+// call LINE and does NOT trigger a TDX probe; it only composes (0 TDX
+// calls, same guarantee as /admin/cctv-hsinchu-collage above, via the
+// shared composeCollageFromCache) and publishes to KV. Fail-closed at
+// every stage, per instruction ("不發布 URL" / "不要建立假 image
+// entry"): 0 usable frames, an encode failure, or a KV write failure all
+// end in a JSON error response, never a URL.
+//
+// `codecOverride` is the same TEST-ONLY parameter composeCollageFromCache
+// takes (see its own doc comment) — threaded through so tests can supply
+// test/testJpegCodec.js's Node-compatible codec instead of hitting the
+// real `.wasm` import, which plain Node cannot load.
+export async function handleHsinchuCctvPublishTest(env, request, codecOverride) {
+  const composed = await composeCollageFromCache(env, codecOverride);
+  if (!composed.ok) {
+    return jsonResponse({ status: 'error', message: composed.message }, COMPOSE_FAILURE_STATUS[composed.reason] ?? 502);
+  }
+
+  const published = await publishCollageImage(env.TRAFFIC_KV, composed.bytes);
+  if (!published.ok) {
+    return jsonResponse({ status: 'error', message: 'Failed to publish image to KV.' }, 502);
+  }
+
+  const origin = new URL(request.url).origin;
+  return jsonResponse(
+    {
+      published: true,
+      imageUrl: `${origin}/cctv/image/${published.id}`,
+      expiresIn: published.expiresIn,
+      sizeBytes: published.sizeBytes,
+    },
+    200
+  );
 }
