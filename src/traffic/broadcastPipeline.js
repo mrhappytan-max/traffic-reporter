@@ -18,13 +18,18 @@
 // published at most once per event, sent in the SAME LINE API request as
 // the text (never a second call). CCTV enrichment is BOUNDED, not
 // blocking-forever: it runs under a hard time budget
-// (CCTV_PREPARE_BUDGET_MS, ~4s) and any failure OR timeout at any stage
-// falls back to the exact text-only push this pipeline always did, this
-// SAME tick — never waits for the next Cron run. See the per-event loop
-// below for the integration point and dynamicCollage.js's module comment
-// for the full fail-closed rationale (including the two Production
-// blockers — unbounded delay and unbounded TDX usage — this correction
-// fixed).
+// (CCTV_PREPARE_BUDGET_MS, ~4s) applied to the WHOLE RUN's CCTV
+// enrichment, not freshly per event — this loop is sequential, so N
+// eligible accidents each getting their own fresh ~4s would let CCTV
+// delay accumulate to N*4s before the last event's text is even
+// considered; one shared deadline computed once before the loop (see
+// cctvRunDeadlineAt below) is what actually bounds the whole tick. Any
+// failure OR timeout at any stage falls back to the exact text-only push
+// this pipeline always did, this SAME tick — never waits for the next
+// Cron run. See the per-event loop below for the integration point and
+// dynamicCollage.js's module comment for the full fail-closed rationale
+// (including the three Production blockers — unbounded delay, unbounded
+// TDX usage, and per-event budget accumulation — this correction fixed).
 
 import { isWithinBroadcastHours } from './broadcastHours.js';
 import { computeEffectiveWindow } from './effectiveWindow.js';
@@ -48,7 +53,7 @@ import {
   resolveIncidentNotifications,
   persistIncidentSuppressionState,
 } from './incidentSuppression.js';
-import { resolveCctvEligibility, prepareCctvImageForEvent } from '../cctv/dynamicCollage.js';
+import { resolveCctvEligibility, prepareCctvImageForEvent, CCTV_PREPARE_BUDGET_MS } from '../cctv/dynamicCollage.js';
 
 function safeErrorMessage(err) {
   if (err && typeof err.message === 'string') return err.message;
@@ -115,9 +120,12 @@ function clusterContentSince(members, { newUpdatedKeys, dedupeMapSnapshot, now }
  *   import, which plain Node cannot load. Production (scheduled.js) never
  *   passes this.
  * @param {number} [options.cctvPrepareBudgetMs] - TEST-ONLY override of
- *   dynamicCollage.js's CCTV_PREPARE_BUDGET_MS hard time budget, so a
- *   test can exercise the timeout path in milliseconds instead of really
- *   waiting ~4s. Production never passes this.
+ *   dynamicCollage.js's CCTV_PREPARE_BUDGET_MS. Represents the budget
+ *   for THIS WHOLE RUN's CCTV enrichment (not per-event — see
+ *   dynamicCollage.js's CCTV_PREPARE_BUDGET_MS comment for why that
+ *   distinction matters), so a test can exercise the run-level timeout
+ *   path in milliseconds instead of really waiting ~4s. Production
+ *   never passes this (defaults to the real CCTV_PREPARE_BUDGET_MS).
  */
 export async function runLineBroadcast(
   env,
@@ -405,8 +413,20 @@ export async function runLineBroadcast(
   // memo (see cctv/dynamicCollage.js's getFreewayCctvMetadata doc
   // comment): created ONCE here, threaded into every accident's
   // prepareCctvImageForEvent call below, so N accidents this tick share
-  // at most 1 TDX CCTV metadata call — never N.
+  // at most 1 metadata KV read — never N.
   const cctvRunCache = {};
+
+  // CORRECTION (post-review): CCTV_PREPARE_BUDGET_MS is a PER-CALL
+  // budget on prepareCctvImageForEvent, not an automatic whole-run
+  // guarantee — this loop is SEQUENTIAL (one event's push loop finishes
+  // before the next event's CCTV prep even starts), so naively passing
+  // every event the same fresh ~4s would let N eligible accidents in one
+  // tick accumulate up to N*4s of possible delay before the LAST event's
+  // text even gets considered. Fixed here: ONE deadline for the WHOLE
+  // run's CCTV enrichment, computed once, before the loop starts; each
+  // event below gets only whatever's LEFT of it (see the loop body).
+  // Never recomputed/reset per event.
+  const cctvRunDeadlineAt = Date.now() + (cctvPrepareBudgetMs ?? CCTV_PREPARE_BUDGET_MS);
 
   for (const { event, window, eventKeyStr, fingerprint, pendingTargets } of perEventPending) {
     if (pendingTargets.length === 0) continue;
@@ -426,22 +446,26 @@ export async function runLineBroadcast(
     // that's actually populated — this path is CACHE-ONLY and NEVER
     // calls TDX itself). ANY failure OR timeout at any stage (ineligible,
     // metadata cache unavailable, 0 cameras, all frame fetches failed,
-    // encode/compose failure, R2 publish failure, or exceeding
-    // CCTV_PREPARE_BUDGET_MS's ~4s hard budget) simply means `messages`
-    // stays text-only — this is never treated as a push failure, never
-    // touches notified-state on its own, and — critically — is bounded:
-    // this await can wait AT MOST ~4s before prepareCctvImageForEvent's
-    // own internal timeout race resolves it to a failure, so a slow/hung
-    // CCTV step can delay this event's push by at most that budget, never
-    // indefinitely and never into the next Cron tick.
+    // encode/compose failure, R2 publish failure, or the WHOLE RUN's
+    // cctvRunDeadlineAt already passed) simply means `messages` stays
+    // text-only — this is never treated as a push failure, never touches
+    // notified-state on its own. Bounded for the run as a whole, not
+    // just per-event: once cctvRunDeadlineAt passes, every remaining
+    // event in this tick skips CCTV entirely (0 wait, not even an
+    // attempt) rather than each getting its own fresh budget.
     let messages = [{ type: 'text', text }];
     if (event.type === 'accident') {
-      const cctv = await prepareCctvImageForEvent(env, event, cctvRunCache, cctvCodecOverride, cctvPrepareBudgetMs);
-      if (cctv.ok) {
-        result.cctvImagesAttachedCount += 1;
-        messages = [{ type: 'text', text }, { type: 'image', originalContentUrl: cctv.imageUrl, previewImageUrl: cctv.imageUrl }];
+      const remainingRunBudgetMs = cctvRunDeadlineAt - Date.now();
+      if (remainingRunBudgetMs <= 0) {
+        result.cctvSkippedByReason['run-budget-exhausted'] = (result.cctvSkippedByReason['run-budget-exhausted'] || 0) + 1;
       } else {
-        result.cctvSkippedByReason[cctv.reason] = (result.cctvSkippedByReason[cctv.reason] || 0) + 1;
+        const cctv = await prepareCctvImageForEvent(env, event, cctvRunCache, cctvCodecOverride, remainingRunBudgetMs);
+        if (cctv.ok) {
+          result.cctvImagesAttachedCount += 1;
+          messages = [{ type: 'text', text }, { type: 'image', originalContentUrl: cctv.imageUrl, previewImageUrl: cctv.imageUrl }];
+        } else {
+          result.cctvSkippedByReason[cctv.reason] = (result.cctvSkippedByReason[cctv.reason] || 0) + 1;
+        }
       }
     }
 

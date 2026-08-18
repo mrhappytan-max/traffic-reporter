@@ -471,3 +471,148 @@ test('5/6/7: CCTV prepare exceeding its budget -> text-only, LINE text still suc
   // (see dynamicCollage.test.js's equivalent note).
   await new Promise((resolve) => setTimeout(resolve, 400));
 });
+
+// =======================================================================
+// CORRECTION (post-review): the budget above is per-EVENT, not
+// automatically per-RUN — broadcastPipeline.js's loop is sequential, so
+// N eligible accidents each getting their own fresh budget could
+// accumulate to N*budget of delay before the last event's text is even
+// considered. These tests cover the fix: ONE shared deadline for the
+// whole run.
+// =======================================================================
+
+/** A frame fetch mock that hangs (only reacts to the AbortSignal) + counts how many distinct frame-fetch attempts were made, for verifying event 2/3 never even tried. */
+function makeHungFrameAndLineMockWithCounter() {
+  const pushCalls = [];
+  let frameAttempts = 0;
+  const fetchFn = async (url, init) => {
+    const href = String(url);
+    if (href.includes('api.line.me')) {
+      pushCalls.push({ url: href, body: JSON.parse(init.body) });
+      return new Response('{}', { status: 200 });
+    }
+    if (href.includes('freeway.gov.tw')) {
+      frameAttempts += 1;
+      return new Promise((resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          const err = new Error('aborted');
+          err.name = 'AbortError';
+          reject(err);
+        });
+      });
+    }
+    throw new Error(`unexpected fetch in test: ${href}`);
+  };
+  return { fetchFn, pushCalls, frameAttemptsRef: () => frameAttempts };
+}
+
+test('1: 3 eligible accidents whose CCTV work never completes share ONE run-wide budget (~one budget total, not 3x) — all 3 end text-only, all 3 LINE texts succeed, notified-state normal', async () => {
+  const kv = createMockKV({ [FREEWAY_METADATA_KEY]: metadataEnvelope(CCTV_RECORDS) });
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  const env = envWithCctvCache({ TRAFFIC_KV: kv });
+  const { fetchFn, pushCalls } = makeHungFrameAndLineMockWithCounter();
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const now = new Date('2026-08-15T09:00:00+08:00');
+  const runBudgetMs = 60; // small so the test stays fast; shared across all 3 events
+  const started = Date.now();
+  const result = await runLineBroadcast(env, {
+    allEvents: [
+      // Distinct, well-separated KM (>1.5km apart — see
+      // incidentSuppression.js's INCIDENT_MAX_KM_DIFF) so V1.5.1's
+      // incident-level suppression treats these as 3 DIFFERENT real
+      // incidents, not 3 sightings of the same one (which would
+      // suppress B/C entirely before they ever reach the CCTV/push
+      // loop this test is exercising).
+      accidentEvent({ rawId: 'FRW-A', startKM: '82K+000', endKM: '82K+200' }),
+      accidentEvent({ rawId: 'FRW-B', startKM: '95K+000', endKM: '95K+200' }),
+      accidentEvent({ rawId: 'FRW-C', startKM: '108K+000', endKM: '108K+200' }),
+    ],
+    dedupeAvailable: true,
+    now,
+    cctvCodecOverride: TEST_CODEC,
+    cctvPrepareBudgetMs: runBudgetMs,
+  });
+  const elapsed = Date.now() - started;
+
+  // NOT 3x the budget — proves the budget is shared across the whole
+  // run, not reset fresh for each event. A generous ceiling (well under
+  // what 3 independent budgets, even this small, plus per-event
+  // overhead would need) without being a flaky exact-ms assertion.
+  assert.ok(elapsed < runBudgetMs * 2 + 600, `expected ~1 run budget total, not 3x — took ${elapsed}ms for a ${runBudgetMs}ms budget`);
+
+  // All 3 accidents end up text-only.
+  assert.equal(result.cctvImagesAttachedCount, 0);
+  const skippedTotal = Object.values(result.cctvSkippedByReason).reduce((a, b) => a + b, 0);
+  assert.equal(skippedTotal, 3);
+  // At least one event actually attempted CCTV and hit the timeout, and
+  // at least one was skipped WITHOUT even attempting (the run budget was
+  // already gone by the time its turn came) — this is what proves the
+  // budget is genuinely shared/exhausted, not just individually applied
+  // 3 times.
+  assert.ok(result.cctvSkippedByReason['prepare-timeout'] >= 1, 'expected at least one real timeout');
+  assert.ok(
+    result.cctvSkippedByReason['run-budget-exhausted'] >= 1,
+    'expected at least one event to be skipped with 0 remaining run budget, never even attempting CCTV'
+  );
+
+  // All 3 LINE texts still succeed, independent of the shared CCTV budget.
+  assert.equal(result.pushSucceeded, 3);
+  assert.equal(pushCalls.length, 3);
+  for (const call of pushCalls) {
+    assert.equal(call.body.messages.length, 1);
+    assert.equal(call.body.messages[0].type, 'text');
+  }
+
+  // Notified-state normal for all 3.
+  const { readNotifiedState } = await import('../src/traffic/notified.js');
+  const notifiedState = await readNotifiedState(env.TRAFFIC_KV);
+  for (const rawId of ['FRW-A', 'FRW-B', 'FRW-C']) {
+    assert.ok(notifiedState.notifiedMap[`freeway:${rawId}`]?.targets?.['user:U1'], `${rawId} must be marked notified`);
+  }
+
+  // Let any still-running background frame fetch(es) settle.
+  await new Promise((resolve) => setTimeout(resolve, 400));
+});
+
+test('2: the first event exhausting the run budget makes the second event skip CCTV entirely — run-budget-exhausted, 0 additional frame fetch, 0 R2 put for it', async () => {
+  const kv = createMockKV({ [FREEWAY_METADATA_KEY]: metadataEnvelope(CCTV_RECORDS) });
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  const bucket = r2Bucket();
+  const env = envWithCctvCache({ TRAFFIC_KV: kv, CCTV_IMAGES: bucket });
+  const { fetchFn, frameAttemptsRef } = makeHungFrameAndLineMockWithCounter();
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const now = new Date('2026-08-15T09:00:00+08:00');
+  const runBudgetMs = 50;
+  const result = await runLineBroadcast(env, {
+    allEvents: [
+      accidentEvent({ rawId: 'FRW-A', startKM: '82K+000', endKM: '82K+200' }),
+      accidentEvent({ rawId: 'FRW-B', startKM: '95K+000', endKM: '95K+200' }),
+    ],
+    dedupeAvailable: true,
+    now,
+    cctvCodecOverride: TEST_CODEC,
+    cctvPrepareBudgetMs: runBudgetMs,
+  });
+
+  // Event A: actually attempted CCTV (consumed the run's whole budget on
+  // a hung frame fetch) -> prepare-timeout.
+  assert.equal(result.cctvSkippedByReason['prepare-timeout'], 1);
+  // Event B: 0 remaining run budget by the time its turn came -> skipped
+  // WITHOUT ever calling prepareCctvImageForEvent at all.
+  assert.equal(result.cctvSkippedByReason['run-budget-exhausted'], 1);
+
+  // The only frame-fetch attempts came from event A (up to 4 candidate
+  // slots); event B triggered ZERO additional attempts.
+  const framesFromEventA = frameAttemptsRef();
+  assert.ok(framesFromEventA > 0 && framesFromEventA <= 4, `expected 1-4 frame attempts from event A only, got ${framesFromEventA}`);
+
+  // 0 R2 put at all — event A's frame fetch never even completed
+  // (hung), so it never reached compose/publish; event B never tried.
+  assert.equal(bucket.putCalls, 0);
+
+  await new Promise((resolve) => setTimeout(resolve, 400));
+});

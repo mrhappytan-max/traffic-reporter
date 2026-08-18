@@ -86,6 +86,24 @@
 //    cctv/freewayCctvMetadataCache.js's module comment for the full
 //    read/write split and why it's a separate module (avoids a circular
 //    import between this file and hsinchuCctvProbe.js).
+//
+// 3. PER-EVENT BUDGET ACCUMULATING ACROSS A RUN. Round 2's fix above
+//    bounded ONE event's CCTV prep to CCTV_PREPARE_BUDGET_MS — but
+//    broadcastPipeline.js's per-event loop is sequential, so N eligible
+//    accidents in the same Cron tick, each independently given a fresh
+//    ~4s, could still accumulate to N*4s of possible delay before the
+//    LAST event's text even gets considered. CCTV_PREPARE_BUDGET_MS is
+//    now explicitly documented (see its own comment) as a PER-CALL
+//    budget, and it's broadcastPipeline.js's job to compute ONE deadline
+//    for the WHOLE run and pass each event only what's left of it —
+//    this file has no concept of "the whole run" on its own. Also added
+//    this round: withTimeout() actually clearTimeout()s the winning
+//    side instead of leaving a bare Promise.race's loser's timer
+//    dangling, and a deadline re-check immediately before the R2 publish
+//    (the one truly expensive, side-effecting step) so a call that's
+//    already blown its budget by the time it GETS to publishing doesn't
+//    bother writing an object nothing will ever reference.
+
 
 import {
   TARGET_ROAD_ID,
@@ -105,14 +123,28 @@ const CCTV_SUPPORTED_ROADS = {
   國道一號: { roadId: TARGET_ROAD_ID, roadNamePattern: TARGET_ROAD_NAME_PATTERN, shortName: '國1' },
 };
 
-// Hard time budget for the ENTIRE prepareCctvImageForEvent call — from
-// "start preparing" to "have an imageUrl (or give up)". Exceeding this
-// is treated exactly like any other CCTV failure: text-only, this same
-// tick, never a delay carried into the next Cron run. A parameter (not
-// hardcoded) on prepareCctvImageForEvent purely so tests can exercise
-// the timeout path deterministically in milliseconds rather than
-// actually waiting ~4 real seconds; production (broadcastPipeline.js)
-// never overrides it.
+// Hard time budget for ONE prepareCctvImageForEvent call — from "start
+// preparing" to "have an imageUrl (or give up)". Exceeding this is
+// treated exactly like any other CCTV failure: text-only, this same
+// tick, never a delay carried into the next Cron run.
+//
+// CORRECTION (post-review): this is a PER-CALL budget, not an implicit
+// "every event gets its own fresh 4s" — broadcastPipeline.js is
+// sequential (one event's push loop finishes before the next event's
+// CCTV prep even starts), so if this module's default were applied
+// fresh to every event, N eligible accidents in one Cron tick could
+// each independently spend up to CCTV_PREPARE_BUDGET_MS, accumulating
+// to N*4s of possible delay before the LAST event's text even gets
+// considered — exactly the "later accidents get delayed by earlier
+// ones' slow CCTV" bug this correction fixes. broadcastPipeline.js is
+// the one responsible for turning this per-call parameter into a
+// whole-run guarantee: it computes ONE deadline
+// (Date.now() + CCTV_PREPARE_BUDGET_MS, or the TEST-ONLY
+// cctvPrepareBudgetMs override) ONCE before its per-event loop starts,
+// and passes each event whatever's LEFT of that shared deadline as
+// THIS function's budgetMs — see that module's own comment. This
+// function itself has no concept of "the whole run"; it only ever
+// bounds the one call it was given.
 export const CCTV_PREPARE_BUDGET_MS = 4000;
 
 // Never let a per-frame fetch timeout collapse to (near-)zero even if
@@ -122,14 +154,37 @@ export const CCTV_PREPARE_BUDGET_MS = 4000;
 // a degenerate 0ms AbortSignal.timeout.
 const MIN_FRAME_TIMEOUT_MS = 300;
 
-// Deliberately does NOT call .unref() on the timer: this is the timeout
-// that resolves the race in prepareCctvImageForEvent below, so it must
-// be allowed to actually fire and keep whatever's awaiting it alive
-// until it does — unref'ing it let Node exit/move on before the timer
-// ever ran under `node --test`, silently "resolving" nothing.
-function delay(ms, value) {
+/**
+ * Races `promise` against a `ms` timer, resolving to whichever settles
+ * first — but, unlike a bare Promise.race, actually clearTimeout()s the
+ * loser: if `promise` wins, the pending timer is cancelled instead of
+ * being left to fire uselessly later (this matters here specifically
+ * because dozens of these can run across a single Cron tick's several
+ * accidents; a cancelled timer is one less thing lingering). If the
+ * timer wins, `promise`'s eventual result (whenever it arrives) is
+ * simply discarded by the caller — see prepareCctvImageForEvent's own
+ * comment on why that's safe.
+ *
+ * Deliberately does NOT call .unref() on the timer — it must be allowed
+ * to actually fire and keep whatever's awaiting it alive until it does;
+ * unref'ing it previously let Node exit/move on before the timer ever
+ * ran under `node --test`, silently "resolving" nothing (a real bug
+ * caught and fixed in an earlier round of this same file).
+ */
+function withTimeout(promise, ms, timeoutValue) {
   return new Promise((resolve) => {
-    setTimeout(() => resolve(value), ms);
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve(timeoutValue);
+    }, ms);
+    promise.then((value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    });
   });
 }
 
@@ -263,6 +318,15 @@ async function prepareCctvImageWork(env, eligibility, runCache, codecOverride, d
   });
   if (!composed.ok) return { ok: false, reason: composed.reason }; // 'no-frames' — all 4 frame fetch/decode attempts failed
 
+  // Re-check the deadline right before the expensive, side-effecting R2
+  // write — per correction: if we're already past the deadline (the
+  // race in prepareCctvImageForEvent may not have "noticed" yet, since
+  // that timer and this check are independent), don't bother creating a
+  // new R2 object at all. The outer race would discard this result
+  // either way, but this avoids the wasted write outright rather than
+  // relying solely on the caller's race to make it moot.
+  if (Date.now() >= deadlineAt) return { ok: false, reason: 'prepare-timeout' };
+
   const published = await publishCollageImage(env.CCTV_IMAGES, composed.bytes);
   if (!published.ok) return { ok: false, reason: 'r2-publish-failed' };
 
@@ -274,8 +338,11 @@ async function prepareCctvImageWork(env, eligibility, runCache, codecOverride, d
  * eligibility -> shared metadata (cache-only, memoized this run) ->
  * four-quadrant select (same ratified algorithm, this event's own
  * road/KM) -> fetch up to 4 frames + compose (same collage renderer) ->
- * publish to R2 — ALL raced against a hard CCTV_PREPARE_BUDGET_MS time
- * budget (see module comment's correction note #1). Called AT MOST ONCE
+ * publish to R2 — ALL bounded by a hard `budgetMs` time budget (see
+ * CCTV_PREPARE_BUDGET_MS's doc comment: this is a PER-CALL budget: the
+ * CALLER — broadcastPipeline.js — is responsible for turning it into a
+ * whole-Cron-run guarantee by passing each event whatever's left of one
+ * shared deadline, not a fresh budget every time). Called AT MOST ONCE
  * per accident event by broadcastPipeline.js (before that event's
  * per-target push loop) — the resulting imageUrl is then shared across
  * every pending target for that event; see this module's own doc note
@@ -289,9 +356,13 @@ async function prepareCctvImageWork(env, eligibility, runCache, codecOverride, d
  * @param {{decodeJpeg,encodeJpeg}} [codecOverride] - TEST-ONLY, threaded
  *   through to composeCollageFromCandidates — see that function's doc
  *   comment.
- * @param {number} [budgetMs] - TEST-ONLY override of CCTV_PREPARE_BUDGET_MS,
- *   so tests can exercise the timeout path in milliseconds instead of
- *   really waiting ~4s. Production never passes this.
+ * @param {number} [budgetMs] - how many ms THIS call gets (defaults to
+ *   the full CCTV_PREPARE_BUDGET_MS for a standalone call, e.g. in
+ *   tests calling this function directly; broadcastPipeline.js always
+ *   passes the run's REMAINING budget explicitly). <= 0 short-circuits
+ *   immediately to 'run-budget-exhausted' without starting any work —
+ *   this is the same reason broadcastPipeline.js itself checks for
+ *   before ever calling in, kept here too as a defensive floor.
  * @returns {Promise<{ok:true, imageUrl:string}|{ok:false, reason:string}>}
  */
 export async function prepareCctvImageForEvent(env, event, runCache, codecOverride, budgetMs = CCTV_PREPARE_BUDGET_MS) {
@@ -299,6 +370,7 @@ export async function prepareCctvImageForEvent(env, event, runCache, codecOverri
   if (!eligibility.eligible) return { ok: false, reason: eligibility.reason };
 
   if (env.CCTV_IMAGES === undefined) return { ok: false, reason: 'no-r2-binding' };
+  if (budgetMs <= 0) return { ok: false, reason: 'run-budget-exhausted' };
 
   const deadlineAt = Date.now() + budgetMs;
   const work = prepareCctvImageWork(env, eligibility, runCache, codecOverride, deadlineAt).catch(() => ({
@@ -308,9 +380,13 @@ export async function prepareCctvImageForEvent(env, event, runCache, codecOverri
 
   // A timeout is NOT a LINE failure and is NEVER carried into the next
   // Cron run — losing this race just means text-only THIS tick. The
-  // losing side (`work`, if the timeout wins) keeps running in the
+  // losing side (`work`, if the timer wins) keeps running in the
   // background rather than being forcibly aborted; its eventual result
-  // (e.g. a late R2 publish) is simply discarded — harmless, since
-  // nothing ever hands that URL to a caller once the race is lost.
-  return Promise.race([work, delay(budgetMs, { ok: false, reason: 'prepare-timeout' })]);
+  // (e.g. a late R2 publish, though the pre-publish deadline re-check
+  // above makes that increasingly unlikely) is simply discarded —
+  // harmless, since nothing ever hands that URL to a caller once the
+  // race is lost. withTimeout (unlike a bare Promise.race) also cancels
+  // the timer if `work` wins first, so a fast success doesn't leave a
+  // stray timer running.
+  return withTimeout(work, budgetMs, { ok: false, reason: 'prepare-timeout' });
 }

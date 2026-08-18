@@ -376,6 +376,51 @@ test('5. CCTV prepare exceeding its budget -> text-only (prepare-timeout), never
   await new Promise((resolve) => setTimeout(resolve, 400));
 });
 
+test('3. work completing before the budget clears the pending timer (no dangling timer left after a fast success)', async () => {
+  const env = baseEnv({ TRAFFIC_KV: kv({ [FREEWAY_METADATA_KEY]: metadataEnvelope(ALL_RECORDS) }) });
+  const { fetchFn } = makeFrameFetch({ frameJpeg: await makeSolidJpeg(80, 60, [4, 4, 4]) });
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  // A deliberately large budget — if withTimeout's clearTimeout() were
+  // NOT actually clearing the timer on a fast win, this budget's own
+  // setTimeout would still be sitting in the event loop after this test
+  // function returns, and — unlike test 5/6/7 above — this test does
+  // NOT add a trailing wait to let it settle. A dangling, un-cleared
+  // timer here would surface exactly like the earlier `unref()` bug did
+  // (a lingering/"cancelledByParent" failure once the file finishes) —
+  // this test passing cleanly, with the whole file finishing in ~2s
+  // rather than anywhere near this 5000ms budget, IS the proof.
+  const largeBudgetMs = 5000;
+  const started = Date.now();
+  const result = await prepareCctvImageForEvent(env, accidentEvent({ startKM: '82K+000', endKM: '82K+200' }), {}, TEST_CODEC, largeBudgetMs);
+  const elapsed = Date.now() - started;
+
+  assert.equal(result.ok, true);
+  assert.ok(elapsed < 1000, `expected the successful call to resolve quickly (well under the ${largeBudgetMs}ms budget), took ${elapsed}ms`);
+});
+
+test('4. the deadline having already passed by the time R2 publish is reached -> R2 put is never called', async () => {
+  const bucket = r2Bucket();
+  const env = baseEnv({ TRAFFIC_KV: kv({ [FREEWAY_METADATA_KEY]: metadataEnvelope(ALL_RECORDS) }), CCTV_IMAGES: bucket });
+  // Frame fetch resolves immediately — the point of this test is that
+  // even when metadata+select+frame-fetch all succeed, an exhausted
+  // deadline by the time compose/publish is reached must still prevent
+  // the R2 write. A 1ms budget guarantees the deadline is already in the
+  // past well before JPEG encode/decode (which realistically takes tens
+  // of ms) finishes.
+  const { fetchFn } = makeFrameFetch({ frameJpeg: await makeSolidJpeg(80, 60, [6, 6, 6]) });
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const tinyBudgetMs = 1;
+  const result = await prepareCctvImageForEvent(env, accidentEvent({ startKM: '82K+000', endKM: '82K+200' }), {}, TEST_CODEC, tinyBudgetMs);
+
+  assert.equal(result.ok, false);
+  assert.ok(['prepare-timeout', 'no-frames'].includes(result.reason), `expected a fail-closed reason, got ${result.reason}`);
+  assert.equal(bucket.store.size, 0, 'no R2 object should ever have been written once the deadline had passed');
+});
+
 test('CCTV_PREPARE_BUDGET_MS (the real production default) is 4000ms', async () => {
   assert.equal(CCTV_PREPARE_BUDGET_MS, 4000);
 });
