@@ -32,10 +32,15 @@
 //   - GET /admin/cctv-hsinchu-publish-test — V1.8.4: composes the same
 //     collage (via the shared composeCollageFromCache — never a
 //     second, divergent orchestration path) and publishes the JPEG to
-//     KV under a fresh opaque id (see cctv/publishedImage.js), returning
-//     a short-lived public HTTPS URL a future LINE Messaging API call
-//     could use directly. 0 TDX calls, same guarantee as the collage
-//     endpoint above. Never calls LINE. See cctv/publishedImage.js's
+//     R2 (env.CCTV_IMAGES — see cctv/publishedImage.js's module comment
+//     for why R2, not KV: strong read-after-write consistency, needed
+//     because a future LINE push could fetch the URL from a different
+//     Cloudflare location almost immediately) under a fresh opaque id,
+//     returning a short-lived public HTTPS URL a future LINE Messaging
+//     API call could use directly. 0 TDX calls, same guarantee as the
+//     collage endpoint above. Never calls LINE. CCTV candidate storage
+//     (CANDIDATES_KEY below) is unaffected — it stays on TRAFFIC_KV; only
+//     published-image storage uses R2. See cctv/publishedImage.js's
 //     module comment for the public GET /cctv/image/:id read path this
 //     feeds — that route lives in a separate module and is deliberately
 //     NOT in ADMIN_PATHS, since LINE's servers cannot carry our Basic
@@ -798,24 +803,33 @@ export async function handleHsinchuCctvCollage(env, codecOverride) {
 // Admin-Auth-gated (see index.js's ADMIN_PATHS) — this endpoint does NOT
 // call LINE and does NOT trigger a TDX probe; it only composes (0 TDX
 // calls, same guarantee as /admin/cctv-hsinchu-collage above, via the
-// shared composeCollageFromCache) and publishes to KV. Fail-closed at
-// every stage, per instruction ("不發布 URL" / "不要建立假 image
-// entry"): 0 usable frames, an encode failure, or a KV write failure all
-// end in a JSON error response, never a URL.
+// shared composeCollageFromCache) and publishes to R2 (env.CCTV_IMAGES).
+// Fail-closed at every stage, per instruction ("不發布 URL" / "不要建立
+// 假 image entry"): a missing CCTV_IMAGES binding, 0 usable frames, an
+// encode failure, or an R2 write failure all end in a JSON error
+// response, never a URL.
 //
 // `codecOverride` is the same TEST-ONLY parameter composeCollageFromCache
 // takes (see its own doc comment) — threaded through so tests can supply
 // test/testJpegCodec.js's Node-compatible codec instead of hitting the
 // real `.wasm` import, which plain Node cannot load.
 export async function handleHsinchuCctvPublishTest(env, request, codecOverride) {
+  // Fail fast, BEFORE composing (which fetches up to 4 CCTV frames) —
+  // if there's nowhere to publish to, there's no point spending those
+  // fetches. Same fail-closed reasoning as composeCollageFromCache's own
+  // TRAFFIC_KV check.
+  if (env.CCTV_IMAGES === undefined) {
+    return jsonResponse({ status: 'error', message: 'CCTV_IMAGES (R2) binding not configured.' }, 503);
+  }
+
   const composed = await composeCollageFromCache(env, codecOverride);
   if (!composed.ok) {
     return jsonResponse({ status: 'error', message: composed.message }, COMPOSE_FAILURE_STATUS[composed.reason] ?? 502);
   }
 
-  const published = await publishCollageImage(env.TRAFFIC_KV, composed.bytes);
+  const published = await publishCollageImage(env.CCTV_IMAGES, composed.bytes);
   if (!published.ok) {
-    return jsonResponse({ status: 'error', message: 'Failed to publish image to KV.' }, 502);
+    return jsonResponse({ status: 'error', message: 'Failed to publish image to R2.' }, 502);
   }
 
   const origin = new URL(request.url).origin;

@@ -41,6 +41,29 @@
       "id": "a763ccea75b0481aa4da99fa43f8341a"
     }
   ],
+  // V1.8.4: CCTV_IMAGES — an R2 bucket binding for the published-collage-
+  // image layer (src/cctv/publishedImage.js). Deliberately R2, not
+  // TRAFFIC_KV: R2 gives strongly consistent read-after-write on
+  // PUT/GET/DELETE, which the intended flow (compose -> store ->
+  // immediately push to LINE -> LINE's servers GET the URL, likely from
+  // a different Cloudflare location) actually needs — Workers KV is only
+  // eventually consistent (Cloudflare's own docs: a write can take 60s+
+  // to become visible elsewhere, and negative lookups get cached too),
+  // which is unacceptable for incident-time delivery. No Secret/API
+  // token is required for an R2 Worker binding.
+  //
+  // NOT YET CREATED in Production as of this commit — this declares the
+  // binding only. Before this branch can be deployed, a human must
+  // create the bucket once (`wrangler r2 bucket create
+  // traffic-reporter-cctv-images`, or via the Cloudflare dashboard);
+  // `wrangler deploy` does not create R2 buckets itself. Bucket name
+  // below is a suggestion, not yet verified against a real bucket.
+  "r2_buckets": [
+    {
+      "binding": "CCTV_IMAGES",
+      "bucket_name": "traffic-reporter-cctv-images"
+    }
+  ],
   "vpc_services": [
     {
       "binding": "PBS_RELAY_WINDOWS",
