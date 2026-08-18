@@ -25,7 +25,7 @@ import { getTdxScheduleState } from './tdxSchedule.js';
 import { readDedupeState } from './dedupe.js';
 import { PRODUCTION_TDX_SOURCE_IDS } from '../tdx/sources.js';
 import { persistProductionTdxEventCache, readProductionTdxEventCache } from './tdxEventCache.js';
-import { commitTdxUsageBatch, compactTdxUsageSummaryForToday } from '../tdx/usageLedger.js';
+import { commitTdxUsageBatch, compactTdxUsageSummaryRecentDays } from '../tdx/usageLedger.js';
 
 /**
  * Shape-compatible with pipeline.js's buildSummary() output (every field
@@ -230,18 +230,22 @@ export async function runScheduledTdxSync(env, now = new Date()) {
   }
 
   // V1.8.6 — TDX usage ledger: write this tick's batch (if any real TDX
-  // call was attempted), then recompact TODAY's summary row from the raw
-  // entries. Neither function ever throws (each reduces any KV failure to
-  // a returned {committed:false, reason, error} — see usageLedger.js), so
-  // no extra try/catch is needed here — same isolation principle as the
-  // health snapshot write above and the tdx-cache write further up: a
-  // usage-ledger outage must never affect the real TDX/PBS/LINE pipeline
-  // this tick already fully completed by this point.
+  // call was attempted), then recompact BOTH today's and yesterday's
+  // summary rows from the raw entries (compactTdxUsageSummaryRecentDays —
+  // catches a cross-midnight Debug/Admin invocation whose "yesterday"
+  // entry only finished writing after yesterday's row was last frozen;
+  // still just 2 bounded list() scans, never the full history). Neither
+  // function ever throws (each reduces any KV failure to a returned
+  // {committed:false, reason, error} — see usageLedger.js), so no extra
+  // try/catch is needed here — same isolation principle as the health
+  // snapshot write above and the tdx-cache write further up: a usage-
+  // ledger outage must never affect the real TDX/PBS/LINE pipeline this
+  // tick already fully completed by this point.
   const batchCommit = await commitTdxUsageBatch(env.TRAFFIC_KV, { context: 'production-cron', now, records: tdxUsageSink });
   if (!batchCommit.committed && batchCommit.reason === 'kv-error') {
     console.error(`[cron][tdx-usage] batch write failed: ${batchCommit.error ?? ''}`);
   }
-  const compaction = await compactTdxUsageSummaryForToday(env.TRAFFIC_KV, now);
+  const compaction = await compactTdxUsageSummaryRecentDays(env.TRAFFIC_KV, now);
   if (!compaction.committed && compaction.reason === 'kv-error') {
     console.error(`[cron][tdx-usage] summary compaction failed: ${compaction.error ?? ''}`);
   }

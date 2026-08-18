@@ -43,13 +43,15 @@
 //     GET /health reads)
 //     { schemaVersion, updatedAt, days: { "<YYYY-MM-DD>": <DayRow> } }
 //
-// Compaction (see compactTdxUsageSummaryForToday) is driven by the Cron
+// Compaction (see compactTdxUsageSummaryRecentDays) is driven by the Cron
 // path, once per tick, AFTER the real run already completed — never by
-// /health itself. It only ever re-lists TODAY's entries (a handful —
-// production makes at most ~42 batches/day, everything else is rare
-// human-triggered traffic), never the full 40-day history, keeping the
-// list() cost small and constant regardless of how much history has
-// accumulated.
+// /health itself. It only ever re-lists TODAY's and YESTERDAY's entries
+// (a handful each — production makes at most ~42 batches/day, everything
+// else is rare human-triggered traffic; yesterday is re-scanned too so a
+// cross-midnight Debug/Admin invocation's late-arriving "yesterday" entry
+// still gets folded in — see that function's own comment), never the
+// full 40-day history, keeping the list() cost small and constant
+// regardless of how much history has accumulated.
 
 import { toTaipeiParts } from '../traffic/broadcastHours.js';
 
@@ -103,6 +105,46 @@ function opaqueId() {
   const bytes = new Uint8Array(8); // 64 bits — uniqueness only, not a security boundary
   crypto.getRandomValues(bytes);
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Floors a moment DOWN to the start of its own 20-minute Production
+ * schedule window (e.g. 20:40:03 Asia/Taipei -> 20:40:00). Uses the same
+ * "+8h, work in UTC fields, shift back" trick as toTaipeiParts/
+ * toTaipeiHHMM elsewhere in this codebase. Only meaningful for a moment
+ * within 08:00–22:00 — callers only ever use this on an already-recorded
+ * Production data-call timestamp, which by construction only exists
+ * inside that window.
+ */
+function windowStartFor(moment) {
+  const shifted = new Date(moment.getTime() + 8 * 60 * 60 * 1000);
+  const flooredMinute = Math.floor(shifted.getUTCMinutes() / 20) * 20;
+  const flooredShifted = new Date(
+    Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate(), shifted.getUTCHours(), flooredMinute, 0, 0)
+  );
+  return new Date(flooredShifted.getTime() - 8 * 60 * 60 * 1000);
+}
+
+/**
+ * The earliest context='production-cron' `kind:'data'` record timestamp
+ * found across a set of raw entry bodies (as returned by
+ * listAllEntryBodies) — used only to seed `trackingStartedAt` on the
+ * very first-ever compaction. Returns null if none found (e.g. the first
+ * compaction happens on a PBS-only/skipped tick, before any Production
+ * TDX call has ever been recorded).
+ */
+function earliestProductionDataTimestamp(entryBodies) {
+  let earliest = null;
+  for (const body of entryBodies || []) {
+    if (!body || normalizeContext(body.context) !== 'production-cron' || !Array.isArray(body.records)) continue;
+    for (const rec of body.records) {
+      if (!rec || rec.kind !== 'data' || !rec.timestamp) continue;
+      const t = new Date(rec.timestamp);
+      if (!Number.isFinite(t.getTime())) continue;
+      if (!earliest || t.getTime() < earliest.getTime()) earliest = t;
+    }
+  }
+  return earliest;
 }
 
 // --- Recording: pure, synchronous, in-memory only — see module comment ---
@@ -302,6 +344,48 @@ export async function readTdxUsageSummary(kv) {
   }
 }
 
+/** Re-lists one date's raw entries and rebuilds its DayRow — the shared core of both compaction functions below. */
+async function rebuildDayRow(kv, date) {
+  const entryBodies = await listAllEntryBodies(kv, `${USAGE_ENTRY_KEY_PREFIX}:${date}:`);
+  return { row: buildDayRowFromEntries(date, entryBodies), entryBodies };
+}
+
+/**
+ * Determines `trackingStartedAt` for the FIRST-EVER compaction only
+ * (`existing.trackingStartedAt` absent) — every later compaction just
+ * preserves the existing value untouched, see the two exported
+ * compaction functions below.
+ *
+ * V1.8.6 CORRECTION — if today's entries already contain a real
+ * Production data call (the common case: this Worker's very first
+ * compaction usually runs on the same tick as its first successful TDX
+ * fetch), `trackingStartedAt` is seeded from that call's OWN window
+ * start (floored — see windowStartFor), not the raw compaction-time
+ * `now`. `now` is always a few ms/seconds AFTER the window actually
+ * fired (Cron dispatch + fetch + normalize + compact all take real
+ * time), so using it directly would place trackingStartedAt just after
+ * that window's start and (via windowsBeforeTrackingStarted's strict-
+ * before check) incorrectly exclude the very window that just produced
+ * the data being compacted — undercounting the theoretical baseline by
+ * one whole window (2 calls) on the very first tracked tick. If today
+ * has no Production data call yet (e.g. the first-ever compaction lands
+ * on a skipped-by-schedule/PBS-only tick), there is no window to anchor
+ * to, so this falls back to the raw `now`, unchanged from before.
+ */
+function determineTrackingStartedAt(existing, now, todayEntryBodies) {
+  if (existing && existing.trackingStartedAt) return existing.trackingStartedAt;
+  const earliestProdTs = earliestProductionDataTimestamp(todayEntryBodies);
+  return (earliestProdTs ? windowStartFor(earliestProdTs) : now).toISOString();
+}
+
+async function persistCompactedSummary(kv, now, dayRowsByDate, todayEntryBodiesForTracking) {
+  const { summary: existing } = await readTdxUsageSummary(kv);
+  const days = pruneOldDays({ ...((existing && existing.days) || {}), ...dayRowsByDate }, now);
+  const trackingStartedAt = determineTrackingStartedAt(existing, now, todayEntryBodiesForTracking);
+  const summary = { schemaVersion: 1, trackingStartedAt, updatedAt: now.toISOString(), days };
+  await kv.put(USAGE_SUMMARY_KEY, JSON.stringify(summary));
+}
+
 /**
  * Cron-driven compaction: re-lists ONLY today's raw entries (cheap — see
  * module comment), recomputes today's DayRow from scratch (idempotent —
@@ -311,31 +395,47 @@ export async function readTdxUsageSummary(kv) {
  * alongside every other day's already-frozen row. Best-effort: never
  * throws, never affects the caller's real Cron run either way.
  *
- * V1.8.6 CORRECTION — `trackingStartedAt`: set ONCE, on the very first
- * compaction this Worker ever runs (`existing.trackingStartedAt` absent),
- * and preserved byte-for-byte on every compaction after that — never
- * reset by a later Cron tick. This exists so a Worker deployed mid-day
- * (e.g. 20:32) doesn't compare "calls so far today" against the FULL
- * 08:00-onward theoretical baseline, which would immediately show a
- * large, false negative diff for windows that fired before the ledger
- * even existed — see theoreticalProductionCallsToday/
- * theoreticalProductionCallsForDay below, which both take this value.
+ * Kept as its own narrow, single-day function (used directly by a few
+ * tests) — the real Cron path calls compactTdxUsageSummaryRecentDays
+ * below instead, which also re-compacts yesterday.
  */
 export async function compactTdxUsageSummaryForToday(kv, now = new Date()) {
   if (!kv) return { committed: false, reason: 'no-kv' };
   try {
     const date = taipeiDateString(now);
-    const prefix = `${USAGE_ENTRY_KEY_PREFIX}:${date}:`;
-    const entryBodies = await listAllEntryBodies(kv, prefix);
-    const todayRow = buildDayRowFromEntries(date, entryBodies);
-
-    const { summary: existing } = await readTdxUsageSummary(kv);
-    const days = pruneOldDays({ ...((existing && existing.days) || {}), [date]: todayRow }, now);
-    const trackingStartedAt = (existing && existing.trackingStartedAt) || now.toISOString();
-
-    const summary = { schemaVersion: 1, trackingStartedAt, updatedAt: now.toISOString(), days };
-    await kv.put(USAGE_SUMMARY_KEY, JSON.stringify(summary));
+    const { row, entryBodies } = await rebuildDayRow(kv, date);
+    await persistCompactedSummary(kv, now, { [date]: row }, entryBodies);
     return { committed: true, date };
+  } catch (err) {
+    return { committed: false, reason: 'kv-error', error: safeErrorMessage(err) };
+  }
+}
+
+/**
+ * V1.8.6 CORRECTION — the real Cron-driven compaction entry point.
+ * Re-lists and rebuilds BOTH today's and yesterday's DayRows, not just
+ * today's. Why: commitTdxUsageBatch already attributes each record to
+ * its OWN timestamp's Asia/Taipei date (so a Debug/Admin call spanning
+ * midnight correctly writes a separate "yesterday" entry) — but if that
+ * write only completes AFTER midnight (invocation started 23:59,
+ * resolved 00:00+), yesterday's summary row was already compacted and
+ * frozen by the last Cron tick that ran before midnight, and would never
+ * see that late-arriving entry again without this. Still bounded/cheap:
+ * exactly 2 list() scans per Cron tick (today + yesterday), never the
+ * full 35-40 day history — /health still only ever reads the compacted
+ * summary key, never lists raw entries itself.
+ */
+export async function compactTdxUsageSummaryRecentDays(kv, now = new Date()) {
+  if (!kv) return { committed: false, reason: 'no-kv' };
+  try {
+    const todayStr = taipeiDateString(now);
+    const yesterdayStr = taipeiDateString(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+
+    const { row: todayRow, entryBodies: todayEntryBodies } = await rebuildDayRow(kv, todayStr);
+    const { row: yesterdayRow } = await rebuildDayRow(kv, yesterdayStr);
+
+    await persistCompactedSummary(kv, now, { [todayStr]: todayRow, [yesterdayStr]: yesterdayRow }, todayEntryBodies);
+    return { committed: true, dates: [yesterdayStr, todayStr] };
   } catch (err) {
     return { committed: false, reason: 'kv-error', error: safeErrorMessage(err) };
   }
@@ -385,18 +485,53 @@ export function productionWindowsElapsedToday(now = new Date()) {
 }
 
 /**
- * How many of the 42 daily windows had ALREADY fired by the moment
- * tracking started — i.e. windows that can never be attributed to this
- * Worker's own ledger, because they happened before the ledger existed.
- * 0 if tracking hasn't started yet (no summary written) — treated as "no
- * correction needed", which correctly reduces to the plain full-schedule
- * baseline everywhere below.
+ * How many of the 42 daily windows have their scheduled moment STRICTLY
+ * BEFORE `now` — unlike productionWindowsElapsedToday above (which is
+ * inclusive: a window firing exactly AT `now` already counts), this one
+ * excludes a window sitting exactly on the boundary. Needed specifically
+ * for windowsBeforeTrackingStarted below: `trackingStartedAt` is (when
+ * derived from a real Production record — see
+ * earliestProductionDataTimestamp/windowStartFor) itself an EXACT window
+ * start, and that window must count as trackable, not as "before
+ * tracking started".
+ *
+ * Boundary examples (all Asia/Taipei): 08:00:00->0, 08:00:01->1,
+ * 20:40:00->38, 20:40:01->39.
+ */
+export function productionWindowsStrictlyBefore(now = new Date()) {
+  const { hour, minute, second } = toTaipeiParts(now);
+  if (hour < 8) return 0;
+  if (hour >= 22) return PRODUCTION_TDX_WINDOWS_PER_DAY;
+  const msSinceDayStart = ((hour - 8) * 3600 + minute * 60 + second) * 1000;
+  const windowIndex = msSinceDayStart / (20 * 60 * 1000);
+  if (windowIndex <= 0) return 0;
+  if (windowIndex >= PRODUCTION_TDX_WINDOWS_PER_DAY) return PRODUCTION_TDX_WINDOWS_PER_DAY;
+  return Number.isInteger(windowIndex) ? windowIndex : Math.floor(windowIndex) + 1;
+}
+
+/**
+ * How many of the 42 daily windows had ALREADY fired STRICTLY before the
+ * moment tracking started — i.e. windows that can never be attributed to
+ * this Worker's own ledger, because they happened before the ledger
+ * existed. 0 if tracking hasn't started yet (no summary written) —
+ * treated as "no correction needed", which correctly reduces to the
+ * plain full-schedule baseline everywhere below.
+ *
+ * V1.8.6 CORRECTION — uses productionWindowsStrictlyBefore, NOT the
+ * inclusive productionWindowsElapsedToday. compactTdxUsageSummaryForToday
+ * seeds trackingStartedAt from a real Production record's OWN window
+ * start (e.g. a call recorded at 20:40:03 sets trackingStartedAt to
+ * 20:40:00 — see windowStartFor) specifically so that window counts as
+ * tracked. Using the inclusive function here would have counted that
+ * exact window as "already fired before tracking started" and swallowed
+ * it, undercounting the theoretical baseline by one whole window (2
+ * calls) on the very first tracked tick.
  */
 function windowsBeforeTrackingStarted(trackingStartedAt) {
   if (!trackingStartedAt) return 0;
   const start = new Date(trackingStartedAt);
   if (!Number.isFinite(start.getTime())) return 0;
-  return productionWindowsElapsedToday(start);
+  return productionWindowsStrictlyBefore(start);
 }
 
 /**

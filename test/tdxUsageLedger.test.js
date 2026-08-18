@@ -20,10 +20,12 @@ import {
   commitTdxUsageBatch,
   buildDayRowFromEntries,
   compactTdxUsageSummaryForToday,
+  compactTdxUsageSummaryRecentDays,
   readTdxUsageSummary,
   aggregateUsageForMonth,
   taipeiDateString,
   productionWindowsElapsedToday,
+  productionWindowsStrictlyBefore,
   theoreticalProductionCallsToday,
   theoreticalProductionCallsForDay,
   isPartialTrackingDay,
@@ -671,4 +673,150 @@ test('a real Cron tick (freeway+highway, same-day timestamps) still produces exa
   await runScheduledTdxSync({ TDX_CLIENT_ID: 'id', TDX_CLIENT_SECRET: 'secret', TRAFFIC_KV: kvStore, PBS_RELAY_WINDOWS: undefined }, now);
   const usageKeys = [...kvStore.store.keys()].filter((k) => k.startsWith(USAGE_ENTRY_KEY_PREFIX));
   assert.equal(usageKeys.length, 1);
+});
+
+// ===========================================================================
+// CORRECTION ROUND 2 (post-review) — 2 daily-reconciliation boundary bugs:
+//   1. the first Production window itself must never be swallowed by
+//      trackingStartedAt when the ledger's very first compaction happens on
+//      that same tick.
+//   2. a cross-midnight invocation's "yesterday" entry must be picked up by
+//      the NEXT Cron compaction even if it's written after midnight.
+// ===========================================================================
+
+test('1. first tracking tick IS the first real Production tick (20:40) -> that window is tracked, not swallowed', async () => {
+  const kvStore = kv();
+  const tickTime = new Date('2026-08-18T20:40:03+08:00'); // dispatch+fetch+normalize+compact takes a few real seconds
+  await commitTdxUsageBatch(kvStore, {
+    context: 'production-cron',
+    now: tickTime,
+    records: [
+      { kind: 'data', source: 'freeway', timestamp: tickTime.toISOString(), attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 100 },
+      { kind: 'data', source: 'highway', timestamp: tickTime.toISOString(), attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 50 },
+    ],
+  });
+  // The FIRST-EVER compaction happens on this SAME tick, after the batch above.
+  await compactTdxUsageSummaryRecentDays(kvStore, tickTime);
+
+  const { summary } = await readTdxUsageSummary(kvStore);
+  assert.equal(summary.trackingStartedAt, '2026-08-18T12:40:00.000Z'); // 20:40:00+08:00 — snapped DOWN from 20:40:03
+
+  const today = summary.days[taipeiDateString(tickTime)];
+  assert.equal(today.totalDataCalls, 2);
+
+  const theoretical = theoreticalProductionCallsToday(tickTime, summary.trackingStartedAt);
+  assert.equal(theoretical, 2); // NOT 0 — the 20:40 window itself must count as tracked
+  assert.equal(today.totalDataCalls - theoretical, 0);
+});
+
+test('2. tracking begins on a skipped/PBS-only tick (20:30, 0 TDX calls) -> falls back to raw now; the NEXT real tick (20:40) still shows the correct theoretical', async () => {
+  const kvStore = kv();
+  const skippedTick = new Date('2026-08-18T20:30:00+08:00');
+  await compactTdxUsageSummaryRecentDays(kvStore, skippedTick); // 0 records today -> trackingStartedAt falls back to raw `now`
+  let read = await readTdxUsageSummary(kvStore);
+  assert.equal(read.summary.trackingStartedAt, skippedTick.toISOString());
+
+  const tickTime = new Date('2026-08-18T20:40:00+08:00');
+  await commitTdxUsageBatch(kvStore, {
+    context: 'production-cron',
+    now: tickTime,
+    records: [
+      { kind: 'data', source: 'freeway', timestamp: tickTime.toISOString(), attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 100 },
+      { kind: 'data', source: 'highway', timestamp: tickTime.toISOString(), attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 50 },
+    ],
+  });
+  await compactTdxUsageSummaryRecentDays(kvStore, tickTime);
+  read = await readTdxUsageSummary(kvStore);
+  assert.equal(read.summary.trackingStartedAt, skippedTick.toISOString()); // unchanged, still 20:30
+
+  const today = read.summary.days[taipeiDateString(tickTime)];
+  const theoretical = theoreticalProductionCallsToday(tickTime, read.summary.trackingStartedAt);
+  assert.equal(today.totalDataCalls, 2);
+  assert.equal(theoretical, 2);
+});
+
+test('3. productionWindowsStrictlyBefore boundary values (08:00:00/08:00:01/20:40:00/20:40:01)', () => {
+  assert.equal(productionWindowsStrictlyBefore(new Date('2026-08-18T08:00:00+08:00')), 0);
+  assert.equal(productionWindowsStrictlyBefore(new Date('2026-08-18T08:00:01+08:00')), 1);
+  assert.equal(productionWindowsStrictlyBefore(new Date('2026-08-18T20:40:00+08:00')), 38);
+  assert.equal(productionWindowsStrictlyBefore(new Date('2026-08-18T20:40:01+08:00')), 39);
+});
+
+test('4/5. cross-midnight raw records split into yesterday+today entries, and the NEXT Cron compaction folds BOTH into their correct summary rows', async () => {
+  const kvStore = kv();
+  const invocationNow = new Date('2026-08-18T23:59:59+08:00');
+  const beforeMidnight = new Date('2026-08-18T23:59:59+08:00');
+  const afterMidnight = new Date('2026-08-19T00:00:01+08:00');
+
+  await commitTdxUsageBatch(kvStore, {
+    context: 'debug-status',
+    now: invocationNow,
+    records: [
+      { kind: 'data', source: 'freeway', timestamp: beforeMidnight.toISOString(), attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 10 },
+      { kind: 'data', source: 'highway', timestamp: afterMidnight.toISOString(), attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 20 },
+    ],
+  });
+
+  const rawKeys = [...kvStore.store.keys()].filter((k) => k.startsWith(USAGE_ENTRY_KEY_PREFIX));
+  assert.equal(rawKeys.filter((k) => k.includes(':2026-08-18:')).length, 1);
+  assert.equal(rawKeys.filter((k) => k.includes(':2026-08-19:')).length, 1);
+
+  // The Cron tick right after midnight (e.g. 00:10) compacts BOTH days.
+  const nextCronTick = new Date('2026-08-19T00:10:00+08:00');
+  await compactTdxUsageSummaryRecentDays(kvStore, nextCronTick);
+
+  const { summary } = await readTdxUsageSummary(kvStore);
+  assert.equal(summary.days['2026-08-18'].totalDataCalls, 1); // the 23:59 freeway call
+  assert.equal(summary.days['2026-08-18'].bySource.freeway, 1);
+  assert.equal(summary.days['2026-08-19'].totalDataCalls, 1); // the 00:00 highway call
+  assert.equal(summary.days['2026-08-19'].bySource.highway, 1);
+});
+
+test('a cross-midnight entry written AFTER yesterday was already compacted still gets picked up by the next compaction (the exact bug this fix targets)', async () => {
+  const kvStore = kv();
+  // Yesterday's summary row was already frozen by the last tick before midnight.
+  const beforeMidnightCronTick = new Date('2026-08-18T23:50:00+08:00');
+  await commitTdxUsageBatch(kvStore, {
+    context: 'production-cron',
+    now: beforeMidnightCronTick,
+    records: [{ kind: 'data', source: 'freeway', timestamp: beforeMidnightCronTick.toISOString(), attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 10 }],
+  });
+  await compactTdxUsageSummaryRecentDays(kvStore, beforeMidnightCronTick);
+  let read = await readTdxUsageSummary(kvStore);
+  assert.equal(read.summary.days['2026-08-18'].totalDataCalls, 1);
+
+  // A slow Debug/Admin invocation starts 23:59, its "yesterday" entry only
+  // finishes writing after midnight has already passed.
+  const lateWrite = new Date('2026-08-19T00:00:30+08:00');
+  await commitTdxUsageBatch(kvStore, {
+    context: 'debug-status',
+    now: lateWrite,
+    records: [{ kind: 'data', source: 'highway', timestamp: '2026-08-18T23:59:50+08:00', attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 10 }],
+  });
+
+  // Without re-compacting yesterday, this late entry would be lost forever.
+  const nextCronTick = new Date('2026-08-19T00:10:00+08:00');
+  await compactTdxUsageSummaryRecentDays(kvStore, nextCronTick);
+  read = await readTdxUsageSummary(kvStore);
+  assert.equal(read.summary.days['2026-08-18'].totalDataCalls, 2); // 1 (before) + 1 (late-arriving)
+});
+
+test('6. trackingStartedAt remains immutable across repeated compactTdxUsageSummaryRecentDays calls, including across midnight', async () => {
+  const kvStore = kv();
+  const first = new Date('2026-08-18T20:40:00+08:00');
+  await commitTdxUsageBatch(kvStore, {
+    context: 'production-cron',
+    now: first,
+    records: [{ kind: 'data', source: 'freeway', timestamp: first.toISOString(), attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 10 }],
+  });
+  await compactTdxUsageSummaryRecentDays(kvStore, first);
+  const { summary: s1 } = await readTdxUsageSummary(kvStore);
+  const original = s1.trackingStartedAt;
+  assert.ok(original);
+
+  await compactTdxUsageSummaryRecentDays(kvStore, new Date('2026-08-19T09:00:00+08:00'));
+  await compactTdxUsageSummaryRecentDays(kvStore, new Date('2026-08-20T09:00:00+08:00'));
+
+  const { summary: sLater } = await readTdxUsageSummary(kvStore);
+  assert.equal(sLater.trackingStartedAt, original);
 });
