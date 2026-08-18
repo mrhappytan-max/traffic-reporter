@@ -21,6 +21,7 @@ import {
   isPartialTrackingDay,
   estimatePoints,
   estimateMonthUsage,
+  hasPendingBaselineCalibrationGap,
   remainingPoints,
   usagePercent,
   projectEndOfMonthPoints,
@@ -386,6 +387,23 @@ function renderTdxUsageBody(summary, now) {
     ? `<p class="hint">含 ${escapeHtml(displayDate(monthUsage.baseline.fromDate))}–${escapeHtml(displayDate(monthUsage.baseline.throughDate))} TDX 官方既有用量 ${formatPoints(monthUsage.baseline.officialPoints)} 點（Local Usage Ledger 啟用前，使用者從 TDX 官方後台人工確認，非本機回推）。</p>`
     : '';
 
+  // CORRECTION (post-review) — a genuine, currently-unresolved coverage
+  // gap: the official baseline covers real usage up through
+  // baseline.throughDate, but the Local Ledger only started tracking
+  // mid-day on a LATER date — the stretch in between is covered by
+  // NEITHER source (see usageLedger.js's hasPendingBaselineCalibrationGap
+  // for the exact condition and TDX_OFFICIAL_USAGE_BASELINES' own
+  // comment for how to resolve it once TDX's next official figure is
+  // available). Never estimated/guessed — only flagged, with the
+  // affected numbers explicitly marked "暫估" rather than presented as
+  // fully reconciled.
+  const pendingCalibrationGap = hasPendingBaselineCalibrationGap(summary, now);
+  const pendingGapDateLabel = pendingCalibrationGap ? displayDate(taipeiDateString(new Date(trackingStartedAt))) : '';
+  const pendingGapWarningHtml = pendingCalibrationGap
+    ? `<p class="hint">⚠️ ${escapeHtml(pendingGapDateLabel)} Ledger 啟用前用量尚待 TDX 官方日結校正（目前為暫估，非已完整校正的剩餘額度）。</p>`
+    : '';
+  const provisionalBadge = pendingCalibrationGap ? '（暫估）' : '';
+
   // --- 來源拆解（今日） ---
   // "Production" reads ONLY the production-cron slice of the 2D
   // byContextSource breakdown, never the marginal `bySource` total
@@ -454,7 +472,7 @@ function renderTdxUsageBody(summary, now) {
   </div>
 
   <div class="card">
-    <h2>TDX 本月</h2>
+    <h2>TDX 本月${provisionalBadge}</h2>
     <p class="big-number">${monthUsage.estimatedCalls} <span class="big-unit">次</span></p>
     <div class="row"><span class="label">流量</span><span class="value">${formatBytesEstimate(monthUsage.estimatedBytes)}</span></div>
     <div class="row"><span class="label">估算點數</span><span class="value">${formatPoints(monthUsage.estimatedPoints)} 點</span></div>
@@ -462,12 +480,13 @@ function renderTdxUsageBody(summary, now) {
   </div>
 
   <div class="card">
-    <h2>剩餘額度</h2>
+    <h2>剩餘額度${provisionalBadge}</h2>
     <p class="big-number">${formatPoints(remaining)} <span class="big-unit">/ ${TDX_MONTHLY_POINT_BUDGET.toFixed(3)} 點</span></p>
     <div class="quota-bar"><div class="quota-bar-fill ${quota.className}" style="width:${Math.min(100, percent * 100)}%;"></div></div>
     <div class="row"><span class="label">已使用</span><span class="value">${formatPercent(percent)}</span></div>
     <div class="row"><span class="label">剩餘</span><span class="value">${formatPercent(Math.max(0, 1 - percent))}</span></div>
     <p class="hint">${quota.emoji} ${quota.label}</p>
+    ${pendingGapWarningHtml}
   </div>
 
   <div class="card">

@@ -13,6 +13,8 @@ import {
   estimatePoints,
   estimateMonthUsage,
   getOfficialUsageBaseline,
+  aggregateUsageForMonth,
+  hasPendingBaselineCalibrationGap,
   remainingPoints,
   usagePercent,
   projectEndOfMonthPoints,
@@ -366,4 +368,91 @@ test('6. GET /health still makes 0 TDX/PBS/LINE calls when a month-level officia
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+// ===========================================================================
+// CORRECTION (post-review) — overlap-safe baseline: a Local Ledger day ON
+// OR BEFORE baseline.throughDate must never be double-counted into the
+// month quota total (it's already inside the baseline's own cumulative
+// figure); a Local Ledger day STRICTLY AFTER throughDate still adds on
+// top. Also: the currently-real, unresolved gap between throughDate
+// (2026-08-17) and trackingStartedAt (mid-day 2026-08-18) must surface a
+// "尚待官方日結校正" warning, never be silently presented as fully
+// reconciled.
+// ===========================================================================
+
+test('1. baseline through 8/17, local rows on 8/18 + 8/19 -> BOTH add to the month total (neither is on/before throughDate)', () => {
+  const now = new Date('2026-08-19T09:00:00+08:00');
+  assert.equal(AUGUST_BASELINE.throughDate, '2026-08-17'); // the real, current baseline this test relies on
+  const summary = {
+    trackingStartedAt: null,
+    days: {
+      '2026-08-18': { totalDataCalls: 100, payloadBytesEstimate: 0 },
+      '2026-08-19': { totalDataCalls: 50, payloadBytesEstimate: 0 },
+    },
+  };
+  const usage = estimateMonthUsage(summary, now);
+  assert.equal(usage.localTotals.totalDataCalls, 150); // 100 + 50 — both included
+  assert.equal(usage.estimatedCalls, AUGUST_BASELINE.calls + 150);
+});
+
+test('2. a hypothetical baseline through 8/18: local rows on 8/18 + 8/19 -> ONLY 8/19 adds to the month total (8/18 not double-counted)', () => {
+  const now = new Date('2026-08-19T09:00:00+08:00');
+  const summary = {
+    days: {
+      '2026-08-18': { totalDataCalls: 100, payloadBytesEstimate: 0 }, // on the (hypothetical) throughDate -> excluded
+      '2026-08-19': { totalDataCalls: 50, payloadBytesEstimate: 0 }, // strictly after -> included
+    },
+  };
+  // Exercises the overlap-safe exclusion mechanism directly (aggregateUsageForMonth's `afterDate` option)
+  // rather than editing the real TDX_OFFICIAL_USAGE_BASELINES constant.
+  const totals = aggregateUsageForMonth(summary, now, { afterDate: '2026-08-18' });
+  assert.equal(totals.totalDataCalls, 50); // only 8/19 — 8/18 correctly excluded, not double-counted
+});
+
+test('3. the 8/18 Local Ledger daily row still exists/renders normally even though it is excluded from the month quota total', async () => {
+  const now = new Date('2026-08-19T09:00:00+08:00'); // 7-day window (08/13-08/19) includes 08/18
+  const day18 = buildDayRowFromEntries('2026-08-18', [
+    { context: 'production-cron', records: [{ kind: 'data', source: 'freeway', attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 10 }] },
+  ]);
+  const today = taipeiDateString(now);
+  const todayRow = buildDayRowFromEntries(today, [
+    { context: 'production-cron', records: [{ kind: 'data', source: 'freeway', attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 10 }] },
+  ]);
+  const summary = { schemaVersion: 1, updatedAt: now.toISOString(), days: { '2026-08-18': day18, [today]: todayRow } };
+
+  const response = await handleHealth({ TRAFFIC_KV: kvWithSummary(now, summary) });
+  const html = await response.text();
+  // The 8/18 row must show its real call count (1), not "尚無資料" —
+  // daily reconciliation is untouched by the month-quota overlap fix.
+  assert.doesNotMatch(html, /<tr><td>08\/18<\/td><td colspan="4" style="text-align:center;color:#999;">尚無資料<\/td><\/tr>/);
+  assert.match(html, /<td>08\/18<\/td>\s*<td>1<\/td>/); // the real row (multi-line, unlike the compact "missing" template) — its actual call count, not a placeholder
+});
+
+test('4. baseline through 8/17 + trackingStartedAt mid-day 8/18 -> pending-calibration gap detected and surfaced as "尚待官方日結校正"', async () => {
+  const now = new Date('2026-08-19T09:00:00+08:00');
+  const trackingStartedAt = '2026-08-18T12:40:00.000Z'; // 2026-08-18 20:40+08:00 — mid-day, one day after throughDate
+  const summary = { trackingStartedAt, days: {} };
+
+  assert.equal(hasPendingBaselineCalibrationGap(summary, now), true);
+
+  const today = taipeiDateString(now);
+  const todayRow = buildDayRowFromEntries(today, [
+    { context: 'production-cron', records: [{ kind: 'data', source: 'freeway', attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 10 }] },
+  ]);
+  const fullSummary = { schemaVersion: 1, updatedAt: now.toISOString(), trackingStartedAt, days: { [today]: todayRow } };
+  const response = await handleHealth({ TRAFFIC_KV: kvWithSummary(now, fullSummary) });
+  const html = await response.text();
+  assert.match(html, /尚待 TDX 官方日結校正/);
+  assert.match(html, /（暫估）/);
+});
+
+test('no pending-calibration gap when trackingStartedAt is on/before throughDate, or exactly midnight the day after', () => {
+  const now = new Date('2026-08-19T09:00:00+08:00');
+  // Tracking started ON throughDate itself -> no gap.
+  assert.equal(hasPendingBaselineCalibrationGap({ trackingStartedAt: '2026-08-17T01:00:00.000Z', days: {} }, now), false);
+  // Tracking started exactly at 00:00:00 Asia/Taipei the day after throughDate -> the Ledger covers that whole day, no gap.
+  assert.equal(hasPendingBaselineCalibrationGap({ trackingStartedAt: '2026-08-17T16:00:00.000Z', days: {} }, now), false); // 2026-08-18T00:00:00+08:00 exactly
+  // No trackingStartedAt at all yet -> nothing to flag.
+  assert.equal(hasPendingBaselineCalibrationGap({ trackingStartedAt: null, days: {} }, now), false);
 });

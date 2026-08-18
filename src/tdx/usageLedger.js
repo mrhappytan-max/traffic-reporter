@@ -100,6 +100,33 @@ export const TDX_MONTHLY_POINT_BUDGET = 3;
 // in this module carries a baseline forward to a month it wasn't
 // recorded for (see getOfficialUsageBaseline/estimateMonthUsage below —
 // both do an exact "YYYY-MM" key lookup, no fallback).
+//
+// `throughDate` semantics, precisely (overlap-safe — see
+// estimateMonthUsage's own comment for the double-counting bug this
+// exists to prevent): "the official cumulative figures already fully
+// cover every day up to AND INCLUDING this date." A Local Ledger day
+// strictly AFTER `throughDate` is what adds on top of this baseline;
+// Local Ledger day(s) ON OR BEFORE `throughDate` still exist and still
+// render normally in the daily reconciliation table, but are excluded
+// from the MONTH-quota total to avoid double-counting the same real TDX
+// usage twice.
+//
+// KNOWN GAP as of this writing: `throughDate` is still 2026-08-17, but
+// the Local Ledger's `trackingStartedAt` is mid-day on 2026-08-18 (V1.8.6
+// deployed partway through that day) — so the stretch from 2026-08-18
+// 00:00 to `trackingStartedAt` is covered by NEITHER the baseline NOR
+// the Ledger. This is a real, currently-unresolved coverage gap — it is
+// deliberately NOT estimated/guessed (see health.js's
+// hasPendingBaselineCalibrationGap, which surfaces this as a "尚待官方日結
+// 校正" warning rather than silently presenting a fully-reconciled
+// number). Once TDX's own official 2026-08-18 cumulative figures are
+// available, update ONLY this one entry — bump `throughDate` to
+// `'2026-08-18'` and replace `calls`/`transferKB`/`officialPoints` with
+// the new officially-confirmed cumulative-through-8/18 numbers. Nothing
+// else in this module needs to change: the overlap-safe exclusion in
+// estimateMonthUsage automatically starts excluding the 8/18 Local Ledger
+// day from the month total the moment `throughDate` covers it, and the
+// gap warning automatically clears itself.
 export const TDX_OFFICIAL_USAGE_BASELINES = {
   '2026-08': {
     fromDate: '2026-08-16',
@@ -515,12 +542,19 @@ export async function compactTdxUsageSummaryRecentDays(kv, now = new Date()) {
  * (see health.js). Factored out of health.js's rendering so it has its
  * own direct unit test coverage.
  */
-export function aggregateUsageForMonth(summary, now = new Date()) {
+export function aggregateUsageForMonth(summary, now = new Date(), { afterDate } = {}) {
   const days = (summary && summary.days) || {};
   const { year, month } = toTaipeiParts(now);
   const prefix = `${year}-${String(month).padStart(2, '0')}`;
   return Object.entries(days)
     .filter(([date]) => date.startsWith(prefix))
+    // V1.8.6.1 CORRECTION — `afterDate` (a "YYYY-MM-DD" string, exclusive)
+    // lets estimateMonthUsage below exclude days already fully covered by
+    // an official pre-Ledger baseline, so a Local Ledger DayRow for a day
+    // the baseline already counted is never double-counted into the
+    // month quota total. Every OTHER caller (no afterDate passed) is
+    // completely unaffected — the filter is a no-op when omitted.
+    .filter(([date]) => !afterDate || date > afterDate)
     .reduce(
       (acc, [, row]) => ({
         totalDataCalls: acc.totalDataCalls + (row.totalDataCalls || 0),
@@ -699,7 +733,22 @@ export function getOfficialUsageBaseline(now = new Date()) {
  */
 export function estimateMonthUsage(summary, now = new Date()) {
   const baseline = getOfficialUsageBaseline(now);
-  const localTotals = aggregateUsageForMonth(summary, now);
+  // CORRECTION (post-review) — "overlap-safe": `baseline.throughDate`
+  // means the official cumulative figure ALREADY fully covers every day
+  // up to and including that date. Local Ledger rows for days ON OR
+  // BEFORE `throughDate` must never also be summed into the month quota
+  // total — that would double-count the exact same real TDX usage once
+  // via the baseline and once via the Ledger. Only Local Ledger days
+  // STRICTLY AFTER `throughDate` contribute here. This does NOT touch
+  // `summary.days` itself — a Local DayRow on/before `throughDate` (e.g.
+  // 2026-08-18, the Ledger's own partial first day) still exists exactly
+  // as recorded and still renders normally in the 7-day daily
+  // reconciliation table; it's excluded ONLY from this month-level
+  // aggregation. When `baseline.throughDate` is later updated to also
+  // cover that day (once TDX's own official 8/18 figures are available),
+  // this same exclusion automatically starts covering it too — no
+  // separate code change needed, just updating the constant.
+  const localTotals = aggregateUsageForMonth(summary, now, { afterDate: baseline ? baseline.throughDate : undefined });
   const localPoints = estimatePoints(localTotals);
 
   const baselineCalls = baseline ? baseline.calls : 0;
@@ -714,6 +763,42 @@ export function estimateMonthUsage(summary, now = new Date()) {
     estimatedBytes: baselineBytes + (localTotals.payloadBytesEstimate || 0),
     estimatedPoints: baselinePoints + localPoints,
   };
+}
+
+/**
+ * True only when there's a genuine, currently-unresolved coverage gap
+ * between the official baseline (covers real TDX usage up through
+ * `baseline.throughDate`, inclusive) and the Local Ledger (starts
+ * tracking mid-day on `trackingStartedAt`'s date) for the SAME month —
+ * i.e. some real stretch of time is covered by NEITHER source. This
+ * never estimates/fills in what that uncovered usage might have been
+ * (see TDX_OFFICIAL_USAGE_BASELINES' own comment) — it only flags that
+ * the gap exists, so the UI can show a "尚待官方日結校正" warning instead
+ * of silently presenting month/quota numbers as if they were fully
+ * reconciled.
+ *
+ * False whenever: this month has no baseline at all; the Ledger's
+ * tracking-start date is ON OR BEFORE `throughDate` (no gap — either the
+ * baseline already covers that day, or there's nothing to reconcile);
+ * or tracking started at EXACTLY 00:00:00 Asia/Taipei on the day right
+ * after `throughDate` (the Ledger covers that entire day from its very
+ * first second, so nothing is left uncovered).
+ */
+export function hasPendingBaselineCalibrationGap(summary, now = new Date()) {
+  const baseline = getOfficialUsageBaseline(now);
+  if (!baseline) return false;
+
+  const trackingStartedAt = summary && summary.trackingStartedAt;
+  if (!trackingStartedAt) return false;
+  const start = new Date(trackingStartedAt);
+  if (!Number.isFinite(start.getTime())) return false;
+
+  const trackingStartDateStr = taipeiDateString(start);
+  if (trackingStartDateStr <= baseline.throughDate) return false; // baseline already covers this day, or covers a later day — no gap
+
+  const { hour, minute, second } = toTaipeiParts(start);
+  const startedAtExactMidnight = hour === 0 && minute === 0 && second === 0;
+  return !startedAtExactMidnight;
 }
 
 /** max(0, budget - used) — never negative, a maxed-out month reads as exactly 0 remaining, not a confusing negative number. */
