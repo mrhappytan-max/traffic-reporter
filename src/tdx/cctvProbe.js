@@ -56,6 +56,7 @@
 
 import { getAccessToken } from './auth.js';
 import { fetchTdxJson, TdxApiError } from './client.js';
+import { commitTdxUsageBatch } from './usageLedger.js';
 
 const CCTV_PROBE_USED_KEY = 'admin:cctv-probe-used:v1';
 const CCTV_URL = 'https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/CCTV/Freeway?$top=1&$format=JSON';
@@ -243,10 +244,17 @@ export async function handleCctvProbe(env) {
   // Never surfaced in any response below. On failure, KV stays 'armed'
   // — never auto-cleared, never auto-retried; a human must delete
   // admin:cctv-probe-used:v1 to try again.
+  // V1.8.6: exactly ONE invocation for usage-ledger purposes — one
+  // in-memory batch, committed context='admin-cctv' at every exit point
+  // below that could have made a real TDX call. Best-effort; see
+  // usageLedger.js.
+  const tdxUsageSink = [];
+
   let accessToken;
   try {
-    accessToken = await getAccessToken(env);
+    accessToken = await getAccessToken(env, tdxUsageSink);
   } catch (err) {
+    await commitTdxUsageBatch(env.TRAFFIC_KV, { context: 'admin-cctv', records: tdxUsageSink });
     return jsonResponse(
       {
         status: 'locked',
@@ -264,8 +272,9 @@ export async function handleCctvProbe(env) {
   // policy as the OAuth failure path above.
   let cctvJson;
   try {
-    cctvJson = await fetchTdxJson(CCTV_URL, accessToken, { source: 'cctv-probe' });
+    cctvJson = await fetchTdxJson(CCTV_URL, accessToken, { source: 'cctv-probe', usageSink: tdxUsageSink });
   } catch (err) {
+    await commitTdxUsageBatch(env.TRAFFIC_KV, { context: 'admin-cctv', records: tdxUsageSink });
     return jsonResponse(
       {
         status: 'locked',
@@ -278,6 +287,7 @@ export async function handleCctvProbe(env) {
       502
     );
   }
+  await commitTdxUsageBatch(env.TRAFFIC_KV, { context: 'admin-cctv', records: tdxUsageSink });
 
   // Metadata call genuinely succeeded — flip armed -> completed. If
   // THIS write itself fails, the KV value simply stays 'armed' (a

@@ -81,9 +81,18 @@ export const SOURCES = [
 // congestion validation at all (see congestionValidation.js's module
 // comment / scheduled.js — V1.5 already excludes pure congestion from
 // broadcast, so VD confirmation serves no production purpose anymore).
-// CMS/Bus Alert definitions above are NOT deleted — GET /debug/tdx and
-// GET /debug/status (on-demand, human-triggered, never scheduled) still
-// fetch all 5 sources unchanged, for diagnostic purposes.
+// CMS/Bus Alert definitions above are NOT deleted — they remain fully
+// fetchable by calling fetchAllSources()/runTdxPipelinePreview() with no
+// sourceIds filter (the default), which nothing on any live path does
+// today. CORRECTION (found during the V1.8.6 TDX-usage-ledger call-path
+// inventory): the claim this comment used to make — that GET /debug/tdx
+// and GET /debug/status still fetch all 5 sources for diagnostics — is
+// stale and wrong. V1.6.2 restricted BOTH of those to
+// PRODUCTION_TDX_SOURCE_IDS as well (see debugStatus.js/debug.js's own
+// comments) specifically so opening either URL costs at most 2 TDX data
+// calls, never 5–7. As of this writing, nothing reachable from a live
+// HTTP request or the Cron ever fetches cms/bus-hsinchu/bus-hsinchu-county
+// — only this module's own tests do.
 export const PRODUCTION_TDX_SOURCE_IDS = ['freeway', 'highway'];
 
 /**
@@ -100,9 +109,13 @@ export const PRODUCTION_TDX_SOURCE_IDS = ['freeway', 'highway'];
  * before any source-specific filter) and `normalized` (after the filter)
  * so callers can report a normalizedCount vs. a post-filter count
  * separately — see /debug/status.
+ *
+ * @param {Array} [usageSink] - V1.8.6, threaded straight through to
+ *   fetchTdxJson — see ../tdx/usageLedger.js. Optional; omitting it
+ *   records nothing.
  */
-export async function fetchSource(source, accessToken) {
-  const json = await fetchTdxJson(source.url, accessToken, { source: source.id });
+export async function fetchSource(source, accessToken, usageSink) {
+  const json = await fetchTdxJson(source.url, accessToken, { source: source.id, usageSink });
   const rawItems = extractArray(json, source.extractKeys);
 
   const normalizedAll = [];

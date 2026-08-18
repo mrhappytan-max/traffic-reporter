@@ -10,9 +10,15 @@
 
 import { fetchAllSources } from './fetchAll.js';
 import { PRODUCTION_TDX_SOURCE_IDS } from './sources.js';
+import { commitTdxUsageBatch } from './usageLedger.js';
 
 export async function handleDebugTdx(env) {
-  const { tokenOk, results } = await fetchAllSources(env, { sourceIds: PRODUCTION_TDX_SOURCE_IDS });
+  // V1.8.6: tagged context='debug-tdx' in the usage ledger — see
+  // debugStatus.js's identical comment for why (visible on /health as
+  // "人工額外呼叫", not silently counted as Production).
+  const tdxUsageSink = [];
+  const { tokenOk, results } = await fetchAllSources(env, { sourceIds: PRODUCTION_TDX_SOURCE_IDS, usageSink: tdxUsageSink });
+  await commitTdxUsageBatch(env.TRAFFIC_KV, { context: 'debug-tdx', records: tdxUsageSink });
 
   const sources = results.map((r) => ({
     source: r.source,

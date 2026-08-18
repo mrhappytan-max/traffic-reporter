@@ -22,6 +22,7 @@ import { mergeForBroadcast } from '../pbs/crossSourceDedup.js';
 import { PBS_BROADCAST_ENABLED } from '../pbs/pbsConfig.js';
 import { getLastTdxTokenSource } from '../tdx/auth.js';
 import { PRODUCTION_TDX_SOURCE_IDS } from '../tdx/sources.js';
+import { commitTdxUsageBatch } from '../tdx/usageLedger.js';
 
 // Safety cap so a runaway source can't blow up the response payload.
 const MAX_LISTED_EVENTS = 100;
@@ -31,7 +32,19 @@ export async function handleDebugStatus(env) {
   // V1.6.2: restricted to PRODUCTION_TDX_SOURCE_IDS (freeway+highway) —
   // CMS/Bus Alert are retired from production entirely (V1.6.1); opening
   // this URL must cost at most 2 TDX data calls, never 5.
-  const summary = await runTdxPipelinePreview(env, { sourceIds: PRODUCTION_TDX_SOURCE_IDS });
+  //
+  // V1.8.6: usageSink records those (at most 2) real TDX calls into the
+  // usage ledger, tagged context='debug-status', so a human opening this
+  // URL is visible on /health's "人工額外呼叫" line instead of silently
+  // inflating what looks like Production's own count. Committed
+  // best-effort AFTER the preview finishes — a ledger-write failure here
+  // must never change what this read-only preview itself returns.
+  const tdxUsageSink = [];
+  const summary = await runTdxPipelinePreview(env, { sourceIds: PRODUCTION_TDX_SOURCE_IDS, usageSink: tdxUsageSink });
+  // commitTdxUsageBatch never throws (see usageLedger.js) — its own
+  // try/catch already reduces any KV failure to a returned {committed:
+  // false} — so no extra try/catch is needed at this call site.
+  await commitTdxUsageBatch(env.TRAFFIC_KV, { context: 'debug-status', now, records: tdxUsageSink });
 
   const newUpdatedKeys = new Set(
     [...summary.newEvents, ...summary.updatedEvents].map((e) => `${e.source}:${e.rawId}`)

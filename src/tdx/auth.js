@@ -22,6 +22,17 @@
 // those values nor the resulting accessToken are ever logged, thrown,
 // returned in any response, or partially displayed (no "first/last N
 // chars") — anywhere in this module.
+//
+// V1.8.6: getAccessToken() optionally accepts a `usageSink` (see
+// ../tdx/usageLedger.js) purely to record a REAL OAuth network request —
+// recorded ONLY in the tier-C branch below (acquireToken's
+// requestNewToken() call), never for a tier-A memory hit or tier-B KV
+// hit. This is a separate counter from TDX DATA calls on purpose (see
+// usageLedger.js's module comment) — a token refresh is not itself a
+// RoadEvent/CCTV data request. Omitting usageSink (every pre-V1.8.6
+// caller/test) is a no-op, unchanged behavior.
+
+import { recordTdxOAuthCall } from './usageLedger.js';
 
 const TDX_AUTH_URL =
   'https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token';
@@ -37,9 +48,10 @@ const EXPIRY_SAFETY_MARGIN_MS = 60_000;
 const KV_TOKEN_KEY = 'tdx:oauth-token-v1';
 
 export class TdxAuthError extends Error {
-  constructor(message) {
+  constructor(message, { status = null } = {}) {
     super(message);
     this.name = 'TdxAuthError';
+    this.status = status;
   }
 }
 
@@ -129,7 +141,7 @@ async function requestNewToken(env) {
     // server is not included in case it ever echoes request parameters
     // (and definitely never client_id/client_secret, which this function
     // never puts anywhere near an Error message to begin with).
-    throw new TdxAuthError(`TDX token request failed with HTTP ${response.status}`);
+    throw new TdxAuthError(`TDX token request failed with HTTP ${response.status}`, { status: response.status });
   }
 
   let data;
@@ -151,7 +163,7 @@ async function requestNewToken(env) {
   return { accessToken: data.access_token, expiresAt };
 }
 
-async function acquireToken(env) {
+async function acquireToken(env, usageSink) {
   const now = Date.now();
 
   // A. this isolate's own memory.
@@ -173,15 +185,24 @@ async function acquireToken(env) {
   // C. neither tier has a valid token -> the real OAuth request. At most
   // one of these per getAccessToken() call, and getAccessToken's own
   // stampede guard (tokenRefreshPromise) keeps concurrent callers in this
-  // isolate from each starting their own.
-  const fresh = await requestNewToken(env);
+  // isolate from each starting their own. V1.8.6: this is the ONLY branch
+  // that ever records an OAuth usage entry — a real network request was
+  // just about to be attempted, success or failure.
+  let fresh;
+  try {
+    fresh = await requestNewToken(env);
+  } catch (err) {
+    recordTdxOAuthCall(usageSink, { success: false, httpStatus: err && typeof err.status === 'number' ? err.status : null });
+    throw err;
+  }
+  recordTdxOAuthCall(usageSink, { success: true, httpStatus: 200 });
   tokenCache = fresh;
   lastTokenSource = 'oauth';
   await writeKvTokenCache(env.TRAFFIC_KV, fresh); // best-effort; see writeKvTokenCache
   return fresh.accessToken;
 }
 
-export async function getAccessToken(env) {
+export async function getAccessToken(env, usageSink) {
   // Fast path: fresh memory, no promise machinery, no await at all.
   const now = Date.now();
   if (isFresh(tokenCache, now)) {
@@ -192,7 +213,7 @@ export async function getAccessToken(env) {
   // Stampede guard — see module comment.
   if (tokenRefreshPromise) return tokenRefreshPromise;
 
-  tokenRefreshPromise = acquireToken(env).finally(() => {
+  tokenRefreshPromise = acquireToken(env, usageSink).finally(() => {
     tokenRefreshPromise = null;
   });
 

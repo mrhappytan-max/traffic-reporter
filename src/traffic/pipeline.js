@@ -15,8 +15,8 @@
 import { fetchAllSources } from '../tdx/fetchAll.js';
 import { readDedupeState, classifyEvents, commitDedupeState } from './dedupe.js';
 
-async function runCore(env, { sourceIds } = {}) {
-  const { tokenOk, results } = await fetchAllSources(env, { sourceIds });
+async function runCore(env, { sourceIds, usageSink } = {}) {
+  const { tokenOk, results } = await fetchAllSources(env, { sourceIds, usageSink });
   const allEvents = results.flatMap((r) => r.events);
   const sourceHealth = Object.fromEntries(results.map((r) => [r.source, r.ok]));
   const dedupeState = await readDedupeState(env.TRAFFIC_KV); // read-only, always
@@ -122,10 +122,17 @@ function buildSummary(core, commitResult) {
 }
 
 /**
- * Read-only preview — GET /debug/status. Never writes to KV.
+ * Read-only preview — GET /debug/status. Never writes to KV (dedupe
+ * state, that is — the caller may separately, best-effort record TDX
+ * usage ledger entries from `options.usageSink` after this returns; see
+ * debugStatus.js. That's an isolated telemetry write, not pipeline
+ * state, so it doesn't compromise this function's "never writes" claim
+ * about the actual traffic pipeline).
  * @param {object} env
- * @param {object} [options] - see fetchAllSources' `sourceIds`. Always
- *   called with no options (full 5 sources) from GET /debug/status.
+ * @param {object} [options] - see fetchAllSources' `sourceIds`/`usageSink`.
+ *   Always called with sourceIds=PRODUCTION_TDX_SOURCE_IDS from GET
+ *   /debug/status (V1.6.2) and with no sourceIds (full 5) from tests that
+ *   call this directly.
  */
 export async function runTdxPipelinePreview(env, options = {}) {
   const core = await runCore(env, options);
@@ -137,10 +144,12 @@ export async function runTdxPipelinePreview(env, options = {}) {
  * `now` defaults to the real clock; tests pass an explicit Date so
  * multi-hour scenarios (source outages, absence windows) don't need to
  * sleep.
- * @param {object} [options] - see fetchAllSources' `sourceIds`. V1.6.1:
- *   scheduled.js passes PRODUCTION_TDX_SOURCE_IDS (freeway+highway only)
- *   here; every other caller (tests calling this directly) keeps the
- *   default (all 5 sources), unchanged.
+ * @param {object} [options] - see fetchAllSources' `sourceIds`/`usageSink`.
+ *   V1.6.1: scheduled.js passes PRODUCTION_TDX_SOURCE_IDS (freeway+highway
+ *   only) here; every other caller (tests calling this directly) keeps
+ *   the default (all 5 sources), unchanged. V1.8.6: scheduled.js also
+ *   passes a fresh `usageSink` array here to record this run's real TDX
+ *   calls — see usageLedger.js.
  */
 export async function runTdxPipelineAndCommit(env, now = new Date(), options = {}) {
   const core = await runCore(env, options);

@@ -181,6 +181,8 @@ If any of these are missing, the affected subsystem fails closed (see §5) — t
 | `admin:cctv-probe-used:v1` | `src/tdx/hsinchuCctvProbe.js` | V1.7 — one-time PRE-ARM guard for the general/fixed-target admin CCTV probe's own TDX call |
 | `admin:cctv-hsinchu-probe-used:v1` | `src/tdx/hsinchuCctvProbe.js` | V1.7/V1.8.5 — PRE-ARM guard specific to the Hsinchu admin probe; currently `completed`. Don't reset/rerun during normal Production operation — see §13 |
 | `admin:cctv-hsinchu-candidates:v1` | `src/tdx/hsinchuCctvProbe.js` | V1.7 — the fixed-target (82.1K) admin probe's persisted 4-quadrant candidate list, 1-hour TTL. Used only by the manual `/admin/cctv-hsinchu-*` preview endpoints, unrelated to the real broadcast path's own cache above |
+| `tdx:usage:entry:v1:<date>:<epochMs>:<opaqueId>` | `src/tdx/usageLedger.js` | V1.8.6 (branch, not yet merged) — append-only, one entry per invocation that made ≥1 real TDX call (Cron tick / `/debug/status` / `/debug/tdx` / an admin CCTV probe). 40-day TTL. See §18 |
+| `tdx:usage:summary:v1` | `src/tdx/usageLedger.js` | V1.8.6 (branch, not yet merged) — compacted daily rollup (last ~35 days), the ONLY usage-ledger key `/health` ever reads. Recompacted by the Cron path after each real run — never by `/health` itself. See §18 |
 
 Never assume a key not in this table exists — `grep -rn "_KEY = " src/` to double check if you suspect drift.
 
@@ -458,3 +460,48 @@ CCTV prep runs once per EVENT (not per target) — structurally, because it sits
 `resolveCctvEligibility(event)` is pure/synchronous/zero-I/O, so `result.cctvEligibleAccidentCount` is computed and populated even under `dryRun=true` (before the `if (dryRun) return result` early-return) — a legitimate stat, not a side effect. `result.cctvImagesAttachedCount`/`cctvSkippedByReason` are only ever populated on the real (non-dryRun) push path, since only that path actually attempts `prepareCctvImageForEvent`. `dryRun` never reads the CCTV metadata cache, never fetches a CCTV frame, never writes to R2, never calls LINE — enforced by construction (the CCTV block lives entirely after the dryRun early-return), verified in `test/broadcastCctvIntegration.test.js`'s test 8/22.
 
 **Out of scope this round, unchanged:** `broadcastPipeline.js`'s non-CCTV logic, `scheduled.js`, Cron, PBS, `tdxSchedule.js`, `cctv/collage.js` (renderer), AI incident recognition, real LINE push testing, Production deploy, Production TDX probe.
+
+---
+
+## 18. V1.8.6 — TDX 用量對帳健康頁 (usage reconciliation ledger)
+
+**Status: built and tested on `feature/v1.8.6-tdx-usage-ledger`, NOT merged to `main`, NOT deployed.** Purpose: let a human reconcile this Worker's own record of "how many real TDX data API calls did we actually make today" against TDX's own official back-office dashboard, and immediately spot an unexpected excess or shortfall — without `/health` ever costing a TDX call itself.
+
+**Core safety rule, unchanged from every prior round's telemetry work:** `/health` still makes **0 TDX/0 PBS/0 LINE calls** — it only gained one extra read-only KV read (`tdx:usage:summary:v1`). Recording usage is best-effort/isolated throughout: every write in `src/tdx/usageLedger.js` is wrapped so a KV outage there degrades to "this batch/day's numbers are temporarily incomplete," never to a broken Cron run (see `test/tdxUsageLedger.test.js`'s test 16 — a usage-ledger KV that always throws still lets the real Cron tick commit dedupe state and run the LINE broadcast normally).
+
+**All TDX call paths, inventoried before this round's changes** (`fetchTdxJson` in `src/tdx/client.js` is the single choke point every one of these goes through):
+- `src/tdx/sources.js`'s `fetchSource` (called from `fetchAllSources` → `runTdxPipelinePreview`/`runTdxPipelineAndCommit`) — Production Cron (`scheduled.js`, `sourceIds: PRODUCTION_TDX_SOURCE_IDS` = freeway+highway only), `GET /debug/status`, `GET /debug/tdx` (both ALSO restricted to freeway+highway since V1.6.2 — see the correction below).
+- `src/tdx/hsinchuCctvProbe.js`'s `handleHsinchuCctvProbe` (`GET /admin/cctv-hsinchu-probe`) — 1 CCTV metadata call.
+- `src/tdx/cctvProbe.js`'s `handleCctvProbe` (`GET /admin/cctv-probe`) — 1 CCTV metadata call.
+- `src/tdx/vdSpeed.js` (via `congestionValidation.js`) — **not reachable from any live Production/debug/admin path today** (V1.6.1 removed it from the Cron path; V1.6.2 also removed `/debug/status`'s own VD preview — see the corrections below). Only its own unit tests exercise it. Left uninstrumented for context tagging; if it's ever wired back in, it already gets recorded generically (no context = `'other'`) since it shares `fetchTdxJson`.
+- `src/tdx/auth.js`'s `getAccessToken`/`requestNewToken` — OAuth, counted completely separately (see below).
+
+**Two stale-documentation corrections found during this inventory** (fixed in the code comments this round, not just here): `src/tdx/sources.js`'s `PRODUCTION_TDX_SOURCE_IDS` comment used to claim `/debug/tdx`/`/debug/status` still fetch all 5 sources for diagnostics — wrong since V1.6.2, both are restricted to freeway+highway (≤2 TDX calls/request). `scheduled.js`'s V1.6.1 comment used to claim `/debug/status` "keeps its own read-only preview" of the VD confirmation step — also wrong since V1.6.2 removed that preview too. `vdSpeed.js`'s TDX calls are dead code on every live path, full stop.
+
+### How a call gets counted
+
+`fetchTdxJson(url, accessToken, { source, usageSink })` — `usageSink` is a plain in-memory array threaded down from the top-level caller. Every real `fetch()` attempt (network error, non-2xx, or success) pushes exactly one `{kind:'data', timestamp, source, attempted:true, success, httpStatus, payloadBytesEstimate}` record — **only an actually-attempted HTTP request is ever counted**, never a scheduling estimate. `src/tdx/auth.js`'s `getAccessToken(env, usageSink)` similarly records a `{kind:'oauth', ...}` record, but **only** in the tier-C branch (`acquireToken`'s `requestNewToken()` call) — a memory-cache or shared-KV-cache token hit records nothing, so OAuth volume genuinely reflects real network requests to TDX's token endpoint, not every `getAccessToken()` call.
+
+**Concurrency — no lost-update risk, by construction, not by locking.** `fetchAllSources()` fires multiple sources via `Promise.all`; a naive "read today's total, +1, write today's total" counter would lose increments under that concurrency. This design never does that: each invocation collects its own in-memory array (`.push()` is synchronous and non-interleaving in JS — safe across concurrent in-flight promises without a lock), and only once the WHOLE invocation finishes does it write **one** append-only KV entry (`commitTdxUsageBatch`) under a fresh unique key (`tdx:usage:entry:v1:<date>:<epochMs>:<opaqueId>`, 40-day TTL). Two invocations "at the same time" just produce two independent keys — nothing to race.
+
+**Contexts:** `production-cron` | `debug-status` | `debug-tdx` | `admin-cctv` | `other` (anything unrecognized). **Source buckets** (`normalizeSourceBucket`): `freeway` | `highway` | `cms` | `bus-hsinchu` | `bus-hsinchu-county` | `cctv` (both `cctv-probe` and `cctv-hsinchu-probe` collapse into this one bucket) | `other`.
+
+### Payload bytes — "本地估算傳輸量", not a claim of TDX's own billing figure
+
+`fetchTdxJson` reads the response body **once** via `response.arrayBuffer()` (exact byte length, no second request), decodes that same buffer with `TextDecoder` for `JSON.parse` — never `response.json()` directly, which would give no way to also measure size without a duplicate read. This measures bytes **after** the Workers runtime's own gzip decompression (`Accept-Encoding: gzip` is still sent), so it will not exactly match TDX's own transfer/billing figure if TDX uses a different compression or metering convention — the health page explicitly labels this "本地估算傳輸量", never claims exact parity, but it's good enough to long-term-calibrate against.
+
+### Compaction and the theoretical baseline
+
+`compactTdxUsageSummaryForToday(kv, now)` — Cron-driven (called from `scheduled.js` after every real run, best-effort), re-lists **only today's** raw entries (`kv.list({prefix: 'tdx:usage:entry:v1:<today>:'})`, paginated) and rebuilds that one day's row from scratch (idempotent — safe to call every tick, never double-counts), merging it into the persisted `tdx:usage:summary:v1` alongside every other day's already-frozen row (last `USAGE_SUMMARY_RETENTION_DAYS`=35 days kept). `/health` never lists/scans — it only ever reads this one compacted key.
+
+`theoreticalProductionCallsToday(now)` is **pure date math, zero I/O** — 08:00–22:00 Asia/Taipei, every 20 minutes, 2 sources/window (mirrors `tdxSchedule.js`'s real gate) — computed live at `/health` render time so it stays accurate even between Cron ticks. Full-day theoretical = `PRODUCTION_TDX_CALLS_PER_DAY` = 84 (42 windows × 2 sources).
+
+### `/health` additions
+
+Below the existing TDX card: **TDX 用量對帳** (today's calls / today's theoretical / diff / today's estimated bytes / manual extra calls), **來源拆解（今日）** (Production freeway/highway + manual debug-status/debug-tdx/admin-cctv breakdown), **本月總覽** (`aggregateUsageForMonth` — sums whatever day-rows are already in the retained summary, no extra KV read), **每日對帳表（近 30 天）** (a day with no ledger entry at all — e.g. any day before this round's deploy — renders `尚無資料`, **never a fabricated 0**), and a clearly-separate, statically-labeled **TDX 官方歷史參考（非本機統計）** card carrying the two officially-reported reference points the user supplied by hand (2026-08-16: 1490 calls/17016KB; 2026-08-17: 704 calls/10534KB; month-to-date: 2194 calls/~27MB) — explicitly captioned as official-dashboard numbers, not this app's own telemetry, since the Local Usage Ledger only starts accumulating from this round's Production deploy onward.
+
+### Deliberately NOT done this round
+
+Backfilling 2026-08-16/17/18 with fabricated "local" numbers (explicitly forbidden by the round's own instructions). A per-day source-breakdown table for the full 30-day history (only TODAY gets the detailed source/context breakdown card — the daily reconciliation table's Production/Manual columns already cover the historical case; expand only if asked). Reusing `incidentSuppression.js`'s own separate free-text KM parser or any other unrelated module — this round touched only `src/tdx/{client,auth,fetchAll,sources,debug,hsinchuCctvProbe,cctvProbe}.js`, `src/traffic/{pipeline,scheduled,debugStatus,health}.js`, and the new `src/tdx/usageLedger.js`.
+
+**Tests:** `test/tdxUsageLedger.test.js` (21 tests — recording, batching/no-lost-update, Cron gating, context/source breakdown, OAuth separation, failed-call recording, payload-byte estimation, `/health`'s 0-TDX-calls guarantee, Taipei day rollover, monthly rollup, the theoretical baseline at several points in the day, multi-page-safe idempotent compaction, and the KV-failure isolation guarantee) plus two pre-existing `/debug/status` "read-only" tests (`test/pipeline.test.js`, `test/debugStatusLine.test.js`) updated to allow the new, deliberate, append-only usage-ledger writes while still proving genuine traffic/dedupe state is untouched.

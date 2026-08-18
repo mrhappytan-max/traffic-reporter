@@ -13,6 +13,13 @@
 
 import { readHealthSnapshot } from './healthSnapshot.js';
 import { formatTaipeiTime } from './broadcastHours.js';
+import {
+  readTdxUsageSummary,
+  taipeiDateString,
+  theoreticalProductionCallsToday,
+  aggregateUsageForMonth,
+  PRODUCTION_TDX_CALLS_PER_DAY,
+} from '../tdx/usageLedger.js';
 
 const STALE_WARNING_MS = 10 * 60 * 1000; // 10 min — "資料更新延遲"
 const STALE_CRITICAL_MS = 15 * 60 * 1000; // 15 min — force critical
@@ -196,6 +203,16 @@ function renderPage({ statusMeta, statusLabel, generatedAtLabel, staleNotice, bo
   }
   .footer { text-align: center; font-size: 14px; color: #666; margin-top: 20px; }
   .footer a { color: #1a5fb4; text-decoration: none; display: block; padding: 6px 0; }
+  .hint { font-size: 13px; color: #777; margin: 8px 0 0; }
+  .table-wrap { overflow-x: auto; }
+  table.usage-table { width: 100%; border-collapse: collapse; font-size: 14px; white-space: nowrap; }
+  table.usage-table th, table.usage-table td { padding: 6px 8px; text-align: right; border-bottom: 1px solid #eee; }
+  table.usage-table th:first-child, table.usage-table td:first-child { text-align: left; }
+  table.usage-table th { color: #555; font-weight: 600; font-size: 12px; }
+  .diff-zero { color: #1a7f37; }
+  .diff-pos { color: #8a6100; }
+  .diff-neg { color: #c31c1c; }
+  .reference-card { background: #f8f7f2; border: 1px dashed #cbb; }
 </style>
 </head>
 <body>
@@ -218,7 +235,179 @@ function renderPage({ statusMeta, statusLabel, generatedAtLabel, staleNotice, bo
 </html>`;
 }
 
-function renderSnapshotBody(snapshot) {
+// V1.8.6 — TDX usage reconciliation ("TDX 用量對帳"). Every number below
+// comes from tdx:usage:summary:v1 (see ../tdx/usageLedger.js) via a
+// single extra read-only KV read in handleHealth — zero TDX/PBS/LINE
+// calls, same guarantee as the rest of this page. The "今日 Production
+// 理論" figure is the ONLY exception to "everything here comes from KV":
+// it's pure date math (theoreticalProductionCallsToday), not a network
+// call, so it stays accurate even between Cron ticks if a human refreshes
+// this page mid-tick.
+
+const USAGE_CONTEXT_LABELS = {
+  'production-cron': 'Production Cron',
+  'debug-status': 'Debug Status',
+  'debug-tdx': 'Debug TDX',
+  'admin-cctv': 'Admin CCTV',
+  other: '其他',
+};
+
+const USAGE_SOURCE_LABELS = {
+  freeway: '國道',
+  highway: '省道',
+  cms: 'CMS',
+  'bus-hsinchu': '公車(市)',
+  'bus-hsinchu-county': '公車(縣)',
+  cctv: 'CCTV',
+  other: '其他',
+};
+
+function formatBytesEstimate(bytes) {
+  const n = Number(bytes) || 0;
+  const mb = n / (1024 * 1024);
+  if (mb >= 0.1) return `${mb.toFixed(1)} MB`;
+  const kb = n / 1024;
+  return `${kb.toFixed(kb >= 10 ? 0 : 1)} KB`;
+}
+
+function displayDate(dateStr) {
+  const parts = String(dateStr).split('-');
+  return parts.length === 3 ? `${parts[1]}/${parts[2]}` : dateStr;
+}
+
+function diffClass(diff) {
+  if (diff === 0) return 'diff-zero';
+  return diff > 0 ? 'diff-pos' : 'diff-neg';
+}
+
+function diffLabel(diff) {
+  if (diff === 0) return '0';
+  return diff > 0 ? `+${diff}` : `${diff}`;
+}
+
+function emptyDayTotals() {
+  return {
+    totalDataCalls: 0,
+    productionDataCalls: 0,
+    manualDataCalls: 0,
+    oauthRequests: 0,
+    payloadBytesEstimate: 0,
+    bySource: {},
+    byContext: {},
+  };
+}
+
+/**
+ * Last N calendar days (Asia/Taipei), newest first. A day with no ledger
+ * entry at all (before V1.8.6 went live, or a genuinely missed write)
+ * renders as "尚無資料" in the table below — NEVER a fabricated 0, per
+ * the explicit instruction not to pretend this app can retroactively
+ * know its own historical call volume.
+ */
+function lastNDates(now, n) {
+  const dates = [];
+  for (let i = 0; i < n; i += 1) {
+    dates.push(taipeiDateString(new Date(now.getTime() - i * 24 * 60 * 60 * 1000)));
+  }
+  return dates;
+}
+
+function renderTdxUsageBody(summary, now) {
+  const days = (summary && summary.days) || {};
+  const todayStr = taipeiDateString(now);
+  const today = days[todayStr] || emptyDayTotals();
+
+  const theoreticalToday = theoreticalProductionCallsToday(now);
+  const diffToday = (today.totalDataCalls || 0) - theoreticalToday;
+  const manualToday = today.manualDataCalls || 0;
+
+  const todaySourceRows = Object.entries(USAGE_SOURCE_LABELS)
+    .map(([key, label]) => `<li><span>${escapeHtml(label)}</span><span>${(today.bySource && today.bySource[key]) || 0}</span></li>`)
+    .join('');
+
+  const todayContextRows = Object.entries(USAGE_CONTEXT_LABELS)
+    .filter(([key]) => key !== 'production-cron')
+    .map(([key, label]) => `<li><span>${escapeHtml(label)}</span><span>${(today.byContext && today.byContext[key]) || 0}</span></li>`)
+    .join('');
+
+  // Monthly rollup — see usageLedger.js's aggregateUsageForMonth: sums
+  // every day-row already present in `summary.days` (at most
+  // USAGE_SUMMARY_RETENTION_DAYS=35 entries) that falls in the SAME
+  // Asia/Taipei calendar month as `now`. No extra KV read, no full-
+  // history scan — computed entirely from the summary object already read.
+  const monthTotals = aggregateUsageForMonth(summary, now);
+
+  const dailyRows = lastNDates(now, 30)
+    .map((date) => {
+      const row = days[date];
+      if (!row) {
+        return `<tr><td>${escapeHtml(displayDate(date))}</td><td colspan="6" style="text-align:center;color:#999;">尚無資料</td></tr>`;
+      }
+      const theoretical = date === todayStr ? theoreticalToday : PRODUCTION_TDX_CALLS_PER_DAY;
+      const diff = (row.totalDataCalls || 0) - theoretical;
+      return `<tr>
+        <td>${escapeHtml(displayDate(date))}</td>
+        <td>${row.productionDataCalls || 0}</td>
+        <td>${row.manualDataCalls || 0}</td>
+        <td>${row.totalDataCalls || 0}</td>
+        <td>${formatBytesEstimate(row.payloadBytesEstimate)}</td>
+        <td>${theoretical}</td>
+        <td class="${diffClass(diff)}">${diffLabel(diff)}</td>
+      </tr>`;
+    })
+    .join('');
+
+  return `
+  <div class="card">
+    <h2>TDX 用量對帳</h2>
+    <div class="row"><span class="label">今日呼叫</span><span class="value">${today.totalDataCalls || 0} 次</span></div>
+    <div class="row"><span class="label">今日 Production 理論</span><span class="value">${theoreticalToday} 次</span></div>
+    <div class="row"><span class="label">差額</span><span class="value ${diffClass(diffToday)}">${diffLabel(diffToday)} 次</span></div>
+    <div class="row"><span class="label">今日估算流量</span><span class="value">${formatBytesEstimate(today.payloadBytesEstimate)}</span></div>
+    <div class="row"><span class="label">人工額外呼叫</span><span class="value">${manualToday} 次</span></div>
+    <p class="hint">理論值依目前時間與 08:00–22:00／每 20 分鐘排程動態計算；估算流量為「本地估算傳輸量」，可能與 TDX 官方傳輸量口徑不同（壓縮／計費方式可能不同），僅供長期校正參考。</p>
+  </div>
+
+  <div class="card">
+    <h2>來源拆解（今日）</h2>
+    <p class="hint" style="margin:0 0 8px;">Production</p>
+    <ul class="source-list">${todaySourceRows}</ul>
+    <p class="hint" style="margin:10px 0 8px;">人工 / Debug / Admin</p>
+    <ul class="source-list">${todayContextRows}</ul>
+  </div>
+
+  <div class="card">
+    <h2>本月總覽</h2>
+    <div class="row"><span class="label">本月累積呼叫</span><span class="value">${monthTotals.totalDataCalls} 次</span></div>
+    <div class="row"><span class="label">Production Cron</span><span class="value">${monthTotals.productionDataCalls} 次</span></div>
+    <div class="row"><span class="label">Debug / Admin</span><span class="value">${monthTotals.manualDataCalls} 次</span></div>
+    <div class="row"><span class="label">OAuth 真實刷新</span><span class="value">${monthTotals.oauthRequests} 次</span></div>
+    <div class="row"><span class="label">估算資料量</span><span class="value">${formatBytesEstimate(monthTotals.payloadBytesEstimate)}</span></div>
+  </div>
+
+  <div class="card">
+    <h2>每日對帳表（近 30 天）</h2>
+    <div class="table-wrap">
+      <table class="usage-table">
+        <thead><tr><th>日期</th><th>Production</th><th>人工/Debug</th><th>總呼叫</th><th>估算流量</th><th>理論呼叫</th><th>差額</th></tr></thead>
+        <tbody>${dailyRows}</tbody>
+      </table>
+    </div>
+    <p class="hint">差額 0 為正常；正數代表有額外 TDX 呼叫（可能是人工 Debug/Admin，也可能是異常超量）；負數代表本機記錄少於理論值（可能是 Cron 漏跑或 API 未嘗試）。差額本身僅作為用量異常提示，不直接判定系統為 Critical。</p>
+  </div>
+
+  <div class="card reference-card">
+    <h2>TDX 官方歷史參考（非本機統計）</h2>
+    <p class="hint" style="margin:0 0 8px;">以下數字來自 TDX 官方後台畫面，人工輸入，僅供比對參考，並非路況播報員本機的 Usage Ledger 統計。本機 Usage Ledger 自 V1.8.6 上線起才開始正式累積，之前的日期一律顯示「尚無資料」，不回推猜測。</p>
+    <div class="row"><span class="label">2026-08-16 官方呼叫</span><span class="value">1490 次</span></div>
+    <div class="row"><span class="label">2026-08-16 官方傳輸</span><span class="value">17016 KB</span></div>
+    <div class="row"><span class="label">2026-08-17 官方呼叫</span><span class="value">704 次</span></div>
+    <div class="row"><span class="label">2026-08-17 官方傳輸</span><span class="value">10534 KB</span></div>
+    <div class="row"><span class="label">當月官方累積（官方畫面顯示）</span><span class="value">2194 次 / 約 27 MB</span></div>
+  </div>`;
+}
+
+function renderSnapshotBody(snapshot, usageSummary, now) {
   const { tdx, pbs, line, kv, broadcast } = snapshot;
 
   const tdxSourcesHtml = tdx.sources
@@ -248,6 +437,8 @@ function renderSnapshotBody(snapshot) {
     <div class="row"><span class="label">最近一次擷取時間</span><span class="value">${tdx.lastFetchedAt ? escapeHtml(formatTaipeiTime(new Date(tdx.lastFetchedAt))) : '尚無資料'}</span></div>
     <ul class="source-list">${tdxSourcesHtml}</ul>
   </div>
+
+  ${renderTdxUsageBody(usageSummary, now)}
 
   <div class="card">
     <h2>PBS 警廣</h2>
@@ -296,12 +487,20 @@ export async function handleHealth(env) {
   const { status, staleNotice } = applyStaleness(snapshot, now);
   const statusMeta = STATUS_META[status] || STATUS_META.critical;
 
+  // V1.8.6: ONE extra read-only KV read of the pre-compacted usage
+  // summary (see ../tdx/usageLedger.js) — never a scan of raw entries,
+  // never a TDX/PBS/LINE call. A missing/unavailable summary (e.g. right
+  // after this round's first deploy, before the first Cron compaction)
+  // degrades to every count in the usage card reading 0/"尚無資料" —
+  // never an error, never affects this page's own status/staleness.
+  const { summary: usageSummary } = await readTdxUsageSummary(env.TRAFFIC_KV);
+
   const html = renderPage({
     statusMeta,
     statusLabel: statusMeta.label,
     generatedAtLabel: formatTaipeiTime(new Date(snapshot.generatedAt)),
     staleNotice,
-    body: renderSnapshotBody(snapshot),
+    body: renderSnapshotBody(snapshot, usageSummary, now),
     now,
   });
 

@@ -25,6 +25,7 @@ import { getTdxScheduleState } from './tdxSchedule.js';
 import { readDedupeState } from './dedupe.js';
 import { PRODUCTION_TDX_SOURCE_IDS } from '../tdx/sources.js';
 import { persistProductionTdxEventCache, readProductionTdxEventCache } from './tdxEventCache.js';
+import { commitTdxUsageBatch, compactTdxUsageSummaryForToday } from '../tdx/usageLedger.js';
 
 /**
  * Shape-compatible with pipeline.js's buildSummary() output (every field
@@ -72,9 +73,18 @@ async function buildSkippedTdxSummary(env, now) {
 export async function runScheduledTdxSync(env, now = new Date()) {
   const tdxScheduleState = getTdxScheduleState(now); // 'scheduled' | 'skipped-by-schedule' | 'night-sleep'
 
+  // V1.8.6 — TDX usage ledger: a fresh, request-scoped array only this
+  // tick writes into (see usageLedger.js's module comment for why a
+  // plain in-memory array threaded through fetchAllSources' Promise.all
+  // needs no lock). Stays empty on a skipped/sleeping tick — 0 TDX calls
+  // were attempted, so there is nothing to record, and the batch commit
+  // below is a no-op for an empty array (commitTdxUsageBatch itself
+  // checks records.length).
+  const tdxUsageSink = [];
+
   const summary =
     tdxScheduleState === 'scheduled'
-      ? await runTdxPipelineAndCommit(env, now, { sourceIds: PRODUCTION_TDX_SOURCE_IDS })
+      ? await runTdxPipelineAndCommit(env, now, { sourceIds: PRODUCTION_TDX_SOURCE_IDS, usageSink: tdxUsageSink })
       : await buildSkippedTdxSummary(env, now);
 
   console.log(
@@ -167,9 +177,11 @@ export async function runScheduledTdxSync(env, now = new Date()) {
   // congestion event's severity here served no production purpose
   // anymore ("VD 不再具有正式播報用途，不得再因 congestion 額外呼叫任何
   // VD API"). congestionValidation.js/vdSpeed.js are left intact and
-  // still exercised by their own unit tests, and GET /debug/status keeps
-  // its own read-only preview of this exact same confirmation step
-  // unchanged (diagnostic-only, never scheduled).
+  // still exercised by their own unit tests. CORRECTION (found during the
+  // V1.8.6 TDX-call-path inventory): GET /debug/status does NOT keep a VD
+  // preview either — V1.6.2 removed that too (see debugStatus.js's own
+  // comment), so vdSpeed.js's TDX calls are not reachable from any live
+  // Production/debug/admin path today, only from its own unit tests.
 
   const lineSummary = await runLineBroadcast(env, {
     allEvents: broadcastEvents,
@@ -215,6 +227,23 @@ export async function runScheduledTdxSync(env, now = new Date()) {
     if (!commit.committed) console.error(`[cron][health] snapshot write failed: ${commit.reason} ${commit.error ?? ''}`);
   } catch (err) {
     console.error(`[cron][health] snapshot build/write failed: ${err && err.message}`);
+  }
+
+  // V1.8.6 — TDX usage ledger: write this tick's batch (if any real TDX
+  // call was attempted), then recompact TODAY's summary row from the raw
+  // entries. Neither function ever throws (each reduces any KV failure to
+  // a returned {committed:false, reason, error} — see usageLedger.js), so
+  // no extra try/catch is needed here — same isolation principle as the
+  // health snapshot write above and the tdx-cache write further up: a
+  // usage-ledger outage must never affect the real TDX/PBS/LINE pipeline
+  // this tick already fully completed by this point.
+  const batchCommit = await commitTdxUsageBatch(env.TRAFFIC_KV, { context: 'production-cron', now, records: tdxUsageSink });
+  if (!batchCommit.committed && batchCommit.reason === 'kv-error') {
+    console.error(`[cron][tdx-usage] batch write failed: ${batchCommit.error ?? ''}`);
+  }
+  const compaction = await compactTdxUsageSummaryForToday(env.TRAFFIC_KV, now);
+  if (!compaction.committed && compaction.reason === 'kv-error') {
+    console.error(`[cron][tdx-usage] summary compaction failed: ${compaction.error ?? ''}`);
   }
 
   return { ...summary, line: lineSummary, pbs: pbsSummary };

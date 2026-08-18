@@ -20,6 +20,12 @@ function safeErrorMessage(err) {
  *   Omitted (the default) fetches all 5, unchanged — GET /debug/tdx and
  *   GET /debug/status both call this with no options and keep their full
  *   existing behavior.
+ * @param {Array} [options.usageSink] - V1.8.6: an in-memory array every
+ *   real TDX data/OAuth call this invocation makes gets recorded into —
+ *   see ../tdx/usageLedger.js. Safe to share across the Promise.all below
+ *   (a plain array .push() is synchronous/non-interleaving in JS — see
+ *   usageLedger.js's module comment for why this needs no lock).
+ *   Omitted (every pre-V1.8.6 caller/test) records nothing, unchanged.
  * @returns {{ tokenOk: boolean, results: Array<{
  *   source: string, label: string, ok: boolean, count: number,
  *   normalizedCount: number, rawCount: number, durationMs: number,
@@ -32,12 +38,12 @@ function safeErrorMessage(err) {
  * `normalizedCount` = successfully-parsed count *before* that filter, for
  * /debug/status's normalizedCount vs. hsinchuFilteredCount distinction.
  */
-export async function fetchAllSources(env, { sourceIds } = {}) {
+export async function fetchAllSources(env, { sourceIds, usageSink } = {}) {
   let accessToken = null;
   let tokenError = null;
 
   try {
-    accessToken = await getAccessToken(env);
+    accessToken = await getAccessToken(env, usageSink);
   } catch (err) {
     tokenError = safeErrorMessage(err);
   }
@@ -65,7 +71,7 @@ export async function fetchAllSources(env, { sourceIds } = {}) {
       }
 
       try {
-        const { rawItems, normalizedAll, normalized } = await fetchSource(source, accessToken);
+        const { rawItems, normalizedAll, normalized } = await fetchSource(source, accessToken, usageSink);
         return {
           source: source.id,
           label: source.label,
