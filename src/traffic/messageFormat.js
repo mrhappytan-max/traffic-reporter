@@ -89,36 +89,59 @@ function formatKmRange(startKM, endKM) {
 
 /**
  * Builds the first two message lines for an event: a short
- * "road direction｜section" line, plus a second line that's purely the
- * KM range (when a section label was resolvable) or the original
- * location text (when it wasn't — e.g. a road roadSectionLabel.js
- * doesn't cover this round). Never repeats road+direction across both
- * lines either way.
+ * "road direction｜section" (or just "road direction", when no section
+ * label resolves) line, plus a second line dedicated purely to the
+ * kilometer marker. Never repeats road+direction across both lines
+ * either way.
+ *
+ * V1.8.5.1 — production repro (2026-08-18): a real accident had genuine
+ * structured `startKM`/`endKM` (or, for a PBS event, a genuine free-text
+ * `displayKM` — see pbs/normalize.js), but `getRoadSectionLabel` couldn't
+ * resolve a named-interchange label for it (out of the curated anchor
+ * table, or the road wasn't recognized by roadSectionLabel.js at all) —
+ * so the OLD code fell all the way through to `event.location`, which
+ * for a PBS event is a raw route-name string like "中山高速公路-國道1號",
+ * not a kilometer at all. The event's own official KM was silently
+ * dropped even though it was right there on the event. Fixed: KM display
+ * priority is now independent of whether a section label resolved —
+ * "不要因為無法產生 section label 就把明確 KM 丟掉":
+ *   1. structured `startKM`/`endKM` (works whether or not a section
+ *      label was resolvable)
+ *   2. `event.displayKM` (PBS-only, free-text-derived, display-only —
+ *      never treated as reliable enough for CCTV/fingerprint/suppression,
+ *      see pbs/normalize.js's module comment)
+ *   3. nothing recognizable as KM at all -> the original location-text
+ *      fallback, unchanged from before this round.
  */
 function buildRoadLines(event) {
   const shortRoad = getRoadShortName(event.road) || event.road || '';
   const roadDirection = [shortRoad, event.direction].filter(Boolean).join(' ');
 
   const section = getRoadSectionLabel({ road: event.road, startKM: event.startKM, endKM: event.endKM });
+  const firstLine = section.label ? (roadDirection ? `${roadDirection}｜${section.label}` : section.label) : roadDirection;
 
-  if (section.label) {
-    const firstLine = roadDirection ? `${roadDirection}｜${section.label}` : section.label;
-    const secondLine = formatKmRange(event.startKM, event.endKM);
-    return { firstLine, secondLine };
+  const structuredKmLine =
+    event.startKM !== undefined || event.endKM !== undefined ? formatKmRange(event.startKM, event.endKM) : '';
+  if (structuredKmLine) {
+    return { firstLine, secondLine: structuredKmLine };
   }
 
-  // Fallback (no section label available — road not in this round's
-  // table, or no usable KM at all): keep the original road+direction
-  // line, then only add a location line if it carries information beyond
-  // that. Also strips the exact reported-bug shape where `location`
-  // already starts with "road direction " (composeLocation's own
-  // format), so the duplicate can't resurface here either.
+  if (typeof event.displayKM === 'number' && Number.isFinite(event.displayKM)) {
+    return { firstLine, secondLine: formatKM(event.displayKM) };
+  }
+
+  // Fallback (no KM recognizable at all, structured or displayKM): keep
+  // the original road+direction line, then only add a location line if
+  // it carries information beyond that. Also strips the exact
+  // reported-bug shape where `location` already starts with
+  // "road direction " (composeLocation's own format), so the duplicate
+  // can't resurface here either.
   let secondLine = event.location && event.location !== roadDirection ? event.location : '';
   if (secondLine && event.road && event.direction) {
     const prefix = `${event.road} ${event.direction} `;
     if (secondLine.startsWith(prefix)) secondLine = secondLine.slice(prefix.length);
   }
-  return { firstLine: roadDirection, secondLine };
+  return { firstLine, secondLine };
 }
 
 /**

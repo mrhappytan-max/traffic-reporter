@@ -189,3 +189,33 @@ test('persistIncidentSuppressionState: KV.put throws -> reports failure, does no
   assert.equal(commit.committed, false);
   assert.equal(typeof commit.error, 'string');
 });
+
+// V1.8.5.1 — required regression test 11: pbs/normalize.js's new
+// `displayKM` field must have zero effect on incident-family grouping.
+// This module already has its own, separate, pre-existing free-text KM
+// parser (parseKmFromDescription, used by midKm() only when startKM/endKM
+// are both absent — exactly the PBS case). It reads `event.description`
+// directly and never looks at `event.displayKM` at all, so grouping must
+// come out identical whether displayKM is absent, present, or even
+// (deliberately, in this test) set to a value that disagrees with what
+// the description text says.
+test('11. displayKM has zero effect on incident-suppression grouping — its own independent free-text parser is unaffected', () => {
+  const base = accident({
+    source: 'pbs',
+    rawId: 'PBS-1',
+    startKM: undefined,
+    endKM: undefined,
+    description: '西行在93.3公里處內側車道發生交通事故',
+  });
+  const withoutDisplayKm = base;
+  const withDisplayKm = { ...base, displayKM: 93.3 };
+  const withDisagreeingDisplayKm = { ...base, displayKM: 12.7 }; // deliberately different from the description
+
+  const a = resolveIncidentNotifications([withoutDisplayKm], {}, T0);
+  const b = resolveIncidentNotifications([withDisplayKm], {}, T0);
+  const c = resolveIncidentNotifications([withDisagreeingDisplayKm], {}, T0);
+
+  assert.equal(a.nextIncidentsByGroup['國道一號|南向'][0].km, 93.3);
+  assert.equal(b.nextIncidentsByGroup['國道一號|南向'][0].km, 93.3);
+  assert.equal(c.nextIncidentsByGroup['國道一號|南向'][0].km, 93.3); // NOT 12.7 — displayKM was never consulted
+});

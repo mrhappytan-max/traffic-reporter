@@ -194,6 +194,18 @@ test('non-accident and non-freeway events are never eligible', async () => {
   assert.equal(resolveCctvEligibility(accidentEvent({ source: 'highway' })).eligible, false);
 });
 
+// V1.8.5.1 — required regression test 9: a PBS accident whose comment
+// text happened to parse a displayKM (pbs/normalize.js) must NOT gain
+// CCTV eligibility because of it. resolveCctvEligibility checks
+// `source === 'freeway'` before it ever looks at any KM field, so a
+// PBS event fails closed at 'not-freeway-source' regardless of whether
+// it carries a displayKM — this module never even reads that field.
+test('9. a PBS event carrying a parsed displayKM is still CCTV-ineligible (not-freeway-source, displayKM never consulted)', async () => {
+  const result = resolveCctvEligibility(accidentEvent({ source: 'pbs', startKM: undefined, endKM: undefined, displayKM: 93.3 }));
+  assert.equal(result.eligible, false);
+  assert.equal(result.reason, 'not-freeway-source');
+});
+
 // =======================================================================
 // prepareCctvImageForEvent — full orchestration, mocked network, cache-only metadata
 // =======================================================================

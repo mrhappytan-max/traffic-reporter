@@ -121,12 +121,85 @@ test('accident message with a resolvable section label uses the "道路 方向�
   assert.match(lines[2], /^90K\+200～90K\+800$/);
 });
 
-test('a road without a resolvable section label (e.g. 台1線) falls back to the original road+direction/location display, unchanged', () => {
+// V1.8.5.1 — CORRECTED: this test previously asserted that an
+// unresolvable-section-label road fell back to raw `location` TEXT even
+// when structured startKM/endKM were present. That was the exact class of
+// bug fixed this round ("不要因為無法產生 section label 就把明確 KM 丟掉")
+// — a real Production accident had genuine KM but no resolvable section
+// label, and the old fallback silently showed a route-name string instead
+// of the KM. See required regression test 4 immediately below for the
+// explicit "no section label but has KM -> KM still shown" case; this
+// test now only covers the genuinely-no-KM-at-all fallback.
+test('a road without a resolvable section label (e.g. 台1線) and with NO usable KM at all falls back to the original road+direction/location display, unchanged', () => {
   const event = {
     type: 'construction',
     road: '台1線',
     direction: '南向',
-    location: '台1線 南向 90K+000 - 91K+000',
+    location: '台1線 南向 施工路段',
+    description: '施工',
+    updatedAt: '2026-08-15T09:00:00+08:00',
+  };
+  const text = formatEventMessage(event);
+  const lines = text.split('\n');
+  assert.equal(lines[1], '台1線 南向');
+  assert.equal(lines[2], '施工路段');
+});
+
+// --- V1.8.5.1: KM must never be dropped just because no section label resolves ---
+
+test('1. TDX structured startKM only -> KM is shown as a single point, on its own line', () => {
+  const event = {
+    source: 'freeway',
+    type: 'accident',
+    road: '國道一號',
+    direction: '南向',
+    startKM: '93K+300',
+    description: '事故',
+    updatedAt: '2026-08-18T17:05:00+08:00',
+  };
+  const text = formatEventMessage(event);
+  const lines = text.split('\n');
+  assert.match(lines[1], /^國1 南向/);
+  assert.equal(lines[2], '93K+300');
+});
+
+test('2. TDX structured endKM only -> KM is shown as a single point', () => {
+  const event = {
+    source: 'freeway',
+    type: 'accident',
+    road: '國道一號',
+    direction: '北向',
+    endKM: '93K+300',
+    description: '事故',
+    updatedAt: '2026-08-18T17:05:00+08:00',
+  };
+  const text = formatEventMessage(event);
+  const lines = text.split('\n');
+  assert.equal(lines[2], '93K+300');
+});
+
+test('3. start/end range -> KM is shown as a "start～end" range', () => {
+  const event = {
+    source: 'freeway',
+    type: 'accident',
+    road: '國道一號',
+    direction: '南向',
+    startKM: '93K+300',
+    endKM: '94K+100',
+    description: '事故',
+    updatedAt: '2026-08-18T17:05:00+08:00',
+  };
+  const text = formatEventMessage(event);
+  const lines = text.split('\n');
+  assert.equal(lines[2], '93K+300～94K+100');
+});
+
+test('4. structured KM present but NO resolvable section label (road outside roadSectionLabel.js\'s curated table) -> KM is still shown, never silently dropped', () => {
+  const event = {
+    type: 'construction',
+    road: '台1線', // not in roadSectionLabel.js's ROAD_ANCHORS/ROAD_ALIASES
+    direction: '南向',
+    location: '台1線 南向 90K+000 - 91K+000', // a location string that is NOT a KM display and must not be shown instead
     startKM: '90K+000',
     endKM: '91K+000',
     description: '施工',
@@ -134,10 +207,82 @@ test('a road without a resolvable section label (e.g. 台1線) falls back to the
   };
   const text = formatEventMessage(event);
   const lines = text.split('\n');
-  assert.equal(lines[1], '台1線 南向');
-  // The redundant "road direction " prefix is stripped even in the
-  // fallback path, so the duplicate-line bug can't resurface here either.
-  assert.equal(lines[2], '90K+000 - 91K+000');
+  assert.equal(lines[1], '台1線 南向'); // no section label, so plain road+direction
+  assert.equal(lines[2], '90K+000～91K+000'); // structured KM shown, not the location text
+});
+
+// Required test 5's spirit: PBS itself never carries a structured KM
+// field today (see pbs/normalize.js's module comment) — but IF an event
+// ever does carry both a structured KM and a displayKM (e.g. a future
+// schema addition), the structured value must always win. This proves
+// that priority ordering directly, independent of source.
+test('5. when BOTH a structured KM and a displayKM are present, structured KM wins (displayKM is a lower-priority fallback only)', () => {
+  const event = {
+    source: 'pbs',
+    type: 'accident',
+    road: '國道一號',
+    direction: '南向',
+    startKM: '93K+300',
+    displayKM: 12.7, // deliberately conflicting — must be ignored
+    description: '事故',
+    updatedAt: '2026-08-18T17:05:00+08:00',
+  };
+  const text = formatEventMessage(event);
+  const lines = text.split('\n');
+  assert.equal(lines[2], '93K+300');
+});
+
+test('6. a PBS event with ONLY a parsed displayKM (no structured KM at all) shows it, formatted the same "NNK+NNN" way', () => {
+  const event = {
+    source: 'pbs',
+    type: 'accident',
+    road: '國道一號',
+    direction: '',
+    location: '中山高速公路-國道1號', // the real reported-bug shape: route-name text, not a KM
+    displayKM: 93.3,
+    description: '南向在93.3公里處內側車道發生交通事故',
+    updatedAt: '2026-08-18T17:05:00+08:00',
+  };
+  const text = formatEventMessage(event);
+  const lines = text.split('\n');
+  assert.equal(lines[1], '國1');
+  assert.equal(lines[2], '93K+300'); // NOT "中山高速公路-國道1號"
+});
+
+test('an event with neither structured KM nor a usable displayKM (undefined/NaN) falls back to location text, unchanged', () => {
+  const event = {
+    source: 'pbs',
+    type: 'accident',
+    road: '國道一號',
+    direction: '',
+    location: '中山高速公路-國道1號',
+    displayKM: NaN,
+    description: '事故',
+    updatedAt: '2026-08-18T17:05:00+08:00',
+  };
+  const text = formatEventMessage(event);
+  const lines = text.split('\n');
+  assert.equal(lines[2], '中山高速公路-國道1號');
+});
+
+// 12. regression: the real, already-working 國1 南向 93K+300 case (from
+// the Production report of what SHOULD keep working) still renders
+// correctly after this round's fix.
+test('12. regression — the real working "國1 南向｜新竹／科學園區附近 / 93K+300" case still renders unchanged', () => {
+  const event = {
+    source: 'freeway',
+    type: 'accident',
+    road: '國道一號',
+    direction: '南向',
+    startKM: '93K+300',
+    description: '事故',
+    updatedAt: '2026-08-18T17:05:00+08:00',
+  };
+  const text = formatEventMessage(event);
+  assert.equal(
+    text,
+    ['🚨 交通事故', '國1 南向｜新竹／科學園區附近', '93K+300', '事故影響通行', '請提前避開', '🕒 17:05更新'].join('\n')
+  );
 });
 
 test('a congestion cluster candidate (numeric startKM/endKM from congestionCluster.js) formats identically to a normal event', () => {

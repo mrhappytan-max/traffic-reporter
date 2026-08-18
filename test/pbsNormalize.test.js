@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizePbsEvent, normalizePbsDirection, parseHappenedAt, parsePbsDateTime } from '../src/pbs/normalize.js';
+import {
+  normalizePbsEvent,
+  normalizePbsDirection,
+  parseHappenedAt,
+  parsePbsDateTime,
+  extractDisplayKmFromText,
+} from '../src/pbs/normalize.js';
 
 test('normalizePbsDirection maps PBS compass terms to the TDX-style 向 vocabulary', () => {
   assert.equal(normalizePbsDirection('西行'), '西向');
@@ -65,4 +71,63 @@ test('normalizePbsEvent handles missing/empty coordinate fields without crashing
   assert.equal(event.latitude, null);
   assert.equal(event.longitude, null);
   assert.equal(event.rawId, 'X1');
+});
+
+// V1.8.5.1 — production repro (2026-08-18): a real 17:05 accident LINE
+// message showed no KM at all (only a route-name string on the second
+// line), because PBS never carries a structured KM field. These tests
+// cover the new DISPLAY-ONLY extractDisplayKmFromText() and its
+// placement on the normalized event as `displayKM`.
+
+test('6. extractDisplayKmFromText recognizes "93K+300" (K+ format)', () => {
+  assert.equal(extractDisplayKmFromText('南向93K+300處發生交通事故'), 93.3);
+});
+
+test('extractDisplayKmFromText recognizes a bare "93K" / "93.3K" (no +NNN suffix)', () => {
+  assert.equal(extractDisplayKmFromText('南向93K處發生交通事故'), 93);
+  assert.equal(extractDisplayKmFromText('南向93.3K處發生交通事故'), 93.3);
+});
+
+test('extractDisplayKmFromText recognizes "93公里"/"93.3公里" (the already-confirmed real 8.1公里 fixture shape)', () => {
+  assert.equal(extractDisplayKmFromText('西行在8.1公里處內側車道發生交通事故'), 8.1);
+  assert.equal(extractDisplayKmFromText('南向約93公里處'), 93);
+  assert.equal(extractDisplayKmFromText('南向約93.3公里處'), 93.3);
+});
+
+test('7. plain unrelated numbers ("2車事故、3人受傷、17:05") are never misread as a kilometer', () => {
+  assert.equal(extractDisplayKmFromText('2車事故、3人受傷、17:05'), null);
+  assert.equal(extractDisplayKmFromText(''), null);
+  assert.equal(extractDisplayKmFromText(null), null);
+  assert.equal(extractDisplayKmFromText(undefined), null);
+});
+
+test('8. normalizePbsEvent: a comment with a parseable KM gets `displayKM`, and it is NEVER written into startKM/endKM', () => {
+  const event = normalizePbsEvent({
+    UID: 'PBS-2026-08180001',
+    road: '',
+    direction: '南向',
+    areaNm: '中山高速公路-國道1號',
+    roadtype: '事故',
+    comment: '南向在93.3公里處內側車道發生交通事故，請小心慢行',
+    happendate: '2026-08-18',
+    happentime: '17:05:00',
+    modDttm: '2026-08-18 17:05:00',
+  });
+
+  assert.equal(event.displayKM, 93.3);
+  assert.equal(event.startKM, undefined);
+  assert.equal(event.endKM, undefined);
+  assert.equal(event.road, '國道一號');
+  assert.equal(event.location, '中山高速公路-國道1號'); // unchanged — still the raw areaNm text
+});
+
+test('a PBS comment with no recognizable KM never gets a `displayKM` field at all (not even null)', () => {
+  const event = normalizePbsEvent({
+    UID: 'PBS-2026-08180002',
+    road: '',
+    areaNm: '中山高速公路-國道1號',
+    roadtype: '事故',
+    comment: '2車事故、3人受傷、17:05',
+  });
+  assert.equal('displayKM' in event, false);
 });

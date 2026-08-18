@@ -9,6 +9,7 @@ import {
   removePrunedEvents,
   persistNotifiedState,
   computeFingerprint,
+  computeNotificationFingerprint,
   CONGESTION_COOLDOWN_MS,
 } from '../src/traffic/notified.js';
 
@@ -180,4 +181,33 @@ test('a corrupt/unparseable notifiedAt fails open (needs notification) rather th
   const key = 'congestion:國道一號:北向:83-91';
   const map = { [key]: { targets: { [targetKey(userA)]: { fingerprint: 'fp', notifiedAt: 'not-a-date' } } } };
   assert.equal(targetNeedsCongestionNotification(key, userA, map, new Date('2026-08-16T10:50:00+08:00')), true);
+});
+
+// V1.8.5.1 — required regression test 10: computeNotificationFingerprint
+// must never change because of pbs/normalize.js's new displayKM field.
+// The function only ever reads type/road/direction/startKM/endKM (or
+// location as a fallback when neither KM is present)/blockedLanes/a
+// closure-impact boolean derived from title+description — displayKM is
+// simply not one of its inputs, so two events identical in every one of
+// those fields must fingerprint identically regardless of displayKM.
+test('10. computeNotificationFingerprint is unaffected by a PBS event\'s displayKM field (present, absent, or changed)', () => {
+  const base = {
+    type: 'accident',
+    road: '國道一號',
+    direction: '南向',
+    location: '中山高速公路-國道1號',
+    title: '',
+    description: '西行在93.3公里處內側車道發生交通事故',
+    blockedLanes: undefined,
+  };
+  const withoutDisplayKm = { ...base };
+  const withDisplayKm = { ...base, displayKM: 93.3 };
+  const withDifferentDisplayKm = { ...base, displayKM: 12.7 };
+
+  const fpWithout = computeNotificationFingerprint(withoutDisplayKm);
+  const fpWith = computeNotificationFingerprint(withDisplayKm);
+  const fpDifferent = computeNotificationFingerprint(withDifferentDisplayKm);
+
+  assert.equal(fpWith, fpWithout);
+  assert.equal(fpDifferent, fpWithout);
 });
