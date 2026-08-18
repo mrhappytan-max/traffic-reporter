@@ -19,8 +19,8 @@ import {
   theoreticalProductionCallsToday,
   theoreticalProductionCallsForDay,
   isPartialTrackingDay,
-  aggregateUsageForMonth,
   estimatePoints,
+  estimateMonthUsage,
   remainingPoints,
   usagePercent,
   projectEndOfMonthPoints,
@@ -367,17 +367,24 @@ function renderTdxUsageBody(summary, now) {
   const todayIsPartialTracking = isPartialTrackingDay(todayStr, trackingStartedAt);
   const todayPoints = estimatePoints(today);
 
-  // Monthly rollup — see usageLedger.js's aggregateUsageForMonth: sums
-  // every day-row already present in `summary.days` (at most
-  // USAGE_SUMMARY_RETENTION_DAYS=35 entries) that falls in the SAME
-  // Asia/Taipei calendar month as `now`. No extra KV read, no full-
-  // history scan — computed entirely from the summary object already read.
-  const monthTotals = aggregateUsageForMonth(summary, now);
-  const monthPoints = estimatePoints(monthTotals);
-  const remaining = remainingPoints(monthPoints);
-  const percent = usagePercent(monthPoints);
+  // Monthly rollup — see usageLedger.js's estimateMonthUsage: Local-
+  // Ledger totals (aggregateUsageForMonth, at most USAGE_SUMMARY_
+  // RETENTION_DAYS=35 day-rows, all in the SAME Asia/Taipei calendar
+  // month as `now`) PLUS a hand-confirmed official pre-Ledger baseline
+  // when this exact month has one (2026-08 only, as of this writing —
+  // the Local Usage Ledger only started 2026-08-18; every later month is
+  // fully Ledger-covered and gets baseline=null automatically). No extra
+  // KV read, no full-history scan — computed entirely from the summary
+  // object already read.
+  const monthUsage = estimateMonthUsage(summary, now);
+  const monthTotals = monthUsage.localTotals; // still used below for the "OAuth（本月）" advanced-info row — baseline carries no OAuth figure
+  const remaining = remainingPoints(monthUsage.estimatedPoints);
+  const percent = usagePercent(monthUsage.estimatedPoints);
   const quota = quotaStatus(percent);
   const projection = projectEndOfMonthPoints(summary, now);
+  const baselineNoteHtml = monthUsage.baseline
+    ? `<p class="hint">含 ${escapeHtml(displayDate(monthUsage.baseline.fromDate))}–${escapeHtml(displayDate(monthUsage.baseline.throughDate))} TDX 官方既有用量 ${formatPoints(monthUsage.baseline.officialPoints)} 點（Local Usage Ledger 啟用前，使用者從 TDX 官方後台人工確認，非本機回推）。</p>`
+    : '';
 
   // --- 來源拆解（今日） ---
   // "Production" reads ONLY the production-cron slice of the 2D
@@ -448,9 +455,10 @@ function renderTdxUsageBody(summary, now) {
 
   <div class="card">
     <h2>TDX 本月</h2>
-    <p class="big-number">${monthTotals.totalDataCalls} <span class="big-unit">次</span></p>
-    <div class="row"><span class="label">流量</span><span class="value">${formatBytesEstimate(monthTotals.payloadBytesEstimate)}</span></div>
-    <div class="row"><span class="label">估算點數</span><span class="value">${formatPoints(monthPoints)} 點</span></div>
+    <p class="big-number">${monthUsage.estimatedCalls} <span class="big-unit">次</span></p>
+    <div class="row"><span class="label">流量</span><span class="value">${formatBytesEstimate(monthUsage.estimatedBytes)}</span></div>
+    <div class="row"><span class="label">估算點數</span><span class="value">${formatPoints(monthUsage.estimatedPoints)} 點</span></div>
+    ${baselineNoteHtml}
   </div>
 
   <div class="card">

@@ -11,6 +11,8 @@ import assert from 'node:assert/strict';
 import { handleHealth } from '../src/traffic/health.js';
 import {
   estimatePoints,
+  estimateMonthUsage,
+  getOfficialUsageBaseline,
   remainingPoints,
   usagePercent,
   projectEndOfMonthPoints,
@@ -19,6 +21,7 @@ import {
   TDX_MONTHLY_POINT_BUDGET,
   TDX_CALLS_PER_POINT,
   TDX_TRAFFIC_MB_PER_POINT,
+  TDX_OFFICIAL_USAGE_BASELINES,
   USAGE_SUMMARY_KEY,
 } from '../src/tdx/usageLedger.js';
 
@@ -252,6 +255,114 @@ test('12. GET /health with the new quota dashboard still makes 0 TDX/PBS/LINE ca
     assert.match(html, /TDX 今日/);
     assert.match(html, /剩餘額度/);
     assert.match(html, /月底預估/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+// ===========================================================================
+// CORRECTION (post-review) — 2026-08 pre-Ledger official baseline. The
+// Local Usage Ledger only started 2026-08-18 (V1.8.6's Production
+// deploy), so for August 2026 specifically, aggregateUsageForMonth alone
+// silently omits real TDX usage that already happened (8/16-8/17) before
+// the Ledger existed — making "剩餘額度" look artificially larger than it
+// really is. estimateMonthUsage folds in a hand-confirmed
+// TDX_OFFICIAL_USAGE_BASELINES entry for any month that has one.
+// ===========================================================================
+
+const AUGUST_BASELINE = TDX_OFFICIAL_USAGE_BASELINES['2026-08'];
+
+test('1. 2026-08, localMonthPoints = 0 -> estimatedMonthPoints = baseline (1.643) -> remaining = 1.357', () => {
+  const now = new Date('2026-08-19T09:00:00+08:00');
+  const summary = { trackingStartedAt: null, days: {} }; // no Local Ledger data yet this month
+  const usage = estimateMonthUsage(summary, now);
+  assert.equal(usage.localPoints, 0);
+  assert.equal(usage.estimatedPoints, AUGUST_BASELINE.officialPoints);
+  assert.equal(usage.estimatedPoints, 1.643);
+  assert.equal(remainingPoints(usage.estimatedPoints), 1.357);
+});
+
+test('2. 2026-08, localMonthPoints = 0.200 -> estimatedMonthPoints = 1.843 -> remaining = 1.157', () => {
+  const now = new Date('2026-08-19T09:00:00+08:00');
+  const summary = {
+    trackingStartedAt: null,
+    days: { '2026-08-19': { totalDataCalls: 300, payloadBytesEstimate: 0 } }, // 300/1500 = 0.2 point
+  };
+  const usage = estimateMonthUsage(summary, now);
+  assert.ok(Math.abs(usage.localPoints - 0.2) < 1e-9);
+  assert.ok(Math.abs(usage.estimatedPoints - 1.843) < 1e-9);
+  assert.ok(Math.abs(remainingPoints(usage.estimatedPoints) - 1.157) < 1e-9);
+});
+
+test('3. 2026-09 -> the August baseline does NOT apply at all', () => {
+  const now = new Date('2026-09-05T09:00:00+08:00');
+  assert.equal(getOfficialUsageBaseline(now), null);
+
+  const summary = {
+    trackingStartedAt: null,
+    days: { '2026-09-01': { totalDataCalls: 150, payloadBytesEstimate: 0 } }, // 0.1 point, fully Ledger-covered
+  };
+  const usage = estimateMonthUsage(summary, now);
+  assert.equal(usage.baseline, null);
+  assert.ok(Math.abs(usage.estimatedPoints - usage.localPoints) < 1e-9); // no baseline added — estimated === local
+  assert.ok(Math.abs(usage.estimatedPoints - 0.1) < 1e-9);
+});
+
+test('4. month-end projection = baseline + local month-to-date + (complete-local-day average x remaining days)', () => {
+  const now = new Date('2026-08-25T09:00:00+08:00');
+  const summary = {
+    trackingStartedAt: null,
+    days: {
+      '2026-08-20': { totalDataCalls: 150, payloadBytesEstimate: 0 }, // 0.1 point, complete
+      '2026-08-21': { totalDataCalls: 150, payloadBytesEstimate: 0 }, // 0.1 point, complete
+      '2026-08-25': { totalDataCalls: 0, payloadBytesEstimate: 0 }, // today — excluded from the average
+    },
+  };
+  const result = projectEndOfMonthPoints(summary, now);
+  assert.equal(result.ready, true);
+  assert.equal(result.completeDayCount, 2);
+  assert.ok(Math.abs(result.avgPointsPerDay - 0.1) < 1e-9); // LOCAL days only — the baseline is NOT a daily row and must never feed this average
+
+  // monthToDatePoints must be baseline (1.643) + local MTD (300 calls / 1500 = 0.2)
+  const expectedMonthToDate = AUGUST_BASELINE.officialPoints + 0.2;
+  assert.ok(Math.abs(result.monthToDatePoints - expectedMonthToDate) < 1e-9);
+
+  // August has 31 days; today is the 25th -> 6 days remain after today.
+  const expectedProjected = expectedMonthToDate + 0.1 * 6;
+  assert.ok(Math.abs(result.projected - expectedProjected) < 1e-9);
+});
+
+test('5. 8/16 and 8/17 still render 尚無資料 in the daily table — the baseline never fabricates Local Ledger daily rows', async () => {
+  const now = new Date('2026-08-19T09:00:00+08:00'); // 7-day window (08/13-08/19) includes both 08/16 and 08/17
+  const today = taipeiDateString(now);
+  const row = buildDayRowFromEntries(today, [
+    { context: 'production-cron', records: [{ kind: 'data', source: 'freeway', attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 10 }] },
+  ]);
+  // Deliberately NO entries for 2026-08-16/17 in summary.days — exactly the real situation (Ledger didn't exist yet).
+  const summary = { schemaVersion: 1, updatedAt: now.toISOString(), days: { [today]: row } };
+
+  const response = await handleHealth({ TRAFFIC_KV: kvWithSummary(now, summary) });
+  const html = await response.text();
+  assert.match(html, /<tr><td>08\/16<\/td><td colspan="4" style="text-align:center;color:#999;">尚無資料<\/td><\/tr>/);
+  assert.match(html, /<tr><td>08\/17<\/td><td colspan="4" style="text-align:center;color:#999;">尚無資料<\/td><\/tr>/);
+});
+
+test('6. GET /health still makes 0 TDX/PBS/LINE calls when a month-level official baseline is in effect', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    throw new Error(`/health must never call fetch() — tried: ${url}`);
+  };
+  try {
+    const now = new Date('2026-08-19T09:00:00+08:00');
+    const today = taipeiDateString(now);
+    const row = buildDayRowFromEntries(today, [
+      { context: 'production-cron', records: [{ kind: 'data', source: 'freeway', attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 10 }] },
+    ]);
+    const summary = { schemaVersion: 1, updatedAt: now.toISOString(), days: { [today]: row } };
+    const response = await handleHealth({ TRAFFIC_KV: kvWithSummary(now, summary) });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.match(html, /TDX 官方既有用量/); // the baseline note actually rendered, proving it went through the real render path
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -79,6 +79,37 @@ export const TDX_CALLS_PER_POINT = 1500;
 export const TDX_TRAFFIC_MB_PER_POINT = 150;
 export const TDX_MONTHLY_POINT_BUDGET = 3;
 
+// V1.8.6.1 CORRECTION (post-review) — the Local Usage Ledger only started
+// accumulating on 2026-08-18 (V1.8.6's Production deploy). For August
+// 2026 specifically, real TDX usage happened BEFORE that — this is NOT
+// something the Ledger can retroactively know, and this project's own
+// explicit rule is "不要回推猜測" (never guess/backfill historical local
+// data). Instead, this is a hand-entered, one-time reference the user
+// personally confirmed from TDX's own official back-office dashboard —
+// NOT derived from anything this Worker measured itself:
+//   2026-08-16: 1490 calls, 17016 KB
+//   2026-08-17: 704 calls, 10534 KB
+//   cumulative through 2026-08-17: 2194 calls, 27550 KB, 1.643 points
+//     (TDX's own displayed cumulative point figure — not recomputed here
+//     from calls/traffic, since TDX's own official rounding/conversion
+//     may differ slightly from this Worker's local estimate formula)
+// Only ever applied to the ONE month it was measured for. A month key
+// with no entry here means "no pre-Ledger baseline for this month" —
+// e.g. 2026-09 (and every month after) is fully covered by the Local
+// Ledger from day 1, so it must NEVER inherit August's baseline; nothing
+// in this module carries a baseline forward to a month it wasn't
+// recorded for (see getOfficialUsageBaseline/estimateMonthUsage below —
+// both do an exact "YYYY-MM" key lookup, no fallback).
+export const TDX_OFFICIAL_USAGE_BASELINES = {
+  '2026-08': {
+    fromDate: '2026-08-16',
+    throughDate: '2026-08-17',
+    calls: 2194,
+    transferKB: 27550,
+    officialPoints: 1.643,
+  },
+};
+
 const KNOWN_CONTEXTS = ['production-cron', 'debug-status', 'debug-tdx', 'admin-cctv'];
 const KNOWN_SOURCE_BUCKETS = ['freeway', 'highway', 'cms', 'bus-hsinchu', 'bus-hsinchu-county', 'cctv'];
 
@@ -639,6 +670,52 @@ export function estimatePoints({ totalDataCalls, payloadBytesEstimate } = {}) {
   return callPoints + trafficPoints;
 }
 
+/** Exact "YYYY-MM" key lookup into TDX_OFFICIAL_USAGE_BASELINES — no fallback to a neighboring month, no "sticky" default. A month with nothing recorded here (every month except 2026-08) simply has no baseline. */
+export function getOfficialUsageBaseline(now = new Date()) {
+  const { year, month } = toTaipeiParts(now);
+  const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
+  return TDX_OFFICIAL_USAGE_BASELINES[yearMonth] || null;
+}
+
+/**
+ * V1.8.6.1 CORRECTION (post-review) — "本月已使用" must never be just
+ * `aggregateUsageForMonth` (Local Ledger only) for a month that has a
+ * pre-Ledger official baseline (see TDX_OFFICIAL_USAGE_BASELINES above):
+ * the Local Usage Ledger only started accumulating on 2026-08-18, so for
+ * August 2026 specifically, `aggregateUsageForMonth` alone silently
+ * omits real TDX usage that genuinely happened (8/16–8/17) — making
+ * "剩餘額度" look artificially larger than it really is. This combines
+ * both: `estimated* = officialBaseline (if this month has one, else 0) +
+ * local (Ledger-tracked, this month only)`. Every OTHER month (no
+ * baseline entry) reduces to exactly the local-only totals, unchanged.
+ *
+ * Does NOT touch daily history — `summary.days` (and therefore the 7-day
+ * reconciliation table) is completely untouched by this; 8/16–8/17 still
+ * correctly render "尚無資料" as real Local Ledger DayRows, never
+ * fabricated from the baseline. The baseline only ever feeds into
+ * MONTH-level totals (this month card, remaining-quota card, and the
+ * month-to-date component of the month-end projection) — see
+ * projectEndOfMonthPoints below for the one place that also uses it.
+ */
+export function estimateMonthUsage(summary, now = new Date()) {
+  const baseline = getOfficialUsageBaseline(now);
+  const localTotals = aggregateUsageForMonth(summary, now);
+  const localPoints = estimatePoints(localTotals);
+
+  const baselineCalls = baseline ? baseline.calls : 0;
+  const baselineBytes = baseline ? baseline.transferKB * 1024 : 0;
+  const baselinePoints = baseline ? baseline.officialPoints : 0;
+
+  return {
+    baseline, // null, or the raw TDX_OFFICIAL_USAGE_BASELINES entry — callers use this to decide whether to show the "含 X/XX–X/XX TDX 官方既有用量" note
+    localTotals,
+    localPoints,
+    estimatedCalls: baselineCalls + (localTotals.totalDataCalls || 0),
+    estimatedBytes: baselineBytes + (localTotals.payloadBytesEstimate || 0),
+    estimatedPoints: baselinePoints + localPoints,
+  };
+}
+
 /** max(0, budget - used) — never negative, a maxed-out month reads as exactly 0 remaining, not a confusing negative number. */
 export function remainingPoints(estimatedPoints, budget = TDX_MONTHLY_POINT_BUDGET) {
   return Math.max(0, budget - (estimatedPoints || 0));
@@ -696,7 +773,16 @@ export function projectEndOfMonthPoints(summary, now = new Date()) {
   }
 
   const avgPointsPerDay = completeDayPoints.reduce((a, b) => a + b, 0) / completeDayPoints.length;
-  const monthToDatePoints = estimatePoints(aggregateUsageForMonth(summary, now));
+  // CORRECTION (post-review) — month-to-date must include the official
+  // pre-Ledger baseline when this month has one (see estimateMonthUsage),
+  // not just Local-Ledger totals — otherwise the projection would start
+  // from an artificially low base for a month like 2026-08. The DAILY
+  // AVERAGE above is deliberately untouched by this: it must only ever
+  // come from genuine Local Ledger complete-day rows, never from the
+  // baseline (which isn't a set of daily rows at all, just one cumulative
+  // pre-Ledger figure) — "不要把 8/16、8/17 官方歷史資料假裝成 Local
+  // complete tracked days".
+  const monthToDatePoints = estimateMonthUsage(summary, now).estimatedPoints;
 
   const { year, month, day } = toTaipeiParts(now);
   // Date.UTC's month param is 0-indexed, so passing the (1-indexed)
