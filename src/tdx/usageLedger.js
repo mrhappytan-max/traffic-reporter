@@ -669,8 +669,23 @@ export function projectEndOfMonthPoints(summary, now = new Date()) {
   const todayStr = taipeiDateString(now);
   const trackingStartedAt = summary && summary.trackingStartedAt;
 
+  // CORRECTION (post-review) — summary.days retains ~35 days of history,
+  // which routinely spans a calendar-month boundary (e.g. on 09/03,
+  // summary.days can still hold 08/10–08/31). Without this filter,
+  // "本月月底預估" would silently average in LAST month's complete days
+  // too — a real correctness bug, not just noise: last month's usage
+  // pattern has no bearing on whether THIS month is on track to exceed
+  // budget. Only days in the SAME Asia/Taipei calendar year+month as
+  // `now` are eligible, same month-scoping already used by
+  // aggregateUsageForMonth (monthToDatePoints below), so the projection
+  // and the month-to-date actual it builds on are always talking about
+  // the same month.
+  const { year: nowYear, month: nowMonth } = toTaipeiParts(now);
+  const monthPrefix = `${nowYear}-${String(nowMonth).padStart(2, '0')}`;
+
   const completeDayPoints = [];
   for (const [date, row] of Object.entries(days)) {
+    if (!date.startsWith(monthPrefix)) continue; // a different calendar month — never eligible for THIS month's projection
     if (date === todayStr) continue; // still in progress, not a complete day
     if (isPartialTrackingDay(date, trackingStartedAt)) continue; // the tracking-start day is never "complete"
     completeDayPoints.push(estimatePoints(row));

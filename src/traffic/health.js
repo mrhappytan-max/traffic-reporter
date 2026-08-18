@@ -401,7 +401,7 @@ function renderTdxUsageBody(summary, now) {
       ? `<div class="card" style="border:1px solid #f0c36d;background:#fff8e8;">
           <h2>⚠️ 發現已停用 TDX 來源</h2>
           <ul class="source-list">${retiredNonZero.map(([key, label]) => `<li><span>${escapeHtml(label)}</span><span>${today.bySource[key]}</span></li>`).join('')}</ul>
-          <p class="hint">CMS／公車動態已於 V1.6.1 退出正式 Production，正常情況下這裡永遠是 0；若非 0，代表有人以未過濾的全 5-source 方式呼叫過 TDX（例如手動 debug 呼叫）。</p>
+          <p class="hint">CMS／公車動態已於 V1.6.1 退出正式 Production，正常情況下這裡永遠是 0（/debug/tdx、/debug/status 本身也已限制只抓 freeway+highway，正常開 Debug 不會抓到這些來源）；若非 0，代表有未預期程式路徑呼叫到已停用來源。</p>
         </div>`
       : '';
 

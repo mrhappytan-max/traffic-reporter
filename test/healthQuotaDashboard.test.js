@@ -112,6 +112,25 @@ test('7. fewer than 2 complete tracked days -> 資料累積中 (ready:false), ne
   assert.equal(ready.avgPointsPerDay, 1); // both complete days were exactly 1 point each
 });
 
+test('cross-month: last month\'s complete days (still in the ~35-day summary retention) must NEVER be averaged into THIS month\'s projection', () => {
+  const now = new Date('2026-09-03T09:00:00+08:00');
+  const summary = {
+    trackingStartedAt: null,
+    days: {
+      '2026-08-30': { totalDataCalls: TDX_CALLS_PER_POINT * 10, payloadBytesEstimate: 0 }, // last month, very high usage — must be excluded
+      '2026-08-31': { totalDataCalls: TDX_CALLS_PER_POINT * 10, payloadBytesEstimate: 0 }, // last month, very high usage — must be excluded
+      '2026-09-01': { totalDataCalls: 75, payloadBytesEstimate: 0 }, // 75/1500 = 0.05 point — this month, complete
+      '2026-09-02': { totalDataCalls: 75, payloadBytesEstimate: 0 }, // 0.05 point — this month, complete
+      '2026-09-03': { totalDataCalls: 0, payloadBytesEstimate: 0 }, // today — still in progress
+    },
+  };
+
+  const result = projectEndOfMonthPoints(summary, now);
+  assert.equal(result.ready, true);
+  assert.equal(result.completeDayCount, 2); // only 09-01 and 09-02 — NOT 08-30/08-31
+  assert.equal(result.avgPointsPerDay, 0.05); // would be wildly higher (~13.35) if August's high-usage days leaked in
+});
+
 // ===========================================================================
 // 8/9. Retired-source (CMS/Bus) hide-when-zero, warn-when-nonzero.
 // ===========================================================================
