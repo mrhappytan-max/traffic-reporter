@@ -68,6 +68,17 @@ export const PRODUCTION_TDX_WINDOWS_PER_DAY = 42;
 export const PRODUCTION_TDX_SOURCES_PER_WINDOW = 2;
 export const PRODUCTION_TDX_CALLS_PER_DAY = PRODUCTION_TDX_WINDOWS_PER_DAY * PRODUCTION_TDX_SOURCES_PER_WINDOW;
 
+// V1.8.6.1 — TDX's own official "基礎服務" point conversion (confirmed
+// against TDX's back-office dashboard, not guessed): 1500 calls = 1
+// point, 150 MB transferred = 1 point. Centralized here — see
+// PROJECT_HANDOFF.md §18 — so the numbers never get duplicated/drift
+// across health.js's rendering code. `TDX_MONTHLY_POINT_BUDGET` defaults
+// to 3, matching this project's current TDX 基礎會員方案 (3 points/month);
+// if the plan is ever upgraded, this is the one constant to change.
+export const TDX_CALLS_PER_POINT = 1500;
+export const TDX_TRAFFIC_MB_PER_POINT = 150;
+export const TDX_MONTHLY_POINT_BUDGET = 3;
+
 const KNOWN_CONTEXTS = ['production-cron', 'debug-status', 'debug-tdx', 'admin-cctv'];
 const KNOWN_SOURCE_BUCKETS = ['freeway', 'highway', 'cms', 'bus-hsinchu', 'bus-hsinchu-county', 'cctv'];
 
@@ -604,4 +615,88 @@ export function isPartialTrackingDay(dateStr, trackingStartedAt) {
   const start = new Date(trackingStartedAt);
   if (!Number.isFinite(start.getTime())) return false;
   return taipeiDateString(start) === dateStr;
+}
+
+// --- V1.8.6.1: point-quota derived calculations, all pure/zero-I/O ---
+// Every value here is explicitly "本地估算" throughout the health page —
+// TDX's own official point accounting may use a different transfer-size
+// or call-counting convention than this Worker's local estimate (see
+// client.js's payloadBytesEstimate comment), so none of this is ever
+// claimed to be byte-for-byte identical to TDX's real account balance —
+// only good enough to long-term-calibrate against and catch gross
+// anomalies early.
+
+/**
+ * `{ totalDataCalls, payloadBytesEstimate }` (a DayRow, or
+ * aggregateUsageForMonth's return shape — both already carry exactly
+ * these two fields) -> estimated TDX point cost, per TDX's own "基礎服務"
+ * conversion (1500 calls = 1 point, 150MB = 1 point), additive.
+ */
+export function estimatePoints({ totalDataCalls, payloadBytesEstimate } = {}) {
+  const callPoints = (totalDataCalls || 0) / TDX_CALLS_PER_POINT;
+  const payloadMB = (payloadBytesEstimate || 0) / (1024 * 1024);
+  const trafficPoints = payloadMB / TDX_TRAFFIC_MB_PER_POINT;
+  return callPoints + trafficPoints;
+}
+
+/** max(0, budget - used) — never negative, a maxed-out month reads as exactly 0 remaining, not a confusing negative number. */
+export function remainingPoints(estimatedPoints, budget = TDX_MONTHLY_POINT_BUDGET) {
+  return Math.max(0, budget - (estimatedPoints || 0));
+}
+
+/** estimatedPoints / budget, as a plain fraction (0.42, not "42%") — caller formats for display. 0 if budget is falsy (avoids a divide-by-zero NaN if this is ever misconfigured to 0). */
+export function usagePercent(estimatedPoints, budget = TDX_MONTHLY_POINT_BUDGET) {
+  if (!budget) return 0;
+  return (estimatedPoints || 0) / budget;
+}
+
+/**
+ * "月底預估" — projects this calendar month's total point cost from the
+ * average points/day of already-COMPLETE tracked days (never today,
+ * which is still accumulating, and never the tracking-start day, which
+ * is a partial day by definition — see isPartialTrackingDay) times the
+ * days still remaining in the month after today, plus points already
+ * used month-to-date (which already includes today's partial usage).
+ *
+ * Requires at least 2 complete days of history before it will project
+ * anything — a single day's usage can be a poor predictor of a whole
+ * month (e.g. an unusually busy Admin/Debug day), and the explicit
+ * instruction is "不要用第一個部分日亂推月底". Returns `{ ready: false }`
+ * until then; the health page must render "資料累積中", never a number.
+ */
+export function projectEndOfMonthPoints(summary, now = new Date()) {
+  const days = (summary && summary.days) || {};
+  const todayStr = taipeiDateString(now);
+  const trackingStartedAt = summary && summary.trackingStartedAt;
+
+  const completeDayPoints = [];
+  for (const [date, row] of Object.entries(days)) {
+    if (date === todayStr) continue; // still in progress, not a complete day
+    if (isPartialTrackingDay(date, trackingStartedAt)) continue; // the tracking-start day is never "complete"
+    completeDayPoints.push(estimatePoints(row));
+  }
+
+  if (completeDayPoints.length < 2) {
+    return { ready: false, completeDayCount: completeDayPoints.length };
+  }
+
+  const avgPointsPerDay = completeDayPoints.reduce((a, b) => a + b, 0) / completeDayPoints.length;
+  const monthToDatePoints = estimatePoints(aggregateUsageForMonth(summary, now));
+
+  const { year, month, day } = toTaipeiParts(now);
+  // Date.UTC's month param is 0-indexed, so passing the (1-indexed)
+  // current month as-is refers to day 0 of the NEXT month — i.e. the
+  // last day of THIS month. A small, well-known trick, not a bug.
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const remainingDaysAfterToday = Math.max(0, daysInMonth - day);
+
+  const projected = monthToDatePoints + avgPointsPerDay * remainingDaysAfterToday;
+  return {
+    ready: true,
+    projected,
+    avgPointsPerDay,
+    remainingDaysAfterToday,
+    monthToDatePoints,
+    completeDayCount: completeDayPoints.length,
+  };
 }

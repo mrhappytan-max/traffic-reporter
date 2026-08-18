@@ -355,7 +355,11 @@ test('11. GET /health makes 0 TDX/PBS/LINE calls even with a populated usage sum
   const response = await handleHealth({ TRAFFIC_KV: kvStore });
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /TDX 用量對帳/);
+  // V1.8.6.1 — the page was redesigned into a quota-first dashboard
+  // ("TDX 今日"/"TDX 本月"/"剩餘額度"/"月底預估"); the old single "TDX 用量
+  // 對帳" heading no longer exists as its own card, so this asserts
+  // against the new top card instead.
+  assert.match(html, /TDX 今日/);
 });
 
 // ===========================================================================
