@@ -413,17 +413,38 @@ export async function compactTdxUsageSummaryForToday(kv, now = new Date()) {
 
 /**
  * V1.8.6 CORRECTION — the real Cron-driven compaction entry point.
- * Re-lists and rebuilds BOTH today's and yesterday's DayRows, not just
- * today's. Why: commitTdxUsageBatch already attributes each record to
- * its OWN timestamp's Asia/Taipei date (so a Debug/Admin call spanning
- * midnight correctly writes a separate "yesterday" entry) — but if that
- * write only completes AFTER midnight (invocation started 23:59,
- * resolved 00:00+), yesterday's summary row was already compacted and
- * frozen by the last Cron tick that ran before midnight, and would never
- * see that late-arriving entry again without this. Still bounded/cheap:
- * exactly 2 list() scans per Cron tick (today + yesterday), never the
- * full 35-40 day history — /health still only ever reads the compacted
- * summary key, never lists raw entries itself.
+ * Re-lists and rebuilds TODAY's DayRow unconditionally, and YESTERDAY's
+ * DayRow too — but ONLY when yesterday genuinely has at least one raw
+ * usage entry. Why: commitTdxUsageBatch already attributes each record
+ * to its OWN timestamp's Asia/Taipei date (so a Debug/Admin call
+ * spanning midnight correctly writes a separate "yesterday" entry) —
+ * and if that write only completes AFTER midnight (invocation started
+ * 23:59, resolved 00:00+), yesterday's summary row was already compacted
+ * and frozen by the last Cron tick before midnight, and would never see
+ * that late-arriving entry again without re-checking yesterday too.
+ *
+ * CORRECTION (post-review) — unconditionally overwriting the yesterday
+ * key was itself a bug: on this Worker's very first day live, "yesterday"
+ * has zero raw entries (the ledger didn't exist yet), and an
+ * unconditional overwrite would have manufactured a fake
+ * `0 calls / 84 theoretical / -84 diff` row for a day nothing was ever
+ * tracked on — directly contradicting /health's own "nothing before
+ * tracking started renders 尚無資料, never a fabricated number" rule.
+ * Fixed: yesterday's rebuilt row only REPLACES what's in the summary
+ * when `yesterdayEntryBodies.length > 0`. Every other case falls out
+ * correctly on its own:
+ *   - no ledger existed yesterday at all -> no key written, `/health`
+ *     shows 尚無資料 (falls through to the `!days[date]` branch there).
+ *   - yesterday genuinely had 0 calls but a summary row already existed
+ *     for it (e.g. a prior tick's compaction) -> untouched, kept as-is
+ *     (this function never DELETES an existing day row).
+ *   - a genuine cross-midnight late entry exists -> rebuilt and folded in.
+ *   - yesterday already had real calls (raw entries still inside their
+ *     40-day TTL) -> rebuilt normally, unchanged from before.
+ *
+ * Still bounded/cheap: exactly 2 list() scans per Cron tick (today +
+ * yesterday), never the full 35-40 day history — /health still only ever
+ * reads the compacted summary key, never lists raw entries itself.
  */
 export async function compactTdxUsageSummaryRecentDays(kv, now = new Date()) {
   if (!kv) return { committed: false, reason: 'no-kv' };
@@ -432,9 +453,12 @@ export async function compactTdxUsageSummaryRecentDays(kv, now = new Date()) {
     const yesterdayStr = taipeiDateString(new Date(now.getTime() - 24 * 60 * 60 * 1000));
 
     const { row: todayRow, entryBodies: todayEntryBodies } = await rebuildDayRow(kv, todayStr);
-    const { row: yesterdayRow } = await rebuildDayRow(kv, yesterdayStr);
+    const { row: yesterdayRow, entryBodies: yesterdayEntryBodies } = await rebuildDayRow(kv, yesterdayStr);
 
-    await persistCompactedSummary(kv, now, { [todayStr]: todayRow, [yesterdayStr]: yesterdayRow }, todayEntryBodies);
+    const dayRows = { [todayStr]: todayRow };
+    if (yesterdayEntryBodies.length > 0) dayRows[yesterdayStr] = yesterdayRow;
+
+    await persistCompactedSummary(kv, now, dayRows, todayEntryBodies);
     return { committed: true, dates: [yesterdayStr, todayStr] };
   } catch (err) {
     return { committed: false, reason: 'kv-error', error: safeErrorMessage(err) };

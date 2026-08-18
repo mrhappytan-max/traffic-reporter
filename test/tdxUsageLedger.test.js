@@ -820,3 +820,62 @@ test('6. trackingStartedAt remains immutable across repeated compactTdxUsageSumm
   const { summary: sLater } = await readTdxUsageSummary(kvStore);
   assert.equal(sLater.trackingStartedAt, original);
 });
+
+// ===========================================================================
+// CORRECTION ROUND 3 (post-review) — compactTdxUsageSummaryRecentDays must
+// NEVER manufacture a fake "0 calls" row for a day that never had any raw
+// ledger entry at all (e.g. the day before this Worker's very first day
+// live) — that contradicts /health's "尚無資料 before tracking started"
+// rule with a fabricated -84 diff.
+// ===========================================================================
+
+test('1. first-ever compaction (V1.8.6 goes live today, 2026-08-18) with yesterday having 0 raw entries -> no fake yesterday row is created', async () => {
+  const kvStore = kv();
+  const now = new Date('2026-08-18T09:00:00+08:00');
+  await commitTdxUsageBatch(kvStore, {
+    context: 'production-cron',
+    now,
+    records: [
+      { kind: 'data', source: 'freeway', timestamp: now.toISOString(), attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 10 },
+      { kind: 'data', source: 'highway', timestamp: now.toISOString(), attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 10 },
+    ],
+  });
+
+  await compactTdxUsageSummaryRecentDays(kvStore, now); // yesterday (2026-08-17) has ZERO raw entries — the ledger didn't exist yet
+
+  const { summary } = await readTdxUsageSummary(kvStore);
+  assert.equal(summary.days['2026-08-17'], undefined); // no fabricated row — /health must render 尚無資料 for it
+  assert.ok(summary.days['2026-08-18']);
+  assert.equal(summary.days['2026-08-18'].totalDataCalls, 2);
+});
+
+test('2. cross-midnight: yesterday still gets rebuilt/updated when it genuinely has a late-arriving raw entry', async () => {
+  const kvStore = kv();
+  const beforeMidnightCronTick = new Date('2026-08-18T23:50:00+08:00');
+  await commitTdxUsageBatch(kvStore, {
+    context: 'production-cron',
+    now: beforeMidnightCronTick,
+    records: [{ kind: 'data', source: 'freeway', timestamp: beforeMidnightCronTick.toISOString(), attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 10 }],
+  });
+  await compactTdxUsageSummaryRecentDays(kvStore, beforeMidnightCronTick);
+  let read = await readTdxUsageSummary(kvStore);
+  assert.equal(read.summary.days['2026-08-18'].totalDataCalls, 1);
+
+  // A slow Debug/Admin call straddling midnight, its "yesterday" record
+  // only finishes writing after midnight.
+  const lateWrite = new Date('2026-08-19T00:00:30+08:00');
+  await commitTdxUsageBatch(kvStore, {
+    context: 'debug-status',
+    now: lateWrite,
+    records: [{ kind: 'data', source: 'highway', timestamp: '2026-08-18T23:59:50+08:00', attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 10 }],
+  });
+
+  const nextCronTick = new Date('2026-08-19T00:10:00+08:00');
+  await compactTdxUsageSummaryRecentDays(kvStore, nextCronTick);
+  read = await readTdxUsageSummary(kvStore);
+
+  // Yesterday (2026-08-18) genuinely has raw entries -> rebuilt, and the
+  // late-arriving call IS folded in.
+  assert.equal(read.summary.days['2026-08-18'].totalDataCalls, 2);
+  assert.ok(read.summary.days['2026-08-19']); // today still written unconditionally, even with 0 calls of its own
+});
