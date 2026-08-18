@@ -3,19 +3,23 @@
 **Read this file before touching the repo.** It exists so a new AI/agent session can operate correctly without re-scanning the whole codebase or re-investigating history that is already solved. If something below conflicts with what you find in the code, trust the code and treat this file as stale — but update it once you understand why.
 
 ```
-STATUS:  V1.5 Alpha sealed, in production observation
-MAIN:    4efb9e5
-DATE:    2026-08-16
-PHASE:   No new features. Only fix what real road testing surfaces.
+STATUS: V1.8.5 Production live
+MAIN:   97756a8805b52acb8746aa7d14bbf89be51ee267
+DATE:   2026-08-18
+PHASE:  Production operation. No speculative feature work; only real-world bug fixes.
 ```
+
+See `RELEASE_SUMMARY_V1.8.5.md` for the human-readable version of what shipped in this round.
 
 ---
 
 ## 1. What this project is
 
-A Cloudflare Worker that, every 5 minutes, fetches road-condition data from two independent official sources (TDX, PBS), normalizes/dedupes/merges them, and pushes LINE messages to enabled subscribers for events that might force a professional driver (taxi/for-hire) to change route *right now*. Ordinary traffic congestion is deliberately excluded — the target audience already has Google Maps / 1968 for that.
+A Cloudflare Worker that fetches road-condition data from two independent official sources (TDX, PBS), normalizes/dedupes/merges them, and pushes LINE messages to enabled subscribers for events that might force a professional driver (taxi/for-hire) to change route *right now*. Ordinary traffic congestion is deliberately excluded — the target audience already has Google Maps / 1968 for that. Since V1.8.5, a qualifying 國道一號 accident's LINE message also carries a 4-camera CCTV collage image, sent in the same push as the text — see §17.
 
-Repo: `mrhappytan-max/traffic-reporter`. Single Worker, no D1, no queues — everything lives in one Cloudflare KV namespace.
+Repo: `mrhappytan-max/traffic-reporter`. Single Worker, no D1, no queues — everything lives in one Cloudflare KV namespace (plus one R2 bucket for published CCTV images, since V1.8.4).
+
+Cron runs **every 10 minutes, 24/7** (`*/10 * * * *`, UTC). PBS runs every single tick. TDX only runs on every 2nd tick (minute 00/20/40) and only during the 08:00–22:00 Asia/Taipei broadcast window — see §2a for the full current cadence. This is a correction of an earlier "every 5 minutes" claim that no longer matches the deployed Cron trigger.
 
 ---
 
@@ -26,42 +30,69 @@ Repo: `mrhappytan-max/traffic-reporter`. Single Worker, no D1, no queues — eve
                     │         Cloudflare Worker (this repo)         │
                     │                                               │
 TDX API ──HTTPS──▶  │  fetchAllSources()  ──▶  normalize/classify   │
-(5 sources:         │                              │                 │
- freeway/highway/   │                              ▼                 │
- CMS/2×bus-alert)   │                     Hsinchu geo-filter         │
-                    │                              │                 │
+(Production only    │                              │                 │
+ fetches 2 of the   │                              ▼                 │
+ 5 defined sources:  │                     Hsinchu geo-filter         │
+ freeway + highway;  │                              │                 │
+ cms/2×bus-alert are │                              ▼                 │
+ defined in code but │              KV dedupe (traffic:dedupe-state,  │
+ never fetched in    │              traffic:baseline)                 │
+ the live Cron path) │                              │                 │
                     │                              ▼                 │
-                    │              KV dedupe (traffic:dedupe-state,  │
-                    │              traffic:baseline)                 │
-                    │                              │                 │
 Windows PBS Relay   │                              ▼                 │
 (off-Cloudflare) ──▶│ crossSourceDedup.mergeForBroadcast()           │
   via Cloudflare     │  (PBS active events + TDX events -> canonical) │
   Tunnel + Workers   │                              │                 │
   VPC Service ───────┤                              ▼                 │
-                    │        congestionValidation (VD speed check,   │
-                    │        only affects congestionSeverity field)  │
-                    │                              │                 │
-                    │                              ▼                 │
                     │       broadcastRules.getBroadcastEligibility() │
                     │              (the V1.5 whitelist gate)         │
                     │                              │                 │
                     │                              ▼                 │
-                    │        congestionCluster (dead code path now — │
+                    │        congestionCluster (dead code path —     │
                     │        congestion never reaches here anymore)  │
                     │                              │                 │
                     │                              ▼                 │
                     │      broadcastPipeline: subscriptions +        │
-                    │      per-target notified-state + LINE push     │
+                    │      per-target notified-state +                │
+                    │      CCTV enrichment (accident/freeway only,   │
+                    │      cache-only, V1.8.5 — see §17) + LINE push │
                     └──────────────────┬────────────────────────────┘
                                         │
                                         ▼
                                   LINE Messaging API
 ```
 
+**V1.6.1 correction, still true today:** `congestionValidation`/VD (Vehicle Detector) speed-check is **not** part of the live Cron path above. V1.5 already excludes every congestion event from broadcast regardless of severity, so an extra TDX VD API call to validate congestion severity was removed from `scheduled.js` entirely — "VD 不再具有正式播報用途，不得再因 congestion 額外呼叫任何 VD API." `congestionValidation.js`/`vdSpeed.js` still exist, are still unit-tested, and `GET /debug/status` still runs its own read-only preview of this same check — but neither is part of what actually runs on a real Cron tick. Don't re-add it to the diagram above without checking `scheduled.js` first.
+
 Two entry points share almost all of this logic:
 - **`scheduled.js`** (`runScheduledTdxSync`) — the real Cron path. Writes KV, pushes LINE.
-- **`debugStatus.js`** (`handleDebugStatus`, `GET /debug/status`) — the read-only preview. Runs the exact same pipeline in `dryRun` mode: computes everything, writes nothing, never calls LINE.
+- **`debugStatus.js`** (`handleDebugStatus`, `GET /debug/status`) — the read-only preview. Runs the exact same pipeline in `dryRun` mode (restricted to the same `PRODUCTION_TDX_SOURCE_IDS`, mirroring production's fetch scope): computes everything, writes nothing, never calls LINE, never touches CCTV/R2.
+
+---
+
+## 2a. Production core — current facts (as of V1.8.5, `97756a8`)
+
+This section exists so an agent never has to re-derive these numbers from the code — they were re-verified against `wrangler.jsonc`/`scheduled.js`/`sources.js`/`broadcastHours.js` as part of sealing V1.8.5.
+
+**TDX**
+- Production fetches only `freeway` + `highway` (`PRODUCTION_TDX_SOURCE_IDS` in `src/tdx/sources.js`) — the other 3 defined sources (`cms`, `bus-hsinchu`, `bus-hsinchu-county`) exist in `SOURCES` but are never fetched by `scheduled.js` or `debugStatus.js`.
+- Only fetched on every 2nd Cron tick (minute 00/20/40 — `src/traffic/tdxSchedule.js`'s `getTdxScheduleState`), and only within the 08:00–22:00 Asia/Taipei broadcast window (`src/traffic/broadcastHours.js`'s `isWithinBroadcastHours`).
+- Net: ~84 TDX RoadEvent calls/day (14 broadcast hours × 3 fetches/hour × 2 sources).
+
+**PBS**
+- Runs on **every** Cron tick, 24/7, unconditionally — via the Windows Relay (§6), not gated by broadcast hours or the TDX schedule.
+
+**LINE**
+- Broadcast window: 08:00–22:00 Asia/Taipei (Cron itself still runs 24/7; LINE just doesn't push outside this window).
+- V1.5 eligibility rule (§4) plus V1.5.1 incident suppression (`line:incident-suppression-state` — see §7) both still fully in force, unchanged by V1.8.x CCTV work.
+
+**CCTV (full version lineage, all still true today)**
+- V1.7: four-quadrant camera-selection rule (§14) — S前/S後/N前/N後, ±2km→±4km→null, max 4 cameras, zero extra TDX calls beyond the one metadata lookup.
+- V1.8: 2×2 JPEG collage compositing (§15), Admin-Auth-gated preview only, not yet wired to real LINE push.
+- V1.8.1/V1.8.2: 服務區/休息站/服務站 camera exclusion, narrowed to siting-only evidence fields after a false-positive review (§15).
+- V1.8.3: collage display text fully localized to Traditional Chinese, real-font (`@fontsource/noto-sans-tc`) rasterized to a pre-baked grayscale alpha-mask bitmap at build time — never a runtime font parser, never hand-drawn CJK glyphs (superseded after Production visual review).
+- V1.8.4: R2-backed public image publishing (`CCTV_IMAGES` bucket), 15-minute **code-enforced** expiry checked on every read from each object's own `customMetadata.expiresAt` — never relies on HTTP caching or R2's own lifecycle rule alone (that's a 1-day backstop only).
+- V1.8.5: wired into the **real** LINE broadcast — dynamic per-accident road/KM resolution (§17). Scope: **國道一號 only** (`CCTV_SUPPORTED_ROADS`), **accident type only**, **structured TDX startKM/endKM only** (never guessed from free text). Broadcast path reads CCTV camera-inventory metadata **cache-only** (`cctv:freeway-metadata:v1`, 7-day TTL) and makes **zero** additional TDX calls of its own — the cache is seeded as a side effect of the Admin Hsinchu probe's existing one-time TDX call. Whole-run CCTV enrichment budget is **4 seconds total per Cron tick** (`cctvRunDeadlineAt`, shared across every eligible accident in that tick — not 4 seconds each). LINE text+image are sent in exactly **one** push API call (`pushLineMessages`). Any CCTV failure/timeout/cache-miss at any stage fails closed to text-only and never affects whether the accident itself is broadcast.
 
 ---
 
@@ -74,6 +105,7 @@ Two entry points share almost all of this logic:
 5. **V1.4 Alpha**: PBS merged into the real broadcast (`crossSourceDedup.mergeForBroadcast`), `PBS_BROADCAST_ENABLED` flipped to `true`.
 6. **V1.4.1**: congestion severity tiers (moderate/congested/severe — `congestionSeverity.js`), corrected 國1 頭份/新竹系統 mileage anchors (`roadSectionLabel.js`), VD (Vehicle Detector) real-time speed as a second opinion before ever calling something "severe" (`vdSpeed.js`, `congestionValidation.js`).
 7. **V1.5**: product repositioning — pure congestion is **never** broadcast-eligible regardless of severity; `construction`/`other` became keyword-conditional; `alert` defaults off. `broadcastRules.js`'s `getBroadcastEligibility()`.
+8. **V1.5.1 → V1.6.x → V1.7 → V1.8 → V1.8.5**: incident-fingerprint suppression across re-ticks (`incidentSuppression.js`); Cron/TDX cadence tightened and VD removed from the live path (§2, §2a); then a full CCTV-collage feature line (four-quadrant camera selection → 2×2 image compositing → Traditional-Chinese labels → R2-backed public publishing → dynamic per-accident wiring into the real LINE broadcast). See §2a for the current-state summary and §14/§15/§16/§17 for the full per-round detail — this numbered list intentionally stops summarizing at V1.5; treat §2a as the up-to-date continuation, not this list.
 
 ---
 
@@ -120,7 +152,9 @@ If asked to tune the keyword lists, edit `CONSTRUCTION_IMPACT_PATTERNS` / `OTHER
 Declared in `wrangler.jsonc`:
 - `TRAFFIC_KV` — KV namespace binding, id `a763ccea75b0481aa4da99fa43f8341a`. Single namespace for all state.
 - `PBS_RELAY_WINDOWS` — Workers VPC Service binding (service id `01a008ab-4cc4-7c22-a747-4e27cdcc83c8`), reaches the Windows PBS Relay through a Cloudflare Tunnel. Called as `env.PBS_RELAY_WINDOWS.fetch(...)`, never a plain global `fetch()` to a public PBS URL (that path is known-broken from Cloudflare's network — see §3).
-- Cron trigger: `*/5 * * * *` (every 5 minutes, UTC — Cloudflare Cron is always UTC).
+- `CCTV_IMAGES` — R2 bucket binding (bucket name `traffic-reporter-cctv-images`), added V1.8.4 for the published-collage-image layer (`src/cctv/publishedImage.js`). R2 chosen over KV specifically for strongly-consistent read-after-write (KV is only eventually consistent, unacceptable for incident-time delivery). Confirmed created in Production; R2's own lifecycle rule auto-deletes objects after 1 day as a backstop only — the real 15-minute expiry is enforced in code on every read, never by R2 lifecycle or HTTP caching alone.
+- `PUBLIC_BASE_URL` — a plain `vars` entry (**not** a secret), added V1.8.5. This Worker's own public HTTPS origin, used only because the Cron-triggered dynamic CCTV path (`cctv/dynamicCollage.js`) has no incoming `Request` to derive an origin from the way the Admin HTTP endpoints do. Falls back safely to this same value if the var is ever absent/misconfigured.
+- Cron trigger: `*/10 * * * *` (every 10 minutes, UTC — Cloudflare Cron is always UTC). See §2a for the full production cadence (PBS every tick, TDX gated to every 2nd tick within broadcast hours).
 
 Configured as Cloudflare Secrets (outside this repo, set via dashboard/`wrangler secret`):
 - `TDX_CLIENT_ID`, `TDX_CLIENT_SECRET` — TDX OAuth client credentials.
@@ -142,6 +176,11 @@ If any of these are missing, the affected subsystem fails closed (see §5) — t
 | `line:notified-state` | `src/traffic/notified.js` | per-(event, target) "already pushed this fingerprint" state |
 | `pbs:lifecycle-state` | `src/pbs/lifecycle.js` | PBS-specific active/cleared/stale tracking, deliberately separate from TDX's dedupe-state |
 | `tdx:oauth-token-v1` | `src/tdx/auth.js` | shared TDX OAuth access token cache (memory → this KV key → real OAuth), cuts token-request volume across isolates |
+| `line:incident-suppression-state` | `src/traffic/incidentSuppression.js` | V1.5.1 — tracks the same real-world incident across ticks (road/direction group + KM within `INCIDENT_MAX_KM_DIFF`) so an unchanged re-tick doesn't re-notify |
+| `cctv:freeway-metadata:v1` | `src/cctv/freewayCctvMetadataCache.js` | V1.8.5 — shared, broadcast-facing CCTV camera-inventory cache (RoadID/RoadDirection/LocationMile/VideoStreamURL), 7-day TTL. Written only as a side effect of the Admin Hsinchu probe's own TDX call; read cache-only by the real broadcast path — **never** written or triggered by `scheduled.js`/`broadcastPipeline.js` itself |
+| `admin:cctv-probe-used:v1` | `src/tdx/hsinchuCctvProbe.js` | V1.7 — one-time PRE-ARM guard for the general/fixed-target admin CCTV probe's own TDX call |
+| `admin:cctv-hsinchu-probe-used:v1` | `src/tdx/hsinchuCctvProbe.js` | V1.7/V1.8.5 — PRE-ARM guard specific to the Hsinchu admin probe; currently `completed`. Don't reset/rerun during normal Production operation — see §13 |
+| `admin:cctv-hsinchu-candidates:v1` | `src/tdx/hsinchuCctvProbe.js` | V1.7 — the fixed-target (82.1K) admin probe's persisted 4-quadrant candidate list, 1-hour TTL. Used only by the manual `/admin/cctv-hsinchu-*` preview endpoints, unrelated to the real broadcast path's own cache above |
 
 Never assume a key not in this table exists — `grep -rn "_KEY = " src/` to double check if you suspect drift.
 
@@ -158,6 +197,15 @@ Never assume a key not in this table exists — `grep -rn "_KEY = " src/` to dou
 
 None of these ever include: TDX client id/secret, LINE token/secret, PBS relay token, full LINE user/group IDs (targets are counts only), or the TDX OAuth access token.
 
+**CCTV admin surface (V1.7/V1.8.x), all also Admin-Basic-Auth-gated, same as above:**
+- `GET /admin/cctv-probe` — V1.7 general one-time probe (guarded by `admin:cctv-probe-used:v1`).
+- `GET /admin/cctv-hsinchu-probe` — the Hsinchu-specific one-time probe; its TDX response is also what seeds the broadcast-facing `cctv:freeway-metadata:v1` cache (§7) as a side effect. Guarded by `admin:cctv-hsinchu-probe-used:v1`. **Don't rerun during normal Production operation** — see §13.
+- `GET /admin/cctv-hsinchu-frame/0..3` — fetches one quadrant's live frame directly from `*.freeway.gov.tw`, no TDX call.
+- `GET /admin/cctv-hsinchu-collage` — composes the 2×2 preview JPEG from the cached candidate list, no TDX call.
+- `GET /admin/cctv-hsinchu-publish-test` — manual R2 publish-and-read-back test for the fixed 82.1K target.
+
+**One deliberately unauthenticated public route:** `GET /cctv/image/:id` (`src/cctv/publishedImage.js`) — serves a published collage image to LINE's own servers, which fetch it with no credential. Security here is via a 128-bit opaque id (unguessable) plus the code-enforced 15-minute `expiresAt` check on every read, not HTTP Basic Auth — this route is intentionally excluded from the Admin-Auth gate that covers every other endpoint in this section.
+
 ---
 
 ## 9. The "v1-bootstrap" trap
@@ -170,13 +218,17 @@ This string has **never been updated since the original bootstrap commit** and d
 
 ---
 
-## 10. Known issues / unverified things (as of `4efb9e5`)
+## 10. Known issues / unverified things (as of `97756a8`, V1.8.5)
+
+Current full-suite test baseline: **636/638 passing.** The 2 failures are the pre-existing, unrelated `pbs-relay/tests/*` failures in item 5 below — don't fix them as a drive-by while working on something else; ask first if they ever seem in scope.
 
 1. **VD (Vehicle Detector) schema is unverified against a live TDX response.** `src/tdx/vdSpeed.js` fetches `v2/Road/Traffic/VD/Freeway` (static metadata) and `v2/Road/Traffic/Live/VD/Freeway` (live speed) and joins them. Every session that built this feature had its network egress blocked from `tdx.transportdata.tw`, so field names are best-effort against TDX's established naming conventions, deliberately read via multiple candidate names so a mismatch degrades to "no usable reading" rather than crashing (see `vdSpeed.js`'s own module comment for the full reasoning). **This currently has near-zero user-visible impact**: since V1.5, congestion is never broadcast regardless of VD outcome, so a wrong VD schema silently means "congestion severity in `/debug/status` never shows 'severe'" — nothing breaks, nothing over- or under-broadcasts. Only worth fixing if congestion broadcasting is ever re-enabled for a future round.
 2. **The `construction`/`other` keyword lists (§4) are a first pass**, not derived from real 新竹 incident text. Expect false negatives (a real impassable-road report using different wording) more than false positives. Tune the pattern lists in `broadcastRules.js` directly as real cases surface — that's expected, ongoing maintenance, not a bug to "fix" architecturally.
 3. **Only one subscriber exists** (the Alpha tester). Multi-subscriber behavior (the `enabledAt` backfill guard, per-target notified-state, partial-push-failure retry) is unit/integration tested but not exercised by real multi-user traffic yet.
 4. **Congestion clustering (`congestionCluster.js`) and the congestion-specific cooldown (`notified.js`'s `targetNeedsCongestionNotification`) are effectively dead code in the live broadcast path** since V1.5 — congestion is filtered out before either ever runs. Both are kept (not deleted) and still unit-tested, in case a future round re-admits some congestion tier to broadcast. Don't be surprised that they exist but never fire; don't delete them without asking.
 5. **`pbs-relay/tests/`** (a separate, not-wired-in sub-project for an alternate Render-hosted relay, superseded by the Windows Relay + VPC approach) has 2 failing tests due to a missing `pbs-relay/src/cache.js` file. This predates all V1.2C+ work in this document and is unrelated to the live Worker — `git stash` was used to confirm it fails identically on a clean `origin/main` checkout, multiple rounds ago. Not a regression, not urgent, not in scope unless someone asks about `pbs-relay/` specifically.
+6. **CCTV auto-image support is 國道一號 only (V1.8.5).** Other roads TDX/`roadSectionLabel.js` already know for section labels (e.g. 國道三號) still have no confirmed CCTV `RoadID`, since TDX egress has never been reachable from any dev sandbox this project was built in — every CCTV RoadID/pattern in `CCTV_SUPPORTED_ROADS` was confirmed only from a real Production response. Not a bug — just scope, see §13 before expanding it.
+7. **`cctv:freeway-metadata:v1` has a 7-day TTL and does not refresh itself.** Once it expires, the broadcast path's CCTV enrichment fails closed to `metadata-cache-unavailable` (text-only) until a human manually reruns the Admin Hsinchu probe. This is a known, accepted operational rhythm, not a bug — see §13.
 
 ---
 
@@ -214,6 +266,8 @@ Key rollback points if a specific round's change is suspect:
 - Don't re-investigate the VPC/Tunnel/PBS-relay-auth history (400s, 401s, token format) — it's solved. Only revisit if production actually shows a new failure there.
 - Don't flip `PBS_BROADCAST_ENABLED` or expand who's subscribed without explicit instruction — both are deliberate, narrow Alpha-stage choices.
 - Don't delete `congestionCluster.js`/`notified.js`'s congestion-cooldown code just because it's currently unreachable (§10 item 4).
+- Don't rerun/reset the Admin Hsinchu CCTV probe (`admin:cctv-hsinchu-probe-used:v1`) during normal Production operation — it's a one-time-use guard, and rerunning it makes a real, separately-budgeted TDX call. Only reset+rerun it if `cctv:freeway-metadata:v1` has actually expired (7-day TTL, §7/§10 item 7) and the broadcast-facing CCTV cache genuinely needs a refresh — not to test something, not "just to check it still works."
+- Don't add another road (e.g. 國3) to `CCTV_SUPPORTED_ROADS` without first confirming its real CCTV `RoadID`/`RoadName` pattern from an actual Production TDX CCTV response (§10 item 6) — never from "the numbering probably matches 國1's."
 
 ---
 
@@ -301,7 +355,7 @@ Result: **at most 4 cameras**, one per quadrant, each quadrant independently emp
 
 ---
 
-## V1.8.3 — 四宮格顯示文字全面中文化 (collage display text fully localized to Traditional Chinese)
+## 16. V1.8.3 — 四宮格顯示文字全面中文化 (collage display text fully localized to Traditional Chinese)
 
 **Goal:** a taxi/for-hire driver reading the collage in LINE should understand it at a glance ("讓計程車／營業車司機在 LINE 上一眼就看懂"). This round changes ONLY the collage's on-image text and layout — selection logic, TDX calls, CCTV fetch behavior, and the collage endpoint's own orchestration are all unchanged.
 
@@ -349,7 +403,7 @@ Result: **at most 4 cameras**, one per quadrant, each quadrant independently emp
 
 ---
 
-## V1.8.5 — Dynamic per-accident CCTV + LINE「事故文字 + 1 張四宮格」
+## 17. V1.8.5 — Dynamic per-accident CCTV + LINE「事故文字 + 1 張四宮格」
 
 **Goal:** wire the V1.8/V1.8.3/V1.8.4 CCTV collage pipeline into the REAL LINE broadcast, without ever sending the wrong location's CCTV image. Until this round, `hsinchuCctvProbe.js`'s four-quadrant selector had only ever run against one fixed test target (國道一號 82K+100). Naively importing that fixed target into `broadcastPipeline.js` would have attached that same 82K+100 image to every accident's LINE message, regardless of where the accident actually was — this round exists specifically to prevent that.
 
