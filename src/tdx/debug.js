@@ -1,7 +1,16 @@
 // GET /debug/tdx — fetches the production TDX sources and reports, per
 // source, how many records were found, a small sample, and any error.
-// Never touches KV/D1 and never schedules anything; this is a one-shot
-// fetch for manual/CI verification.
+// Never schedules anything; this is a one-shot fetch for manual/CI
+// verification. CORRECTED comment (V1.8.6): this handler does NOT touch
+// KV/D1 in the traffic/dedupe/notified sense — no operational state is
+// ever read or written here. The one exception is deliberate and
+// isolated: it writes an append-only TDX usage-telemetry entry (see
+// ../tdx/usageLedger.js, context='debug-tdx') so a human opening this
+// URL is visible on /health's "人工額外呼叫" line instead of silently
+// inflating what looks like Production's own count. That write can never
+// affect this handler's own response, and a usage-ledger KV outage
+// degrades to "this call's usage entry is missing," never to an error
+// here.
 //
 // V1.6.2: restricted to PRODUCTION_TDX_SOURCE_IDS (freeway+highway) —
 // CMS/Bus Alert are retired from production entirely (see V1.6.1) and

@@ -17,8 +17,9 @@ import {
   readTdxUsageSummary,
   taipeiDateString,
   theoreticalProductionCallsToday,
+  theoreticalProductionCallsForDay,
+  isPartialTrackingDay,
   aggregateUsageForMonth,
-  PRODUCTION_TDX_CALLS_PER_DAY,
 } from '../tdx/usageLedger.js';
 
 const STALE_WARNING_MS = 10 * 60 * 1000; // 10 min — "資料更新延遲"
@@ -294,6 +295,7 @@ function emptyDayTotals() {
     payloadBytesEstimate: 0,
     bySource: {},
     byContext: {},
+    byContextSource: {},
   };
 }
 
@@ -316,13 +318,20 @@ function renderTdxUsageBody(summary, now) {
   const days = (summary && summary.days) || {};
   const todayStr = taipeiDateString(now);
   const today = days[todayStr] || emptyDayTotals();
+  const trackingStartedAt = summary && summary.trackingStartedAt;
 
-  const theoreticalToday = theoreticalProductionCallsToday(now);
+  const theoreticalToday = theoreticalProductionCallsToday(now, trackingStartedAt);
   const diffToday = (today.totalDataCalls || 0) - theoreticalToday;
   const manualToday = today.manualDataCalls || 0;
+  const todayIsPartialTracking = isPartialTrackingDay(todayStr, trackingStartedAt);
 
+  // V1.8.6 CORRECTION — "Production" must read ONLY the production-cron
+  // slice of the 2D byContextSource breakdown, never the marginal
+  // `bySource` total (which also includes whatever a human's /debug/status
+  // or /debug/tdx call added for the same source buckets).
+  const todayProductionSource = (today.byContextSource && today.byContextSource['production-cron']) || {};
   const todaySourceRows = Object.entries(USAGE_SOURCE_LABELS)
-    .map(([key, label]) => `<li><span>${escapeHtml(label)}</span><span>${(today.bySource && today.bySource[key]) || 0}</span></li>`)
+    .map(([key, label]) => `<li><span>${escapeHtml(label)}</span><span>${todayProductionSource[key] || 0}</span></li>`)
     .join('');
 
   const todayContextRows = Object.entries(USAGE_CONTEXT_LABELS)
@@ -343,10 +352,12 @@ function renderTdxUsageBody(summary, now) {
       if (!row) {
         return `<tr><td>${escapeHtml(displayDate(date))}</td><td colspan="6" style="text-align:center;color:#999;">尚無資料</td></tr>`;
       }
-      const theoretical = date === todayStr ? theoreticalToday : PRODUCTION_TDX_CALLS_PER_DAY;
+      const theoretical = date === todayStr ? theoreticalToday : theoreticalProductionCallsForDay(date, trackingStartedAt);
       const diff = (row.totalDataCalls || 0) - theoretical;
+      const partial = isPartialTrackingDay(date, trackingStartedAt);
+      const dateCell = partial ? `${escapeHtml(displayDate(date))}<br><span class="hint" style="margin:0;">部分日</span>` : escapeHtml(displayDate(date));
       return `<tr>
-        <td>${escapeHtml(displayDate(date))}</td>
+        <td>${dateCell}</td>
         <td>${row.productionDataCalls || 0}</td>
         <td>${row.manualDataCalls || 0}</td>
         <td>${row.totalDataCalls || 0}</td>
@@ -357,6 +368,10 @@ function renderTdxUsageBody(summary, now) {
     })
     .join('');
 
+  const partialTrackingNotice = todayIsPartialTracking
+    ? `<p class="hint">⚠️ 部分日（自 ${escapeHtml(formatTaipeiTime(new Date(trackingStartedAt)))} 開始追蹤）——今日理論值只計算開始追蹤之後應發生的排程次數，不是完整 08:00 起算的 84 次。</p>`
+    : '';
+
   return `
   <div class="card">
     <h2>TDX 用量對帳</h2>
@@ -365,6 +380,7 @@ function renderTdxUsageBody(summary, now) {
     <div class="row"><span class="label">差額</span><span class="value ${diffClass(diffToday)}">${diffLabel(diffToday)} 次</span></div>
     <div class="row"><span class="label">今日估算流量</span><span class="value">${formatBytesEstimate(today.payloadBytesEstimate)}</span></div>
     <div class="row"><span class="label">人工額外呼叫</span><span class="value">${manualToday} 次</span></div>
+    ${partialTrackingNotice}
     <p class="hint">理論值依目前時間與 08:00–22:00／每 20 分鐘排程動態計算；估算流量為「本地估算傳輸量」，可能與 TDX 官方傳輸量口徑不同（壓縮／計費方式可能不同），僅供長期校正參考。</p>
   </div>
 

@@ -25,6 +25,8 @@ import {
   taipeiDateString,
   productionWindowsElapsedToday,
   theoreticalProductionCallsToday,
+  theoreticalProductionCallsForDay,
+  isPartialTrackingDay,
   PRODUCTION_TDX_CALLS_PER_DAY,
   USAGE_ENTRY_KEY_PREFIX,
   USAGE_SUMMARY_KEY,
@@ -501,4 +503,172 @@ test('commitTdxUsageBatch is a no-op (not committed) for an empty or missing rec
   assert.equal((await commitTdxUsageBatch(kvStore, { context: 'production-cron', records: [] })).committed, false);
   assert.equal((await commitTdxUsageBatch(kvStore, { context: 'production-cron', records: undefined })).committed, false);
   assert.equal(kvStore.store.size, 0);
+});
+
+// ===========================================================================
+// CORRECTION ROUND (post-review) — 3 reconciliation-correctness blockers:
+//   1. trackingStartedAt: no false negative diff on a mid-day first tracking
+//      day; never reset by later compactions; a subsequent full day is a
+//      normal 84.
+//   2. byContextSource: Production and Debug/Admin source counts must never
+//      mix into a shared "Production" number.
+//   3. Cross-midnight invocations attribute each record by its OWN
+//      timestamp's Asia/Taipei date, not the invocation's `now`.
+// ===========================================================================
+
+test('1. first tracking day started mid-day (20:32) does not produce a false negative diff at 20:40', async () => {
+  const kvStore = kv();
+  const trackingStart = new Date('2026-08-18T20:32:00+08:00');
+  // First-ever compaction, 0 TDX calls this particular tick (e.g. a
+  // skipped-by-schedule tick right after deploy) — trackingStartedAt
+  // still gets set here; it marks when the LEDGER started existing, not
+  // necessarily when the first real data call happened.
+  await compactTdxUsageSummaryForToday(kvStore, trackingStart);
+  let read = await readTdxUsageSummary(kvStore);
+  assert.equal(read.summary.trackingStartedAt, trackingStart.toISOString());
+
+  // The next real scheduled tick, 20:40 — freeway+highway fetched.
+  const tickTime = new Date('2026-08-18T20:40:00+08:00');
+  await commitTdxUsageBatch(kvStore, {
+    context: 'production-cron',
+    now: tickTime,
+    records: [
+      { kind: 'data', source: 'freeway', timestamp: tickTime.toISOString(), attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 100 },
+      { kind: 'data', source: 'highway', timestamp: tickTime.toISOString(), attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 50 },
+    ],
+  });
+  await compactTdxUsageSummaryForToday(kvStore, tickTime);
+  read = await readTdxUsageSummary(kvStore);
+
+  const today = read.summary.days[taipeiDateString(tickTime)];
+  assert.equal(today.totalDataCalls, 2);
+
+  const theoretical = theoreticalProductionCallsToday(tickTime, read.summary.trackingStartedAt);
+  assert.equal(theoretical, 2); // NOT 78 — the false-negative the old 08:00-onward baseline would have shown
+  assert.equal(today.totalDataCalls - theoretical, 0);
+});
+
+test('2. trackingStartedAt is set exactly once and never reset by any later compaction, even across days', async () => {
+  const kvStore = kv();
+  const first = new Date('2026-08-18T20:32:00+08:00');
+  await compactTdxUsageSummaryForToday(kvStore, first);
+  let read = await readTdxUsageSummary(kvStore);
+  assert.equal(read.summary.trackingStartedAt, first.toISOString());
+
+  await compactTdxUsageSummaryForToday(kvStore, new Date('2026-08-18T21:00:00+08:00'));
+  await compactTdxUsageSummaryForToday(kvStore, new Date('2026-08-19T09:00:00+08:00'));
+  await compactTdxUsageSummaryForToday(kvStore, new Date('2026-08-20T09:00:00+08:00'));
+
+  read = await readTdxUsageSummary(kvStore);
+  assert.equal(read.summary.trackingStartedAt, first.toISOString());
+});
+
+test('3. the second (full) tracking day has the normal complete theoretical baseline of 84, not a partial one', async () => {
+  const kvStore = kv();
+  await compactTdxUsageSummaryForToday(kvStore, new Date('2026-08-18T20:32:00+08:00')); // first, partial day
+  const { summary } = await readTdxUsageSummary(kvStore);
+
+  const secondDayNow = new Date('2026-08-19T22:00:00+08:00'); // full day elapsed
+  assert.equal(theoreticalProductionCallsToday(secondDayNow, summary.trackingStartedAt), PRODUCTION_TDX_CALLS_PER_DAY);
+  assert.equal(theoreticalProductionCallsForDay('2026-08-19', summary.trackingStartedAt), PRODUCTION_TDX_CALLS_PER_DAY);
+  assert.equal(isPartialTrackingDay('2026-08-19', summary.trackingStartedAt), false);
+  assert.equal(isPartialTrackingDay('2026-08-18', summary.trackingStartedAt), true); // the actual tracking-start day IS partial
+});
+
+test('4/5. byContextSource keeps Production and Debug/Admin source counts fully separate — Production reads ONLY byContextSource, never the marginal bySource total', () => {
+  const date = '2026-08-18';
+  const productionBatch = {
+    context: 'production-cron',
+    date,
+    records: [
+      ...Array.from({ length: 37 }, () => ({ kind: 'data', source: 'freeway', attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 10 })),
+      ...Array.from({ length: 37 }, () => ({ kind: 'data', source: 'highway', attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 10 })),
+    ],
+  };
+  const debugBatch = {
+    context: 'debug-status',
+    date,
+    records: [
+      { kind: 'data', source: 'freeway', attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 10 },
+      { kind: 'data', source: 'highway', attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 10 },
+    ],
+  };
+  const row = buildDayRowFromEntries(date, [productionBatch, debugBatch]);
+
+  assert.equal(row.totalDataCalls, 76);
+  assert.equal(row.productionDataCalls, 74);
+  assert.equal(row.manualDataCalls, 2);
+
+  // The health page's "Production" block must read ONLY this:
+  assert.equal(row.byContextSource['production-cron'].freeway, 37);
+  assert.equal(row.byContextSource['production-cron'].highway, 37);
+  // The marginal bySource total is 38/38 (Production + Debug mixed) —
+  // proving exactly the bug this correction fixes, and that it must
+  // never be what the "Production" UI block reads from.
+  assert.equal(row.bySource.freeway, 38);
+  assert.equal(row.bySource.highway, 38);
+  // Debug's own slice stays fully isolated too.
+  assert.equal(row.byContextSource['debug-status'].freeway, 1);
+  assert.equal(row.byContextSource['debug-status'].highway, 1);
+});
+
+test('6. records straddling Asia/Taipei midnight are attributed to their OWN date, split into up to 2 append-only entries', async () => {
+  const kvStore = kv();
+  const invocationNow = new Date('2026-08-18T23:59:59+08:00'); // the invocation itself started just before midnight
+  const beforeMidnight = new Date('2026-08-18T23:59:59+08:00');
+  const afterMidnight = new Date('2026-08-19T00:00:05+08:00'); // resolved just after midnight
+
+  const commit = await commitTdxUsageBatch(kvStore, {
+    context: 'admin-cctv',
+    now: invocationNow,
+    records: [
+      { kind: 'data', source: 'cctv-hsinchu-probe', timestamp: beforeMidnight.toISOString(), attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 10 },
+      { kind: 'oauth', timestamp: afterMidnight.toISOString(), success: true, httpStatus: 200 },
+    ],
+  });
+
+  assert.equal(commit.committed, true);
+  assert.equal(commit.keys.length, 2);
+
+  const bodies = commit.keys.map((k) => JSON.parse(kvStore.store.get(k)));
+  const day18 = bodies.find((b) => b.date === '2026-08-18');
+  const day19 = bodies.find((b) => b.date === '2026-08-19');
+  assert.ok(day18 && day19);
+  assert.equal(day18.records.length, 1);
+  assert.equal(day18.records[0].kind, 'data');
+  assert.equal(day19.records.length, 1);
+  assert.equal(day19.records[0].kind, 'oauth');
+
+  // And compaction correctly attributes each to its own day.
+  const row18 = buildDayRowFromEntries('2026-08-18', [day18]);
+  const row19 = buildDayRowFromEntries('2026-08-19', [day19]);
+  assert.equal(row18.totalDataCalls, 1);
+  assert.equal(row18.oauthRequests, 0);
+  assert.equal(row19.totalDataCalls, 0);
+  assert.equal(row19.oauthRequests, 1);
+});
+
+test('7. a normal (non-midnight-straddling) invocation still writes exactly ONE batch entry', async () => {
+  const kvStore = kv();
+  const now = new Date('2026-08-18T09:00:00+08:00');
+  const commit = await commitTdxUsageBatch(kvStore, {
+    context: 'production-cron',
+    now,
+    records: [
+      { kind: 'data', source: 'freeway', timestamp: now.toISOString(), attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 10 },
+      { kind: 'data', source: 'highway', timestamp: now.toISOString(), attempted: true, success: true, httpStatus: 200, payloadBytesEstimate: 10 },
+    ],
+  });
+  assert.equal(commit.keys.length, 1);
+  assert.equal(kvStore.store.size, 1);
+});
+
+test('a real Cron tick (freeway+highway, same-day timestamps) still produces exactly one usage-ledger KV key end to end', async () => {
+  const kvStore = kv();
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockTdxFetch({ freewayEvents: [] });
+  const now = new Date('2026-08-18T08:00:00+08:00');
+  await runScheduledTdxSync({ TDX_CLIENT_ID: 'id', TDX_CLIENT_SECRET: 'secret', TRAFFIC_KV: kvStore, PBS_RELAY_WINDOWS: undefined }, now);
+  const usageKeys = [...kvStore.store.keys()].filter((k) => k.startsWith(USAGE_ENTRY_KEY_PREFIX));
+  assert.equal(usageKeys.length, 1);
 });

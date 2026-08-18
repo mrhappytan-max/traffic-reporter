@@ -157,16 +157,40 @@ export function recordTdxOAuthCall(usageSink, { success, httpStatus = null, now 
  * persistHealthSnapshot/persistProductionTdxEventCache (see
  * scheduled.js), so a usage-ledger outage can never affect the real
  * TDX/PBS/LINE pipeline it's observing.
+ *
+ * V1.8.6 CORRECTION — daily attribution by each record's OWN timestamp,
+ * not the invocation's `now`. A human-triggered Debug/Admin call that
+ * happens to straddle Asia/Taipei midnight (started 23:59, a slow
+ * request resolves at 00:00) would otherwise misattribute a late-night
+ * call to the wrong calendar day, throwing off the daily reconciliation
+ * against TDX's own official PER-DAY dashboard by 1-2 calls. Records are
+ * grouped by `taipeiDateString(record.timestamp)` and written as
+ * SEPARATE append-only entries — still append-only, still one entry per
+ * (invocation, date) pair, never a shared counter. The overwhelmingly
+ * common case (an invocation entirely within one calendar day, which is
+ * every Production Cron tick by construction — a single tick can't
+ * itself take 24h) still writes exactly ONE entry.
  */
 export async function commitTdxUsageBatch(kv, { context, now = new Date(), records }) {
   if (!kv) return { committed: false, reason: 'no-kv' };
   if (!Array.isArray(records) || records.length === 0) return { committed: false, reason: 'no-records' };
   try {
-    const date = taipeiDateString(now);
-    const key = `${USAGE_ENTRY_KEY_PREFIX}:${date}:${now.getTime()}:${opaqueId()}`;
-    const body = { context: normalizeContext(context), date, createdAt: now.toISOString(), records };
-    await kv.put(key, JSON.stringify(body), { expirationTtl: USAGE_ENTRY_TTL_SECONDS });
-    return { committed: true, key };
+    const byDate = new Map();
+    for (const rec of records) {
+      const recordMoment = rec && rec.timestamp ? new Date(rec.timestamp) : now;
+      const date = taipeiDateString(Number.isFinite(recordMoment.getTime()) ? recordMoment : now);
+      if (!byDate.has(date)) byDate.set(date, []);
+      byDate.get(date).push(rec);
+    }
+
+    const keys = [];
+    for (const [date, dateRecords] of byDate) {
+      const key = `${USAGE_ENTRY_KEY_PREFIX}:${date}:${now.getTime()}:${opaqueId()}`;
+      const body = { context: normalizeContext(context), date, createdAt: now.toISOString(), records: dateRecords };
+      await kv.put(key, JSON.stringify(body), { expirationTtl: USAGE_ENTRY_TTL_SECONDS });
+      keys.push(key);
+    }
+    return { committed: true, key: keys[0], keys };
   } catch (err) {
     return { committed: false, reason: 'kv-error', error: safeErrorMessage(err) };
   }
@@ -174,11 +198,27 @@ export async function commitTdxUsageBatch(kv, { context, now = new Date(), recor
 
 // --- Compaction: Cron-driven, today-only, cheap ---
 
+function emptySourceCounts() {
+  return Object.fromEntries([...KNOWN_SOURCE_BUCKETS, 'other'].map((s) => [s, 0]));
+}
+
 function emptyDayRow(date) {
   return {
     date,
-    bySource: Object.fromEntries([...KNOWN_SOURCE_BUCKETS, 'other'].map((s) => [s, 0])),
+    // V1.8.6 CORRECTION — bySource/byContext are kept for backward-
+    // compatible/simple totals, but they are marginal aggregates:
+    // bySource mixes Production and Debug/Admin calls for the same
+    // source together (a human running /debug/status DOES add to
+    // bySource.freeway), so the health page must NEVER read bySource and
+    // label it "Production" — see byContextSource below, which is the
+    // only correct source of a per-context, per-source breakdown.
+    bySource: emptySourceCounts(),
     byContext: Object.fromEntries([...KNOWN_CONTEXTS, 'other'].map((c) => [c, 0])),
+    // { context: { sourceBucket: count } } — the 2D breakdown the health
+    // page's "Production" block must read from (byContextSource['production-cron']),
+    // so a manually-triggered /debug/status call can never silently
+    // inflate what's displayed as Production's own freeway/highway count.
+    byContextSource: Object.fromEntries([...KNOWN_CONTEXTS, 'other'].map((c) => [c, emptySourceCounts()])),
     totalDataCalls: 0,
     productionDataCalls: 0,
     manualDataCalls: 0,
@@ -203,6 +243,8 @@ export function buildDayRowFromEntries(date, entryBodies) {
       const bucket = normalizeSourceBucket(rec.source);
       row.bySource[bucket] = (row.bySource[bucket] || 0) + 1;
       row.byContext[context] = (row.byContext[context] || 0) + 1;
+      if (!row.byContextSource[context]) row.byContextSource[context] = emptySourceCounts();
+      row.byContextSource[context][bucket] = (row.byContextSource[context][bucket] || 0) + 1;
       row.totalDataCalls += 1;
       if (context === 'production-cron') row.productionDataCalls += 1;
       else row.manualDataCalls += 1;
@@ -268,6 +310,16 @@ export async function readTdxUsageSummary(kv) {
  * incrementing anything), and merges it into the persisted summary
  * alongside every other day's already-frozen row. Best-effort: never
  * throws, never affects the caller's real Cron run either way.
+ *
+ * V1.8.6 CORRECTION — `trackingStartedAt`: set ONCE, on the very first
+ * compaction this Worker ever runs (`existing.trackingStartedAt` absent),
+ * and preserved byte-for-byte on every compaction after that — never
+ * reset by a later Cron tick. This exists so a Worker deployed mid-day
+ * (e.g. 20:32) doesn't compare "calls so far today" against the FULL
+ * 08:00-onward theoretical baseline, which would immediately show a
+ * large, false negative diff for windows that fired before the ledger
+ * even existed — see theoreticalProductionCallsToday/
+ * theoreticalProductionCallsForDay below, which both take this value.
  */
 export async function compactTdxUsageSummaryForToday(kv, now = new Date()) {
   if (!kv) return { committed: false, reason: 'no-kv' };
@@ -279,8 +331,9 @@ export async function compactTdxUsageSummaryForToday(kv, now = new Date()) {
 
     const { summary: existing } = await readTdxUsageSummary(kv);
     const days = pruneOldDays({ ...((existing && existing.days) || {}), [date]: todayRow }, now);
+    const trackingStartedAt = (existing && existing.trackingStartedAt) || now.toISOString();
 
-    const summary = { schemaVersion: 1, updatedAt: now.toISOString(), days };
+    const summary = { schemaVersion: 1, trackingStartedAt, updatedAt: now.toISOString(), days };
     await kv.put(USAGE_SUMMARY_KEY, JSON.stringify(summary));
     return { committed: true, date };
   } catch (err) {
@@ -331,7 +384,65 @@ export function productionWindowsElapsedToday(now = new Date()) {
   return hoursCompleted * 3 + windowsThisHour;
 }
 
-/** Theoretical Production TDX data-call count "so far today", live-computed — see module comment above. */
-export function theoreticalProductionCallsToday(now = new Date()) {
-  return productionWindowsElapsedToday(now) * PRODUCTION_TDX_SOURCES_PER_WINDOW;
+/**
+ * How many of the 42 daily windows had ALREADY fired by the moment
+ * tracking started — i.e. windows that can never be attributed to this
+ * Worker's own ledger, because they happened before the ledger existed.
+ * 0 if tracking hasn't started yet (no summary written) — treated as "no
+ * correction needed", which correctly reduces to the plain full-schedule
+ * baseline everywhere below.
+ */
+function windowsBeforeTrackingStarted(trackingStartedAt) {
+  if (!trackingStartedAt) return 0;
+  const start = new Date(trackingStartedAt);
+  if (!Number.isFinite(start.getTime())) return 0;
+  return productionWindowsElapsedToday(start);
+}
+
+/**
+ * Theoretical Production TDX data-call count "so far today", live-
+ * computed — see module comment above. `trackingStartedAt` (from
+ * tdx:usage:summary:v1, immutable once set — see
+ * compactTdxUsageSummaryForToday) makes this tracking-aware: on the
+ * calendar day tracking began, only windows AT OR AFTER that moment
+ * count toward the theoretical baseline — a Worker that started tracking
+ * at 20:32 must never be compared against the full 08:00-onward
+ * baseline, which would show a large false negative diff for windows
+ * that fired before the ledger existed. On every subsequent day (or when
+ * trackingStartedAt is absent/unknown), this is unchanged from the plain
+ * full-schedule baseline.
+ */
+export function theoreticalProductionCallsToday(now = new Date(), trackingStartedAt = null) {
+  const windowsNow = productionWindowsElapsedToday(now);
+  if (trackingStartedAt && taipeiDateString(new Date(trackingStartedAt)) === taipeiDateString(now)) {
+    const windowsAtStart = windowsBeforeTrackingStarted(trackingStartedAt);
+    return Math.max(0, windowsNow - windowsAtStart) * PRODUCTION_TDX_SOURCES_PER_WINDOW;
+  }
+  return windowsNow * PRODUCTION_TDX_SOURCES_PER_WINDOW;
+}
+
+/**
+ * Theoretical Production TDX data-call count for a COMPLETE calendar day
+ * (used by /health's 30-day reconciliation table for every day except
+ * today, which uses theoreticalProductionCallsToday above instead) — the
+ * full PRODUCTION_TDX_CALLS_PER_DAY (84), UNLESS `dateStr` is the exact
+ * calendar day tracking started, in which case only the windows from
+ * that moment through end-of-day are theoretically trackable. See
+ * isPartialTrackingDay — the health page must label that one day as a
+ * partial day, never display it as if it were a normal complete 84.
+ */
+export function theoreticalProductionCallsForDay(dateStr, trackingStartedAt) {
+  if (isPartialTrackingDay(dateStr, trackingStartedAt)) {
+    const windowsAtStart = windowsBeforeTrackingStarted(trackingStartedAt);
+    return Math.max(0, PRODUCTION_TDX_WINDOWS_PER_DAY - windowsAtStart) * PRODUCTION_TDX_SOURCES_PER_WINDOW;
+  }
+  return PRODUCTION_TDX_CALLS_PER_DAY;
+}
+
+/** True only for the single Asia/Taipei calendar day tracking began on. */
+export function isPartialTrackingDay(dateStr, trackingStartedAt) {
+  if (!trackingStartedAt) return false;
+  const start = new Date(trackingStartedAt);
+  if (!Number.isFinite(start.getTime())) return false;
+  return taipeiDateString(start) === dateStr;
 }
