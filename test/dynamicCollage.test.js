@@ -1,16 +1,24 @@
 // V1.8.5 — src/cctv/dynamicCollage.js: dynamic, per-accident CCTV image
 // preparation. No real TDX/R2/network calls anywhere in this file — every
 // fetch is mocked, R2/KV are in-memory mocks.
+//
+// CORRECTION (post-review, two Production blockers fixed):
+//   1. The broadcast-facing metadata path is now CACHE-ONLY — it must
+//      NEVER call TDX itself (enforced structurally: this module no
+//      longer imports anything TDX-related at all). A cache miss/expiry
+//      is 'metadata-cache-unavailable', not a TDX call.
+//   2. prepareCctvImageForEvent now has a hard time budget
+//      (CCTV_PREPARE_BUDGET_MS, overridable per-call for tests) — an
+//      overrun resolves 'prepare-timeout', not an indefinite wait.
 
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { resetTdxTokenCache } from '../src/tdx/auth.js';
-import { resolveCctvEligibility, prepareCctvImageForEvent } from '../src/cctv/dynamicCollage.js';
+import { resolveCctvEligibility, prepareCctvImageForEvent, CCTV_PREPARE_BUDGET_MS } from '../src/cctv/dynamicCollage.js';
+import { FREEWAY_METADATA_KEY, FREEWAY_METADATA_TTL_SECONDS } from '../src/cctv/freewayCctvMetadataCache.js';
 import { decodeJpeg, encodeJpeg } from './testJpegCodec.js';
 
 const TEST_CODEC = { decodeJpeg, encodeJpeg };
-const TDX_CLIENT_ID = 'test-tdx-client-id-dynamic';
-const TDX_CLIENT_SECRET = 'test-tdx-client-secret-dynamic';
 
 function kv(initial) {
   const store = new Map(Object.entries(initial || {}));
@@ -19,8 +27,9 @@ function kv(initial) {
     async get(key) {
       return store.get(key) ?? null;
     },
-    async put(key, value, _options) {
+    async put(key, value, options = {}) {
       store.set(key, value);
+      this.lastPutOptions = options;
     },
   };
 }
@@ -45,10 +54,12 @@ function r2Bucket({ failPut } = {}) {
   };
 }
 
+function metadataEnvelope(records) {
+  return JSON.stringify({ records, fetchedAt: new Date().toISOString() });
+}
+
 function baseEnv(overrides = {}) {
   return {
-    TDX_CLIENT_ID,
-    TDX_CLIENT_SECRET,
     TRAFFIC_KV: kv(),
     CCTV_IMAGES: r2Bucket(),
     ...overrides,
@@ -109,26 +120,18 @@ async function makeSolidJpeg(width, height, rgb) {
   return new Uint8Array(await encodeJpeg({ data, width, height }, { quality: 80 }));
 }
 
-function makeTdxFetch({ cctvRecords = ALL_RECORDS, tokenStatus = 200, cctvStatus = 200, frameJpeg } = {}) {
-  const hits = { token: 0, metadata: 0, frame: 0 };
+/** freeway.gov.tw frame fetches only — this module must NEVER call TDX at all, so any TDX-looking URL here is a bug and throws loudly. */
+function makeFrameFetch({ frameJpeg } = {}) {
+  const hits = { frame: 0, other: 0 };
   const fetchFn = async (url) => {
     const href = String(url);
-    if (href.includes('openid-connect/token')) {
-      hits.token += 1;
-      if (tokenStatus !== 200) return new Response('unauthorized', { status: tokenStatus });
-      return new Response(JSON.stringify({ access_token: 'tok', expires_in: 3600 }), { status: 200 });
-    }
-    if (href.includes('/Road/Traffic/CCTV/Freeway')) {
-      hits.metadata += 1;
-      if (cctvStatus !== 200) return new Response('error', { status: cctvStatus });
-      return new Response(JSON.stringify({ CCTVs: cctvRecords }), { status: 200 });
-    }
     if (href.includes('freeway.gov.tw')) {
       hits.frame += 1;
       if (!frameJpeg) return new Response('not found', { status: 404 });
       return new Response(frameJpeg, { status: 200 });
     }
-    throw new Error(`unexpected fetch in test: ${href}`);
+    hits.other += 1;
+    throw new Error(`unexpected non-freeway.gov.tw fetch in test (this module must never call TDX): ${href}`);
   };
   return { fetchFn, hits };
 }
@@ -152,8 +155,6 @@ test('1. an eligible freeway accident with startKM/endKM resolves a DYNAMIC targ
   const e2 = resolveCctvEligibility(accidentEvent({ startKM: '30K+000', endKM: '30K+000' }));
   assert.equal(e2.eligible, true);
   assert.equal(e2.targetKm, 30);
-  // Never silently defaults to the old fixed 82.1 for an event that
-  // plainly reports a different location.
   assert.notEqual(e2.targetKm, 82.1);
 });
 
@@ -194,26 +195,21 @@ test('non-accident and non-freeway events are never eligible', async () => {
 });
 
 // =======================================================================
-// prepareCctvImageForEvent — full orchestration, mocked network
+// prepareCctvImageForEvent — full orchestration, mocked network, cache-only metadata
 // =======================================================================
 
 test('2. a different accident KM selects DIFFERENT cameras than a nearby one', async () => {
-  const envAt82 = baseEnv();
-  const { fetchFn: fetchFn82 } = makeTdxFetch({ frameJpeg: await makeSolidJpeg(80, 60, [10, 20, 30]) });
+  const envAt82 = baseEnv({ TRAFFIC_KV: kv({ [FREEWAY_METADATA_KEY]: metadataEnvelope(ALL_RECORDS) }) });
+  const { fetchFn } = makeFrameFetch({ frameJpeg: await makeSolidJpeg(80, 60, [10, 20, 30]) });
   priorFetch = globalThis.fetch;
-  globalThis.fetch = fetchFn82;
+  globalThis.fetch = fetchFn;
   const result82 = await prepareCctvImageForEvent(envAt82, accidentEvent({ startKM: '82K+000', endKM: '82K+200' }), {}, TEST_CODEC);
   assert.equal(result82.ok, true);
 
-  globalThis.fetch = fetchFn82; // same mock, fresh env/runCache
-  const envAt95 = baseEnv();
+  const envAt95 = baseEnv({ TRAFFIC_KV: kv({ [FREEWAY_METADATA_KEY]: metadataEnvelope(ALL_RECORDS) }) });
   const result95 = await prepareCctvImageForEvent(envAt95, accidentEvent({ startKM: '95K+000', endKM: '95K+200' }), {}, TEST_CODEC);
   assert.equal(result95.ok, true);
 
-  // Different R2 objects (different opaque ids) — can't directly inspect
-  // which CCTVID won without OCR-ing the JPEG, but we CAN confirm the
-  // selector actually ran against different candidate pools by checking
-  // the underlying selection directly.
   const { selectFourQuadrantCandidates, TARGET_ROAD_ID, TARGET_ROAD_NAME_PATTERN } = await import('../src/tdx/hsinchuCctvProbe.js');
   const at82 = selectFourQuadrantCandidates(ALL_RECORDS, { roadId: TARGET_ROAD_ID, roadNamePattern: TARGET_ROAD_NAME_PATTERN, targetKm: 82.1 });
   const at95 = selectFourQuadrantCandidates(ALL_RECORDS, { roadId: TARGET_ROAD_ID, roadNamePattern: TARGET_ROAD_NAME_PATTERN, targetKm: 95.2 });
@@ -224,42 +220,48 @@ test('2. a different accident KM selects DIFFERENT cameras than a nearby one', a
   assert.notDeepEqual(idsAt82.sort(), idsAt95.sort());
 });
 
-test('6. CCTV metadata fetch failure (TDX auth/fetch error) -> prepareCctvImageForEvent fails closed, never throws', async () => {
-  const env = baseEnv();
-  const { fetchFn } = makeTdxFetch({ tokenStatus: 500 });
+test('6/1-required: broadcast metadata cache MISS -> text-only (metadata-cache-unavailable), 0 TDX CCTV metadata calls, never falls back to calling TDX', async () => {
+  const env = baseEnv(); // no cctv:freeway-metadata:v1 key seeded at all
+  const { fetchFn, hits } = makeFrameFetch(); // any fetch at all in this test is unexpected
   priorFetch = globalThis.fetch;
   globalThis.fetch = fetchFn;
 
   const result = await prepareCctvImageForEvent(env, accidentEvent(), {}, TEST_CODEC);
   assert.equal(result.ok, false);
-  assert.equal(result.reason, 'tdx-auth-failed');
+  assert.equal(result.reason, 'metadata-cache-unavailable');
+  assert.equal(hits.frame, 0);
+  assert.equal(hits.other, 0, '0 fetch calls of any kind — this module must never call TDX itself');
 });
 
-test('6b. CCTV metadata HTTP failure -> fails closed with tdx-fetch-failed', async () => {
-  const env = baseEnv();
-  const { fetchFn } = makeTdxFetch({ cctvStatus: 502 });
+test('6b. an EXPIRED/corrupt cache entry is treated the same as a miss -> metadata-cache-unavailable', async () => {
+  const env = baseEnv({ TRAFFIC_KV: kv({ [FREEWAY_METADATA_KEY]: 'not valid json' }) });
+  const result = await prepareCctvImageForEvent(env, accidentEvent(), {}, TEST_CODEC);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'metadata-cache-unavailable');
+});
+
+test('2-required: broadcast metadata cache HIT -> CCTV proceeds normally', async () => {
+  const env = baseEnv({ TRAFFIC_KV: kv({ [FREEWAY_METADATA_KEY]: metadataEnvelope(ALL_RECORDS) }) });
+  const { fetchFn, hits } = makeFrameFetch({ frameJpeg: await makeSolidJpeg(80, 60, [1, 2, 3]) });
   priorFetch = globalThis.fetch;
   globalThis.fetch = fetchFn;
 
-  const result = await prepareCctvImageForEvent(env, accidentEvent(), {}, TEST_CODEC);
-  assert.equal(result.ok, false);
-  assert.equal(result.reason, 'tdx-fetch-failed');
+  const result = await prepareCctvImageForEvent(env, accidentEvent({ startKM: '82K+000', endKM: '82K+200' }), {}, TEST_CODEC);
+  assert.equal(result.ok, true);
+  assert.match(result.imageUrl, /^https:\/\//);
+  assert.ok(hits.frame > 0);
 });
 
 test('7. 0 matching cameras (metadata has none on this road/near this KM) -> no-camera', async () => {
-  const env = baseEnv();
-  const { fetchFn } = makeTdxFetch({ cctvRecords: [cctvRecord({ RoadID: '999999', RoadName: '省道台1線' })] });
-  priorFetch = globalThis.fetch;
-  globalThis.fetch = fetchFn;
-
+  const env = baseEnv({ TRAFFIC_KV: kv({ [FREEWAY_METADATA_KEY]: metadataEnvelope([cctvRecord({ RoadID: '999999', RoadName: '省道台1線' })]) }) });
   const result = await prepareCctvImageForEvent(env, accidentEvent(), {}, TEST_CODEC);
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'no-camera');
 });
 
 test('8. cameras found but ALL frame fetches fail -> no-frames, never throws', async () => {
-  const env = baseEnv();
-  const { fetchFn } = makeTdxFetch({ frameJpeg: undefined }); // every freeway.gov.tw fetch 404s
+  const env = baseEnv({ TRAFFIC_KV: kv({ [FREEWAY_METADATA_KEY]: metadataEnvelope(ALL_RECORDS) }) });
+  const { fetchFn } = makeFrameFetch({ frameJpeg: undefined }); // every freeway.gov.tw fetch 404s
   priorFetch = globalThis.fetch;
   globalThis.fetch = fetchFn;
 
@@ -269,8 +271,8 @@ test('8. cameras found but ALL frame fetches fail -> no-frames, never throws', a
 });
 
 test('9. R2 publish failure -> r2-publish-failed, never throws', async () => {
-  const env = baseEnv({ CCTV_IMAGES: r2Bucket({ failPut: true }) });
-  const { fetchFn } = makeTdxFetch({ frameJpeg: await makeSolidJpeg(80, 60, [1, 2, 3]) });
+  const env = baseEnv({ TRAFFIC_KV: kv({ [FREEWAY_METADATA_KEY]: metadataEnvelope(ALL_RECORDS) }), CCTV_IMAGES: r2Bucket({ failPut: true }) });
+  const { fetchFn } = makeFrameFetch({ frameJpeg: await makeSolidJpeg(80, 60, [1, 2, 3]) });
   priorFetch = globalThis.fetch;
   globalThis.fetch = fetchFn;
 
@@ -279,40 +281,33 @@ test('9. R2 publish failure -> r2-publish-failed, never throws', async () => {
   assert.equal(result.reason, 'r2-publish-failed');
 });
 
-test('9b. missing CCTV_IMAGES (R2) binding -> fails closed, 0 TDX calls (checked before composing)', async () => {
-  const env = baseEnv({ CCTV_IMAGES: undefined });
-  const { fetchFn, hits } = makeTdxFetch();
+test('9b. missing CCTV_IMAGES (R2) binding -> fails closed, 0 fetch calls (checked before doing any work)', async () => {
+  const env = baseEnv({ TRAFFIC_KV: kv({ [FREEWAY_METADATA_KEY]: metadataEnvelope(ALL_RECORDS) }), CCTV_IMAGES: undefined });
+  const { fetchFn, hits } = makeFrameFetch();
   priorFetch = globalThis.fetch;
   globalThis.fetch = fetchFn;
 
   const result = await prepareCctvImageForEvent(env, accidentEvent(), {}, TEST_CODEC);
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'no-r2-binding');
-  assert.equal(hits.metadata, 0);
-  assert.equal(hits.token, 0);
+  assert.equal(hits.frame, 0);
+  assert.equal(hits.other, 0);
 });
 
 // =======================================================================
-// shared metadata cache: cache hit = 0 TDX; N accidents this run = <=1 TDX
+// shared metadata cache: N accidents this run share at most 1 KV read
 // =======================================================================
 
-test('metadata cache hit -> 0 TDX CCTV metadata calls', async () => {
-  const env = baseEnv({
-    TRAFFIC_KV: kv({ 'cctv:freeway-metadata:v1': JSON.stringify({ records: ALL_RECORDS, fetchedAt: new Date().toISOString() }) }),
-  });
-  const { fetchFn, hits } = makeTdxFetch({ frameJpeg: await makeSolidJpeg(80, 60, [4, 5, 6]) });
-  priorFetch = globalThis.fetch;
-  globalThis.fetch = fetchFn;
-
-  const result = await prepareCctvImageForEvent(env, accidentEvent({ startKM: '82K+000', endKM: '82K+200' }), {}, TEST_CODEC);
-  assert.equal(result.ok, true);
-  assert.equal(hits.metadata, 0);
-  assert.equal(hits.token, 0);
-});
-
-test('metadata cache miss populates the cache -> at most 1 TDX CCTV metadata call for a whole run, shared via runCache across multiple accidents', async () => {
-  const env = baseEnv();
-  const { fetchFn, hits } = makeTdxFetch({ frameJpeg: await makeSolidJpeg(80, 60, [7, 8, 9]) });
+test('metadata reads are shared across multiple accidents this run via runCache (at most 1 KV get)', async () => {
+  const trafficKv = kv({ [FREEWAY_METADATA_KEY]: metadataEnvelope(ALL_RECORDS) });
+  let getCalls = 0;
+  const originalGet = trafficKv.get.bind(trafficKv);
+  trafficKv.get = async (...args) => {
+    getCalls += 1;
+    return originalGet(...args);
+  };
+  const env = baseEnv({ TRAFFIC_KV: trafficKv });
+  const { fetchFn } = makeFrameFetch({ frameJpeg: await makeSolidJpeg(80, 60, [7, 8, 9]) });
   priorFetch = globalThis.fetch;
   globalThis.fetch = fetchFn;
 
@@ -325,9 +320,62 @@ test('metadata cache miss populates the cache -> at most 1 TDX CCTV metadata cal
   assert.equal(r1.ok, true);
   assert.equal(r2.ok, true);
   assert.equal(r3.ok, true);
-  assert.equal(hits.metadata, 1, `expected exactly 1 shared TDX CCTV metadata call for 3 accidents this run, got ${hits.metadata}`);
+  assert.equal(getCalls, 1, `expected exactly 1 shared metadata KV read for 3 accidents this run, got ${getCalls}`);
+});
 
-  // And it was cached to KV for the NEXT run/tick to hit.
-  const cached = env.TRAFFIC_KV.store.get('cctv:freeway-metadata:v1');
-  assert.ok(cached);
+// =======================================================================
+// 4. metadata TTL = 7 days
+// =======================================================================
+
+test('4. FREEWAY_METADATA_TTL_SECONDS is 7 days', async () => {
+  assert.equal(FREEWAY_METADATA_TTL_SECONDS, 7 * 24 * 60 * 60);
+});
+
+// =======================================================================
+// 5/6/7: hard time budget
+// =======================================================================
+
+test('5. CCTV prepare exceeding its budget -> text-only (prepare-timeout), never hangs the caller past the budget', async () => {
+  const env = baseEnv({ TRAFFIC_KV: kv({ [FREEWAY_METADATA_KEY]: metadataEnvelope(ALL_RECORDS) }) });
+  // A frame fetch that hangs like a real stuck connection — never
+  // resolves on its own, only reacts to the AbortSignal
+  // extractFirstJpegFrame passes in (real `fetch` behaves the same way
+  // under AbortSignal.timeout). This lets the still-running background
+  // work eventually settle on its own shortly after the outer race is
+  // lost, instead of leaving a truly-dangling unresolved promise for the
+  // whole test process.
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = (url, init) =>
+    new Promise((resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        const err = new Error('The operation was aborted');
+        err.name = 'AbortError';
+        reject(err);
+      });
+    });
+
+  const started = Date.now();
+  const smallBudgetMs = 80; // tiny budget so the test stays fast/deterministic
+  const result = await prepareCctvImageForEvent(env, accidentEvent({ startKM: '82K+000', endKM: '82K+200' }), {}, TEST_CODEC, smallBudgetMs);
+  const elapsed = Date.now() - started;
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'prepare-timeout');
+  // Generous upper bound — proves the caller was NOT held anywhere near
+  // "forever"/the old unbounded behavior, without being a flaky exact-ms
+  // assertion under CI scheduling jitter.
+  assert.ok(elapsed < smallBudgetMs + 1000, `expected to resolve near the ${smallBudgetMs}ms budget, took ${elapsed}ms`);
+
+  // The LOSING side of the internal race (the abandoned frame fetch,
+  // still bounded by its own MIN_FRAME_TIMEOUT_MS floor) keeps running
+  // in the background after prepareCctvImageForEvent already returned —
+  // exactly as documented (harmless, its result is simply discarded).
+  // Explicitly wait it out here so the test process doesn't exit with a
+  // floating promise still in flight (Node's test runner flags that as
+  // an error even though it's an intentional, harmless discard).
+  await new Promise((resolve) => setTimeout(resolve, 400));
+});
+
+test('CCTV_PREPARE_BUDGET_MS (the real production default) is 4000ms', async () => {
+  assert.equal(CCTV_PREPARE_BUDGET_MS, 4000);
 });

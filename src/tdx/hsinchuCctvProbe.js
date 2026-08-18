@@ -107,6 +107,7 @@ import { parseKM } from '../traffic/roadSectionLabel.js';
 import { toTaipeiParts } from '../traffic/broadcastHours.js';
 import { composeQuadrantCollage } from '../cctv/collage.js';
 import { publishCollageImage } from '../cctv/publishedImage.js';
+import { writeFreewayCctvMetadataCache } from '../cctv/freewayCctvMetadataCache.js';
 
 // cctv/jpegCodecWorker.js does a top-level `import ... from '*.wasm'` —
 // the only WASM-loading mechanism Cloudflare Workers actually supports
@@ -585,6 +586,16 @@ export async function handleHsinchuCctvProbe(env) {
 
   await persistCandidates(env.TRAFFIC_KV, candidates, new Date());
 
+  // V1.8.5 correction: also seed the SHARED broadcast-facing freeway
+  // metadata cache (cctv/freewayCctvMetadataCache.js) from this SAME
+  // already-fetched `records` — zero additional TDX calls. The real
+  // broadcast pipeline (cctv/dynamicCollage.js) is cache-only and must
+  // NEVER call TDX itself; this is how that cache actually gets
+  // populated/refreshed in practice (an Admin manually running this
+  // probe). Best-effort: a failure here must never affect this probe's
+  // own response/guard state.
+  await writeFreewayCctvMetadataCache(env.TRAFFIC_KV, records, new Date());
+
   // Metadata call genuinely succeeded — flip armed -> completed. If this
   // write fails, KV simply stays 'armed' — still fully locked either way.
   try {
@@ -797,15 +808,22 @@ export async function composeCollageFromCache(env, codecOverride) {
  *   i.e. {cctvId, roadDirection, locationMile, videoStreamUrl, ...}).
  * @param {{titleLine: string, subtitleLine: string}} headerLines - see
  *   buildCollageHeaderLines.
- * @param {{targetKm?: number, codecOverride?: {decodeJpeg,encodeJpeg}}} [options]
+ * @param {{targetKm?: number, codecOverride?: {decodeJpeg,encodeJpeg}, frameTimeoutMs?: number}} [options]
+ *   `frameTimeoutMs` — V1.8.5: overrides extractFirstJpegFrame's own
+ *   default FRAME_TIMEOUT_MS per-frame timeout. Used by
+ *   cctv/dynamicCollage.js to bound each frame fetch to whatever's left
+ *   of its overall CCTV_PREPARE_BUDGET_MS hard time budget, instead of
+ *   always spending up to the full default regardless of how much
+ *   budget remains. Fixed-target admin callers never pass this — they
+ *   keep the original default.
  * @returns {Promise<{ok:true, bytes:ArrayBuffer, contentType:'image/jpeg'}|{ok:false, reason:'no-frames', message:string}>}
  */
-export async function composeCollageFromCandidates(candidates, headerLines, { targetKm = TARGET_KM, codecOverride } = {}) {
+export async function composeCollageFromCandidates(candidates, headerLines, { targetKm = TARGET_KM, codecOverride, frameTimeoutMs } = {}) {
   const frameResults = await Promise.all(
     candidates.map(async (candidate) => {
       if (!candidate) return null;
       try {
-        return await extractFirstJpegFrame(candidate.videoStreamUrl);
+        return await extractFirstJpegFrame(candidate.videoStreamUrl, frameTimeoutMs !== undefined ? { timeoutMs: frameTimeoutMs } : undefined);
       } catch {
         // extractFirstJpegFrame never throws in practice (every failure
         // path returns a typed {ok:false,...} result) — this catch is

@@ -13,23 +13,30 @@ import assert from 'node:assert/strict';
 import { resetTdxTokenCache } from '../src/tdx/auth.js';
 import worker from '../src/index.js';
 import { extractFirstJpegFrame, MAX_FRAME_BYTES, PROBE_USED_KEY, CANDIDATES_KEY } from '../src/tdx/hsinchuCctvProbe.js';
+import { FREEWAY_METADATA_KEY, FREEWAY_METADATA_TTL_SECONDS } from '../src/cctv/freewayCctvMetadataCache.js';
 
 const FIXED_USERNAME = 'admin';
 const ADMIN_PASSWORD = 'test-admin-pass-hsinchu';
 const TDX_CLIENT_ID = 'test-tdx-client-id-hsinchu';
 const TDX_CLIENT_SECRET = 'test-tdx-client-secret-hsinchu';
 
-function kv(initial, { failPutForValue } = {}) {
+function kv(initial, { failPutForValue, failPutForKey } = {}) {
   const store = new Map();
+  const putOptionsByKey = new Map();
   if (initial) for (const [k, v] of Object.entries(initial)) store.set(k, v);
   return {
     store,
     async get(key) {
       return store.get(key) ?? null;
     },
-    async put(key, value, _options) {
+    async put(key, value, options) {
       if (failPutForValue && value === failPutForValue) throw new Error('KV write outage');
+      if (failPutForKey && key === failPutForKey) throw new Error('KV write outage (this key)');
       store.set(key, value);
+      putOptionsByKey.set(key, options);
+    },
+    lastPutOptionsFor(key) {
+      return putOptionsByKey.get(key);
     },
   };
 }
@@ -255,6 +262,52 @@ test('2. first legitimate run makes exactly 1 CCTV metadata call and selects the
     assert.deepEqual(Object.keys(c).sort(), ['cctvId', 'locationMile', 'positionLat', 'positionLon', 'roadDirection', 'videoStreamUrl'].sort());
   }
   assert.equal(stored.candidates[2], null);
+});
+
+// --- 2i (V1.8.5 correction): the probe's one TDX metadata call ALSO seeds the shared broadcast-facing cache, with 0 additional TDX calls ---
+
+test('2i. a successful probe run also writes the SAME records into the shared cctv:freeway-metadata:v1 cache (7-day TTL), without a second TDX call', async () => {
+  const env = baseEnv();
+  const { fetchFn, tdxHits } = makeFetch();
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const res = await worker.fetch(authedRequest('/admin/cctv-hsinchu-probe'), env);
+  assert.equal(res.status, 200);
+  // Still exactly 1 TDX CCTV metadata call total — writing the shared
+  // cache is a side effect of the SAME response, never a second fetch.
+  assert.equal(tdxHits.filter((h) => h.kind === 'cctv-metadata').length, 1);
+
+  const cachedRaw = env.TRAFFIC_KV.store.get(FREEWAY_METADATA_KEY);
+  assert.ok(cachedRaw, 'expected the shared freeway metadata cache to be populated');
+  const cached = JSON.parse(cachedRaw);
+  assert.ok(Array.isArray(cached.records));
+  // Same full record set the probe itself fetched (MOCK_RECORDS — see
+  // makeFetch's default), not just the 4 selected candidates.
+  assert.equal(cached.records.length, MOCK_RECORDS.length);
+  assert.deepEqual(
+    cached.records.map((r) => r.CCTVID).sort(),
+    MOCK_RECORDS.map((r) => r.CCTVID).sort()
+  );
+
+  const putOptions = env.TRAFFIC_KV.lastPutOptionsFor?.(FREEWAY_METADATA_KEY);
+  if (putOptions) assert.equal(putOptions.expirationTtl, FREEWAY_METADATA_TTL_SECONDS);
+});
+
+test('2j. the shared metadata cache write is best-effort — a KV outage for THAT key never breaks the probe response itself', async () => {
+  const env = baseEnv({
+    TRAFFIC_KV: kv(undefined, { failPutForKey: FREEWAY_METADATA_KEY }),
+  });
+  const { fetchFn } = makeFetch();
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const res = await worker.fetch(authedRequest('/admin/cctv-hsinchu-probe'), env);
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(html, /TDX CCTV metadata calls: 1/);
+  // The probe's OWN candidates cache must still have committed fine.
+  assert.ok(env.TRAFFIC_KV.store.get(CANDIDATES_KEY));
 });
 
 // --- 2b/2c: distance-tier boundaries, isolated from the other quadrants ---

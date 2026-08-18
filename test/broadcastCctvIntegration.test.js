@@ -2,23 +2,40 @@
 // (src/cctv/dynamicCollage.js) wired into the real LINE push loop
 // (src/traffic/broadcastPipeline.js). Exercises the REAL Worker pipeline
 // (not just dynamicCollage.js in isolation — see test/dynamicCollage.test.js
-// for that) with every fetch (LINE push + TDX + freeway.gov.tw frames)
-// mocked, and the real JPEG codec via test/testJpegCodec.js's
-// Node-compatible codec override (cctvCodecOverride — see
-// broadcastPipeline.js's doc comment).
+// for that) with every fetch (LINE push + freeway.gov.tw frames) mocked,
+// and the real JPEG codec via test/testJpegCodec.js's Node-compatible
+// codec override (cctvCodecOverride — see broadcastPipeline.js's doc
+// comment).
+//
+// CORRECTION (post-review, two Production blockers fixed):
+//   1. The broadcast path is now CACHE-ONLY for CCTV metadata — it must
+//      NEVER call TDX. Every fixture below seeds (or deliberately omits)
+//      cctv:freeway-metadata:v1 in KV directly instead of relying on a
+//      mocked TDX response; the shared fetch mock (makeFullMock) doesn't
+//      even recognize a TDX URL any more — any accidental TDX call in
+//      this file throws immediately, an implicit "0 TDX calls" proof for
+//      every single test here.
+//   2. CCTV enrichment now runs under a hard time budget
+//      (cctvPrepareBudgetMs, threaded through runLineBroadcast for
+//      tests) — see the new timeout tests (5/6/7 below).
 
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { resetTdxTokenCache } from '../src/tdx/auth.js';
 import { runLineBroadcast } from '../src/traffic/broadcastPipeline.js';
 import { setUserEnabled, setGroupEnabled } from '../src/traffic/subscriptions.js';
+import { FREEWAY_METADATA_KEY } from '../src/cctv/freewayCctvMetadataCache.js';
 import { decodeJpeg, encodeJpeg } from './testJpegCodec.js';
 
 const TEST_CODEC = { decodeJpeg, encodeJpeg };
 const ENROLLED_AT = new Date('2026-08-01T00:00:00+08:00');
 
-function createMockKV() {
-  const store = new Map();
+function metadataEnvelope(records) {
+  return JSON.stringify({ records, fetchedAt: new Date().toISOString() });
+}
+
+function createMockKV(initial) {
+  const store = new Map(Object.entries(initial || {}));
   return {
     store,
     async get(key) {
@@ -88,6 +105,16 @@ const CCTV_RECORDS = [
   cctvRecord({ CCTVID: 'CCTV-N-AFTER', RoadDirection: 'N', LocationMile: '82K+400' }),
 ];
 
+/** env with the shared CCTV metadata cache pre-seeded (as if an Admin had already run /admin/cctv-hsinchu-probe recently). */
+function envWithCctvCache(overrides = {}) {
+  return {
+    LINE_CHANNEL_ACCESS_TOKEN: 'tok',
+    TRAFFIC_KV: createMockKV({ [FREEWAY_METADATA_KEY]: metadataEnvelope(CCTV_RECORDS) }),
+    CCTV_IMAGES: r2Bucket(),
+    ...overrides,
+  };
+}
+
 async function makeSolidJpeg(width, height, rgb) {
   const data = new Uint8ClampedArray(width * height * 4);
   for (let i = 0; i < width * height; i += 1) {
@@ -99,30 +126,29 @@ async function makeSolidJpeg(width, height, rgb) {
   return new Uint8Array(await encodeJpeg({ data, width, height }, { quality: 80 }));
 }
 
-/** Combined mock: LINE push URL + TDX token/metadata + freeway.gov.tw frames. */
-function makeFullMock({ frameJpeg, cctvRecords = CCTV_RECORDS, linePushStatus = 200 } = {}) {
+/**
+ * Combined mock: LINE push URL + freeway.gov.tw frames ONLY. This
+ * module's broadcast path must NEVER call TDX (cache-only metadata) —
+ * so unlike earlier rounds' mock, there is deliberately no
+ * openid-connect/token or /Road/Traffic/CCTV/Freeway handling here at
+ * all; any such call throws, which is itself the "0 TDX calls" proof
+ * for every test in this file.
+ */
+function makeFullMock({ frameJpeg, linePushStatus = 200 } = {}) {
   const pushCalls = [];
-  const hits = { token: 0, metadata: 0, frame: 0 };
+  const hits = { frame: 0 };
   const fetchFn = async (url, init) => {
     const href = String(url);
     if (href.includes('api.line.me')) {
       pushCalls.push({ url: href, body: JSON.parse(init.body) });
       return new Response(linePushStatus === 200 ? '{}' : 'server error', { status: linePushStatus });
     }
-    if (href.includes('openid-connect/token')) {
-      hits.token += 1;
-      return new Response(JSON.stringify({ access_token: 'tok', expires_in: 3600 }), { status: 200 });
-    }
-    if (href.includes('/Road/Traffic/CCTV/Freeway')) {
-      hits.metadata += 1;
-      return new Response(JSON.stringify({ CCTVs: cctvRecords }), { status: 200 });
-    }
     if (href.includes('freeway.gov.tw')) {
       hits.frame += 1;
       if (!frameJpeg) return new Response('not found', { status: 404 });
       return new Response(frameJpeg, { status: 200 });
     }
-    throw new Error(`unexpected fetch in test: ${href}`);
+    throw new Error(`unexpected fetch in test (must never call TDX from the broadcast path): ${href}`);
   };
   return { fetchFn, pushCalls, hits };
 }
@@ -137,9 +163,9 @@ afterEach(() => {
 // --- 10/11/12/13: successful CCTV -> exactly 2 messages, text first, image second, urls match, https ---
 
 test('10/11/12/13: a successful CCTV compose sends exactly 2 messages (text then image), originalContentUrl===previewImageUrl, both HTTPS', async () => {
-  const kv = createMockKV();
+  const kv = createMockKV({ [FREEWAY_METADATA_KEY]: metadataEnvelope(CCTV_RECORDS) });
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
-  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TDX_CLIENT_ID: 'test-id', TDX_CLIENT_SECRET: 'test-secret', TRAFFIC_KV: kv, CCTV_IMAGES: r2Bucket() };
+  const env = envWithCctvCache({ TRAFFIC_KV: kv });
   const { fetchFn, pushCalls } = makeFullMock({ frameJpeg: await makeSolidJpeg(80, 60, [10, 20, 30]) });
   priorFetch = globalThis.fetch;
   globalThis.fetch = fetchFn;
@@ -161,10 +187,10 @@ test('10/11/12/13: a successful CCTV compose sends exactly 2 messages (text then
 // --- 14: text-only path (ineligible event) still exactly 1 message ---
 
 test('14: a CCTV-ineligible accident (no KM) still sends exactly 1 (text-only) message', async () => {
-  const kv = createMockKV();
+  const kv = createMockKV({ [FREEWAY_METADATA_KEY]: metadataEnvelope(CCTV_RECORDS) });
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
-  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TDX_CLIENT_ID: 'test-id', TDX_CLIENT_SECRET: 'test-secret', TRAFFIC_KV: kv, CCTV_IMAGES: r2Bucket() };
-  const { fetchFn, pushCalls, hits } = makeFullMock();
+  const env = envWithCctvCache({ TRAFFIC_KV: kv });
+  const { fetchFn, pushCalls } = makeFullMock();
   priorFetch = globalThis.fetch;
   globalThis.fetch = fetchFn;
 
@@ -180,19 +206,18 @@ test('14: a CCTV-ineligible accident (no KM) still sends exactly 1 (text-only) m
   assert.equal(result.cctvImagesAttachedCount, 0);
   assert.equal(pushCalls[0].body.messages.length, 1);
   assert.equal(pushCalls[0].body.messages[0].type, 'text');
-  assert.equal(hits.metadata, 0, 'an ineligible event must never trigger a CCTV metadata call at all');
 });
 
 // --- 15: multiple targets, same event -> compose once, R2 put once ---
 
 test('15: the same event with multiple LINE targets composes/publishes the CCTV image exactly ONCE and shares one imageUrl', async () => {
-  const kv = createMockKV();
+  const kv = createMockKV({ [FREEWAY_METADATA_KEY]: metadataEnvelope(CCTV_RECORDS) });
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   await setUserEnabled(kv, 'U2', true, ENROLLED_AT);
   await setGroupEnabled(kv, 'G1', true, ENROLLED_AT);
   const bucket = r2Bucket();
-  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TDX_CLIENT_ID: 'test-id', TDX_CLIENT_SECRET: 'test-secret', TRAFFIC_KV: kv, CCTV_IMAGES: bucket };
-  const { fetchFn, pushCalls, hits } = makeFullMock({ frameJpeg: await makeSolidJpeg(80, 60, [5, 6, 7]) });
+  const env = envWithCctvCache({ TRAFFIC_KV: kv, CCTV_IMAGES: bucket });
+  const { fetchFn, pushCalls } = makeFullMock({ frameJpeg: await makeSolidJpeg(80, 60, [5, 6, 7]) });
   priorFetch = globalThis.fetch;
   globalThis.fetch = fetchFn;
 
@@ -201,7 +226,6 @@ test('15: the same event with multiple LINE targets composes/publishes the CCTV 
 
   assert.equal(result.pushSucceeded, 3);
   assert.equal(bucket.putCalls, 1, 'expected exactly 1 R2 publish for 3 targets of the same event');
-  assert.equal(hits.metadata, 1, 'expected exactly 1 CCTV metadata call for 3 targets of the same event');
   assert.equal(pushCalls.length, 3);
   const imageUrls = pushCalls.map((c) => c.body.messages[1].originalContentUrl);
   assert.equal(new Set(imageUrls).size, 1, 'all 3 targets must share the exact same imageUrl');
@@ -209,11 +233,11 @@ test('15: the same event with multiple LINE targets composes/publishes the CCTV 
 
 // --- 16/17: partial failure semantics preserved; a failed target isn't marked notified ---
 
-test('16/17: LINE text+image request failing (500) for one target -> that target NOT marked notified, other targets unaffected, next-run retry preserved', async () => {
-  const kv = createMockKV();
+test('16/17: LINE text+image request failing (500) for one target -> that target NOT marked notified, other targets unaffected', async () => {
+  const kv = createMockKV({ [FREEWAY_METADATA_KEY]: metadataEnvelope(CCTV_RECORDS) });
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   await setUserEnabled(kv, 'U2', true, ENROLLED_AT);
-  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TDX_CLIENT_ID: 'test-id', TDX_CLIENT_SECRET: 'test-secret', TRAFFIC_KV: kv, CCTV_IMAGES: r2Bucket() };
+  const env = envWithCctvCache({ TRAFFIC_KV: kv });
 
   let callCount = 0;
   const { fetchFn: baseFetch } = makeFullMock({ frameJpeg: await makeSolidJpeg(80, 60, [1, 1, 1]) });
@@ -258,9 +282,9 @@ test('16/17: LINE text+image request failing (500) for one target -> that target
 // --- 18: no same-round fallback re-send of text-only after a text+image failure ---
 
 test('18: a failed text+image push is NEVER followed by a same-round fallback text-only resend (exactly 1 LINE call per target, always)', async () => {
-  const kv = createMockKV();
+  const kv = createMockKV({ [FREEWAY_METADATA_KEY]: metadataEnvelope(CCTV_RECORDS) });
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
-  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TDX_CLIENT_ID: 'test-id', TDX_CLIENT_SECRET: 'test-secret', TRAFFIC_KV: kv, CCTV_IMAGES: r2Bucket() };
+  const env = envWithCctvCache({ TRAFFIC_KV: kv });
   const { fetchFn: baseFetch } = makeFullMock({ frameJpeg: await makeSolidJpeg(80, 60, [2, 2, 2]) });
   let lineCallCount = 0;
   priorFetch = globalThis.fetch;
@@ -282,10 +306,10 @@ test('18: a failed text+image push is NEVER followed by a same-round fallback te
 // --- 19/20: incident suppression / material escalation interplay with CCTV ---
 
 test('19: incident suppression — the next tick with no material change does not push again, so no new CCTV image is generated either', async () => {
-  const kv = createMockKV();
+  const kv = createMockKV({ [FREEWAY_METADATA_KEY]: metadataEnvelope(CCTV_RECORDS) });
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
-  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TDX_CLIENT_ID: 'test-id', TDX_CLIENT_SECRET: 'test-secret', TRAFFIC_KV: kv, CCTV_IMAGES: r2Bucket() };
-  const { fetchFn, hits } = makeFullMock({ frameJpeg: await makeSolidJpeg(80, 60, [3, 3, 3]) });
+  const env = envWithCctvCache({ TRAFFIC_KV: kv });
+  const { fetchFn } = makeFullMock({ frameJpeg: await makeSolidJpeg(80, 60, [3, 3, 3]) });
   priorFetch = globalThis.fetch;
   globalThis.fetch = fetchFn;
 
@@ -293,7 +317,6 @@ test('19: incident suppression — the next tick with no material change does no
   const first = await runLineBroadcast(env, { allEvents: [accidentEvent()], dedupeAvailable: true, now: t0, cctvCodecOverride: TEST_CODEC });
   assert.equal(first.pushSucceeded, 1);
   assert.equal(first.cctvImagesAttachedCount, 1);
-  assert.equal(hits.metadata, 1);
 
   // Next tick, 5 minutes later, same event content (no escalation) — same
   // real incident, slightly different rawId even (as if TDX reissued it).
@@ -306,13 +329,12 @@ test('19: incident suppression — the next tick with no material change does no
   });
   assert.equal(second.pushSucceeded, 0);
   assert.equal(second.cctvImagesAttachedCount, 0);
-  assert.equal(hits.metadata, 1, 'no new CCTV metadata call on a suppressed, no-material-change re-tick');
 });
 
 test('20: material escalation DOES allow a rebroadcast with a freshly-generated CCTV image', async () => {
-  const kv = createMockKV();
+  const kv = createMockKV({ [FREEWAY_METADATA_KEY]: metadataEnvelope(CCTV_RECORDS) });
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
-  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TDX_CLIENT_ID: 'test-id', TDX_CLIENT_SECRET: 'test-secret', TRAFFIC_KV: kv, CCTV_IMAGES: r2Bucket() };
+  const env = envWithCctvCache({ TRAFFIC_KV: kv });
   const { fetchFn } = makeFullMock({ frameJpeg: await makeSolidJpeg(80, 60, [8, 8, 8]) });
   priorFetch = globalThis.fetch;
   globalThis.fetch = fetchFn;
@@ -338,9 +360,9 @@ test('20: material escalation DOES allow a rebroadcast with a freshly-generated 
 // --- 21: image URL never influences the notification fingerprint ---
 
 test('21: the notified-state fingerprint never includes anything CCTV/image-URL-derived (re-running the identical event does not look "new")', async () => {
-  const kv = createMockKV();
+  const kv = createMockKV({ [FREEWAY_METADATA_KEY]: metadataEnvelope(CCTV_RECORDS) });
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
-  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TDX_CLIENT_ID: 'test-id', TDX_CLIENT_SECRET: 'test-secret', TRAFFIC_KV: kv, CCTV_IMAGES: r2Bucket() };
+  const env = envWithCctvCache({ TRAFFIC_KV: kv });
   const { fetchFn } = makeFullMock({ frameJpeg: await makeSolidJpeg(80, 60, [9, 9, 9]) });
   priorFetch = globalThis.fetch;
   globalThis.fetch = fetchFn;
@@ -360,13 +382,13 @@ test('21: the notified-state fingerprint never includes anything CCTV/image-URL-
   assert.equal(second.pendingTargetCount, 0);
 });
 
-// --- 22: dryRun -> 0 TDX CCTV metadata, 0 freeway CCTV fetch, 0 R2 write, 0 LINE ---
+// --- 8/22: dryRun -> 0 TDX CCTV metadata, 0 freeway CCTV fetch, 0 R2 write, 0 LINE ---
 
-test('22: dryRun computes cctvEligibleAccidentCount (pure) but performs 0 CCTV metadata fetch, 0 frame fetch, 0 R2 write, 0 LINE push', async () => {
-  const kv = createMockKV();
+test('8/22: dryRun computes cctvEligibleAccidentCount (pure) but performs 0 CCTV metadata fetch, 0 frame fetch, 0 R2 write, 0 LINE push', async () => {
+  const kv = createMockKV({ [FREEWAY_METADATA_KEY]: metadataEnvelope(CCTV_RECORDS) });
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   const bucket = r2Bucket();
-  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TDX_CLIENT_ID: 'test-id', TDX_CLIENT_SECRET: 'test-secret', TRAFFIC_KV: kv, CCTV_IMAGES: bucket };
+  const env = envWithCctvCache({ TRAFFIC_KV: kv, CCTV_IMAGES: bucket });
   const { fetchFn, pushCalls, hits } = makeFullMock({ frameJpeg: await makeSolidJpeg(80, 60, [11, 11, 11]) });
   priorFetch = globalThis.fetch;
   globalThis.fetch = fetchFn;
@@ -375,10 +397,77 @@ test('22: dryRun computes cctvEligibleAccidentCount (pure) but performs 0 CCTV m
   const result = await runLineBroadcast(env, { allEvents: [accidentEvent()], dedupeAvailable: true, now, dryRun: true, cctvCodecOverride: TEST_CODEC });
 
   assert.equal(result.cctvEligibleAccidentCount, 1, 'the pure eligibility count must still be populated under dryRun');
-  assert.equal(hits.metadata, 0);
   assert.equal(hits.frame, 0);
-  assert.equal(hits.token, 0);
   assert.equal(bucket.putCalls, 0);
   assert.equal(pushCalls.length, 0);
   assert.equal(result.cctvImagesAttachedCount, 0);
+});
+
+// =======================================================================
+// 5/6/7: hard time budget, end-to-end through runLineBroadcast
+// =======================================================================
+
+/** A frame fetch mock that hangs like a real stuck connection — only reacts to the AbortSignal extractFirstJpegFrame passes in, matching real `fetch` behavior under AbortSignal.timeout. */
+function makeHungFrameAndLineMock() {
+  const pushCalls = [];
+  const fetchFn = async (url, init) => {
+    const href = String(url);
+    if (href.includes('api.line.me')) {
+      pushCalls.push({ url: href, body: JSON.parse(init.body) });
+      return new Response('{}', { status: 200 });
+    }
+    if (href.includes('freeway.gov.tw')) {
+      return new Promise((resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          const err = new Error('aborted');
+          err.name = 'AbortError';
+          reject(err);
+        });
+      });
+    }
+    throw new Error(`unexpected fetch in test: ${href}`);
+  };
+  return { fetchFn, pushCalls };
+}
+
+test('5/6/7: CCTV prepare exceeding its budget -> text-only, LINE text still succeeds, notified normally, exactly 1 LINE call (no second fallback)', async () => {
+  const kv = createMockKV({ [FREEWAY_METADATA_KEY]: metadataEnvelope(CCTV_RECORDS) });
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  const env = envWithCctvCache({ TRAFFIC_KV: kv });
+  const { fetchFn, pushCalls } = makeHungFrameAndLineMock();
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const now = new Date('2026-08-15T09:00:00+08:00');
+  const smallBudgetMs = 80; // tiny budget so the test stays fast/deterministic
+  const started = Date.now();
+  const result = await runLineBroadcast(env, {
+    allEvents: [accidentEvent()],
+    dedupeAvailable: true,
+    now,
+    cctvCodecOverride: TEST_CODEC,
+    cctvPrepareBudgetMs: smallBudgetMs,
+  });
+  const elapsed = Date.now() - started;
+
+  // 5. exceeded budget -> text-only.
+  assert.equal(result.cctvImagesAttachedCount, 0);
+  assert.equal(result.cctvSkippedByReason['prepare-timeout'], 1);
+  assert.ok(elapsed < smallBudgetMs + 1000, `expected the whole broadcast to proceed near the ${smallBudgetMs}ms budget, took ${elapsed}ms`);
+
+  // 6. LINE text still succeeds, notified normally.
+  assert.equal(result.pushSucceeded, 1);
+  assert.equal(pushCalls.length, 1);
+  assert.equal(pushCalls[0].body.messages.length, 1);
+  assert.equal(pushCalls[0].body.messages[0].type, 'text');
+  const { readNotifiedState } = await import('../src/traffic/notified.js');
+  const notifiedState = await readNotifiedState(env.TRAFFIC_KV);
+  assert.ok(notifiedState.notifiedMap['freeway:FRW-1']?.targets?.['user:U1'], 'the target must be marked notified from the successful text-only push');
+
+  // 7. no second LINE request.
+  assert.equal(pushCalls.length, 1, 'exactly 1 LINE request — no second request after the CCTV timeout');
+
+  // Let the abandoned background frame fetch settle before the test ends
+  // (see dynamicCollage.test.js's equivalent note).
+  await new Promise((resolve) => setTimeout(resolve, 400));
 });

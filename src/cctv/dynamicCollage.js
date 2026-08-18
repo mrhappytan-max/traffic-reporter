@@ -42,19 +42,52 @@
 //
 // Fail-closed, at every single stage, per instruction: no reliable KM,
 // an unsupported/unresolvable road, a missing CCTV_IMAGES/TRAFFIC_KV
-// binding, a CCTV metadata fetch failure, zero matching cameras, all 4
-// frame fetches failing, a JPEG decode/compose failure, or an R2 publish
-// failure are ALL just "this accident doesn't get a CCTV image this
+// binding, an unavailable metadata cache, zero matching cameras, all 4
+// frame fetches failing, a JPEG decode/compose failure, an R2 publish
+// failure, OR exceeding the hard time budget (see CCTV_PREPARE_BUDGET_MS
+// below) are ALL just "this accident doesn't get a CCTV image this
 // tick" — never a reason to withhold the accident text itself, never a
 // reason to mark the event failed, never a retry-with-delay. See
 // broadcastPipeline.js for how a {ok:false} result here maps to a
 // plain text-only LINE push, functionally identical to V1.8.4-and-
 // earlier's only-ever-text behavior.
+//
+// CORRECTION (post-review, two Production blockers fixed):
+//
+// 1. UNBOUNDED DELAY. The first version of this module awaited the
+//    entire CCTV pipeline (metadata, up to 4 frame fetches, JPEG
+//    encode/decode, R2 publish) with no overall ceiling before ever
+//    reaching the LINE push — "never delays the text" was true only in
+//    the sense that a CCTV FAILURE didn't block the text, but a CCTV
+//    pipeline that was merely SLOW (a hung frame fetch, a slow R2 put)
+//    could delay a real accident notification indefinitely. Fixed with
+//    CCTV_PREPARE_BUDGET_MS: the whole prepareCctvImageForEvent call is
+//    raced against a hard timeout; losing that race resolves
+//    {ok:false, reason:'prepare-timeout'} immediately and the broadcast
+//    proceeds text-only THIS SAME tick — never waits for next Cron.
+//    Frame fetches (already parallel, unchanged) are additionally given
+//    whatever's left of the budget as their own per-fetch timeout (see
+//    composeCollageFromCandidates's frameTimeoutMs), so they fail fast
+//    rather than each independently spending up to their own default
+//    ~5s regardless of how much budget remains.
+//
+// 2. UNBOUNDED TDX USAGE. The first version's shared metadata cache
+//    fell back to calling TDX itself on a cache miss — meaning the real
+//    broadcast path could, in principle, add TDX CCTV metadata calls on
+//    top of the already-budgeted RoadEvent schedule. Fixed: this module
+//    is now CACHE-ONLY for metadata (see getFreewayCctvMetadata below) —
+//    it NEVER calls TDX, enforced structurally by this file importing
+//    nothing TDX-related at all (no tdx/auth.js, no tdx/client.js). A
+//    cache miss/expiry is just another fail-closed reason
+//    ('metadata-cache-unavailable') → text-only. The cache is instead
+//    populated as a side effect of tdx/hsinchuCctvProbe.js's existing
+//    Admin-Auth-gated one-time probe (which already makes its own,
+//    separately-budgeted TDX call) — see
+//    cctv/freewayCctvMetadataCache.js's module comment for the full
+//    read/write split and why it's a separate module (avoids a circular
+//    import between this file and hsinchuCctvProbe.js).
 
-import { getAccessToken } from '../tdx/auth.js';
-import { fetchTdxJson } from '../tdx/client.js';
 import {
-  CCTV_URL,
   TARGET_ROAD_ID,
   TARGET_ROAD_NAME_PATTERN,
   selectFourQuadrantCandidates,
@@ -63,6 +96,7 @@ import {
 } from '../tdx/hsinchuCctvProbe.js';
 import { resolveRoadKey, parseKM } from '../traffic/roadSectionLabel.js';
 import { publishCollageImage } from './publishedImage.js';
+import { readFreewayCctvMetadataCache } from './freewayCctvMetadataCache.js';
 
 // See module comment: 國道一號 only, using the SAME Production-confirmed
 // roadId/roadNamePattern hsinchuCctvProbe.js has used since V1.7 — no
@@ -71,20 +105,33 @@ const CCTV_SUPPORTED_ROADS = {
   國道一號: { roadId: TARGET_ROAD_ID, roadNamePattern: TARGET_ROAD_NAME_PATTERN, shortName: '國1' },
 };
 
-// Shared CCTV metadata cache — a full TDX CCTV/Freeway response is the
-// same regardless of which accident asks for it, so it's cached
-// independently of any one accident. Own key (isolated from
-// hsinchuCctvProbe.js's admin-probe CANDIDATES_KEY/PROBE_USED_KEY — see
-// this project's module-isolation convention) so a bug in one can never
-// affect the other. 6h TTL: generous enough that a normal Cron cadence
-// (every 10 minutes) very rarely re-fetches, short enough that a camera
-// added/removed/relocated in the real TDX feed shows up again within
-// the same working day. KV's eventual consistency is explicitly
-// ACCEPTABLE here (unlike the R2-backed published-image URL) — this is
-// a metadata cache feeding a fresh compose, never a write-then-
-// immediately-publicly-read link.
-const FREEWAY_METADATA_KEY = 'cctv:freeway-metadata:v1';
-const FREEWAY_METADATA_TTL_SECONDS = 6 * 60 * 60;
+// Hard time budget for the ENTIRE prepareCctvImageForEvent call — from
+// "start preparing" to "have an imageUrl (or give up)". Exceeding this
+// is treated exactly like any other CCTV failure: text-only, this same
+// tick, never a delay carried into the next Cron run. A parameter (not
+// hardcoded) on prepareCctvImageForEvent purely so tests can exercise
+// the timeout path deterministically in milliseconds rather than
+// actually waiting ~4 real seconds; production (broadcastPipeline.js)
+// never overrides it.
+export const CCTV_PREPARE_BUDGET_MS = 4000;
+
+// Never let a per-frame fetch timeout collapse to (near-)zero even if
+// almost the whole budget is already spent by the time frame-fetching
+// starts — a floor this small still fails fast and safely (straight
+// into the existing 'no-frames'/partial-frame handling), it just avoids
+// a degenerate 0ms AbortSignal.timeout.
+const MIN_FRAME_TIMEOUT_MS = 300;
+
+// Deliberately does NOT call .unref() on the timer: this is the timeout
+// that resolves the race in prepareCctvImageForEvent below, so it must
+// be allowed to actually fire and keep whatever's awaiting it alive
+// until it does — unref'ing it let Node exit/move on before the timer
+// ever ran under `node --test`, silently "resolving" nothing.
+function delay(ms, value) {
+  return new Promise((resolve) => {
+    setTimeout(() => resolve(value), ms);
+  });
+}
 
 // Fallback only — the real value should come from env.PUBLIC_BASE_URL
 // (see wrangler.jsonc's `vars`). Kept here so a missing/misconfigured
@@ -156,97 +203,41 @@ export function resolveCctvEligibility(event) {
   };
 }
 
-async function fetchFreewayCctvRecordsFromKvOrTdx(env) {
-  if (env.TRAFFIC_KV) {
-    try {
-      const raw = await env.TRAFFIC_KV.get(FREEWAY_METADATA_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && Array.isArray(parsed.records)) return { ok: true, records: parsed.records };
-      }
-    } catch {
-      // A corrupt/unreadable cache entry must never itself become a hard
-      // failure — fall through to a fresh TDX fetch, same as a cache miss.
-    }
-  }
-
-  let accessToken;
-  try {
-    accessToken = await getAccessToken(env);
-  } catch {
-    return { ok: false, reason: 'tdx-auth-failed' };
-  }
-
-  let json;
-  try {
-    json = await fetchTdxJson(CCTV_URL, accessToken, { source: 'cctv-dynamic-metadata' });
-  } catch {
-    return { ok: false, reason: 'tdx-fetch-failed' };
-  }
-
-  const records = Array.isArray(json) ? json : json.CCTVs || json.Data || [];
-
-  if (env.TRAFFIC_KV) {
-    try {
-      await env.TRAFFIC_KV.put(FREEWAY_METADATA_KEY, JSON.stringify({ records, fetchedAt: new Date().toISOString() }), {
-        expirationTtl: FREEWAY_METADATA_TTL_SECONDS,
-      });
-    } catch {
-      // Best-effort cache write only — this run's own in-memory result is
-      // already in hand and used regardless of whether the write lands.
-    }
-  }
-
+/**
+ * CACHE-ONLY — see this module's correction note above. NEVER calls
+ * TDX; a cache miss/expiry/corrupt entry is simply
+ * {ok:false, reason:'metadata-cache-unavailable'}, the same as any other
+ * CCTV failure (→ text-only). The cache itself is populated elsewhere —
+ * see cctv/freewayCctvMetadataCache.js's module comment.
+ */
+async function readFreewayMetadataCacheOnly(env) {
+  const records = await readFreewayCctvMetadataCache(env.TRAFFIC_KV);
+  if (!records) return { ok: false, reason: 'metadata-cache-unavailable' };
   return { ok: true, records };
 }
 
 /**
- * Cache-first, and — critically — IN-FLIGHT-PROMISE-MEMOIZED via
- * `runCache`, a plain object the CALLER creates ONCE per Cron run and
- * threads through every accident this tick (see broadcastPipeline.js).
- * This is what guarantees "N accidents this tick -> at most 1 TDX CCTV
- * metadata call, never N": the FIRST accident to need metadata this run
- * kicks off fetchFreewayCctvRecordsFromKvOrTdx and stores the
- * still-pending Promise on runCache.metadataPromise; every subsequent
- * accident this SAME tick awaits that identical Promise instead of
- * calling fetchTdxJson again, regardless of call ordering/timing.
- * `runCache` is deliberately NOT module-level/global state — a
- * request-scoped object avoids any cross-invocation staleness/
- * concurrency concern module-level mutable state would raise.
+ * Cache-only, and IN-FLIGHT-PROMISE-MEMOIZED via `runCache`, a plain
+ * object the CALLER creates ONCE per Cron run and threads through every
+ * accident this tick (see broadcastPipeline.js). This keeps N accidents
+ * this tick down to at most 1 KV read for metadata, never N: the FIRST
+ * accident to need metadata this run kicks off
+ * readFreewayMetadataCacheOnly and stores the still-pending Promise on
+ * runCache.metadataPromise; every subsequent accident this SAME tick
+ * awaits that identical Promise instead of reading KV again. `runCache`
+ * is deliberately NOT module-level/global state — a request-scoped
+ * object avoids any cross-invocation staleness/concurrency concern
+ * module-level mutable state would raise.
  */
 function getFreewayCctvMetadata(env, runCache) {
   if (!runCache.metadataPromise) {
-    runCache.metadataPromise = fetchFreewayCctvRecordsFromKvOrTdx(env);
+    runCache.metadataPromise = readFreewayMetadataCacheOnly(env);
   }
   return runCache.metadataPromise;
 }
 
-/**
- * Orchestrates the FULL dynamic CCTV pipeline for one accident event:
- * eligibility -> shared metadata (cache-first, memoized this run) ->
- * four-quadrant select (same ratified algorithm, this event's own
- * road/KM) -> fetch up to 4 frames + compose (same collage renderer) ->
- * publish to R2. Called AT MOST ONCE per accident event by
- * broadcastPipeline.js (before that event's per-target push loop) — the
- * resulting imageUrl is then shared across every pending target for
- * that event; see this module's own doc note in broadcastPipeline.js
- * for why that's structurally guaranteed, not just convention.
- *
- * @param {object} env
- * @param {object} event
- * @param {{metadataPromise?: Promise}} runCache - shared across this
- *   Cron run's accidents; see getFreewayCctvMetadata above.
- * @param {{decodeJpeg,encodeJpeg}} [codecOverride] - TEST-ONLY, threaded
- *   through to composeCollageFromCandidates — see that function's doc
- *   comment.
- * @returns {Promise<{ok:true, imageUrl:string}|{ok:false, reason:string}>}
- */
-export async function prepareCctvImageForEvent(env, event, runCache, codecOverride) {
-  const eligibility = resolveCctvEligibility(event);
-  if (!eligibility.eligible) return { ok: false, reason: eligibility.reason };
-
-  if (env.CCTV_IMAGES === undefined) return { ok: false, reason: 'no-r2-binding' };
-
+/** The actual (potentially slow) work — see prepareCctvImageForEvent, which races this against CCTV_PREPARE_BUDGET_MS. */
+async function prepareCctvImageWork(env, eligibility, runCache, codecOverride, deadlineAt) {
   const metadata = await getFreewayCctvMetadata(env, runCache);
   if (!metadata.ok) return { ok: false, reason: metadata.reason };
 
@@ -262,11 +253,64 @@ export async function prepareCctvImageForEvent(env, event, runCache, codecOverri
     targetKm: eligibility.targetKm,
   });
 
-  const composed = await composeCollageFromCandidates(candidates, headerLines, { targetKm: eligibility.targetKm, codecOverride });
+  // Give each (parallel) frame fetch whatever's left of the overall
+  // budget, not always the full default — see module comment.
+  const frameTimeoutMs = Math.max(MIN_FRAME_TIMEOUT_MS, deadlineAt - Date.now());
+  const composed = await composeCollageFromCandidates(candidates, headerLines, {
+    targetKm: eligibility.targetKm,
+    codecOverride,
+    frameTimeoutMs,
+  });
   if (!composed.ok) return { ok: false, reason: composed.reason }; // 'no-frames' — all 4 frame fetch/decode attempts failed
 
   const published = await publishCollageImage(env.CCTV_IMAGES, composed.bytes);
   if (!published.ok) return { ok: false, reason: 'r2-publish-failed' };
 
   return { ok: true, imageUrl: publicImageUrl(env, published.id) };
+}
+
+/**
+ * Orchestrates the FULL dynamic CCTV pipeline for one accident event:
+ * eligibility -> shared metadata (cache-only, memoized this run) ->
+ * four-quadrant select (same ratified algorithm, this event's own
+ * road/KM) -> fetch up to 4 frames + compose (same collage renderer) ->
+ * publish to R2 — ALL raced against a hard CCTV_PREPARE_BUDGET_MS time
+ * budget (see module comment's correction note #1). Called AT MOST ONCE
+ * per accident event by broadcastPipeline.js (before that event's
+ * per-target push loop) — the resulting imageUrl is then shared across
+ * every pending target for that event; see this module's own doc note
+ * in broadcastPipeline.js for why that's structurally guaranteed, not
+ * just convention.
+ *
+ * @param {object} env
+ * @param {object} event
+ * @param {{metadataPromise?: Promise}} runCache - shared across this
+ *   Cron run's accidents; see getFreewayCctvMetadata above.
+ * @param {{decodeJpeg,encodeJpeg}} [codecOverride] - TEST-ONLY, threaded
+ *   through to composeCollageFromCandidates — see that function's doc
+ *   comment.
+ * @param {number} [budgetMs] - TEST-ONLY override of CCTV_PREPARE_BUDGET_MS,
+ *   so tests can exercise the timeout path in milliseconds instead of
+ *   really waiting ~4s. Production never passes this.
+ * @returns {Promise<{ok:true, imageUrl:string}|{ok:false, reason:string}>}
+ */
+export async function prepareCctvImageForEvent(env, event, runCache, codecOverride, budgetMs = CCTV_PREPARE_BUDGET_MS) {
+  const eligibility = resolveCctvEligibility(event);
+  if (!eligibility.eligible) return { ok: false, reason: eligibility.reason };
+
+  if (env.CCTV_IMAGES === undefined) return { ok: false, reason: 'no-r2-binding' };
+
+  const deadlineAt = Date.now() + budgetMs;
+  const work = prepareCctvImageWork(env, eligibility, runCache, codecOverride, deadlineAt).catch(() => ({
+    ok: false,
+    reason: 'prepare-error',
+  }));
+
+  // A timeout is NOT a LINE failure and is NEVER carried into the next
+  // Cron run — losing this race just means text-only THIS tick. The
+  // losing side (`work`, if the timeout wins) keeps running in the
+  // background rather than being forcibly aborted; its eventual result
+  // (e.g. a late R2 publish) is simply discarded — harmless, since
+  // nothing ever hands that URL to a caller once the race is lost.
+  return Promise.race([work, delay(budgetMs, { ok: false, reason: 'prepare-timeout' })]);
 }

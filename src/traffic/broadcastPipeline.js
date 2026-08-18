@@ -16,11 +16,15 @@
 // V1.8.5: type==='accident' events additionally get a best-effort CCTV
 // collage image attached (see cctv/dynamicCollage.js) — composed/
 // published at most once per event, sent in the SAME LINE API request as
-// the text (never a second call), and completely non-blocking: any CCTV
-// failure at any stage falls back to the exact text-only push this
-// pipeline always did. See the per-event loop below for the integration
-// point and dynamicCollage.js's module comment for the full fail-closed
-// rationale.
+// the text (never a second call). CCTV enrichment is BOUNDED, not
+// blocking-forever: it runs under a hard time budget
+// (CCTV_PREPARE_BUDGET_MS, ~4s) and any failure OR timeout at any stage
+// falls back to the exact text-only push this pipeline always did, this
+// SAME tick — never waits for the next Cron run. See the per-event loop
+// below for the integration point and dynamicCollage.js's module comment
+// for the full fail-closed rationale (including the two Production
+// blockers — unbounded delay and unbounded TDX usage — this correction
+// fixed).
 
 import { isWithinBroadcastHours } from './broadcastHours.js';
 import { computeEffectiveWindow } from './effectiveWindow.js';
@@ -110,6 +114,10 @@ function clusterContentSince(members, { newUpdatedKeys, dedupeMapSnapshot, now }
  *   successful CCTV compose without hitting the real Workers-only `.wasm`
  *   import, which plain Node cannot load. Production (scheduled.js) never
  *   passes this.
+ * @param {number} [options.cctvPrepareBudgetMs] - TEST-ONLY override of
+ *   dynamicCollage.js's CCTV_PREPARE_BUDGET_MS hard time budget, so a
+ *   test can exercise the timeout path in milliseconds instead of really
+ *   waiting ~4s. Production never passes this.
  */
 export async function runLineBroadcast(
   env,
@@ -122,6 +130,7 @@ export async function runLineBroadcast(
     now = new Date(),
     dryRun = false,
     cctvCodecOverride,
+    cctvPrepareBudgetMs,
   }
 ) {
   const result = {
@@ -413,15 +422,21 @@ export async function runLineBroadcast(
     // re-composed/re-published per target). Only ever attempted for
     // type==='accident' — see dynamicCollage.js's resolveCctvEligibility
     // for the full fail-closed gate (freeway source, a road with a
-    // Production-confirmed CCTV mapping, a reliable KM). ANY failure at
-    // any stage (ineligible, metadata unavailable, 0 cameras, all frame
-    // fetches failed, encode/compose failure, R2 publish failure) simply
-    // means `messages` stays text-only — this is never treated as a push
-    // failure, never blocks/delays the text, never touches
-    // notified-state on its own.
+    // Production-confirmed CCTV mapping, a reliable KM, a metadata cache
+    // that's actually populated — this path is CACHE-ONLY and NEVER
+    // calls TDX itself). ANY failure OR timeout at any stage (ineligible,
+    // metadata cache unavailable, 0 cameras, all frame fetches failed,
+    // encode/compose failure, R2 publish failure, or exceeding
+    // CCTV_PREPARE_BUDGET_MS's ~4s hard budget) simply means `messages`
+    // stays text-only — this is never treated as a push failure, never
+    // touches notified-state on its own, and — critically — is bounded:
+    // this await can wait AT MOST ~4s before prepareCctvImageForEvent's
+    // own internal timeout race resolves it to a failure, so a slow/hung
+    // CCTV step can delay this event's push by at most that budget, never
+    // indefinitely and never into the next Cron tick.
     let messages = [{ type: 'text', text }];
     if (event.type === 'accident') {
-      const cctv = await prepareCctvImageForEvent(env, event, cctvRunCache, cctvCodecOverride);
+      const cctv = await prepareCctvImageForEvent(env, event, cctvRunCache, cctvCodecOverride, cctvPrepareBudgetMs);
       if (cctv.ok) {
         result.cctvImagesAttachedCount += 1;
         messages = [{ type: 'text', text }, { type: 'image', originalContentUrl: cctv.imageUrl, previewImageUrl: cctv.imageUrl }];
