@@ -137,8 +137,15 @@ const PBS_CATEGORY_ANOMALY_DETAIL = {
   'dangerous-driving': { emoji: '⚠️', label: '危險駕駛' },
 };
 
+// V1.8.6.4 (broadcast provenance) — exported so broadcastProvenance.js can
+// reuse this EXACT SAME classification (for its `classificationEvidence`
+// debug field) instead of re-implementing a second, parallel keyword
+// table. Reusing the live function guarantees the debug record always
+// agrees with what the LINE message itself actually showed — see that
+// module's own comment for why this matters ("不要重新 classify 一遍造成
+// 第二套規則").
 /** @returns {{emoji:string,label:string}|null} null -> keep the generic "ℹ️ 路況異常" (never guessed beyond what the source text/category actually says). */
-function resolveOtherAnomalyDetail(event) {
+export function resolveOtherAnomalyDetail(event) {
   if (event.pbsCategory && PBS_CATEGORY_ANOMALY_DETAIL[event.pbsCategory]) {
     return PBS_CATEGORY_ANOMALY_DETAIL[event.pbsCategory];
   }

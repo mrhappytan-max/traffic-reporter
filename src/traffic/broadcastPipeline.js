@@ -30,6 +30,15 @@
 // dynamicCollage.js's module comment for the full fail-closed rationale
 // (including the three Production blockers — unbounded delay, unbounded
 // TDX usage, and per-event budget accumulation — this correction fixed).
+//
+// V1.8.6.4: every event that actually gets pushed to >=1 target also gets
+// a best-effort "broadcast provenance" debug record written (see
+// broadcastProvenance.js) — a short-TTL, Admin-only KV log answering "why
+// did that LINE message look like that" without ever needing to re-query
+// TDX/PBS. Written strictly AFTER the real push/notified-state write
+// below, from data already in scope; the write is fully isolated (never
+// throws) and never runs for an eligible-but-unsent/deduped/0-subscriber
+// event. See that module's own comment for the full boundary list.
 
 import { isWithinBroadcastHours } from './broadcastHours.js';
 import { computeEffectiveWindow } from './effectiveWindow.js';
@@ -46,7 +55,7 @@ import {
   computeNotificationFingerprint,
 } from './notified.js';
 import { clusterCongestionEvents } from './congestionCluster.js';
-import { formatEventMessage } from './messageFormat.js';
+import { formatEventMessage, resolveOtherAnomalyDetail } from './messageFormat.js';
 import { pushLineMessages } from '../line/pushMessage.js';
 import {
   readIncidentSuppressionState,
@@ -54,6 +63,8 @@ import {
   persistIncidentSuppressionState,
 } from './incidentSuppression.js';
 import { resolveCctvEligibility, prepareCctvImageForEvent, CCTV_PREPARE_BUDGET_MS } from '../cctv/dynamicCollage.js';
+import { PUBLISHED_IMAGE_TTL_SECONDS } from '../cctv/publishedImage.js';
+import { buildProvenanceRecord, recordBroadcastProvenance } from './broadcastProvenance.js';
 
 function safeErrorMessage(err) {
   if (err && typeof err.message === 'string') return err.message;
@@ -237,8 +248,16 @@ export async function runLineBroadcast(
   // data collection and GET /debug/status visibility are unaffected.
   const broadcastEligibleEvents = [];
   const ineligibleByReason = {};
+  // V1.8.6.4 — captured once, here, at the single existing
+  // getBroadcastEligibility() call site — never re-invoked later just to
+  // label a provenance record (that would be a second, possibly-drifting
+  // copy of the same decision). Keyed by object identity: every event
+  // reference below (perEventPending, the push loop) is this SAME object,
+  // never a clone, all the way from allEvents.
+  const eligibilityReasonByEvent = new Map();
   for (const event of allEvents) {
     const { eligible, reason } = getBroadcastEligibility(event);
+    eligibilityReasonByEvent.set(event, reason);
     if (eligible) {
       broadcastEligibleEvents.push(event);
     } else {
@@ -509,6 +528,32 @@ export async function runLineBroadcast(
           `HIGH RISK: event ${eventKeyStr} was pushed to ${successfulTargets.length} target(s) but notified-state write failed (${commit.error}) — those target(s) may be re-notified next run`
         );
       }
+
+      // V1.8.6.4 — broadcast provenance (see broadcastProvenance.js's own
+      // module comment for the full design). Written ONLY here, AFTER a
+      // real push already succeeded to >=1 target — never for an eligible-
+      // but-unsent, deduped, or 0-subscriber event. Reuses
+      // eligibilityReasonByEvent (captured once, at the single existing
+      // getBroadcastEligibility() call site above) and messageFormat.js's
+      // own resolveOtherAnomalyDetail — never a second classification
+      // pass. Fully isolated: recordBroadcastProvenance() never throws, so
+      // this can never affect the push/notified-state outcome above,
+      // which already completed by the time this runs.
+      const anomalyDetail = event.type === 'other' ? resolveOtherAnomalyDetail(event) : null;
+      const imageAttached = messages.length > 1;
+      const record = buildProvenanceRecord({
+        event,
+        formattedOutput: text,
+        eligibilityReason: eligibilityReasonByEvent.get(event) || null,
+        anomalyDetail,
+        image: {
+          attached: imageAttached,
+          urlPresent: imageAttached,
+          expiresAt: imageAttached ? new Date(now.getTime() + PUBLISHED_IMAGE_TTL_SECONDS * 1000).toISOString() : null,
+        },
+        now,
+      });
+      await recordBroadcastProvenance(env.TRAFFIC_KV, record, now);
     }
   }
 

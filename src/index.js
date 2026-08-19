@@ -9,6 +9,7 @@ import { requireAdminAuth, applyAdminSecurityHeaders } from './security/adminAut
 import { handleCctvProbe } from './tdx/cctvProbe.js';
 import { handleHsinchuCctvProbe, handleHsinchuCctvFrame, handleHsinchuCctvCollage, handleHsinchuCctvPublishTest } from './tdx/hsinchuCctvProbe.js';
 import { handlePublicCctvImage } from './cctv/publishedImage.js';
+import { handleBroadcastProvenance } from './traffic/broadcastProvenance.js';
 
 // V1.6.3 — Admin Protection: every human-facing admin/debug page requires
 // HTTP Basic Auth (see security/adminAuth.js). Centralized here on
@@ -47,6 +48,16 @@ import { handlePublicCctvImage } from './cctv/publishedImage.js';
 // Authorization header, so that route's security is opaque-id entropy +
 // short TTL, not auth — see cctv/publishedImage.js's module comment.
 const HSINCHU_FRAME_PATHS = Array.from({ length: 4 }, (_, i) => `/admin/cctv-hsinchu-frame/${i}`);
+
+// V1.8.6.4: /admin/broadcast-provenance (see traffic/broadcastProvenance.js)
+// — Admin-Basic-Auth-gated GET, same as everything else in ADMIN_PATHS
+// below, but ALSO the first endpoint in this project that must explicitly
+// answer 405 for any other HTTP method (rather than just falling through
+// to the generic 404 every other admin path currently would for a wrong
+// method) — handled as its own small pre-check in fetch() below, ahead of
+// the generic GET-only ADMIN_PATHS dispatch.
+const BROADCAST_PROVENANCE_PATH = '/admin/broadcast-provenance';
+
 const ADMIN_PATHS = new Set([
   '/health',
   '/debug/status',
@@ -57,6 +68,7 @@ const ADMIN_PATHS = new Set([
   '/admin/cctv-hsinchu-probe',
   '/admin/cctv-hsinchu-collage',
   '/admin/cctv-hsinchu-publish-test',
+  BROADCAST_PROVENANCE_PATH,
   ...HSINCHU_FRAME_PATHS,
 ]);
 
@@ -72,6 +84,7 @@ function routeAdminGet(pathname, env, request) {
   if (pathname === '/admin/cctv-hsinchu-probe') return handleHsinchuCctvProbe(env);
   if (pathname === '/admin/cctv-hsinchu-collage') return handleHsinchuCctvCollage(env);
   if (pathname === '/admin/cctv-hsinchu-publish-test') return handleHsinchuCctvPublishTest(env, request);
+  if (pathname === BROADCAST_PROVENANCE_PATH) return handleBroadcastProvenance(env, request);
   const frameIndex = HSINCHU_FRAME_PATHS.indexOf(pathname);
   if (frameIndex !== -1) return handleHsinchuCctvFrame(env, frameIndex);
   return new Response('Not Found', { status: 404 });
@@ -89,6 +102,15 @@ export default {
         status: 'ok',
         version: 'v1-bootstrap',
       });
+    }
+
+    // V1.8.6.4: this ONE admin path also answers 405 for any non-GET
+    // method (auth-gated first, same as every other admin path — a wrong
+    // method never bypasses Admin Auth to learn the route even exists).
+    if (url.pathname === BROADCAST_PROVENANCE_PATH && request.method !== 'GET') {
+      const denied = await requireAdminAuth(request, env);
+      if (denied) return applyAdminSecurityHeaders(denied);
+      return applyAdminSecurityHeaders(new Response('Method Not Allowed', { status: 405, headers: { Allow: 'GET' } }));
     }
 
     if (request.method === 'GET' && ADMIN_PATHS.has(url.pathname)) {
