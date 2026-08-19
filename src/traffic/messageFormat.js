@@ -13,20 +13,30 @@
 // only this round — everything else falls back to the original
 // location-based line, per "不要擴大 scope").
 //
-// V1.8.6.4 — production repro (台3線): a real 省道 event had genuine KM
-// AND a genuine TDX-supplied human location/section field, but line 1
-// only ever considered `getRoadSectionLabel()`'s curated 國1/國3 anchor
-// table — a 台3/台1/etc event with no anchor entry showed bare KM only,
-// with no place-name context at all. Root cause traced to
-// `tdx/normalize.js`'s `normalizeRoadEvent`: whenever structured KM was
-// present, `composeLocation()` silently shadowed TDX's own
-// `LocationDescription`/`Location.Description`/`RoadSection` fields
-// before they ever reached this file. Fixed at the source (see that
-// module's own comment) by preserving them as a NEW, separate
-// `event.locationDescription` field; this file now prefers that genuine
-// source text over an anchor-table label whenever it's present and looks
-// like real place text (not just another KM string) — see
-// `pickHumanLocationText` below. Priority, per the round's own principle
+// V1.8.6.4 — reported symptom (台3線): a 省道 LINE message showed only
+// bare KM, with no place-name context at all — because line 1 only ever
+// considered `getRoadSectionLabel()`'s curated 國1/國3 anchor table, and
+// any road outside that table (every 省道) has nothing else to fall back
+// on. NOTE — provenance-audit correction: this repo has no persisted raw
+// TDX payload for the specific historical event that was reported, so
+// whether that ONE event actually carried a populated human location
+// field TDX's own `composeLocation()` then shadowed is NOT independently
+// confirmed (see PROJECT_HANDOFF.md's "V1.8.6.4 — provenance audit"
+// section). What IS confirmed, by reading
+// `tdx/normalize.js`'s old code directly (a structural fact, not
+// dependent on any one event): whenever structured KM was present,
+// `composeLocation()` UNCONDITIONALLY shadowed any human location text a
+// raw record might carry, before it ever reached this file — a genuine
+// bug regardless of whether it fired on that specific historical event.
+// Fixed at the source (see that module's own comment, including the
+// per-field confidence levels for `LocationDescription`/
+// `Location.Description`/`RoadSection` — none of them are confirmed to
+// exist on a real RoadEvent response) by preserving them as a NEW,
+// separate, fully optional `event.locationDescription` field; this file
+// now prefers that genuine source text (when present) over an
+// anchor-table label whenever it looks like real place text (not just
+// another KM string) — see `pickHumanLocationText` below. Priority, per
+// the round's own principle
 // ("來源本來有的人類位置資訊 > 經可靠對照的路段名稱 > KM > 不顯示"):
 //   1. `event.locationDescription` (TDX-supplied human text, filtered)
 //   2. `getRoadSectionLabel()`'s curated anchor label (國1/國3 only —

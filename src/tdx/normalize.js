@@ -6,9 +6,13 @@
 // }
 //
 // V1.8.6.4: `normalizeRoadEvent` also attaches an optional
-// `locationDescription` — the raw, human-oriented location/section text
-// TDX supplies alongside (not instead of) the structured KM fields, kept
-// distinct from `location` (see that function's own comment for why).
+// `locationDescription` — raw, human-oriented location/section text IF
+// the raw record happens to carry any of a few candidate fields (see that
+// function's own comment for exactly which, and each one's confidence
+// level — none of them are confirmed to always be present, or even to
+// exist at all on a real RoadEvent response), kept distinct from
+// `location` so it's never lost just because structured KM is also
+// present.
 //
 // Freeway/Highway field mapping below was corrected against a real TDX
 // response verified via the deployed /debug/tdx endpoint (see commit
@@ -124,23 +128,46 @@ export function normalizeRoadEvent(raw, source) {
     composedLocation ||
     String(firstDefined(raw, ['LocationDescription', 'Location.Description', 'LocationMile'], ''));
 
-  // V1.8.6.4 — production repro (台3線): `location` above is composed from
-  // road+direction+KM the instant `road` is non-empty (composeLocation()
-  // only ever returns '' if road/direction/KM are ALL missing, which is
-  // rare) — so whenever TDX ALSO supplies a genuinely human-readable
-  // section/location field (`LocationDescription`/`Location.Description`,
-  // or `RoadSection` — the latter confirmed present on TDX's sibling CCTV
-  // dataset in this same Highway/Freeway family, see
-  // tdx/hsinchuCctvProbe.js's `isServiceAreaCctv` — kept here only as a
-  // secondary candidate since it is not independently re-confirmed for
-  // RoadEvent specifically), that text was being silently discarded: it
-  // never even reached `location`, let alone the LINE message. Preserved
-  // here, UNCONDITIONALLY and RAW (no filtering/guessing at this layer —
-  // see messageFormat.js's `pickHumanLocationText` for the display-time
-  // "is this actually human text, not just another KM string" check), as
-  // its own separate field so `location`'s existing value/shape (and
-  // therefore notified.js's fingerprint, which reads `location`) is
-  // completely untouched by this change.
+  // V1.8.6.4 — CONFIRMED STRUCTURAL BUG (provable by reading the code
+  // above, independent of any specific historical event): `location` is
+  // composed from road+direction+KM the instant `road` is non-empty
+  // (composeLocation() only ever returns '' if road/direction/KM are ALL
+  // missing, which is rare) — so IF a raw record ever also carries a
+  // genuinely human-readable location/section field, that text was being
+  // silently discarded before it ever reached `location`, let alone the
+  // LINE message. This mechanism is certain; whether it actually fired
+  // for any specific past production event is NOT independently verified
+  // (this repo has no persisted raw-payload history to check against —
+  // see PROJECT_HANDOFF.md's "V1.8.6.4 — provenance audit" section).
+  //
+  // CONFIDENCE LEVELS for each candidate field below, precisely (do not
+  // upgrade these without a real, independently-confirmed TDX response —
+  // "不要假裝確認"):
+  //   - `LocationDescription`/`Location.Description`: UNVERIFIED. These
+  //     are the ORIGINAL V1.1 guessed field names (see commit 518d348),
+  //     carried forward unchanged by ebff9ff's "corrected against a real
+  //     TDX response" pass — that commit's own message lists exactly
+  //     which fields it verified (title/road/direction/startKM/endKM/
+  //     startTime/updatedAt/blockedLanes), and these two are NOT on that
+  //     list. They may or may not exist on a real RoadEvent response —
+  //     kept only as defensive, optional fallback candidates, same as
+  //     they always were.
+  //   - `RoadSection`/`Location.RoadSection`: also UNVERIFIED for
+  //     RoadEvent. Confirmed to exist only on TDX's CCTV metadata dataset
+  //     (`Road/Traffic/CCTV/Freeway` — see tdx/hsinchuCctvProbe.js's
+  //     `isServiceAreaCctv`), a DIFFERENT TDX dataset than RoadEvent.
+  //     Added here purely as a candidate on the (unconfirmed) assumption
+  //     TDX's highway datasets share field-naming conventions — never
+  //     assume it's actually populated on RoadEvent without checking a
+  //     real response first.
+  // Preserved UNCONDITIONALLY and RAW when present (no filtering/guessing
+  // at this layer — see messageFormat.js's `pickHumanLocationText` for
+  // the display-time "is this actually human text, not just another KM
+  // string" check), as its own separate, fully OPTIONAL field so
+  // `location`'s existing value/shape (and therefore notified.js's
+  // fingerprint, which reads `location`) is completely untouched by this
+  // change. Absent on the raw record -> simply absent here, never
+  // fabricated, never assumed present.
   const locationDescription = String(
     firstDefined(raw, ['LocationDescription', 'Location.Description', 'RoadSection', 'Location.RoadSection'], '')
   ).trim();
