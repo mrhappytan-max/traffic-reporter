@@ -3,6 +3,7 @@ import { handleDebugStatus } from './traffic/debugStatus.js';
 import { runScheduledTdxSync } from './traffic/scheduled.js';
 import { handleLineWebhook } from './line/webhook.js';
 import { handleDebugPbs } from './pbs/debugPbs.js';
+import { handleSharedFeed } from './traffic/sharedFeedHandler.js';
 
 export default {
   async fetch(request, env) {
@@ -30,6 +31,14 @@ export default {
 
     if (url.pathname === '/debug/pbs' && request.method === 'GET') {
       return handleDebugPbs(env);
+    }
+
+    // V57 Shared Traffic Feed. Matched on pathname ALONE, before the 404,
+    // so a non-GET verb gets an honest 405 from the handler instead of a
+    // misleading "Not Found" — the read-only contract has to be visible to
+    // a caller that tries to write.
+    if (url.pathname === '/internal/shared-feed') {
+      return handleSharedFeed(request, env);
     }
 
     return new Response('Not Found', { status: 404 });

@@ -10,6 +10,7 @@
 import { runTdxPipelineAndCommit } from './pipeline.js';
 import { runLineBroadcast } from './broadcastPipeline.js';
 import { runPbsPipelineAndCommit } from '../pbs/pipeline.js';
+import { runSharedFeedPersist } from './sharedFeed.js';
 
 export async function runScheduledTdxSync(env, now = new Date()) {
   const summary = await runTdxPipelineAndCommit(env, now);
@@ -73,5 +74,26 @@ export async function runScheduledTdxSync(env, now = new Date()) {
     pbsSummary = { pbsOk: false, pbsError: err && err.message };
   }
 
-  return { ...summary, line: lineSummary, pbs: pbsSummary };
+  // V57: persist the completed products (the same finished LINE text this
+  // Worker just broadcast) so another project can consume them read-only —
+  // see src/traffic/sharedFeed.js.
+  //
+  // Deliberately the LAST step, in its own try/catch, and consuming only
+  // `summary.allEvents` which is already in memory: it fetches nothing, and
+  // this Worker's own TDX pipeline and LINE broadcast have both fully
+  // completed before it starts. A failure here can therefore never reduce
+  // or delay this Worker's own broadcast — it is log-only, best effort.
+  let sharedFeedSummary;
+  try {
+    sharedFeedSummary = await runSharedFeedPersist(env, { allEvents: summary.allEvents, now });
+    console.log(
+      `[cron][shared-feed] committed=${sharedFeedSummary.committed} ` +
+        `events=${sharedFeedSummary.eventCount} error=${sharedFeedSummary.error ?? 'none'}`
+    );
+  } catch (err) {
+    console.error(`[cron][shared-feed] persistence failed: ${err && err.message}`);
+    sharedFeedSummary = { committed: false, error: err && err.message, eventCount: 0 };
+  }
+
+  return { ...summary, line: lineSummary, pbs: pbsSummary, sharedFeed: sharedFeedSummary };
 }
