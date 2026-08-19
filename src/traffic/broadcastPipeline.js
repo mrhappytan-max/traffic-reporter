@@ -181,6 +181,24 @@ export async function runLineBroadcast(
     cctvEligibleAccidentCount: 0,
     cctvImagesAttachedCount: 0,
     cctvSkippedByReason: {},
+    // V57 — the finished products of THIS run, in broadcast order: exactly
+    // the events that survived every gate this pipeline applies (type
+    // eligibility, 60-minute relevance, congestion clustering, incident
+    // suppression) together with the exact `text` this Worker would send
+    // and, when one was actually composed for the real push below, that
+    // event's CCTV image URL and expiry.
+    //
+    // Populated regardless of whether any target still needed notifying,
+    // because a consumer of the Shared Traffic Feed has its OWN audience
+    // and its own delivery state — "everyone here already knows" must not
+    // mean "nobody else may ever learn". Building the text costs nothing
+    // (formatEventMessage is pure); the CCTV image is NEVER composed for
+    // this list's sake — it is only ever recorded when the real broadcast
+    // path composed one anyway, so the feed adds ZERO CCTV work.
+    //
+    // Empty under dryRun, fail-closed, and outside broadcast hours — all
+    // three are states in which this Worker itself produces nothing.
+    completedProducts: [],
     broadcastRelevantCount: 0,
     activeNowCount: 0,
     futureWithin60MinCount: 0,
@@ -429,12 +447,22 @@ export async function runLineBroadcast(
   const cctvRunDeadlineAt = Date.now() + (cctvPrepareBudgetMs ?? CCTV_PREPARE_BUDGET_MS);
 
   for (const { event, window, eventKeyStr, fingerprint, pendingTargets } of perEventPending) {
-    if (pendingTargets.length === 0) continue;
-
     const startMs = new Date(window.effectiveStart).getTime();
     const forecast = startMs > now.getTime();
     const minutesUntilStart = forecast ? Math.max(1, Math.round((startMs - now.getTime()) / 60000)) : null;
     const text = formatEventMessage(event, { forecast, minutesUntilStart });
+
+    // V57: record the finished product BEFORE the pending-target
+    // short-circuit below. formatEventMessage is pure and was already
+    // being called at exactly this point for every event that did have
+    // pending targets, so this reorder changes nothing about what gets
+    // pushed — it only stops an event from being invisible to the Shared
+    // Traffic Feed just because this Worker's own subscribers happen to
+    // have been notified already.
+    const completedProduct = { eventKeyStr, fingerprint, text, event, imageUrl: null, imageExpiresAt: null };
+    result.completedProducts.push(completedProduct);
+
+    if (pendingTargets.length === 0) continue;
 
     // V1.8.5 — CCTV image enrichment: composed/published AT MOST ONCE
     // per event, BEFORE the per-target push loop, so every pending
@@ -463,6 +491,9 @@ export async function runLineBroadcast(
         if (cctv.ok) {
           result.cctvImagesAttachedCount += 1;
           messages = [{ type: 'text', text }, { type: 'image', originalContentUrl: cctv.imageUrl, previewImageUrl: cctv.imageUrl }];
+          // V57: reuse — never re-compose — the image this push already has.
+          completedProduct.imageUrl = cctv.imageUrl;
+          completedProduct.imageExpiresAt = cctv.imageExpiresAt;
         } else {
           result.cctvSkippedByReason[cctv.reason] = (result.cctvSkippedByReason[cctv.reason] || 0) + 1;
         }
