@@ -12,6 +12,35 @@
 // roadSectionLabel.js for the KM→interchange mapping (國道一號/國道三號
 // only this round — everything else falls back to the original
 // location-based line, per "不要擴大 scope").
+//
+// V1.8.6.4 — production repro (台3線): a real 省道 event had genuine KM
+// AND a genuine TDX-supplied human location/section field, but line 1
+// only ever considered `getRoadSectionLabel()`'s curated 國1/國3 anchor
+// table — a 台3/台1/etc event with no anchor entry showed bare KM only,
+// with no place-name context at all. Root cause traced to
+// `tdx/normalize.js`'s `normalizeRoadEvent`: whenever structured KM was
+// present, `composeLocation()` silently shadowed TDX's own
+// `LocationDescription`/`Location.Description`/`RoadSection` fields
+// before they ever reached this file. Fixed at the source (see that
+// module's own comment) by preserving them as a NEW, separate
+// `event.locationDescription` field; this file now prefers that genuine
+// source text over an anchor-table label whenever it's present and looks
+// like real place text (not just another KM string) — see
+// `pickHumanLocationText` below. Priority, per the round's own principle
+// ("來源本來有的人類位置資訊 > 經可靠對照的路段名稱 > KM > 不顯示"):
+//   1. `event.locationDescription` (TDX-supplied human text, filtered)
+//   2. `getRoadSectionLabel()`'s curated anchor label (國1/國3 only —
+//      no fabricated anchor table was added for 台1/台3/etc since this
+//      repo has no independently-confirmed KM-anchor data for them;
+//      guessing interchange positions is exactly what this project's
+//      "不要猜" rule forbids)
+//   3. raw KM (unchanged, second line)
+//   4. nothing (bare road+direction only — never an invented address)
+// Deliberately NEVER extended to PBS's own `event.location` (areaNm) —
+// that field is already covered by V1.8.5.1's own explicit "KM must win
+// over a route-name-shaped location string" regression test, which this
+// round must not regress (see required regression test 10 below / this
+// file's own test suite).
 
 import { getRoadShortName, getRoadSectionLabel } from './roadSectionLabel.js';
 import { DEFAULT_CONGESTION_SEVERITY } from './congestionSeverity.js';
@@ -42,6 +71,73 @@ const TYPE_IMPACT_LINES = {
   alert: '營運異動\n請留意公告',
   other: '請留意路況',
 };
+
+// V1.8.6.4 — direction-aware impact wording. `event.direction === '雙向'`
+// is a real structured TDX/PBS field, not a guess — so when it's set,
+// naming it in the impact line ("雙向施工管制" instead of a direction-
+// silent "施工影響通行") gives the driver real information the source
+// already supports. Deliberately does NOT invent extra severity: a
+// construction event still reads "雙向施工管制" (management/control),
+// never "雙向道路封閉" — only `type==='closure'` ever says 封閉. Only the
+// 4 types that actually reach a driver's LINE message today
+// (accident/construction/closure/control — congestion is never
+// broadcast, per broadcastRules.js) have a variant; `other`/`alert` keep
+// their existing direction-silent wording unchanged, since this project
+// has no reliably structured signal for which direction(s) an 'other'
+// anomaly actually impacts.
+const BIDIRECTIONAL_IMPACT_LINES = {
+  accident: '事故影響雙向通行\n請提前避開',
+  construction: '雙向施工管制\n請注意車道',
+  closure: '雙向道路封閉\n請改道行駛',
+  control: '雙向交通管制\n請配合疏導',
+};
+
+// V1.8.6.4 — production repro: an 'other'-typed event that legitimately
+// passed broadcastRules.js's OTHER_ANOMALY_PATTERNS eligibility gate
+// (積水/落石/坍方/樹倒/電線掉落/掉落物/火災/橋梁異常/道路中斷/etc — see
+// that module) still rendered as a generic "ℹ️ 路況異常" here, because
+// this file never looked at WHICH keyword matched, only that `type`
+// stayed 'other'. Fixed with a display-only re-classification (does NOT
+// touch `event.type`, dedupe/fingerprint semantics, or broadcast
+// eligibility itself — those all still key off the plain 'other' type,
+// completely unchanged) that picks the single most specific label for
+// the headline. `無法通行` is deliberately excluded from this table (it
+// only says "impassable", not WHY — no specific icon/label to show
+// without guessing a cause that isn't actually in the source text).
+const ANOMALY_DETAIL_RULES = [
+  { emoji: '🌊', label: '道路積水', patterns: [/淹水/, /積水/, /涵洞/, /河川暴漲/, /溪水暴漲/] },
+  { emoji: '⛰️', label: '落石', patterns: [/落石/] },
+  { emoji: '⛰️', label: '邊坡坍方', patterns: [/坍方/, /路基流失/] },
+  { emoji: '🌳', label: '路樹倒塌', patterns: [/樹倒/] },
+  { emoji: '⚡', label: '電線倒塌', patterns: [/電線掉落/, /電線桿倒/] },
+  { emoji: '⚠️', label: '掉落物', patterns: [/掉落物/, /貨物散落/] },
+  { emoji: '🔥', label: '火災', patterns: [/火災/] },
+  { emoji: '⚠️', label: '橋梁異常', patterns: [/橋梁封閉/, /橋梁異常/] },
+  { emoji: '⚠️', label: '道路中斷', patterns: [/道路中斷/] },
+];
+
+// PBS already carries a finer-grained, STRUCTURED category
+// (`pbsCategory` — see pbs/classify.js) for exactly this situation, more
+// reliable than re-parsing free text — checked first, before falling
+// back to the keyword table above (which still applies to a plain TDX
+// 'other' event, which has no `pbsCategory` at all).
+const PBS_CATEGORY_ANOMALY_DETAIL = {
+  obstruction: { emoji: '⚠️', label: '掉落物' },
+  breakdown: { emoji: '🚗', label: '故障車' },
+  'dangerous-driving': { emoji: '⚠️', label: '危險駕駛' },
+};
+
+/** @returns {{emoji:string,label:string}|null} null -> keep the generic "ℹ️ 路況異常" (never guessed beyond what the source text/category actually says). */
+function resolveOtherAnomalyDetail(event) {
+  if (event.pbsCategory && PBS_CATEGORY_ANOMALY_DETAIL[event.pbsCategory]) {
+    return PBS_CATEGORY_ANOMALY_DETAIL[event.pbsCategory];
+  }
+  const text = `${event.title || ''} ${event.description || ''}`;
+  for (const rule of ANOMALY_DETAIL_RULES) {
+    if (rule.patterns.some((p) => p.test(text))) return { emoji: rule.emoji, label: rule.label };
+  }
+  return null;
+}
 
 // V1.4.1: congestion is no longer a single flat label — see
 // congestionSeverity.js. 'severe' is only ever reached when
@@ -87,6 +183,32 @@ function formatKmRange(startKM, endKM) {
   return start || end || '';
 }
 
+// True for text that is ITSELF just a KM point/range in disguise (e.g. a
+// raw `LocationDescription` that happens to hold "92K+000", exactly as
+// observed on TDX's sibling CCTV dataset — see normalize.js's comment).
+// Showing that as if it were a place name would be redundant with the KM
+// line below it, not genuinely new information — so it's treated the
+// same as "no human text available", never displayed as a section label.
+const KM_ONLY_TEXT_PATTERN = /^-?\d+(?:\.\d+)?\s*K(?:\s*\+\s*\d+)?(?:\s*[-~～]\s*-?\d+(?:\.\d+)?\s*K(?:\s*\+\s*\d+)?)?$/i;
+
+/**
+ * V1.8.6.4 — the source-text half of "來源本來有的人類位置資訊 > 經可靠
+ * 對照的路段名稱 > KM > 不顯示". Only ever returns text the source
+ * ITSELF supplied (`event.locationDescription`, see normalize.js) —
+ * never synthesizes or guesses a place name. Rejects it only when it
+ * carries no information beyond what's already shown elsewhere: empty,
+ * purely a KM string (see above), or identical to the road/direction
+ * line it would sit next to.
+ */
+function pickHumanLocationText(event, roadDirection) {
+  const candidate = (event.locationDescription || '').trim();
+  if (!candidate) return null;
+  if (KM_ONLY_TEXT_PATTERN.test(candidate)) return null;
+  if (candidate === roadDirection) return null;
+  if (event.road && candidate === String(event.road)) return null;
+  return candidate;
+}
+
 /**
  * Builds the first two message lines for an event: a short
  * "road direction｜section" (or just "road direction", when no section
@@ -117,8 +239,14 @@ function buildRoadLines(event) {
   const shortRoad = getRoadShortName(event.road) || event.road || '';
   const roadDirection = [shortRoad, event.direction].filter(Boolean).join(' ');
 
-  const section = getRoadSectionLabel({ road: event.road, startKM: event.startKM, endKM: event.endKM });
-  const firstLine = section.label ? (roadDirection ? `${roadDirection}｜${section.label}` : section.label) : roadDirection;
+  // Tier 1 (source's own human text) beats tier 2 (curated anchor
+  // table) — only fall back to getRoadSectionLabel()'s resolution when
+  // the source didn't supply usable location text of its own. See the
+  // V1.8.6.4 module comment above for the full priority rationale.
+  const humanLocationText = pickHumanLocationText(event, roadDirection);
+  const section = humanLocationText ? null : getRoadSectionLabel({ road: event.road, startKM: event.startKM, endKM: event.endKM });
+  const sectionLabel = humanLocationText || (section && section.label);
+  const firstLine = sectionLabel ? (roadDirection ? `${roadDirection}｜${sectionLabel}` : sectionLabel) : roadDirection;
 
   const structuredKmLine =
     event.startKM !== undefined || event.endKM !== undefined ? formatKmRange(event.startKM, event.endKM) : '';
@@ -141,6 +269,10 @@ function buildRoadLines(event) {
     const prefix = `${event.road} ${event.direction} `;
     if (secondLine.startsWith(prefix)) secondLine = secondLine.slice(prefix.length);
   }
+  // V1.8.6.4: don't repeat the same text on both lines if `event.location`
+  // happens to duplicate the human location text already shown in
+  // `sectionLabel` on line 1.
+  if (secondLine && secondLine === sectionLabel) secondLine = '';
   return { firstLine, secondLine };
 }
 
@@ -169,9 +301,20 @@ export function formatEventMessage(event, { forecast = false, minutesUntilStart 
       ? CONGESTION_SEVERITY_DISPLAY[event.congestionSeverity] || CONGESTION_SEVERITY_DISPLAY[DEFAULT_CONGESTION_SEVERITY]
       : null;
 
-  const emoji = congestionDisplay ? congestionDisplay.emoji : TYPE_EMOJI[event.type] || 'ℹ️';
-  const label = congestionDisplay ? congestionDisplay.label : TYPE_LABEL[event.type] || '路況異常';
-  const impactLines = congestionDisplay ? congestionDisplay.impactLines : TYPE_IMPACT_LINES[event.type] || '請留意路況';
+  // V1.8.6.4: a genuinely-classifiable 'other' anomaly (積水/落石/坍方/...)
+  // gets its own specific headline instead of always falling through to
+  // the generic "路況異常" — see resolveOtherAnomalyDetail's own comment.
+  const anomalyDetail = !congestionDisplay && event.type === 'other' ? resolveOtherAnomalyDetail(event) : null;
+
+  const emoji = congestionDisplay ? congestionDisplay.emoji : anomalyDetail ? anomalyDetail.emoji : TYPE_EMOJI[event.type] || 'ℹ️';
+  const label = congestionDisplay ? congestionDisplay.label : anomalyDetail ? anomalyDetail.label : TYPE_LABEL[event.type] || '路況異常';
+
+  // V1.8.6.4: a real, structured direction==='雙向' gets direction-aware
+  // impact wording (see BIDIRECTIONAL_IMPACT_LINES's own comment) —
+  // congestion keeps its own severity-driven impact text unchanged.
+  const impactLines = congestionDisplay
+    ? congestionDisplay.impactLines
+    : (event.direction === '雙向' && BIDIRECTIONAL_IMPACT_LINES[event.type]) || TYPE_IMPACT_LINES[event.type] || '請留意路況';
   const updatedHHMM = toTaipeiHHMM(event.updatedAt);
 
   const lines = [

@@ -131,6 +131,113 @@ export const highwayEventNoLocationSignal = {
   Location: { FreeExpressHighway: { Road: '台3線', Direction: '南向' } },
 };
 
+// --- V1.8.6.4: 台3線 message-clarity regression fixtures ---
+//
+// Same raw TDX Highway/RoadEvent shape used throughout this file
+// (Location.FreeExpressHighway.{Road,Direction,StartKM,EndKM}, EventType,
+// Description) — these additionally carry `LocationDescription`, the
+// field `tdx/normalize.js` already listed as a known real-response
+// candidate (see that module's own comment/history) but which used to be
+// silently shadowed by composeLocation() whenever StartKM/EndKM was also
+// present. This is the exact production repro shape (structured KM +
+// genuine human section text, both present) — reproducing the reported
+// 台3線 issue without needing a live TDX call.
+
+// 施工, 雙向, WITH a genuine human LocationDescription alongside real KM.
+export const highwayTai3ConstructionWithLocationDescription = {
+  EventID: 'HWY-2026-0819-301',
+  EventTitle: '台3線雙向78K道路施工',
+  EventType: '施工',
+  Description: '台3線雙向路段進行路面施工，請注意車道管制',
+  LocationDescription: '關西－橫山路段',
+  EffectiveTime: '2026-08-19T08:00:00+08:00',
+  LastUpdateTime: '2026-08-19T08:10:00+08:00',
+  Location: {
+    FreeExpressHighway: { Road: '台3線', Direction: '雙向', StartKM: '78K+500', EndKM: '79K+200' },
+  },
+};
+
+// Same 台3線 施工 event, but the source did NOT supply any location
+// description text this time — must fall back to bare road+direction and
+// still show the real KM, never an invented section name.
+export const highwayTai3ConstructionNoLocationDescription = {
+  EventID: 'HWY-2026-0819-302',
+  EventTitle: '台3線雙向78K道路施工',
+  EventType: '施工',
+  Description: '台3線雙向路段進行路面施工，請注意車道管制',
+  EffectiveTime: '2026-08-19T08:00:00+08:00',
+  LastUpdateTime: '2026-08-19T08:10:00+08:00',
+  Location: {
+    FreeExpressHighway: { Road: '台3線', Direction: '雙向', StartKM: '78K+500', EndKM: '79K+200' },
+  },
+};
+
+// 事故 (accident) on 台3線, single-direction, with LocationDescription.
+export const highwayTai3AccidentWithLocationDescription = {
+  EventID: 'HWY-2026-0819-303',
+  EventTitle: '台3線南向事故',
+  EventType: '事故',
+  Description: '南向發生車輛事故，外側車道受阻',
+  LocationDescription: '關西鎮中山路附近',
+  EffectiveTime: '2026-08-19T09:00:00+08:00',
+  LastUpdateTime: '2026-08-19T09:05:00+08:00',
+  Location: {
+    FreeExpressHighway: { Road: '台3線', Direction: '南向', StartKM: '82K+300' },
+  },
+};
+
+// 封閉 (closure) on 台3線, 雙向.
+export const highwayTai3Closure = {
+  EventID: 'HWY-2026-0819-304',
+  EventTitle: '台3線雙向道路封閉',
+  EventType: '封閉',
+  Description: '因坍方雙向道路封閉，請改道',
+  EffectiveTime: '2026-08-19T10:00:00+08:00',
+  LastUpdateTime: '2026-08-19T10:05:00+08:00',
+  Location: {
+    FreeExpressHighway: { Road: '台3線', Direction: '雙向', StartKM: '85K+000', EndKM: '85K+500' },
+  },
+};
+
+// 管制 (traffic control) on 台3線, 雙向.
+export const highwayTai3Control = {
+  EventID: 'HWY-2026-0819-305',
+  EventTitle: '台3線雙向交通管制',
+  EventType: '管制',
+  Description: '因活動實施雙向交通管制',
+  EffectiveTime: '2026-08-19T11:00:00+08:00',
+  LastUpdateTime: '2026-08-19T11:05:00+08:00',
+  Location: {
+    FreeExpressHighway: { Road: '台3線', Direction: '雙向', StartKM: '70K+000', EndKM: '70K+500' },
+  },
+};
+
+// A genuine anomaly ('other', keyword-eligible per broadcastRules.js's
+// OTHER_ANOMALY_PATTERNS) — no structured EventType match, only free text.
+export const highwayTai3Flooding = {
+  EventID: 'HWY-2026-0819-306',
+  EventTitle: '台3線路況',
+  EventType: '其他',
+  Description: '台3線路段因大雨積水，請小心慢行',
+  EffectiveTime: '2026-08-19T12:00:00+08:00',
+  LastUpdateTime: '2026-08-19T12:05:00+08:00',
+  Location: {
+    FreeExpressHighway: { Road: '台3線', Direction: '南向', StartKM: '60K+000' },
+  },
+};
+
+export const highwayTai3RockslideRaw = {
+  EventID: 'HWY-2026-0819-307',
+  EventTitle: '台3線路況',
+  EventType: '其他',
+  Description: '台3線邊坡落石，請注意行車安全',
+  EffectiveTime: '2026-08-19T13:00:00+08:00',
+  LastUpdateTime: '2026-08-19T13:05:00+08:00',
+  Location: {
+    FreeExpressHighway: { Road: '台3線', Direction: '北向', StartKM: '55K+000' },
+  },
+};
+
 // AlertID "0" is TDX's convention for "nothing to report".
 export const busAlertNormalOperationById = {
   AlertID: '0',

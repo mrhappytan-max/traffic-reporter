@@ -139,7 +139,12 @@ test('5. flooding (淹水) -> classifies as "other", still 1 LINE message', asyn
   const { pushed } = await withPushCapture(mockFetch({ freewayEvents: [raw] }), () => runScheduledTdxSync(env, NOW));
 
   assert.equal(pushed.length, 1);
-  assert.match(pushed[0], /ℹ️ 路況異常/);
+  // V1.8.6.4: messageFormat.js now gives a recognized 'other' anomaly its
+  // own specific headline instead of the old generic "ℹ️ 路況異常" — see
+  // test/provincialRoadMessageClarity.test.js for the dedicated coverage.
+  // `event.type` itself is still plain 'other', unchanged — this is a
+  // display-only refinement, still gated by the same eligibility rule.
+  assert.match(pushed[0], /🌊 道路積水/);
 });
 
 test('6. congestion + accident describing the SAME incident -> exactly 1 LINE message, framed as the accident', async () => {
@@ -235,7 +240,9 @@ test('11. "other" with a recognized anomaly keyword (落石) -> 1 LINE message',
   const { pushed } = await withPushCapture(mockFetch({ freewayEvents: [raw] }), () => runScheduledTdxSync(env, NOW));
 
   assert.equal(pushed.length, 1);
-  assert.match(pushed[0], /ℹ️ 路況異常/);
+  // V1.8.6.4: specific anomaly headline (⛰️ 落石), not the old generic
+  // "ℹ️ 路況異常" — see test/provincialRoadMessageClarity.test.js.
+  assert.match(pushed[0], /⛰️ 落石/);
 });
 
 // V1.6.1: Bus Alert (both Hsinchu city and county) is no longer fetched

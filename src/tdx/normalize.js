@@ -5,6 +5,11 @@
 //   startTime, endTime, updatedAt, rawId,
 // }
 //
+// V1.8.6.4: `normalizeRoadEvent` also attaches an optional
+// `locationDescription` — the raw, human-oriented location/section text
+// TDX supplies alongside (not instead of) the structured KM fields, kept
+// distinct from `location` (see that function's own comment for why).
+//
 // Freeway/Highway field mapping below was corrected against a real TDX
 // response verified via the deployed /debug/tdx endpoint (see commit
 // history / TDX_SOURCE_AUDIT.md for the earlier, unverified guesses).
@@ -119,6 +124,27 @@ export function normalizeRoadEvent(raw, source) {
     composedLocation ||
     String(firstDefined(raw, ['LocationDescription', 'Location.Description', 'LocationMile'], ''));
 
+  // V1.8.6.4 — production repro (台3線): `location` above is composed from
+  // road+direction+KM the instant `road` is non-empty (composeLocation()
+  // only ever returns '' if road/direction/KM are ALL missing, which is
+  // rare) — so whenever TDX ALSO supplies a genuinely human-readable
+  // section/location field (`LocationDescription`/`Location.Description`,
+  // or `RoadSection` — the latter confirmed present on TDX's sibling CCTV
+  // dataset in this same Highway/Freeway family, see
+  // tdx/hsinchuCctvProbe.js's `isServiceAreaCctv` — kept here only as a
+  // secondary candidate since it is not independently re-confirmed for
+  // RoadEvent specifically), that text was being silently discarded: it
+  // never even reached `location`, let alone the LINE message. Preserved
+  // here, UNCONDITIONALLY and RAW (no filtering/guessing at this layer —
+  // see messageFormat.js's `pickHumanLocationText` for the display-time
+  // "is this actually human text, not just another KM string" check), as
+  // its own separate field so `location`'s existing value/shape (and
+  // therefore notified.js's fingerprint, which reads `location`) is
+  // completely untouched by this change.
+  const locationDescription = String(
+    firstDefined(raw, ['LocationDescription', 'Location.Description', 'RoadSection', 'Location.RoadSection'], '')
+  ).trim();
+
   const type = mapRoadEventType(raw, description);
 
   return {
@@ -143,6 +169,7 @@ export function normalizeRoadEvent(raw, source) {
     ...(startKM !== undefined ? { startKM } : {}),
     ...(endKM !== undefined ? { endKM } : {}),
     ...(blockedLanes !== undefined ? { blockedLanes } : {}),
+    ...(locationDescription ? { locationDescription } : {}),
   };
 }
 
