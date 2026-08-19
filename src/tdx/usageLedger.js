@@ -89,7 +89,9 @@ export const TDX_MONTHLY_POINT_BUDGET = 3;
 // NOT derived from anything this Worker measured itself:
 //   2026-08-16: 1490 calls, 17016 KB
 //   2026-08-17: 704 calls, 10534 KB
-//   cumulative through 2026-08-17: 2194 calls, 27550 KB, 1.643 points
+//   2026-08-18: 89 calls, 3177 KB, 0.080 points
+//     （其中：國道 RoadEvent 42、省道 RoadEvent 42、CCTV metadata 5）
+//   cumulative through 2026-08-18: 2283 calls, 30727 KB, 1.723 points
 //     (TDX's own displayed cumulative point figure — not recomputed here
 //     from calls/traffic, since TDX's own official rounding/conversion
 //     may differ slightly from this Worker's local estimate formula)
@@ -111,29 +113,26 @@ export const TDX_MONTHLY_POINT_BUDGET = 3;
 // from the MONTH-quota total to avoid double-counting the same real TDX
 // usage twice.
 //
-// KNOWN GAP as of this writing: `throughDate` is still 2026-08-17, but
-// the Local Ledger's `trackingStartedAt` is mid-day on 2026-08-18 (V1.8.6
-// deployed partway through that day) — so the stretch from 2026-08-18
-// 00:00 to `trackingStartedAt` is covered by NEITHER the baseline NOR
-// the Ledger. This is a real, currently-unresolved coverage gap — it is
-// deliberately NOT estimated/guessed (see health.js's
-// hasPendingBaselineCalibrationGap, which surfaces this as a "尚待官方日結
-// 校正" warning rather than silently presenting a fully-reconciled
-// number). Once TDX's own official 2026-08-18 cumulative figures are
-// available, update ONLY this one entry — bump `throughDate` to
-// `'2026-08-18'` and replace `calls`/`transferKB`/`officialPoints` with
-// the new officially-confirmed cumulative-through-8/18 numbers. Nothing
-// else in this module needs to change: the overlap-safe exclusion in
-// estimateMonthUsage automatically starts excluding the 8/18 Local Ledger
-// day from the month total the moment `throughDate` covers it, and the
-// gap warning automatically clears itself.
+// V1.8.6.3 CORRECTION — TDX's official 2026-08-18 day-close figures are
+// now confirmed, so `throughDate` moved from 2026-08-17 to 2026-08-18.
+// This closes the coverage gap that used to exist between the baseline
+// and the Local Ledger's `trackingStartedAt` (mid-day 2026-08-18, when
+// V1.8.6 deployed): the baseline now fully covers 2026-08-18 itself, so
+// hasPendingBaselineCalibrationGap correctly reads false again (see its
+// own doc comment below — "tracking-start date is ON OR BEFORE
+// `throughDate`" is exactly this case). The 2026-08-18 Local Ledger
+// DayRow itself is untouched and still renders its real numbers in the
+// daily reconciliation table — only the MONTH-quota total's overlap-safe
+// exclusion boundary moved, per estimateMonthUsage's own comment above.
+// If TDX's official cumulative figure is ever corrected again for a date
+// already covered here, update ONLY this one entry the same way.
 export const TDX_OFFICIAL_USAGE_BASELINES = {
   '2026-08': {
     fromDate: '2026-08-16',
-    throughDate: '2026-08-17',
-    calls: 2194,
-    transferKB: 27550,
-    officialPoints: 1.643,
+    throughDate: '2026-08-18',
+    calls: 2283,
+    transferKB: 30727,
+    officialPoints: 1.723,
   },
 };
 

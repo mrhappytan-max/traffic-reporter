@@ -544,7 +544,9 @@ function renderTdxUsageBody(summary, now) {
       <div class="row"><span class="label">2026-08-16 官方傳輸</span><span class="value">17016 KB</span></div>
       <div class="row"><span class="label">2026-08-17 官方呼叫</span><span class="value">704 次</span></div>
       <div class="row"><span class="label">2026-08-17 官方傳輸</span><span class="value">10534 KB</span></div>
-      <div class="row"><span class="label">當月官方累積（官方畫面顯示）</span><span class="value">2194 次 / 約 27 MB</span></div>
+      <div class="row"><span class="label">2026-08-18 官方呼叫</span><span class="value">89 次（國道 42／省道 42／CCTV 5）</span></div>
+      <div class="row"><span class="label">2026-08-18 官方傳輸</span><span class="value">3177 KB</span></div>
+      <div class="row"><span class="label">當月官方累積（官方畫面顯示，截至 8/18）</span><span class="value">2283 次 / 約 30 MB</span></div>
     </div>
   </details>`;
 }
