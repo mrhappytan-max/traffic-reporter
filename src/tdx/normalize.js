@@ -14,6 +14,16 @@
 // `location` so it's never lost just because structured KM is also
 // present.
 //
+// V1.8.6.4 (provenance gap, follow-up round): `normalizeRoadEvent` also
+// attaches a debug-only `provenance` object — `{classificationSource,
+// locationSource?}` — recording WHICH raw field actually decided `type`
+// and (when present) `locationDescription`. Captured from the SAME
+// existing classification/extraction pass, never a second decision; never
+// read by the formatter/fingerprint/eligibility/dedupe. Exists purely so
+// broadcastProvenance.js's debug log can answer "上游到底是哪一個 raw
+// field 提供這個資訊" without ever re-deriving it or storing the full raw
+// payload.
+//
 // Freeway/Highway field mapping below was corrected against a real TDX
 // response verified via the deployed /debug/tdx endpoint (see commit
 // history / TDX_SOURCE_AUDIT.md for the earlier, unverified guesses).
@@ -45,22 +55,51 @@ const EVENT_TYPE_TEXT_MAP = {
   車多: 'congestion',
 };
 
+// V1.8.6.4 (provenance gap) — debug-only cap on any raw field value/
+// summary kept in a provenance record. Never a security boundary, purely
+// "don't let one oddly-huge raw field balloon a debug KV entry."
+const PROVENANCE_VALUE_MAX_CHARS = 80;
+function truncateForDebug(value) {
+  const text = value === undefined || value === null ? '' : String(value);
+  return text.length > PROVENANCE_VALUE_MAX_CHARS ? `${text.slice(0, PROVENANCE_VALUE_MAX_CHARS)}…` : text;
+}
+
 // Checks EventType, then EventSubType, then Category independently (rather
 // than stopping at whichever is present first) so a generic EventType
 // doesn't shadow a more specific EventSubType.
+//
+// V1.8.6.4 (provenance gap) — this SAME single decision now also returns
+// WHICH raw field actually won, as `classificationSource` — never a
+// second classification pass, never a different result: every branch
+// below returns the exact same `type` value this function always
+// returned, just paired with the field/value that produced it. Debug-only
+// (see broadcastProvenance.js) — never read by the formatter, eligibility,
+// fingerprint, or dedupe.
 function mapRoadEventType(raw, description) {
-  const candidates = [get(raw, 'EventType'), get(raw, 'EventSubType'), get(raw, 'Category')].filter(
-    (v) => v !== undefined && v !== null && v !== ''
-  );
+  const fieldCandidates = [
+    ['EventType', get(raw, 'EventType')],
+    ['EventSubType', get(raw, 'EventSubType')],
+    ['Category', get(raw, 'Category')],
+  ].filter(([, v]) => v !== undefined && v !== null && v !== '');
 
-  for (const candidate of candidates) {
+  for (const [field, candidate] of fieldCandidates) {
     const key = String(candidate).trim();
-    if (EVENT_TYPE_TEXT_MAP[key]) return EVENT_TYPE_TEXT_MAP[key];
+    const classificationSource = { field, value: truncateForDebug(key), fallback: false };
+    if (EVENT_TYPE_TEXT_MAP[key]) return { type: EVENT_TYPE_TEXT_MAP[key], classificationSource };
     const byKeyword = classifyByKeyword(key);
-    if (byKeyword !== 'other') return byKeyword;
+    if (byKeyword !== 'other') return { type: byKeyword, classificationSource };
   }
 
-  return classifyByKeyword(description);
+  // None of EventType/EventSubType/Category (if present at all) produced a
+  // recognized type — falls back to keyword-matching the free-text
+  // Description, same as always. `fallback: true` marks this branch
+  // explicitly so a provenance reader can tell "a structured field decided
+  // this" apart from "nothing structured matched, this is our own
+  // description-keyword guess" — even when the result is still 'other'.
+  return {
+    type: classifyByKeyword(description),
+    classificationSource: { field: 'Description', value: truncateForDebug(description), fallback: true },
+  };
 }
 
 // Same candidate fields mapRoadEventType() reads from, concatenated so
@@ -168,11 +207,25 @@ export function normalizeRoadEvent(raw, source) {
   // fingerprint, which reads `location`) is completely untouched by this
   // change. Absent on the raw record -> simply absent here, never
   // fabricated, never assumed present.
-  const locationDescription = String(
-    firstDefined(raw, ['LocationDescription', 'Location.Description', 'RoadSection', 'Location.RoadSection'], '')
-  ).trim();
+  // V1.8.6.4 (provenance gap) — same candidate list as before, but now a
+  // manual loop (instead of firstDefined) so the WINNING field name is
+  // captured alongside the value, as `locationSource` — debug-only, never
+  // changes `locationDescription`'s own value/presence, never a second
+  // "which field is more trustworthy" decision (still strictly first-
+  // match-wins, same order as always).
+  const LOCATION_DESCRIPTION_CANDIDATE_FIELDS = ['LocationDescription', 'Location.Description', 'RoadSection', 'Location.RoadSection'];
+  let locationDescription = '';
+  let locationSource = null;
+  for (const field of LOCATION_DESCRIPTION_CANDIDATE_FIELDS) {
+    const value = get(raw, field);
+    if (value !== undefined && value !== null && value !== '') {
+      locationDescription = String(value).trim();
+      locationSource = { field, value: truncateForDebug(locationDescription) };
+      break;
+    }
+  }
 
-  const type = mapRoadEventType(raw, description);
+  const { type, classificationSource } = mapRoadEventType(raw, description);
 
   return {
     source,
@@ -197,6 +250,17 @@ export function normalizeRoadEvent(raw, source) {
     ...(endKM !== undefined ? { endKM } : {}),
     ...(blockedLanes !== undefined ? { blockedLanes } : {}),
     ...(locationDescription ? { locationDescription } : {}),
+    // V1.8.6.4 (provenance gap) — debug-only origin metadata, never read
+    // by the formatter/fingerprint/eligibility/dedupe/CCTV-eligibility
+    // (all of those destructure only their own named fields — see
+    // notified.js's computeNotificationFingerprint / dedupe.js's
+    // computeFingerprint / broadcastRules.js's getBroadcastEligibility for
+    // confirmation none of them spread the whole event object). Answers
+    // "which raw field actually produced this?" for
+    // broadcastProvenance.js's debug record — see PROJECT_HANDOFF.md's
+    // "V1.8.6.4 — provenance audit" section for the confidence-level
+    // caveats on the location candidate field names themselves.
+    provenance: { classificationSource, ...(locationSource ? { locationSource } : {}) },
   };
 }
 

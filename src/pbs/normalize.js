@@ -99,19 +99,42 @@ const DISPLAY_KM_PLAIN_PATTERN = /(\d+(?:\.\d+)?)\s*公里/; // "93公里", "93.
  * observed to state a range, only a single point). Returns a plain
  * number (km, e.g. 93.3) or null if nothing recognizable is present.
  */
-export function extractDisplayKmFromText(text) {
+/**
+ * V1.8.6.4 (provenance gap, follow-up round) — same parsing as
+ * extractDisplayKmFromText below (that function is now a thin wrapper
+ * around this one, single source of truth, no duplicate regex logic),
+ * but also returns the raw MATCHED SUBSTRING (`matchedText`, e.g.
+ * "8.1公里") for debug provenance — never the full comment text, just the
+ * few characters that actually decided the value.
+ */
+export function extractDisplayKmMatch(text) {
   if (!text) return null;
 
   const kPlusMatch = text.match(DISPLAY_KM_K_PLUS_PATTERN);
-  if (kPlusMatch) return parseFloat(kPlusMatch[1]) + parseInt(kPlusMatch[2], 10) / 1000;
+  if (kPlusMatch) return { value: parseFloat(kPlusMatch[1]) + parseInt(kPlusMatch[2], 10) / 1000, matchedText: kPlusMatch[0] };
 
   const bareKMatch = text.match(DISPLAY_KM_BARE_K_PATTERN);
-  if (bareKMatch) return parseFloat(bareKMatch[1]);
+  if (bareKMatch) return { value: parseFloat(bareKMatch[1]), matchedText: bareKMatch[0] };
 
   const plainKmMatch = text.match(DISPLAY_KM_PLAIN_PATTERN);
-  if (plainKmMatch) return parseFloat(plainKmMatch[1]);
+  if (plainKmMatch) return { value: parseFloat(plainKmMatch[1]), matchedText: plainKmMatch[0] };
 
   return null;
+}
+
+export function extractDisplayKmFromText(text) {
+  const match = extractDisplayKmMatch(text);
+  return match ? match.value : null;
+}
+
+// V1.8.6.4 (provenance gap) — same 80-char debug-value cap used by
+// tdx/normalize.js and pbs/classify.js, duplicated locally per this
+// project's existing convention (see e.g. broadcastPipeline.js's own
+// local safeErrorMessage) rather than a shared cross-module import.
+const PROVENANCE_VALUE_MAX_CHARS = 80;
+function truncateForDebug(value) {
+  const text = value === undefined || value === null ? '' : String(value);
+  return text.length > PROVENANCE_VALUE_MAX_CHARS ? `${text.slice(0, PROVENANCE_VALUE_MAX_CHARS)}…` : text;
 }
 
 export function normalizePbsEvent(raw) {
@@ -120,8 +143,20 @@ export function normalizePbsEvent(raw) {
   const description = (raw.comment || '').trim();
   const happenedAt = parseHappenedAt(raw.happendate, raw.happentime);
   const updatedAt = parsePbsDateTime(raw.modDttm);
-  const { type, pbsCategory } = classifyPbsEvent({ roadtype: raw.roadtype, comment: description });
-  const displayKM = extractDisplayKmFromText(description);
+  const { type, pbsCategory, classificationSource } = classifyPbsEvent({ roadtype: raw.roadtype, comment: description });
+  const displayKmMatch = extractDisplayKmMatch(description);
+  const displayKM = displayKmMatch ? displayKmMatch.value : null;
+
+  // V1.8.6.4 (provenance gap) — debug-only origin metadata, mirroring
+  // tdx/normalize.js's own `provenance` field. `locationSource` is fixed
+  // (PBS only ever has one location field, `areaNm` — unlike TDX's
+  // several location-text candidates, there's no "which one won"
+  // ambiguity here, just whether it's present at all).
+  const provenance = {
+    classificationSource,
+    ...(raw.areaNm ? { locationSource: { field: 'areaNm', value: truncateForDebug(raw.areaNm) } } : {}),
+    ...(displayKmMatch ? { displayKMSource: { field: 'comment', value: truncateForDebug(displayKmMatch.matchedText) } } : {}),
+  };
 
   return {
     source: 'pbs',
@@ -153,5 +188,9 @@ export function normalizePbsEvent(raw) {
       : {}),
     // V1.8.5.1 — display-only, see the module comment above this function.
     ...(displayKM !== null ? { displayKM } : {}),
+    // V1.8.6.4 (provenance gap) — never read by the formatter/fingerprint/
+    // eligibility/dedupe/CCTV-eligibility, debug-only (see
+    // broadcastProvenance.js).
+    provenance,
   };
 }

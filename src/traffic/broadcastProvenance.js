@@ -35,6 +35,7 @@ import { taipeiDateString } from '../tdx/usageLedger.js';
 export const PROVENANCE_KEY_PREFIX = 'debug:broadcast-provenance:v1';
 export const PROVENANCE_TTL_SECONDS = 48 * 60 * 60; // 48h, per instruction — debug-only, short-lived
 const DESCRIPTION_SUMMARY_MAX_CHARS = 80;
+const PROVENANCE_SOURCE_FIELD_MAX_CHARS = 40; // field NAMES are always short constants (e.g. "EventSubType") — generous cap, defensive only
 export const DEFAULT_LIST_LIMIT = 20;
 export const MAX_LIST_LIMIT = 100;
 // Bounds how many raw KV entries a single admin request will ever fetch/
@@ -65,6 +66,24 @@ function opaqueId() {
 function truncate(text, maxChars) {
   if (typeof text !== 'string' || !text) return '';
   return text.length > maxChars ? `${text.slice(0, maxChars)}…` : text;
+}
+
+// V1.8.6.4 (provenance gap) — `event.provenance.{classificationSource,
+// locationSource,displayKMSource}` are already debug-only, already-
+// truncated (80 chars, see tdx/normalize.js / pbs/classify.js / pbs/
+// normalize.js's own PROVENANCE_VALUE_MAX_CHARS) objects of the shape
+// `{field, value}` (classificationSource additionally carries `fallback`
+// for TDX). This just re-validates the shape defensively and re-truncates
+// `value` one more time — belt-and-suspenders, never a second source of
+// truth — before it's ever written to KV. Never re-derives WHICH field
+// won; only ever copies what normalize.js/pbs/classify.js already decided.
+function sanitizeSourceInfo(info) {
+  if (!info || typeof info !== 'object' || typeof info.field !== 'string') return null;
+  return {
+    field: truncate(info.field, PROVENANCE_SOURCE_FIELD_MAX_CHARS) || info.field,
+    value: truncate(String(info.value ?? ''), DESCRIPTION_SUMMARY_MAX_CHARS),
+    ...(typeof info.fallback === 'boolean' ? { fallback: info.fallback } : {}),
+  };
 }
 
 /**
@@ -123,6 +142,16 @@ export function buildProvenanceRecord({ event, formattedOutput, eligibilityReaso
     pbsCategory: (event && event.pbsCategory) || null,
     classificationEvidence: describeClassificationEvidence(event, eligibilityReason, anomalyDetail),
     eligibilityReason: eligibilityReason || null,
+    // V1.8.6.4 (provenance gap) — WHICH raw upstream field actually
+    // produced `type`/`locationDescription`/`displayKM` above, e.g.
+    // {field:"EventSubType", value:"道路施工"} — answers "上游到底是哪一個
+    // raw field提供這個資訊" without ever storing the full raw payload.
+    // Copied straight from event.provenance (set once, at normalize time
+    // — see tdx/normalize.js / pbs/normalize.js / pbs/classify.js) —
+    // never re-derived here.
+    classificationSource: sanitizeSourceInfo(event && event.provenance && event.provenance.classificationSource),
+    locationSource: sanitizeSourceInfo(event && event.provenance && event.provenance.locationSource),
+    displayKMSource: sanitizeSourceInfo(event && event.provenance && event.provenance.displayKMSource),
     formattedOutput: formattedOutput || '',
     imageAttached: Boolean(image && image.attached),
     imageUrlPresent: Boolean(image && image.urlPresent),
