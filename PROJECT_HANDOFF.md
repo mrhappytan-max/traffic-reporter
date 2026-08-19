@@ -3,13 +3,29 @@
 **Read this file before touching the repo.** It exists so a new AI/agent session can operate correctly without re-scanning the whole codebase or re-investigating history that is already solved. If something below conflicts with what you find in the code, trust the code and treat this file as stale — but update it once you understand why.
 
 ```
-STATUS: V1.8.5 Production live
-MAIN:   97756a8805b52acb8746aa7d14bbf89be51ee267
-DATE:   2026-08-18
+STATUS: V1.8.6.3 Production live
+MAIN:   ba74d48f2c98b41f1d5b2db8a60639001ecd1109
+DATE:   2026-08-19
 PHASE:  Production operation. No speculative feature work; only real-world bug fixes.
 ```
 
-See `RELEASE_SUMMARY_V1.8.5.md` for the human-readable version of what shipped in this round.
+See `RELEASE_SUMMARY_V1.8.5.md` for the human-readable version of what shipped in that round, and `RELEASE_SUMMARY_V1.8.6.md` for V1.8.6/V1.8.6.1/V1.8.6.2/V1.8.6.3 (TDX usage reconciliation ledger, the quota-dashboard `/health` redesign, the CCTV/source-vs-context correction, and the 2026-08-18 official baseline calibration).
+
+---
+
+## 0. CURRENT PRODUCTION TRUTH (read this first — supersedes anything below it that conflicts)
+
+This section exists so a future agent never has to reconstruct the current state by reading through §18–§21's full correction history. If anything below in §18–§21 reads as a still-open problem/gap and contradicts a line here, **this section wins** — the history sections are kept for "why," not "what's true right now."
+
+- Production TDX live sources = **freeway + highway only** (`PRODUCTION_TDX_SOURCE_IDS`). CMS／新竹市公車／新竹縣公車 are defined in code but retired from Production since V1.6.1 — never fetched by `scheduled.js`/`debugStatus.js`.
+- CCTV metadata (`GET /Road/Traffic/CCTV/Freeway`) is **only** ever fetched from the Admin CCTV refresh/probe paths (`/admin/cctv-probe`, `/admin/cctv-hsinchu-probe`) — never from the Production Cron path, never from `/debug/status`/`/debug/tdx`.
+- TDX full-day theoretical Production data-call baseline = **84** (42 twenty-minute windows × 2 sources, 08:00–22:00 Asia/Taipei).
+- `GET /health` makes **zero** TDX/PBS/LINE network calls — it only reads two already-written KV keys (`health:snapshot:v1`, `tdx:usage:summary:v1`).
+- Usage-ledger keys: raw entries `tdx:usage:entry:v1:<date>:<epochMs>:<opaqueId>` (append-only, 40-day TTL); compacted rollup `tdx:usage:summary:v1` (~35-day retention, the only one `/health` reads).
+- Current TDX 基礎服務 monthly point budget = **3** (`TDX_MONTHLY_POINT_BUDGET`).
+- August 2026 official pre-Ledger baseline: `throughDate: '2026-08-18'`, cumulative **2283 calls / 30727 KB / 1.723 points** — fully covers 2026-08-18 itself, so `hasPendingBaselineCalibrationGap` currently reads **false** in Production (no open coverage gap). September 2026 and every later month have **no** baseline entry at all — fully Local-Ledger-covered from day 1.
+- **Source ≠ context.** Source = which TDX API resource was hit (`freeway`/`highway`/`cctv` — what `/health`'s "TDX 來源（今日）" card shows, always 3 fixed rows, read from `bySource`). Context = which code path made the call (`production-cron`/`debug-status`/`debug-tdx`/`admin-cctv` — moved into `/health`'s collapsible 進階資訊, never shown in the same card as source).
+- LINE's real-time CCTV image (the actual broadcast attachment, V1.8.5) is a plain `*.freeway.gov.tw` MJPEG frame grab — **not** a TDX API call, **never** counted toward TDX usage/points. Only the TDX CCTV **metadata** lookup (`cctv-probe`/`cctv-hsinchu-probe`, source bucket `cctv`) counts.
 
 ---
 
@@ -181,8 +197,8 @@ If any of these are missing, the affected subsystem fails closed (see §5) — t
 | `admin:cctv-probe-used:v1` | `src/tdx/hsinchuCctvProbe.js` | V1.7 — one-time PRE-ARM guard for the general/fixed-target admin CCTV probe's own TDX call |
 | `admin:cctv-hsinchu-probe-used:v1` | `src/tdx/hsinchuCctvProbe.js` | V1.7/V1.8.5 — PRE-ARM guard specific to the Hsinchu admin probe; currently `completed`. Don't reset/rerun during normal Production operation — see §13 |
 | `admin:cctv-hsinchu-candidates:v1` | `src/tdx/hsinchuCctvProbe.js` | V1.7 — the fixed-target (82.1K) admin probe's persisted 4-quadrant candidate list, 1-hour TTL. Used only by the manual `/admin/cctv-hsinchu-*` preview endpoints, unrelated to the real broadcast path's own cache above |
-| `tdx:usage:entry:v1:<date>:<epochMs>:<opaqueId>` | `src/tdx/usageLedger.js` | V1.8.6 (branch, not yet merged) — append-only, one entry per invocation that made ≥1 real TDX call (Cron tick / `/debug/status` / `/debug/tdx` / an admin CCTV probe). 40-day TTL. See §18 |
-| `tdx:usage:summary:v1` | `src/tdx/usageLedger.js` | V1.8.6 (branch, not yet merged) — compacted daily rollup (last ~35 days), the ONLY usage-ledger key `/health` ever reads. Recompacted by the Cron path after each real run — never by `/health` itself. See §18 |
+| `tdx:usage:entry:v1:<date>:<epochMs>:<opaqueId>` | `src/tdx/usageLedger.js` | V1.8.6, Production live — append-only, one entry per invocation that made ≥1 real TDX call (Cron tick / `/debug/status` / `/debug/tdx` / an admin CCTV probe). 40-day TTL. See §18 |
+| `tdx:usage:summary:v1` | `src/tdx/usageLedger.js` | V1.8.6, Production live — compacted daily rollup (last ~35 days), the ONLY usage-ledger key `/health` ever reads. Recompacted by the Cron path after each real run — never by `/health` itself. See §18 |
 
 Never assume a key not in this table exists — `grep -rn "_KEY = " src/` to double check if you suspect drift.
 
@@ -220,9 +236,9 @@ This string has **never been updated since the original bootstrap commit** and d
 
 ---
 
-## 10. Known issues / unverified things (as of `97756a8`, V1.8.5)
+## 10. Known issues / unverified things (as of `ba74d48`, V1.8.6.3)
 
-Current full-suite test baseline: **636/638 passing.** The 2 failures are the pre-existing, unrelated `pbs-relay/tests/*` failures in item 5 below — don't fix them as a drive-by while working on something else; ask first if they ever seem in scope.
+Current full-suite test baseline: **718/720 passing** (this count grew across V1.8.5.1/V1.8.6/V1.8.6.1/V1.8.6.2/V1.8.6.3's added test files). The 2 failures are the pre-existing, unrelated `pbs-relay/tests/*` failures in item 5 below — don't fix them as a drive-by while working on something else; ask first if they ever seem in scope.
 
 1. **VD (Vehicle Detector) schema is unverified against a live TDX response.** `src/tdx/vdSpeed.js` fetches `v2/Road/Traffic/VD/Freeway` (static metadata) and `v2/Road/Traffic/Live/VD/Freeway` (live speed) and joins them. Every session that built this feature had its network egress blocked from `tdx.transportdata.tw`, so field names are best-effort against TDX's established naming conventions, deliberately read via multiple candidate names so a mismatch degrades to "no usable reading" rather than crashing (see `vdSpeed.js`'s own module comment for the full reasoning). **This currently has near-zero user-visible impact**: since V1.5, congestion is never broadcast regardless of VD outcome, so a wrong VD schema silently means "congestion severity in `/debug/status` never shows 'severe'" — nothing breaks, nothing over- or under-broadcasts. Only worth fixing if congestion broadcasting is ever re-enabled for a future round.
 2. **The `construction`/`other` keyword lists (§4) are a first pass**, not derived from real 新竹 incident text. Expect false negatives (a real impassable-road report using different wording) more than false positives. Tune the pattern lists in `broadcastRules.js` directly as real cases surface — that's expected, ongoing maintenance, not a bug to "fix" architecturally.
@@ -465,7 +481,7 @@ CCTV prep runs once per EVENT (not per target) — structurally, because it sits
 
 ## 18. V1.8.6 — TDX 用量對帳健康頁 (usage reconciliation ledger)
 
-**Status: built and tested on `feature/v1.8.6-tdx-usage-ledger`, NOT merged to `main`, NOT deployed.** Purpose: let a human reconcile this Worker's own record of "how many real TDX data API calls did we actually make today" against TDX's own official back-office dashboard, and immediately spot an unexpected excess or shortfall — without `/health` ever costing a TDX call itself.
+**Status: merged to `main` (`b36d26a`), Production live.** Purpose: let a human reconcile this Worker's own record of "how many real TDX data API calls did we actually make today" against TDX's own official back-office dashboard, and immediately spot an unexpected excess or shortfall — without `/health` ever costing a TDX call itself.
 
 **Core safety rule, unchanged from every prior round's telemetry work:** `/health` still makes **0 TDX/0 PBS/0 LINE calls** — it only gained one extra read-only KV read (`tdx:usage:summary:v1`). Recording usage is best-effort/isolated throughout: every write in `src/tdx/usageLedger.js` is wrapped so a KV outage there degrades to "this batch/day's numbers are temporarily incomplete," never to a broken Cron run (see `test/tdxUsageLedger.test.js`'s test 16 — a usage-ledger KV that always throws still lets the real Cron tick commit dedupe state and run the LINE broadcast normally).
 
@@ -529,7 +545,7 @@ Nothing else changed this round either — everything listed as untouched in rou
 
 ## 19. V1.8.6.1 — `/health` UI 瘦身＋TDX 額度儀表板 (quota-first mobile dashboard)
 
-**Status: built and tested on `ui/v1.8.6.1-health-quota-dashboard`, NOT merged to `main`, NOT deployed. UI/derived-calculation only — no change to Production TDX cadence, no new TDX request of any kind, no change to `scheduled.js`/the pipeline.**
+**Status: merged to `main` (`2ef95de`), Production live. UI/derived-calculation only — no change to Production TDX cadence, no new TDX request of any kind, no change to `scheduled.js`/the pipeline.**
 
 **Goal:** the V1.8.6 usage ledger's *data* was already correct — this round is purely about making `/health` answer "今天用了多少／本月用了多少／還剩多少額度／月底會不會爆" in 3 seconds on a phone, instead of reading like an engineering debug dump. All numbers still come from the same single `tdx:usage:summary:v1` read `handleHealth` already made — **zero new KV reads, zero TDX/PBS/LINE calls** (verified by `test/healthQuotaDashboard.test.js`'s test 12, which makes `fetch()` itself throw and confirms `/health` still renders normally).
 
@@ -545,7 +561,7 @@ Confirmed against TDX's own back-office dashboard, not guessed: **1500 calls = 1
 2. **TDX 本月** — big number (month-to-date total calls) + 流量／估算點數.
 3. **剩餘額度** — big `X.XXX / 3.000 點` + a progress bar + 已使用%／剩餘% + a status line: **<70% → ✅ 額度充足, 70–90% → ⚠️ 注意用量, ≥90% → 🔴 接近上限**. This is a quota WARNING only — it never promotes `/health`'s own `status` (normal/degraded/critical, driven by `healthSnapshot.js`/staleness) to a worse tier; a near-exhausted TDX point budget is a usage anomaly to watch, not a pipeline failure.
 4. **月底預估** (`projectEndOfMonthPoints`) — projects the month's total point cost from the average points/day of already-**complete** tracked days (excludes today, which is still accumulating, and excludes the tracking-start day, which is partial by definition — `isPartialTrackingDay`) × remaining days in the month, plus points already used month-to-date. Requires **≥2 complete tracked days** before projecting anything — fewer than that renders "資料累積中", never a number computed off a single (possibly unrepresentative) day.
-5. **來源拆解（今日）** — Production now shows **only 國道／省道** (freeway/highway — the two sources actually live in Production since V1.6.1); 人工／管理 shows CCTV／Debug Status／Debug TDX／其他, **hides any zero row**, and shows "今日無人工額外呼叫" when all four are zero.
+5. **來源拆解（今日）** *(superseded by V1.8.6.2 — see §20; kept here as history)* — Production now shows **only 國道／省道** (freeway/highway — the two sources actually live in Production since V1.6.1); 人工／管理 shows CCTV／Debug Status／Debug TDX／其他, **hides any zero row**, and shows "今日無人工額外呼叫" when all four are zero.
 6. **⚠️ 發現已停用 TDX 來源** — a separate card, rendered ONLY when today's CMS/公車市/公車縣 counts (the marginal `bySource` total, across every context) are collectively nonzero — i.e. someone called TDX in a way that touched a source retired from Production in V1.6.1 (most likely a full-5-source `/debug/tdx`/`fetchAllSources` call). Fully absent on a normal day. The backend ledger buckets for these 3 sources are **not removed** — `usageLedger.js`'s `KNOWN_SOURCE_BUCKETS` still records them if any context ever calls them, preserving history/anomaly-detection capability even though the default Production display no longer shows them as fixed zero rows.
 7. **每日對帳（近 7 天）** — simplified to 日期／呼叫／流量／估算點數／差額 (dropped the old Production/人工/理論 columns from the compact view — that breakdown is already visible in card 1/5 for today). No JS interaction added; the full 30-day history remains in `tdx:usage:summary:v1`, just not rendered as a wide table by default.
 8. **進階資訊** — a native `<details>` disclosure (zero JS): 今日 Production 理論／OAuth 真實刷新（今日／本月）／the point-conversion formula spelled out／and the same "TDX 官方歷史參考（非本機統計）" reference block from V1.8.6, all moved out of the primary scroll.
@@ -563,6 +579,8 @@ TDX's own back-office has confirmed "高速公路閉路電視攝影機資料" (t
 `projectEndOfMonthPoints` iterated every "complete" day in `summary.days` with no month filter — but the summary retains ~35 days, which routinely spans a calendar-month boundary (e.g. on `09/03`, `summary.days` can still hold `08/10`–`08/31`). Without a filter, "本月月底預估" would silently average LAST month's complete days into THIS month's projection — a real correctness bug (last month's usage pattern has no bearing on whether this month is on track), not just noise. Fixed: `completeDayPoints` now only considers days whose date string starts with the same `YYYY-MM` prefix as `now`'s Asia/Taipei calendar year+month — the same month-scoping `aggregateUsageForMonth` (which `monthToDatePoints` already builds on) uses, so the projection and the month-to-date actual it's added to always talk about the same month. Everything else — excluding today, excluding the tracking-start partial day, the ≥2-complete-days gate, `remainingDaysAfterToday` — unchanged. Also reworded the retired-source-anomaly hint text: it used to suggest "manual debug calls" as the likely cause, which is misleading since `/debug/tdx`/`/debug/status` have been restricted to freeway+highway since V1.6.2 and can't produce a CMS/Bus hit through normal use — now reads "代表有未預期程式路徑呼叫到已停用來源" (comment/text-only, no behavior change). New test: a cross-month scenario (two very-high-usage August days + two low-usage September days) confirms only the September days are averaged.
 
 ### CORRECTION (post-review) — a 2026-08 pre-Ledger official usage baseline
+
+*(The exact numbers in this subsection — `throughDate: '2026-08-17'`, `2194 calls / 27550 KB / 1.643 points` — are the ORIGINAL baseline this correction introduced. V1.8.6.3 §21 later moved `throughDate` forward to `2026-08-18` with updated cumulative figures once TDX's official 8/18 day-close was confirmed. Kept here as history/mechanism explanation — see §0/§21 for the current, correct numbers.)*
 
 The Local Usage Ledger only started accumulating on **2026-08-18** (V1.8.6's Production deploy). For August 2026 specifically, real TDX usage genuinely happened BEFORE that (the user's own confirmed TDX official back-office figures: `2026-08-16` = 1490 calls/17016 KB, `2026-08-17` = 704 calls/10534 KB, cumulative through 8/17 = 2194 calls / 27550 KB / **1.643 points** — TDX's own displayed cumulative point figure, not recomputed locally). Without accounting for this, `剩餘額度`/`本月` were computed from `aggregateUsageForMonth` alone (Local Ledger only) — silently omitting that real pre-Ledger usage and making remaining quota look artificially larger than it actually is for August.
 
@@ -587,6 +605,52 @@ The previous correction added `estimatedCalls = baseline.calls + localTotals.tot
 - `estimateMonthUsage` now calls it with `afterDate: baseline.throughDate` whenever this month has a baseline — so a Local Ledger day **on or before** `throughDate` no longer contributes to the month quota total (the baseline already counts it), while a day **strictly after** `throughDate` still adds on top, exactly as intended. This does **not** touch `summary.days` itself — a Local DayRow on/before `throughDate` (e.g. 2026-08-18, the Ledger's own partial first day) still exists exactly as recorded and still renders normally in the 7-day daily reconciliation table; it's excluded only from this one month-level aggregation.
 - `TDX_OFFICIAL_USAGE_BASELINES`' `throughDate` is now explicitly documented as inclusive-coverage, overlap-safe by construction: once TDX's own official 2026-08-18 cumulative figures become available, the ONLY change needed is bumping that one entry's `throughDate` to `'2026-08-18'` and updating `calls`/`transferKB`/`officialPoints` — the exclusion (and the gap warning below) both automatically adjust, no other code changes.
 
-**New: `hasPendingBaselineCalibrationGap(summary, now)`** — true only when this month has a baseline AND the Ledger's `trackingStartedAt` date is strictly after `throughDate` AND tracking didn't start at exactly `00:00:00` Asia/Taipei that day (which would mean the Ledger already covers that whole day, no gap). Never estimates/fills the uncovered stretch — only flags that it exists. `/health`'s **TDX 本月**/**剩餘額度** card headings show a **"（暫估）"** badge and the 剩餘額度 card gets an extra warning line ("⚠️ {該日期} Ledger 啟用前用量尚待 TDX 官方日結校正（目前為暫估，非已完整校正的剩餘額度）") whenever this is true — currently true in Production, since `throughDate` is still `2026-08-17`.
+**New: `hasPendingBaselineCalibrationGap(summary, now)`** — true only when this month has a baseline AND the Ledger's `trackingStartedAt` date is strictly after `throughDate` AND tracking didn't start at exactly `00:00:00` Asia/Taipei that day (which would mean the Ledger already covers that whole day, no gap). Never estimates/fills the uncovered stretch — only flags that it exists. `/health`'s **TDX 本月**/**剩餘額度** card headings show a **"（暫估）"** badge and the 剩餘額度 card gets an extra warning line ("⚠️ {該日期} Ledger 啟用前用量尚待 TDX 官方日結校正（目前為暫估，非已完整校正的剩餘額度）") whenever this is true — this WAS true in Production at the time this round shipped (`throughDate` was still `2026-08-17`, `trackingStartedAt` mid-day 8/18). **Superseded by V1.8.6.3 (§21):** TDX's official 2026-08-18 day-close figures are now confirmed and `throughDate` moved to `2026-08-18`, which fully covers the Ledger's own `trackingStartedAt` date — `hasPendingBaselineCalibrationGap` now reads **false** in Production, the "（暫估）" badge and the warning line are both gone. The mechanism itself (this function, the badge, the warning line) is completely unchanged — only the data that feeds it moved forward. See §0/§21 for the current, correct baseline values — don't use `2194`/`27550`/`1.643`/`2026-08-17` below as current facts, they're historical.
 
-**Tests added** (`test/healthQuotaDashboard.test.js`, 5 new): baseline-through-8/17 with local rows on 8/18+8/19 → both add (neither on/before `throughDate`); a hypothetical baseline-through-8/18 with the same two rows → only 8/19 adds (8/18 not double-counted, tested directly against `aggregateUsageForMonth`'s new `afterDate` option); the 8/18 daily row still renders its real numbers in the reconciliation table even though excluded from the month total; the real current gap (`throughDate=8/17`, `trackingStartedAt` mid-day 8/18) is detected and surfaces both the warning text and the "（暫估）" badge; no false-positive gap when tracking started on/before `throughDate` or at exact midnight.
+**Tests added** (`test/healthQuotaDashboard.test.js`, 5 new): baseline-through-8/17 with local rows on 8/18+8/19 → both add (neither on/before `throughDate`); a hypothetical baseline-through-8/18 with the same two rows → only 8/19 adds (8/18 not double-counted, tested directly against `aggregateUsageForMonth`'s new `afterDate` option); the 8/18 daily row still renders its real numbers in the reconciliation table even though excluded from the month total; the real current gap (`throughDate=8/17`, `trackingStartedAt` mid-day 8/18) is detected and surfaces both the warning text and the "（暫估）" badge; no false-positive gap when tracking started on/before `throughDate` or at exact midnight. **(V1.8.6.3 shifted these same tests forward a day and added a false→gap-resolved test — see §21; kept here as the original correction's own record.)**
+
+---
+
+## 20. V1.8.6.2 — `/health` TDX 來源分類修正 (source vs. context split)
+
+**Status: merged to `main` (`8ceee35`), Production live. Pure `/health` UI classification fix — no change to `scheduled.js`/pipeline/TDX cadence/usage-ledger recording/baseline/quota math/CCTV metadata cache/LINE CCTV image logic.**
+
+**Problem this round fixed:** V1.8.6.1's "來源拆解（今日）" card (§19 item 5, now superseded) read Production's row from `byContextSource['production-cron']` — scoped to ONE call context. TDX's own back-office confirmed there are exactly 3 real TDX API **sources** this project ever fetches (國道 RoadEvent, 省道 RoadEvent, CCTV metadata), and a source called only via a non-Production context (e.g. Debug/Admin) would silently read as 0 in that old card even though it genuinely cost TDX quota.
+
+**Fix — "TDX 來源（今日）" card, replacing the old "來源拆解（今日）":**
+- Reads `today.bySource.freeway` / `.highway` / `.cctv` — the marginal total **across every context**, deliberately NOT `byContextSource['production-cron']`. A source called from ANY context (Production, Debug, Admin) now correctly shows its real total.
+- Always renders **all 3 rows**, even at 0 — no hide-when-zero behavior (this is a source-vs-context classification fix, not a decluttering pass).
+- CCTV here is **only** `bySource.cctv` — real TDX CCTV metadata calls (`cctv-probe`/`cctv-hsinchu-probe`, via `fetchTdxJson`). The real-time LINE CCTV image fetch (`*.freeway.gov.tw` MJPEG, `handleHsinchuCctvFrame`) never goes through `fetchTdxJson`, never writes a usage-ledger entry, and is structurally incapable of leaking into this count (verified directly — `test/healthCctvSourceBreakdown.test.js` test 4 confirms the frame handler writes zero `tdx:usage:entry:*` keys).
+- **Call CONTEXT** (Production Cron／Debug Status／Debug TDX／Admin CCTV) is a separate axis, deliberately kept OUT of this card — moved into `/health`'s collapsible 進階資訊 under a new "呼叫情境（今日）" subsection. The 今日 card's own "Production XX 次／人工額外 XX 次" summary rows (unchanged) already cover the common at-a-glance case.
+- The retired-source anomaly card (CMS/公車市/公車縣, §19 item 6) is unchanged — still reads `bySource`, still hidden when all-zero.
+
+**Out of scope / untouched:** `usageLedger.js`'s recording/compaction/baseline/quota functions (`bySource`/`byContext`/`byContextSource` data shapes are all pre-existing from V1.8.6 — only which field `/health` reads for this one card changed), `scheduled.js`, TDX cadence, CCTV metadata cache, real LINE CCTV image logic.
+
+**Tests:** `test/healthCctvSourceBreakdown.test.js` (new, 5 tests) — all-zero day still renders all 3 rows; 5 CCTV calls render "CCTV 5"; a source called ONLY via a non-Production context (the exact old bug) still shows its real count, and context labels never leak into the source card itself; the freeway.gov.tw MJPEG frame path never writes a usage-ledger entry; `/health` still makes 0 TDX/PBS/LINE calls with the new card.
+
+---
+
+## 21. V1.8.6.3 — August official baseline calibrated through 2026-08-18
+
+**Status: merged to `main` (`ba74d48`), Production live. Docs/constant-only correction — `estimateMonthUsage`'s overlap-safe algorithm and `hasPendingBaselineCalibrationGap`'s detection logic are BOTH completely unchanged; only the `TDX_OFFICIAL_USAGE_BASELINES['2026-08']` data moved forward.**
+
+**What changed:** TDX's official 2026-08-18 day-close figures became available (user-confirmed from TDX's own back-office): **89 calls / 3177 KB / 0.080 points** for that one day, broken down as **42 國道 RoadEvent + 42 省道 RoadEvent + 5 CCTV metadata**. Per the exact "one entry to update" plan §19's overlap-safe correction had already documented in advance, `TDX_OFFICIAL_USAGE_BASELINES['2026-08']` was updated:
+
+```js
+{ fromDate: '2026-08-16', throughDate: '2026-08-18', calls: 2283, transferKB: 30727, officialPoints: 1.723 }
+```
+(was `{ throughDate: '2026-08-17', calls: 2194, transferKB: 27550, officialPoints: 1.643 }` — see §19's baseline-introduction correction for that original entry's own history.)
+
+**Effect, entirely automatic (no algorithm change, by design):**
+- `estimateMonthUsage`'s existing overlap-safe exclusion boundary (`afterDate: baseline.throughDate`) moved forward with `throughDate` — the Local Ledger's month-quota contribution now starts strictly after **2026-08-18** (i.e. from 2026-08-19 onward), instead of after 2026-08-17.
+- The 2026-08-18 Local Ledger DayRow itself is **completely untouched** and still renders its real numbers in the 7-day daily reconciliation table — only its contribution to the MONTH-level quota total is excluded (already counted inside the baseline's own cumulative figure), exactly the same overlap-safe mechanism as before, just at the new boundary. No double count.
+- `hasPendingBaselineCalibrationGap` — same unchanged function — now evaluates the real Production `trackingStartedAt` (mid-day 2026-08-18) against the new `throughDate` (2026-08-18) and correctly returns **false**: the baseline now fully covers the Ledger's own tracking-start date, so there is no more unresolved coverage gap. `/health`'s "TDX 本月（暫估）"/"剩餘額度（暫估）" badges and the "尚待 TDX 官方日結校正" warning line are all gone as a direct, automatic consequence — no UI code changed, only the data the existing logic reads.
+- September 2026 (and every later month) still has **no** baseline entry — `getOfficialUsageBaseline` does an exact `"YYYY-MM"` key lookup with no fallback, so this correction never carries forward past August.
+
+**Static reference text also updated** (`usageLedger.js`'s header comment, `health.js`'s "進階資訊 → TDX 官方歷史參考" block): now lists all three pre-Ledger days (8/16, 8/17, **8/18**) and the new cumulative-through-8/18 figures. The old "KNOWN GAP... 2026-08-18 00:00 to trackingStartedAt covered by NEITHER source" note (from §19) is removed/replaced with a note describing how this round closed that exact gap — not left as a dangling "still open" claim.
+
+**Tests updated** (`test/healthQuotaDashboard.test.js`, no new test files — targeted-only run, no full suite): the two hardcoded baseline-derived numbers (`1.643`/`1.357` → `1.723`/`1.277`; `1.843`/`1.157` → `1.923`/`1.077`); the overlap-safe "test 1" scenario shifted one calendar day forward (baseline-through-8/17 assumption → baseline-through-8/18, local rows 8/18+8/19 → 8/19+8/20) since 8/18 itself is now on-the-boundary rather than strictly-after; the old "gap detected" test (real baseline + real `trackingStartedAt` → gap TRUE) flipped to assert the current real-world outcome (gap **FALSE**, badges/warning gone), with a companion mechanism-only test proving `hasPendingBaselineCalibrationGap` still correctly returns true for a hypothetical LATER tracking-start date beyond the new baseline coverage (proves the detection code itself, not just this one now-resolved date, still works). 82 targeted tests across `test/healthQuotaDashboard.test.js`/`test/tdxUsageLedger.test.js`/`test/health.test.js`/`test/healthCctvSourceBreakdown.test.js` all pass.
+
+**If TDX's official cumulative figure is ever corrected again** (a later date's day-close becomes available, or an existing figure needs revision): update ONLY the `TDX_OFFICIAL_USAGE_BASELINES['2026-08']` entry the same way — nothing else in `usageLedger.js`/`health.js` needs to change, by construction.
+
+**Out of scope / untouched:** `scheduled.js`, the TDX/PBS/LINE pipeline, Cron cadence, `estimateMonthUsage`/`hasPendingBaselineCalibrationGap`'s own algorithms (data-only change), any TDX probe, any real LINE push, `wrangler.jsonc`.
