@@ -852,3 +852,66 @@ Never stores: the full raw TDX/PBS JSON payload, a Secret, an `Authorization` he
 ### What this round deliberately did not do
 
 No merge into `main`. No deploy. No change to which branch Cloudflare's Worker actually watches. No real TDX/PBS/CCTV probe, no real LINE push — every test uses mock KV/R2/fetch, same conventions as the rest of this test suite.
+
+## 24. V1.8.6.8 — Driver-Relevant Event Broadcast Time Policy
+
+**Status: on branch `feature/v1.8.6.8-broadcast-time-policy`, branched from `main` (§23). NOT merged, NOT deployed.**
+
+### Product principle
+
+The Worker only actively broadcasts events that could really affect a driver's route/lane/road-passability DURING the product's own active hours, Asia/Taipei 08:00–22:00. Outside that window, ordinary construction/closure/event notices are not pushed — a genuine accident's own real-time-relevance logic is untouched (see below).
+
+### Root cause / what was actually wrong
+
+Two separate, pre-existing bugs, both in the "announced" (schedule-text-parsed) event branch of `effectiveWindow.js`:
+
+1. **Cross-midnight arithmetic bug** — `parseChineseDate.js`'s `parseChineseDateRange` computed a schedule's end hour on the SAME calendar day as its start hour, unconditionally. For an overnight range like "21時至6時" (21:00 to 6:00 the next morning), this put `effectiveEnd` 15 hours BEFORE `effectiveStart` — so the moment the event started, `isBroadcastRelevant` immediately read it as already "ended" (`endMs <= nowMs`), even though the event was genuinely active. A real overnight closure would never broadcast at all, at any hour.
+2. **No support for a multi-day date range with a nightly-recurring window** at all — text like "8月20日至8月25日每日21時至翌日6時" simply didn't match the existing single-occurrence regex (no `每日` handling), so `parseChineseDateRange` returned `null` for it — same fail-closed outcome as bug 1 (never broadcasts), for a different reason.
+
+Neither bug is specific to any one event/road — both are structural gaps in the ONE authoritative date-text parser every non-live event type (construction/closure/control/other) already goes through via `effectiveWindow.js`'s "announced" branch.
+
+A third, separate issue (not a broadcast-decision bug, but a Pipeline Trace display bug): `pipelineTrace.js`'s `directionChanged` anomaly check compared upstream and normalized direction text with plain string equality, so "北上" (upstream) vs "北向" (normalized) — the SAME real-world direction, two different words for it — was wrongly flagged as `DIRECTION_CHANGED`.
+
+### Authoritative time-policy implementation — where, precisely
+
+No second time system was created. Two existing modules were extended, one new shared classifier was factored out of an existing function:
+
+- **`effectiveWindow.js`** — `parseChineseDate.js`'s cross-midnight arithmetic is now general (`occurrenceForAnchorDay`: whenever the same-day interpretation of `endHour` would put `end <= start`, roll `end` to the next calendar day — this applies whether or not the text explicitly says "翌日"/"次日", since it's pure date arithmetic, not a keyword-triggered special case), and a new `RECURRING_PATTERN` regex + `resolveRecurringOccurrence()` resolve a `每日`-tagged, optionally multi-day-ranged schedule to the ONE concrete occurrence relevant to `now` on every call (never a cached/stateful recurring schedule — `computeEffectiveWindow` is already called fresh every Cron tick, so this "resolve fresh each time" design needed zero changes to that calling convention).
+- **`effectiveWindow.js`** also gained `classifyEventTimeStatus(window, now)` — the SAME comparison `isBroadcastRelevant` already made (started? ended?), just exposing the answer as `'no-data'|'not-started'|'active'|'ended'` instead of collapsing it to one boolean. `broadcastRules.js`'s `isBroadcastRelevant` was refactored to call this directly (its own 60-minute-forecast leniency layered on top, unchanged) — one authoritative classifier, two callers (the real gate, and Pipeline Trace's display), never two independent comparisons that could drift.
+- **`broadcastHours.js`**'s `isWithinBroadcastHours` (08:00–22:00 Asia/Taipei) is completely unchanged — it was ALREADY the single authoritative product-broadcast-window gate, applied uniformly before any push, for every event type, since V1.6.1. This round did not touch its logic at all, only made its result (`result.withinBroadcastHours`, already computed once per run) visible per-event in Pipeline Trace as `broadcastWindowActive`.
+
+### 08:00–22:00 — confirmed already correctly enforced, not re-implemented
+
+Verified (not assumed) that `broadcastPipeline.js`'s existing `if (!result.withinBroadcastHours) { ...; return result; }` gate already runs strictly before ANY push attempt, for every event type including accidents — this was already true before this round. What this round adds is `eventActive`/`eventTimeStatus`/`broadcastWindowActive` as explicit, separately-visible Pipeline Trace fields (see below), not a new gate.
+
+### Scheduled event / cross-midnight handling
+
+`resolveRecurringOccurrence` (in `parseChineseDate.js`) evaluates, for `referenceDate`, whichever of "yesterday's" or "today's" daily occurrence (each independently checked against an optional `[rangeStart, rangeEnd]` calendar-date bound) actually contains `now`; if none does, the nearest FUTURE occurrence (for `isBroadcastRelevant`'s 60-minute-forecast leniency to still work correctly on an announced multi-day schedule); if none of those either, the range's own boundary occurrence (so a fully-past or fully-future range still resolves to an honest `effectiveEnd<=now` "ended" or `effectiveStart>now` "not started", never null/guessed). A completely date-less `每日` schedule (no month/day at all) resolves the same way, indefinitely recurring relative to whatever `now` currently is.
+
+### Event types this rule applies to
+
+Every type effectiveWindow.js already routes through its "announced" (non-live) branch — construction/closure/control/other — governed by whether the source's OWN description text carries a parseable Chinese date/time range, never by an event-name keyword list. 施工/車道封閉/道路封閉/單向封閉/改道/活動封路/遶境/廟會/路跑/遊行/大型活動 etc. are all already covered by this same mechanism as soon as their description matches `SINGLE_RANGE_PATTERN` or `RECURRING_PATTERN` — no per-event-name hardcoding was added or is needed. `accident`/`congestion` (and any event with `nonCollisionAnomalyDetail`, per V1.8.6.6/V1.8.6.7) stay on the LIVE branch, completely untouched by any of this round's changes.
+
+### Direction semantic fix
+
+`directionEquivalence.js` (new, tiny module) holds the single project-wide direction-equivalence table (北上=北向, 南下=南向, 東行=東向, 西行=西向, 南行=南向, 北行=北向— moved out of `pbs/normalize.js`, which still re-exports `normalizePbsDirection` unchanged for every existing importer, purely to avoid a circular import: `pbs/normalize.js` already imports `buildUpstreamSnapshot` FROM `pipelineTrace.js`, so `pipelineTrace.js` importing `normalizePbsDirection` back from `pbs/normalize.js` would have cycled). `pipelineTrace.js`'s `directionChanged` anomaly check now normalizes BOTH sides through this same table before comparing — a genuine change (e.g. 北向→南向) still flags `DIRECTION_CHANGED`; a same-direction synonym pair never does. The event's own `normalized.direction` value itself was never touched — only the TRACE'S comparison logic changed, per the task's own explicit instruction.
+
+### Pipeline Trace improvements
+
+`decision` now carries `eventActive` (boolean), `eventTimeStatus` ('no-data'|'not-started'|'active'|'ended'), `eventWindow` (the raw `{effectiveStart, effectiveEnd, timeSource}` `computeEffectiveWindow()` produced this run, shown verbatim), and `broadcastWindowActive` (boolean) — four fields where there used to be one opaque `relevant:false`. `status` gained three new values replacing the old single `not-relevant` catch-all: `not-started`, `event-ended`, `outside-broadcast-window` — `not-relevant` is kept only as a defensive fallback for a caller that doesn't supply `eventTimeStatus`. The trace-view page (`pipelineTraceView.js`) shows all four decision fields explicitly in the per-event detail (section B), with a Taipei-local-time-formatted `事件有效時間` range, so an administrator can see exactly why an event didn't broadcast without reading code.
+
+### What was deliberately NOT changed
+
+The pre-existing 60-minute forecast leniency (`isBroadcastRelevant`'s "starts within 60 minutes" allowance, `broadcastPipeline.test.js`'s own "forecast event crossing into the 60-minute window" test) applies identically to every event type, unchanged — a construction event announced to start within the next hour still gets its existing "60分鐘路況預報" pre-announcement, exactly as it did before this round. This round's `eventActive` is a NEW diagnostic/display dimension, not a tightened broadcast gate — no existing test's push/no-push outcome changed.
+
+### Verified unbroken
+
+Genuine accident real-time broadcast (structured `startTime`, LIVE branch, completely untouched — scenario 12), V57.2 PBS-freeway-gating (`crossSourceDedup.js`, not modified this round at all — scenario 13), CCTV, KM Location Resolver/Google Maps URL, Shared Feed, and the full pre-existing 937-test suite from V1.8.6.7 — all re-run and pass unmodified.
+
+### Tests
+
+`test/parseChineseDate.test.js` (+7: cross-midnight single, marker-optional rollover, multi-day recurring middle/last day, past/future range boundaries, date-less recurring), `test/effectiveWindow.test.js` (+6: `classifyEventTimeStatus`'s 4 states, confirming it's distinct from `isBroadcastRelevant`'s forecast leniency), `test/broadcastTimePolicy.test.js` (new, 15 tests — the task's own full scenario list, end-to-end through `runLineBroadcast`), `test/pipelineTraceView.test.js` (+1: the view page shows all three distinct new statuses, never one generic label). Full suite: 965 tests, 962 pass, the same 3 pre-existing unrelated failures as every prior round.
+
+### What this round deliberately did not do
+
+No merge into `main`. No deploy. No change to which branch Cloudflare's Worker actually watches. No real TDX/PBS/CCTV probe, no real LINE push. No change to the 60-minute forecast feature, to `isWithinBroadcastHours`'s own logic, or to any event's actual `normalized.direction`/`type` value.

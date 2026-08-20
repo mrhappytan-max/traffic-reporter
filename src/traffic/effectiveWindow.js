@@ -88,3 +88,41 @@ export function computeEffectiveWindow(event, now = new Date()) {
   // than to broadcast a multi-day-early guess.
   return { effectiveStart: null, effectiveEnd: null, timeSource: 'fallback', confidence: 'low' };
 }
+
+// V1.8.6.8 — the ONE place "is this event's own announced window covering
+// `now`" gets decided. `broadcastRules.js`'s isBroadcastRelevant() below
+// is refactored to call this directly (and add its own 60-minute-forecast
+// leniency on top of the 'not-started' case) so there is exactly one
+// definition of "started"/"ended", never two that could drift; this
+// classifier ALSO doubles as the single source of truth for Pipeline
+// Trace's `eventActive`/`eventTimeStatus` fields (see
+// pipelineTrace.js#buildTraceEntry), so a human reading the trace-view
+// page sees the EXACT reasoning isBroadcastRelevant() itself used, not a
+// second, independently-computed approximation.
+//
+// Deliberately distinct from `broadcastWindowActive` (isWithinBroadcastHours,
+// broadcastHours.js) — that is the PRODUCT's own 08:00-22:00 Asia/Taipei
+// active-hours policy, a completely separate axis from "is the event
+// itself, as the source announced it, actually ongoing right now." Both
+// must hold for a scheduled/announced event to broadcast; conflating them
+// into one flag is exactly what made a rejected event's Pipeline Trace
+// reason collapse into a single unhelpful "尚未到播報時間" before this round.
+//
+// @param {{ effectiveStart: string|null, effectiveEnd: string|null }} window
+// @param {Date} now
+// @returns {'no-data'|'not-started'|'active'|'ended'}
+export function classifyEventTimeStatus(window, now = new Date()) {
+  if (!window || !window.effectiveStart) return 'no-data';
+  const startMs = new Date(window.effectiveStart).getTime();
+  if (!Number.isFinite(startMs)) return 'no-data';
+
+  const nowMs = now.getTime();
+
+  if (window.effectiveEnd) {
+    const endMs = new Date(window.effectiveEnd).getTime();
+    if (Number.isFinite(endMs) && endMs <= nowMs) return 'ended';
+  }
+
+  if (startMs <= nowMs) return 'active';
+  return 'not-started';
+}

@@ -12,25 +12,14 @@ import { normalizePbsRoad } from './roadName.js';
 import { classifyPbsEvent } from './classify.js';
 import { classifyCongestionSeverity } from '../traffic/congestionSeverity.js';
 import { buildUpstreamSnapshot } from '../traffic/pipelineTrace.js';
-
-const DIRECTION_MAP = {
-  北上: '北向',
-  南下: '南向',
-  東行: '東向',
-  西行: '西向',
-  南行: '南向',
-  北行: '北向',
-  東向: '東向',
-  西向: '西向',
-  南向: '南向',
-  北向: '北向',
-};
-
-export function normalizePbsDirection(direction) {
-  if (!direction) return '';
-  const trimmed = String(direction).trim();
-  return DIRECTION_MAP[trimmed] || trimmed;
-}
+// V1.8.6.8 — moved to its own module (directionEquivalence.js) so
+// traffic/pipelineTrace.js can reuse the SAME table without a circular
+// import (this file already imports FROM pipelineTrace.js above) — see
+// that module's own comment. Re-exported here unchanged so every
+// existing importer of `normalizePbsDirection` from this file (this
+// module's own use below, test/pbsNormalize.test.js) keeps working.
+export { normalizePbsDirection } from '../traffic/directionEquivalence.js';
+import { normalizePbsDirection } from '../traffic/directionEquivalence.js';
 
 /** Asia/Taipei is fixed UTC+8 (no DST) — same approach used throughout this project. */
 function taipeiPartsToUtcIso(year, month, day, hour, minute, second) {

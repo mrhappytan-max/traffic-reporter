@@ -2,30 +2,30 @@
 // now" or "about to happen very soon" is worth an interruption.
 
 import { NON_COLLISION_ANOMALY_RULES } from './anomalyClassification.js';
+import { classifyEventTimeStatus } from './effectiveWindow.js';
 
 const SIXTY_MINUTES_MS = 60 * 60 * 1000;
 
 /**
+ * V1.8.6.8 — thin wrapper over effectiveWindow.js's classifyEventTimeStatus
+ * (the single authoritative "is the event's own window active" check;
+ * see that function's own comment), adding ONLY this rule's own 60-minute
+ * forecast leniency on top of the 'not-started' case — never a second,
+ * independent start/end comparison. Pipeline Trace's `eventActive` field
+ * reads classifyEventTimeStatus() directly, so its reasoning always
+ * matches this function's exactly.
+ *
  * @param {{ effectiveStart: string|null, effectiveEnd: string|null }} window
  *   - output of computeEffectiveWindow()
  * @param {Date} now
  */
 export function isBroadcastRelevant(window, now = new Date()) {
-  if (!window || !window.effectiveStart) return false; // can't tell -> don't broadcast
+  const status = classifyEventTimeStatus(window, now);
+  if (status === 'active') return true;
+  if (status !== 'not-started') return false; // 'no-data' or 'ended'
 
   const startMs = new Date(window.effectiveStart).getTime();
-  if (!Number.isFinite(startMs)) return false;
-
-  const nowMs = now.getTime();
-
-  if (window.effectiveEnd) {
-    const endMs = new Date(window.effectiveEnd).getTime();
-    if (Number.isFinite(endMs) && endMs <= nowMs) return false; // already ended
-  }
-
-  if (startMs <= nowMs) return true; // already started (and not ended)
-
-  return startMs <= nowMs + SIXTY_MINUTES_MS; // starts within 60 minutes
+  return startMs <= now.getTime() + SIXTY_MINUTES_MS; // starts within 60 minutes
 }
 
 // V1.5: product repositioning — "路況播報員" only interrupts a

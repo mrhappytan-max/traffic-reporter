@@ -49,7 +49,7 @@
 // changes nothing about what this Worker sends its own subscribers.
 
 import { isWithinBroadcastHours } from './broadcastHours.js';
-import { computeEffectiveWindow } from './effectiveWindow.js';
+import { computeEffectiveWindow, classifyEventTimeStatus } from './effectiveWindow.js';
 import { isBroadcastRelevant, getBroadcastEligibility } from './broadcastRules.js';
 import { readSubscriptions, persistSubscriptions } from './subscriptions.js';
 import {
@@ -274,7 +274,18 @@ export async function runLineBroadcast(
     let input = traceInputByEvent.get(event);
     if (!input) {
       const meta = eventMeta.get(`${event.source}:${event.rawId}`) || {};
-      input = { event, now, dedupeResult: meta.dedupeResult ?? null, gatingResult: meta.gatingResult ?? null };
+      // V1.8.6.8 — broadcastWindowActive is the SAME isWithinBroadcastHours(now)
+      // result already computed once, above, for this whole run
+      // (result.withinBroadcastHours) — never recomputed per event, and
+      // set here (at first-touch) so every trace entry carries it
+      // regardless of which stage first creates its input.
+      input = {
+        event,
+        now,
+        dedupeResult: meta.dedupeResult ?? null,
+        gatingResult: meta.gatingResult ?? null,
+        broadcastWindowActive: result.withinBroadcastHours,
+      };
       traceInputByEvent.set(event, input);
     }
     return input;
@@ -384,9 +395,20 @@ export async function runLineBroadcast(
   // null) also has its lifecycle end right here; every relevant one gets
   // `relevant:true` for now (an accident that gets suppressed below still
   // reads relevant:true — suppression is a separate, later decision).
+  //
+  // V1.8.6.8 — eventTimeStatus/eventWindow are recorded from the EXACT
+  // same `window` isBroadcastRelevant(window, now) itself just evaluated
+  // (classifyEventTimeStatus is the shared classifier isBroadcastRelevant
+  // is built on — see effectiveWindow.js) — never a second, independent
+  // window computation. This is what lets Pipeline Trace distinguish
+  // "尚未開始"/"事件已結束"/"事件有效" instead of one generic
+  // "尚未到播報時間" for every non-relevant reason (section 4 of this round).
   const relevantEventSet = new Set(relevant.map(({ event }) => event));
-  for (const { event } of withWindow) {
-    traceFor(event).relevant = relevantEventSet.has(event);
+  for (const { event, window } of withWindow) {
+    const trace = traceFor(event);
+    trace.relevant = relevantEventSet.has(event);
+    trace.eventTimeStatus = classifyEventTimeStatus(window, now);
+    trace.eventWindow = window;
   }
 
   // V1.5.1: accident-specific incident-level suppression — see

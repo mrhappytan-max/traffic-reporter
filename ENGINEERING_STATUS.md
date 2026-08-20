@@ -1,6 +1,6 @@
 # ENGINEERING_STATUS.md — traffic-reporter (路況播報員)
 
-Current-state snapshot only — no long history here. For "why" and full round-by-round detail, see `PROJECT_HANDOFF.md` (§1–§23). For human-readable release notes, see `RELEASE_SUMMARY_V1.8.5.md`.
+Current-state snapshot only — no long history here. For "why" and full round-by-round detail, see `PROJECT_HANDOFF.md` (§1–§24). For human-readable release notes, see `RELEASE_SUMMARY_V1.8.5.md`.
 
 ---
 
@@ -27,7 +27,7 @@ assume `main`.
 ## Current Production version / main HEAD
 
 ```
-main HEAD: 8cd97c3e61ac2eace7db66634a398450adb17e4b (V1.8.6.6 + V57/V57.1/V57.2 reconciled)
+main HEAD: 3858e0ad07b07c1c96bc8bdc6edfb70b5a354645 (V1.8.6.7 — 24h Pipeline Trace, fast-forwarded onto main)
 ```
 
 Cloudflare auto-deploys on every push to `main` — no manual `wrangler deploy` needed under normal operation. (This document's own prior round is the reminder to periodically re-verify that's still actually true.)
@@ -37,6 +37,23 @@ Cloudflare auto-deploys on every push to `main` — no manual `wrangler deploy` 
 - Production live, operating normally.
 - `GET /health` — zero TDX/PBS/LINE network calls, reads only `health:snapshot:v1` + `tdx:usage:summary:v1` from KV.
 - TDX usage reconciliation ledger live and accumulating (`tdx:usage:summary:v1`).
+
+## Latest completed work — V1.8.6.8: Driver-Relevant Event Broadcast Time Policy
+
+**Status: on branch `feature/v1.8.6.8-broadcast-time-policy`, branched from main (V1.8.6.7), NOT merged, NOT deployed.**
+
+Fixes two real, structural bugs in how a "announced" (schedule-text) event's own active window gets computed — both silently made a correctly-parsed overnight/multi-day construction, closure, or event notice unbroadcastable at ANY hour, not just outside 08:00-22:00:
+
+- **Cross-midnight arithmetic bug** — a schedule like "21時至6時" (9pm to 6am the next morning) had its end computed on the SAME calendar day as its start, putting `effectiveEnd` 15 hours BEFORE `effectiveStart` — the event read as "already ended" the instant it started. Fixed generally (any `end <= start` rolls to the next calendar day), not conditioned on a "翌日"/"次日" marker being present in the text.
+- **No support for a multi-day date range with a nightly-recurring window** ("8月20日至8月25日每日21時至翌日6時") — this text simply never matched the existing parser at all, returning null (same "never broadcasts" outcome as the first bug, for a different reason). New capability added, resolved fresh against `now` on every call (no cached/stateful schedule).
+
+Also fixes a Pipeline Trace false-positive: upstream "北上" vs normalized "北向" (same real-world direction, PBS's own vocabulary vs this project's canonical form) was wrongly flagged `DIRECTION_CHANGED` — fixed by reusing the project's single existing direction-equivalence table (now in `directionEquivalence.js`) on both sides of the comparison before flagging.
+
+Pipeline Trace's `decision` block gained `eventActive`/`eventTimeStatus`/`eventWindow`/`broadcastWindowActive` — replacing one opaque "尚未到播報時間" for every non-broadcast reason with four fields that let an administrator see exactly why an event didn't broadcast (尚未開始 / 已結束 / 非播報時段 / event genuinely active) without reading code.
+
+Deliberately unchanged: the pre-existing 60-minute forecast pre-announcement ("60分鐘路況預報"), the 08:00–22:00 broadcast-hours gate's own logic (`isWithinBroadcastHours`, unchanged since V1.6.1 — this round only made its per-run result visible per-event in the trace), genuine accident real-time broadcast, CCTV, KM Location Resolver, Shared Feed, and V57.2 PBS-freeway-gating.
+
+Full suite: 965 tests, 962 pass, the same 3 pre-existing unrelated failures as every prior round. See `PROJECT_HANDOFF.md` §24 for the full design writeup and `PRODUCT_DECISIONS.md` for why the forecast feature and the 08:00–22:00 gate's logic were deliberately left untouched.
 
 ## Latest completed work — V1.8.6.7: 24h Pipeline Trace + 人工查修頁
 
@@ -157,7 +174,7 @@ Total Upload: 7549.90 KiB / gzip 718.25 KiB
 
 - Let the road-location dataset stay as-is until new/updated official data is deliberately imported — no action needed for normal operation.
 - If official data.gov.tw datasets 7040/95016/166496/8161 publish an update, re-run `npm run update:road-location-data` (see README.md's "Road location data maintenance" section) and re-verify the two acceptance resolutions above still make sense before merging.
-- If/when `feature/v1.8.6.7-pipeline-trace-view` (this round's Pipeline Trace work — see "Latest completed work" above) is reviewed and approved, merge it into `main` the same way the branch-split fix was: fast-forward if `main` hasn't moved, otherwise a real merge — then Cloudflare's existing auto-deploy-on-push-to-`main` picks it up with no manual `wrangler deploy`.
+- If/when `feature/v1.8.6.8-broadcast-time-policy` (this round's cross-midnight/broadcast-time-policy work — see "Latest completed work" above) is reviewed and approved, merge it into `main` the same way every prior round's branch was: fast-forward if `main` hasn't moved, otherwise a real merge — then Cloudflare's existing auto-deploy-on-push-to-`main` picks it up with no manual `wrangler deploy`.
 
 ## Do not
 

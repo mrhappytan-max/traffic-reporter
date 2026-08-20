@@ -54,6 +54,7 @@
 
 import { taipeiDateString } from '../tdx/usageLedger.js';
 import { describeClassificationEvidence } from './broadcastProvenance.js';
+import { normalizePbsDirection } from './directionEquivalence.js';
 
 export const TRACE_KEY_PREFIX = 'debug:pipeline-trace:v1';
 export const TRACE_TTL_SECONDS = 24 * 60 * 60; // 24h, per instruction
@@ -173,8 +174,20 @@ function sanitizeKmLocationResolution(resolution) {
  * `status` is a small fixed enum, computed here from the other fields,
  * used for the admin endpoints' `?status=` filter and the trace-view
  * page's at-a-glance badge:
- *   line-sent | eligible-no-target | suppressed | not-relevant |
- *   ineligible | duplicate | gated | merged | line-failed
+ *   line-sent | eligible-no-target | suppressed | not-started |
+ *   event-ended | outside-broadcast-window | not-relevant | ineligible |
+ *   duplicate | gated | merged | line-failed
+ *
+ * V1.8.6.8 — `not-started`/`event-ended`/`outside-broadcast-window`
+ * replace the old single catch-all `not-relevant` for a rejected
+ * scheduled/announced event (construction/closure/control/other with a
+ * parsed schedule) whenever `eventTimeStatus` is available — see section
+ * 4 of this round's own task: a management page that only ever said
+ * "尚未到播報時間" for every non-broadcast reason made it impossible to
+ * tell, without reading code, whether an event simply hadn't started
+ * yet, had already ended, or was genuinely active but outside the
+ * product's own 08:00-22:00 window. `not-relevant` is kept ONLY as a
+ * fallback for a caller that doesn't pass `eventTimeStatus` at all.
  */
 export function buildTraceEntry({
   event,
@@ -184,6 +197,20 @@ export function buildTraceEntry({
   eligibility = null, // boolean | null
   eligibilityReason = null,
   relevant = null, // boolean | null — effectiveWindow.js's isBroadcastRelevant this run
+  // V1.8.6.8 — see effectiveWindow.js's classifyEventTimeStatus (the
+  // SAME classifier isBroadcastRelevant itself is built on, never a
+  // second independent comparison): 'no-data' | 'not-started' | 'active'
+  // | 'ended'. eventActive is a plain boolean convenience derived from
+  // it (true only for 'active') for callers/tests that just want the
+  // boolean this round's own task spec names.
+  eventTimeStatus = null,
+  eventWindow = null, // {effectiveStart, effectiveEnd, timeSource} | null — the raw computeEffectiveWindow() result, shown verbatim in the trace so a human can see the exact window the decision was based on
+  // V1.8.6.8 — broadcastHours.js's isWithinBroadcastHours(now) result for
+  // THIS run, threaded in by the caller (already computed once per run —
+  // never recomputed per event). A completely separate axis from
+  // eventTimeStatus: the PRODUCT's own 08:00-22:00 Asia/Taipei active-
+  // hours policy, not the event's own announced timing.
+  broadcastWindowActive = null,
   suppressionResult = null, // 'new-incident' | 'material-escalation' | 'same-incident-no-escalation' | null
   kmLocationResolution = null,
   cctvEligible = null, // boolean | null
@@ -199,12 +226,15 @@ export function buildTraceEntry({
 } = {}) {
   const anomalyDetail = event && event.nonCollisionAnomalyDetail ? event.nonCollisionAnomalyDetail : null;
   const upstream = (event && event.pipelineTraceUpstream) || buildUpstreamSnapshot({});
+  const eventActive = eventTimeStatus === null ? null : eventTimeStatus === 'active';
 
   const status = computeStatus({
     dedupeResult,
     gatingResult,
     eligibility,
     relevant,
+    eventTimeStatus,
+    broadcastWindowActive,
     suppressionResult,
     lineAttempted,
     lineSucceeded,
@@ -236,6 +266,15 @@ export function buildTraceEntry({
       dedupeResult,
       suppressionResult,
       gatingResult,
+      // V1.8.6.8 — see the param comments above. eventWindow is the raw
+      // effectiveStart/effectiveEnd/timeSource computeEffectiveWindow()
+      // already produced this run (never re-derived here); eventActive/
+      // eventTimeStatus/broadcastWindowActive are the two-axis
+      // "事件有效時間 x 播報時段" breakdown section 1/4 of this round asks for.
+      eventActive,
+      eventTimeStatus,
+      eventWindow: eventWindow ? { effectiveStart: eventWindow.effectiveStart, effectiveEnd: eventWindow.effectiveEnd, timeSource: eventWindow.timeSource } : null,
+      broadcastWindowActive,
     },
     enrichment: {
       kmLocationResolution: sanitizeKmLocationResolution(kmLocationResolution),
@@ -255,7 +294,17 @@ export function buildTraceEntry({
   };
 }
 
-function computeStatus({ dedupeResult, gatingResult, eligibility, relevant, suppressionResult, lineAttempted, lineSucceeded }) {
+function computeStatus({
+  dedupeResult,
+  gatingResult,
+  eligibility,
+  relevant,
+  eventTimeStatus,
+  broadcastWindowActive,
+  suppressionResult,
+  lineAttempted,
+  lineSucceeded,
+}) {
   if (typeof lineSucceeded === 'number' && lineSucceeded > 0) return 'line-sent';
   if (typeof lineAttempted === 'number' && lineAttempted > 0 && lineSucceeded === 0) return 'line-failed';
   if (dedupeResult === 'duplicate') return 'duplicate';
@@ -263,7 +312,10 @@ function computeStatus({ dedupeResult, gatingResult, eligibility, relevant, supp
   if (gatingResult === 'merged-into-canonical') return 'merged';
   if (eligibility === false) return 'ineligible';
   if (suppressionResult === 'same-incident-no-escalation') return 'suppressed';
-  if (relevant === false) return 'not-relevant';
+  if (eventTimeStatus === 'ended') return 'event-ended';
+  if (eventTimeStatus === 'not-started') return 'not-started';
+  if (broadcastWindowActive === false) return 'outside-broadcast-window';
+  if (relevant === false) return 'not-relevant'; // fallback: eventTimeStatus wasn't supplied
   if (eligibility === true && typeof lineAttempted === 'number' && lineAttempted === 0) return 'eligible-no-target';
   return 'eligible-no-target';
 }
@@ -367,11 +419,21 @@ export async function listPipelineTrace(kv, { limit = DEFAULT_LIST_LIMIT, source
 // `message` is the human-readable (Traditional Chinese) explanation shown
 // on the trace-view page.
 
+// V1.8.6.8 — production false-positive: 上游「北上」vs normalized「北向」
+// (or 南下/南向, 東行/東向, 西行/西向, 南行/南向, 北行/北向) is the SAME
+// semantic direction, two different words for it — not a real direction
+// change. Reuses pbs/normalize.js's own normalizePbsDirection (the
+// project's single existing direction-equivalence table — see that
+// module's DIRECTION_MAP) rather than a second copy; the comparison
+// below normalizes BOTH sides through it before comparing, so this stays
+// correct if that table ever gains more equivalents, with zero changes
+// needed here. Only a genuine semantic change (e.g. 北向 -> 南向) still
+// flags DIRECTION_CHANGED.
 function directionChanged(trace) {
   const raw = trace.upstream && trace.upstream.rawDirection;
   const normalized = trace.normalized && trace.normalized.direction;
   if (!raw || !normalized) return null;
-  if (raw === normalized) return null;
+  if (normalizePbsDirection(raw) === normalizePbsDirection(normalized)) return null;
   return {
     severity: 'error',
     code: 'DIRECTION_CHANGED',

@@ -180,3 +180,39 @@ test('view page shows a friendly empty state when there is no data', async () =>
     globalThis.fetch = originalFetch;
   }
 });
+
+// --- V1.8.6.8: the time-policy breakdown (section 4 of that round) -------
+
+test('view page distinguishes "非播報時段" from "事件已結束" from "事件尚未開始" — never a single generic status for all three', async () => {
+  const kv = createMockKV();
+  const window = { effectiveStart: '2026-08-20T13:00:00.000Z', effectiveEnd: '2026-08-20T22:00:00.000Z', timeSource: 'description' };
+  await recordPipelineTrace(kv, buildTraceEntry({
+    event: accidentEvent({ rawId: 'OUT1', type: 'construction' }), now: NOW, eligibility: true, eligibilityReason: 'construction-impact-keyword',
+    relevant: true, eventTimeStatus: 'active', eventWindow: window, broadcastWindowActive: false, lineAttempted: 0, lineSucceeded: 0,
+  }), NOW);
+  await recordPipelineTrace(kv, buildTraceEntry({
+    event: accidentEvent({ rawId: 'ENDED1', type: 'construction' }), now: NOW, eligibility: true, eligibilityReason: 'construction-impact-keyword',
+    relevant: false, eventTimeStatus: 'ended', eventWindow: window, broadcastWindowActive: true,
+  }), NOW);
+  await recordPipelineTrace(kv, buildTraceEntry({
+    event: accidentEvent({ rawId: 'NOTSTART1', type: 'construction' }), now: NOW, eligibility: true, eligibilityReason: 'construction-impact-keyword',
+    relevant: false, eventTimeStatus: 'not-started', eventWindow: window, broadcastWindowActive: true,
+  }), NOW);
+  const env = { ADMIN_PASSWORD, TRAFFIC_KV: kv };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = throwingFetch('upstream');
+  try {
+    const res = await worker.fetch(adminRequest('/admin/pipeline-trace-view', { auth: basicAuthHeader(ADMIN_USERNAME, ADMIN_PASSWORD) }), env);
+    const html = await res.text();
+    assert.match(html, /非播報時段（08:00～22:00）/);
+    assert.match(html, /事件已結束/);
+    assert.match(html, /事件尚未開始/);
+    // The detail section's own labeled fields must also be present, not
+    // just the summary badge.
+    assert.match(html, /eventActive/);
+    assert.match(html, /broadcastWindowActive/);
+    assert.match(html, /事件有效時間/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

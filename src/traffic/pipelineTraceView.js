@@ -41,6 +41,14 @@ const STATUS_META = {
   merged: { emoji: '✅', label: '已與 TDX 合併', cls: 'ok' },
   'eligible-no-target': { emoji: '⚠️', label: '符合但無需推播', cls: 'warn' },
   suppressed: { emoji: '⚠️', label: '已抑制（同一事故）', cls: 'warn' },
+  // V1.8.6.8 — replaces the old single "尚未到播報時間" catch-all with the
+  // three actually-distinct reasons section 4 of that round's task asked
+  // for (see pipelineTrace.js's computeStatus). `not-relevant` is kept
+  // only as a fallback for a trace entry that predates this round or
+  // otherwise never got eventTimeStatus populated.
+  'not-started': { emoji: '⚠️', label: '事件尚未開始', cls: 'warn' },
+  'event-ended': { emoji: '⚠️', label: '事件已結束', cls: 'warn' },
+  'outside-broadcast-window': { emoji: '⚠️', label: '非播報時段（08:00～22:00）', cls: 'warn' },
   'not-relevant': { emoji: '⚠️', label: '尚未到播報時間', cls: 'warn' },
   ineligible: { emoji: '⚠️', label: '不符合播報資格', cls: 'warn' },
   gated: { emoji: '⚠️', label: '國道閘門（無 TDX 對應）', cls: 'warn' },
@@ -56,6 +64,26 @@ function cctvBadge(entry) {
   if (e.cctvEligible === true && e.imagePrepared === false) return { emoji: '🚫', label: `無圖（${escapeHtml(e.cctvSkippedByReason || '未知原因')}）` };
   if (e.cctvEligible === false) return null; // not applicable — no badge, not a failure
   return null;
+}
+
+// V1.8.6.8 — Asia/Taipei is a fixed UTC+8 offset (no DST), same hard-code
+// already used throughout this project (broadcastHours.js/
+// parseChineseDate.js) — never `Date`'s own locale-dependent
+// toLocaleString, which would silently follow the SERVER's timezone.
+function formatTaipeiInstant(iso) {
+  if (!iso) return null;
+  const ms = new Date(iso).getTime();
+  if (!Number.isFinite(ms)) return null;
+  const shifted = new Date(ms + 8 * 60 * 60 * 1000);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())} ${pad(shifted.getUTCHours())}:${pad(shifted.getUTCMinutes())}`;
+}
+
+function formatEventWindow(eventWindow) {
+  if (!eventWindow || !eventWindow.effectiveStart) return null;
+  const start = formatTaipeiInstant(eventWindow.effectiveStart);
+  const end = eventWindow.effectiveEnd ? formatTaipeiInstant(eventWindow.effectiveEnd) : '持續中';
+  return `${start} ～ ${end}`;
 }
 
 function mapBadge(entry) {
@@ -107,6 +135,9 @@ function renderDetail(entry) {
     ${renderField('DisplayKM', normalized.displayKM)}
     ${renderField('classificationSource', normalized.classificationSource ? `${normalized.classificationSource.field}=${normalized.classificationSource.value}` : null)}
     ${renderField('classificationEvidence', (normalized.classificationEvidence || []).join(', '))}
+    ${renderField('事件有效時間（Asia/Taipei）', formatEventWindow(decision.eventWindow))}
+    ${renderField('eventActive', decision.eventActive === null ? null : decision.eventActive ? '是（事件正在發生）' : decision.eventTimeStatus === 'not-started' ? '否（尚未開始）' : decision.eventTimeStatus === 'ended' ? '否（已結束）' : '否')}
+    ${renderField('broadcastWindowActive（08:00～22:00）', decision.broadcastWindowActive === null ? null : decision.broadcastWindowActive ? '是' : '否')}
     ${renderField('eligibility', decision.eligibility === null ? null : decision.eligibility ? '符合' : '不符合')}
     ${renderField('eligibilityReason', decision.eligibilityReason)}
     ${renderField('dedupe', decision.dedupeResult)}
