@@ -351,10 +351,17 @@ test('16. PBS relay throws -> TDX still fetches and still broadcasts normally', 
 
 test('17. TDX freeway+highway both fail -> PBS still fetches and still broadcasts normally', async () => {
   const pbsCalls = [];
+  // V57.2: a 國道 PBS event with no TDX match is now gated (never
+  // broadcast) regardless of why it's unmatched — see
+  // crossSourceDedup.js's own header comment. This test's actual point
+  // (PBS pipeline resilience when TDX fails) is unrelated to that rule,
+  // so it uses a 省道/highway fixture (unaffected by the V57.2 gate),
+  // same fixture choice already used for this exact scenario in
+  // test/pbsLineBroadcast.test.js's test 7b.
   const env = await envWithPbs(pbsCalls, [
     {
-      UID: 'PBS-1', road: '國道一號', direction: '北向', areaNm: '國道一號北向', roadtype: '事故',
-      comment: '北向92公里處發生車輛事故', happendate: '2026-08-18', happentime: '08:15:00',
+      UID: 'PBS-1', road: '台68', direction: '東向', areaNm: '台68線', roadtype: '事故',
+      comment: '東向5公里處發生車輛事故', happendate: '2026-08-18', happentime: '08:15:00',
       modDttm: '2026-08-18 08:19:00', srcdetail: '測試來源',
     },
   ]);

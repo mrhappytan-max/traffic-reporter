@@ -46,11 +46,16 @@ export async function handleDebugPbs(env) {
     filteredCount: pbsSummary.filteredCount,
     crossSourceDuplicateCount: pbsSummary.crossSourceDuplicateCount,
     canonicalEventCount: pbsSummary.canonicalEventCount,
+    // V57.2 — 國道 PBS events gated from ever becoming a broadcast
+    // candidate this run (no TDX match) — internal observability only,
+    // see crossSourceDedup.js's own header comment for the full rule.
+    freewayGatedCount: pbsSummary.freewayGatedCount,
     rawSample: pbsSummary.rawSample,
     normalizedSample: pbsSummary.normalizedSample,
     clearedSample: pbsSummary.clearedSample,
     staleSample: pbsSummary.staleSample,
     crossSourceSample: pbsSummary.crossSourceSample,
+    freewayGatedSample: pbsSummary.freewayGatedSample,
   };
 
   return Response.json(body, { status: pbsSummary.pbsOk ? 200 : 502 });

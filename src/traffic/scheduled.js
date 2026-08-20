@@ -147,7 +147,8 @@ export async function runScheduledTdxSync(env, now = new Date()) {
         `kvAvailable=${pbsSummary.kvAvailable} committed=${pbsSummary.committed} ` +
         `raw=${pbsSummary.rawCount} hsinchu=${pbsSummary.hsinchuCount} active=${pbsSummary.activeCount} ` +
         `cleared=${pbsSummary.clearedCount} stale=${pbsSummary.staleCount} filtered=${pbsSummary.filteredCount} ` +
-        `crossSourceDuplicates=${pbsSummary.crossSourceDuplicateCount} canonical=${pbsSummary.canonicalEventCount}`
+        `crossSourceDuplicates=${pbsSummary.crossSourceDuplicateCount} canonical=${pbsSummary.canonicalEventCount} ` +
+        `freewayGated=${pbsSummary.freewayGatedCount ?? 0}` // V57.2: 國道 PBS events with no TDX match this run — never broadcast, observability only
     );
   } catch (err) {
     // Belt-and-suspenders: PBS must never be able to take down the Cron

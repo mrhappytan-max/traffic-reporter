@@ -60,3 +60,17 @@ export function normalizePbsRoad(road, areaNm) {
 
   return normalizeFreewayName(trimmedAreaNm) || normalizeHighwayName(trimmedAreaNm) || toHalfwidthDigits(trimmedAreaNm);
 }
+
+// V57.2 — "is this an already-normalized 國道 (freeway) road name" — the
+// SAME canonical shape normalizeFreewayName() above always produces
+// ("國道X號"), formalized as a reusable predicate so callers (see
+// crossSourceDedup.js's freeway-gate) reuse this module's own existing
+// classification instead of inventing a second, parallel road-name
+// pattern. Deliberately only ever tested against an ALREADY-normalized
+// road (i.e. the output of normalizePbsRoad, or TDX's own real
+// "國道一號"-shaped Road field) — never re-parses raw areaNm/road text
+// itself, so this can never drift from what normalizePbsRoad already
+// decided for a given event.
+export function isFreewayRoadName(road) {
+  return /^國道.+號$/.test((road || '').trim());
+}
