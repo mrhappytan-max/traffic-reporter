@@ -82,9 +82,17 @@ function nearestPoint(points, targetKm) {
   return { point: best, dist: bestDist };
 }
 
+// V1.8.6.5 UI hotfix — short-form Google Maps URL. `https://maps.google.com/?q=<lat>,<lng>`
+// is a shorter, equally stable/public/documented URL form than the
+// `?api=1&query=` shape used at launch — no API key, no shortener, still
+// opens the exact coordinate in any client. Coordinates are fixed to 5
+// decimal places (~1.1m precision at these latitudes — plenty for "which
+// interchange/village this is near", never claimed as survey-grade) so
+// the URL itself stays short and doesn't leak the dataset's own raw
+// (much longer) float precision into a LINE message.
 function buildMapUrl(lat, lng) {
   if (typeof lat !== 'number' || typeof lng !== 'number' || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+  return `https://maps.google.com/?q=${lat.toFixed(5)},${lng.toFixed(5)}`;
 }
 
 function buildProvincialLabel(point) {

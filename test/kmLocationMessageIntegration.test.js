@@ -26,7 +26,7 @@ test('tier-1 human location text (locationDescription) still wins line 1 over th
 test('a 📍 地圖 line is still added even when tier-1 text wins the label — the map is a separate concern from which tier supplied the label text', () => {
   const event = normalizeRoadEvent(highwayTai3ConstructionWithLocationDescription, 'highway');
   const text = formatEventMessage(event);
-  assert.match(text, /^📍 地圖 https:\/\/www\.google\.com\/maps\/search\/\?api=1&query=[\d.,-]+$/m);
+  assert.match(text, /^📍 地圖 https:\/\/maps\.google\.com\/\?q=[\d.,-]+$/m);
 });
 
 test('no locationDescription, but the official dataset covers this road -> tier-2 (resolver) label wins line 1, not a bare road+direction fallback', () => {
@@ -38,7 +38,7 @@ test('no locationDescription, but the official dataset covers this road -> tier-
   // for the resolver's own output shape; this only checks the label WON.
   assert.equal(lines[1], '台3線 雙向｜新竹縣北埔鄉');
   assert.equal(lines[2], '78K+500～79K+200'); // raw KM line is untouched, still shown
-  assert.ok(text.includes('📍 地圖 https://www.google.com/maps/search/?api=1&query='));
+  assert.ok(text.includes('📍 地圖 https://maps.google.com/?q='));
 });
 
 test('a freeway event with structured KM the official dataset covers resolves via the resolver (tier 2), not the old curated anchor table (tier 3)', () => {
@@ -55,7 +55,7 @@ test('a freeway event with structured KM the official dataset covers resolves vi
   const text = formatEventMessage(event);
   const lines = text.split('\n');
   assert.equal(lines[1], '國1 北向｜竹北交流道附近');
-  assert.ok(text.includes('📍 地圖 https://www.google.com/maps/search/?api=1&query=24.82443422,121.0177405'));
+  assert.ok(text.includes('📍 地圖 https://maps.google.com/?q=24.82443,121.01774'));
 });
 
 test('a road/KM the official dataset genuinely does not cover falls back exactly as V1.8.6.4 did: no tier-2 label, no 📍 line', () => {

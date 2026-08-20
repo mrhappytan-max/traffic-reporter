@@ -52,7 +52,7 @@ test('1. provincial: resolves via composed county+township+village when no 設�
   assert.equal(result.dataset, 'provincial');
   assert.equal(result.locationLabel, '測試縣測試鄉測試村');
   assert.equal(result.coordinate.lat, 24.8);
-  assert.equal(result.mapUrl, 'https://www.google.com/maps/search/?api=1&query=24.8,121');
+  assert.equal(result.mapUrl, 'https://maps.google.com/?q=24.80000,121.00000');
 });
 
 test('2. provincial: prefers the official 設置位置 free-text label over composing county/township/village', () => {
@@ -120,7 +120,7 @@ test('10. freeway: coordinate/mapUrl come from the nearest 100m milestone within
   const result = resolveKmLocation({ road: '國道一號', startKM: '88K+050' }, { datasetOverride: DATASET_OVERRIDE });
   assert.equal(result.coordinate.lat, 24.85);
   assert.equal(result.coordinate.lng, 121.03);
-  assert.equal(result.mapUrl, 'https://www.google.com/maps/search/?api=1&query=24.85,121.03');
+  assert.equal(result.mapUrl, 'https://maps.google.com/?q=24.85000,121.03000');
   assert.equal(result.resolvedKm, 88.0);
 });
 
@@ -180,7 +180,7 @@ test('17. REQUIRED acceptance test: 台13甲 9K+000 resolves to a real official 
   assert.equal(result.dataset, 'provincial');
   assert.equal(result.locationLabel, '苗栗縣造橋鄉造橋村');
   assert.ok(result.coordinate);
-  assert.equal(result.mapUrl, 'https://www.google.com/maps/search/?api=1&query=24.6285049,120.8528022');
+  assert.equal(result.mapUrl, 'https://maps.google.com/?q=24.62850,120.85280');
 });
 
 test('18. REQUIRED acceptance test: 國1 88K+000 南向 resolves to a real official segment + coordinate', () => {
@@ -191,5 +191,5 @@ test('18. REQUIRED acceptance test: 國1 88K+000 南向 resolves to a real offic
   assert.equal(result.segmentTo, '竹北交流道');
   assert.equal(result.locationLabel, '湖口服務區－竹北交流道路段');
   assert.ok(result.coordinate);
-  assert.equal(result.mapUrl, 'https://www.google.com/maps/search/?api=1&query=24.84951279,121.0179116');
+  assert.equal(result.mapUrl, 'https://maps.google.com/?q=24.84951,121.01791');
 });

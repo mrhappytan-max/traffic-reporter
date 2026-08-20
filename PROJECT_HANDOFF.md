@@ -722,3 +722,5 @@ Pre-real-data (scaffold only): 850.57 KiB / gzip 227.39 KiB. With the real datas
 ### Tests
 
 `test/roadIdentity.test.js`, `test/kmLocationResolver.test.js` (incl. the two REQUIRED real acceptance resolutions, tests 17/18, run against the actual imported data — not a fixture), `test/kmLocationMessageIntegration.test.js`, `test/broadcastProvenanceKmLocation.test.js`, `test/updateRoadLocationData.test.js` (the importer's own `parseCsv` in isolation). Full suite: 819 tests, 816 pass, 3 fail — the same 3 pre-existing, unrelated failures as every prior round (2× `pbs-relay/tests/*`, 1× wall-clock-dependent `healthQuotaDashboard.test.js`).
+
+V1.8.6.5 map URL 改為 maps.google.com/?q=lat,lng，座標 5 位小數；仍為純 URL、0 Google API calls。

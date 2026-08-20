@@ -112,7 +112,7 @@ test('7. congestion message matches the required new short format exactly', () =
       '國1 北向｜竹北交流道－湖口服務區路段',
       '91K+000～82K+400',
       '車多回堵\n請預留時間',
-      '📍 地圖 https://www.google.com/maps/search/?api=1&query=24.85875369,121.0106688',
+      '📍 地圖 https://maps.google.com/?q=24.85875,121.01067',
       '🕒 10:50更新',
     ].join('\n')
   );
@@ -310,7 +310,7 @@ test('12. regression — the real working "國1 南向｜新竹／科學園區�
       '93K+300',
       '事故影響通行',
       '請提前避開',
-      '📍 地圖 https://www.google.com/maps/search/?api=1&query=24.80515882,121.0098376',
+      '📍 地圖 https://maps.google.com/?q=24.80516,121.00984',
       '🕒 17:05更新',
     ].join('\n')
   );

@@ -52,7 +52,7 @@ test('2. buildProvenanceRecord: a resolved kmLocationResolution keeps evidence f
       segmentFrom: null,
       segmentTo: null,
       coordinate: { lat: 24.8, lng: 121.0 },
-      mapUrl: 'https://www.google.com/maps/search/?api=1&query=24.8,121',
+      mapUrl: 'https://maps.google.com/?q=24.80000,121.00000',
     },
   });
   assert.equal(record.kmLocationResolution.resolved, true);
