@@ -724,3 +724,54 @@ Pre-real-data (scaffold only): 850.57 KiB / gzip 227.39 KiB. With the real datas
 `test/roadIdentity.test.js`, `test/kmLocationResolver.test.js` (incl. the two REQUIRED real acceptance resolutions, tests 17/18, run against the actual imported data — not a fixture), `test/kmLocationMessageIntegration.test.js`, `test/broadcastProvenanceKmLocation.test.js`, `test/updateRoadLocationData.test.js` (the importer's own `parseCsv` in isolation). Full suite: 819 tests, 816 pass, 3 fail — the same 3 pre-existing, unrelated failures as every prior round (2× `pbs-relay/tests/*`, 1× wall-clock-dependent `healthQuotaDashboard.test.js`).
 
 V1.8.6.5 map URL 改為 maps.google.com/?q=lat,lng，座標 5 位小數；仍為純 URL、0 Google API calls。
+
+## 22. Production branch split, discovery + repair — `integration/v57.2-v1.8.6.5-production`
+
+**Status: branch merged, tested, committed, NOT deployed, NOT merged to `main`.** See `ENGINEERING_STATUS.md`'s branch-split section for the current-state summary; this section is the round-by-round detail.
+
+### Root cause
+
+Cloudflare's Worker was actually deploying from `claude/v57.2-tdx-gated-freeway-broadcast` (`9c0de1d`), not `main` — a lineage branch created for the V57 Shared Traffic Feed work that was never merged back. `main` kept moving independently (V1.8.6.4 provenance log, V1.8.6.5 KM Location Resolver — §20/§21 above), fully merged and documented as "Production live" in good faith, but never actually reaching users. Common ancestor `ba74d48`; `main` 10 commits ahead, the V57.2 branch 3 commits ahead. This is the actual mechanism behind the prior round's "main 已修好但 Production 看不到" symptom — not a caching issue, not a stale KV read, a genuinely different codebase running.
+
+### Integration methodology
+
+`integration/v57.2-v1.8.6.5-production` branched from latest `main`, then `git merge --no-ff origin/claude/v57.2-tdx-gated-freeway-broadcast` (a real 3-way merge — the histories had genuinely diverged, not a fast-forward relationship). Exactly 3 files conflicted:
+
+- **`README.md`** — two independent additive doc sections (KM Location Resolver maintenance vs Shared Traffic Feed contract) inserted at the same point. Resolved by keeping both, back to back.
+- **`src/index.js`** — dueling `import` lines only (`handleBroadcastProvenance` vs `handleSharedFeed`). Everything else in the file — route dispatch, `ADMIN_PATHS`, the `/admin/broadcast-provenance` 405 pre-check, the `/internal/shared-feed` route registration — had already merged cleanly with zero conflict markers.
+- **`src/traffic/broadcastPipeline.js`** — dueling module-header comments and dueling imports only. Every function BODY (provenance recording, `kmLocationResolution`, `completedProducts`, `feedOnlyProducts`, `topUpSharedFeedCctvImages`) merged with zero conflict — main's V1.8.6.4/5 edits and V57's V57/V57.1/V57.2 edits landed in non-overlapping regions of the same functions, so git's 3-way merge spliced both feature sets into one coherent function body on its own.
+
+Every other touched file (`src/pbs/roadName.js`, `src/pbs/crossSourceDedup.js`, `src/pbs/pipeline.js`, `src/pbs/debugPbs.js`, `test/pbsCrossSourceDedup.test.js`, `test/pbsOnlyCrossSourceDedup.test.js`, `test/tdxUsageReduction.test.js`) auto-merged with no conflict at all — the V57.2 branch never touched `src/pbs/normalize.js`/`src/pbs/classify.js`/`src/tdx/normalize.js`/`src/traffic/messageFormat.js` after the common ancestor, so main's V1.8.6.4/5 versions of those files carried through untouched.
+
+No `ours`/`theirs` resolution was used anywhere — every conflict was resolved by reading both sides' actual content and keeping both.
+
+### V1.8.6.6 — verified still needed, not assumed
+
+`fix/v1.8.6.6-anomaly-classification-audit` (`d0012e1`) was NOT part of either `main` or the V57.2 lineage. Rather than merging it in on the assumption it was still required, it was verified empirically first: without it, a raw TDX record shaped like the real Fixture B incident (`EventType:'事故'`, `EventSubType:'其他異常告警－行人誤闖'`) still classifies as `accident` in the merged main+V57.2 code, because `mapRoadEventType()` stops at the first field matching the broad "事故" bucket, never re-checking a more specific field's non-collision-hazard signal. Confirmed genuinely still needed, then cherry-picked cleanly (0 conflicts against the integration branch — `d0012e1`'s own diff against `main` touches only `src/pbs/classify.js`, `src/pbs/normalize.js`, `src/tdx/normalize.js`, `src/traffic/anomalyClassification.js` (new), `src/traffic/broadcastRules.js`, `src/traffic/messageFormat.js`, and its own test file — none of which the V57.2 merge had touched).
+
+### Regression fixtures — two real, named Production events
+
+`test/productionIntegrationFixtures.test.js`, run through the real normalize/classify code and the real broadcast pipeline (`runLineBroadcast` + `runSharedFeedPersist`), with the real `@jsquash` JPEG codec for CCTV compose (not mocked away):
+
+- **Fixture A** (rawId `A15040100H-01-20260820201348494100020`, 國1 北向 93K+500, genuine accident) — confirms type/direction/KM fidelity, the KM Location Resolver + short Google Maps URL are genuinely active in the merged broadcaster path, CCTV attaches, and the Shared Feed ends up carrying the exact same `imageUrl`/`imageExpiresAt` the LINE push carried (never `null` when R2 publish actually succeeded).
+- **Fixture B** (rawId `A15040100H-01-20260820200616953100035`, 國1 南向 92K+800, "其他異常告警－行人誤闖") — confirms `type:'other'` (not `accident`), no "交通事故"/"事故影響通行" text, CCTV correctly ineligible, and the absence of an image never blocks or alters the text broadcast.
+
+### CCTV image → Shared Feed handoff — root cause and finding
+
+Traced per the task's explicit instruction (R2 publish result forward only — camera/frame/collage/R2-publish steps were already proven working and were not re-investigated): `completedProduct` is a single object, mutated in place (`completedProduct.imageUrl = cctv.imageUrl`) after a successful CCTV attach, and the SAME reference already sits inside `result.completedProducts` (pushed before the pending-target check, per V57's own design). `buildSharedFeedEvents` (`sharedFeed.js`) correctly copies `product.imageUrl` into the persisted entry. **The merged pipeline is structurally correct for this case.** The real gap was in test coverage: `sharedFeedCctvTopUp.test.js`'s existing test 5a confirmed the main push path attaches an image to `completedProducts`, but nothing previously ran that specific product through `runSharedFeedPersist` to confirm the image survives into the actually-persisted KV blob — only the `pendingTargets===0` (suppressed) path had that end-to-end check (test 7). Fixture A now closes that gap and passes on this branch, so as of this integration the historical Production symptom ("R2 image created, Shared Feed shows `imageUrl: null`") does not reproduce for a genuinely-pushed accident.
+
+### A second regression, found while building Fixture B
+
+`effectiveWindow.js`'s `LIVE_TYPES` only ever included `'accident'`/`'congestion'` — every other type (including `'other'`) requires a parseable Chinese date-range in its description to become broadcast-relevant at all (a deliberate, already-tested design — see `broadcastEligibility.test.js` test 5, for a genuinely pre-announced `'other'` event like a flooding advisory with a schedule). But V1.8.6.6's override downgrades `type` from `'accident'` to `'other'` for a live pedestrian/animal-intrusion report — exactly as "right now" as the collision report it was reclassified from, with no schedule text at all. Without a fix, the reclassification would have gone from "broadcast with the wrong text" to "never broadcast at all" — strictly worse. Fixed narrowly in `effectiveWindow.js`: an event carrying `nonCollisionAnomalyDetail` (the exact marker the V1.8.6.6 override attaches) is now also treated as live, leaving every other `'other'` event's existing "needs a schedule" requirement untouched.
+
+### Verified unbroken
+
+PBS 國道 gating (V57.2's `filteredFreewayEvents`), TDX authority, cross-source dedupe, subscriptions, notified-state, incident suppression, the Shared Feed contract (`sharedFeed.test.js`, `sharedFeedCctvTopUp.test.js`, `v572TdxGatedFreewayBroadcast.test.js`, `pbsCrossSourceDedup.test.js`, `pbsOnlyCrossSourceDedup.test.js` — 98 tests, all pass on this branch), the V1.8.6.4 provenance log + `/admin/broadcast-provenance` (`broadcastProvenance*.test.js` — 127 tests combined with KM-resolver/classification/message-format suites, all pass), and `dryRun` producing 0 side effects (existing coverage in `broadcastPipeline.test.js`/`sharedFeed.test.js`, unchanged).
+
+### Full suite
+
+889 tests, 886 pass, 3 known pre-existing failures (unchanged from every prior round): 2× `pbs-relay/tests/*` (missing `pbs-relay/src/cache.js`), 1× wall-clock-dependent `healthQuotaDashboard.test.js` test 6.
+
+### What this round deliberately did not do
+
+No merge into `main`. No deploy. No change to which branch Cloudflare's Worker actually watches. See `ENGINEERING_STATUS.md`'s "Next (safe actions)" for the proposed permanent fix (reunify Production's deploy source with `main`) — that decision needs a human to actually act on, not something to do autonomously mid-integration.

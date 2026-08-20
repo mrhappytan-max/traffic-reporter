@@ -4,6 +4,20 @@ Deliberate product/architecture decisions and the reasoning behind them — not 
 
 ---
 
+## Branch integration (`integration/v57.2-v1.8.6.5-production`) — why full reconciliation, not "pick the newer branch"
+
+### Why merge both lineages instead of just redeploying whichever branch is "more complete"
+
+Neither branch was disposable: the V57.2 branch was carrying Production's actual live traffic (Shared Traffic Feed consumed by another project, its CCTV top-up, TDX-gated freeway broadcast — real, currently-relied-upon behavior), while `main` carried genuinely completed, reviewed work (V1.8.6.4 provenance, V1.8.6.5 KM Location Resolver) that had simply never reached users. Discarding either side to "just ship the other one" would either regress a live consumer-facing contract or throw away completed, already-reviewed work — both are real costs, not a close call. A real 3-way merge, with every conflict resolved by tracing actual call paths rather than `ours`/`theirs`, was the only option that loses nothing on either side.
+
+### Why the V1.8.6.6 fix was verified empirically before being pulled in, not merged on assumption
+
+The task explicitly asked whether the reclassification fix was still needed after the main+V57.2 merge, or whether integration alone might already handle it. Rather than guessing either way, the actual raw-record shape from the real incident was run through the merged classifier first — it still misclassified `EventSubType:'其他異常告警－行人誤闖'` as `accident`, confirming the fix was genuinely still required, not a leftover from a state the merge had already superseded. This is the same "不要猜" discipline applied to a merge decision, not just to data.
+
+### Why the branch-split root cause is documented as a process gap, not just patched away
+
+Merging the two lineages fixes THIS instance of the split, but the underlying cause — a lineage branch created for isolated work, never merged back, silently becoming Production's actual deploy source while `main` moved on independently — could recur with any future long-lived feature branch. Recording it here (and in `ENGINEERING_STATUS.md`'s branch-split section) as an explicit "verify which branch Cloudflare actually deploys from, don't assume `main`" is a deliberate decision to treat this as a standing verification step, not a one-time cleanup.
+
 ## V1.8.6.5 — KM Location Resolver
 
 ### Why an offline, imported official dataset — not a runtime Google/TDX lookup
