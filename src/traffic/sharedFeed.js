@@ -110,6 +110,35 @@ export async function fingerprintOf(event) {
     .slice(0, 24);
 }
 
+/**
+ * V57.1 — "does this stored entry still carry an image a consumer could
+ * legitimately hand to LINE right now?"
+ *
+ * The single definition of image validity for the whole producer side:
+ * broadcastPipeline.js's Shared-Feed-only CCTV top-up uses it to decide
+ * whether it is allowed to compose/publish a NEW collage, and
+ * buildSharedFeedEvents below uses it to decide whether an existing one
+ * may be carried forward. Having exactly one definition is what makes
+ * "never re-compose an image the feed already has" and "never silently
+ * drop an image the feed already has" the same rule seen from two sides.
+ *
+ * Requires a fingerprint match: a content change means the stored
+ * collage belongs to the previous content, so it must not be presented
+ * as this content's image. Any unparseable/absent expiry is invalid —
+ * never optimistic.
+ *
+ * @param {object|null|undefined} entry - a previously stored feed entry
+ * @param {string|null} fingerprint - this run's fingerprint for the same
+ *   eventId, or null to skip the fingerprint check
+ * @param {Date} now
+ */
+export function isStoredImageStillValid(entry, fingerprint, now = new Date()) {
+  if (!entry || typeof entry.imageUrl !== 'string' || entry.imageUrl.length === 0) return false;
+  if (typeof fingerprint === 'string' && entry.fingerprint !== fingerprint) return false;
+  const expiresMs = new Date(entry.imageExpiresAt).getTime();
+  return Number.isFinite(expiresMs) && expiresMs > now.getTime();
+}
+
 function isUsableProduct(product) {
   if (!product || typeof product !== 'object') return false;
   if (!product.event || !product.event.source || !product.event.rawId) return false;
@@ -149,13 +178,24 @@ export async function buildSharedFeedEvents(completedProducts, previousEvents, n
     const previous = previousById.get(eventId);
     const unchanged = previous && previous.fingerprint === fingerprint;
 
+    // V57.1 — carry a STILL-VALID stored image forward when this run's
+    // product has none. Without this, an event that keeps being
+    // broadcast-relevant for several ticks lost its image on the very
+    // next tick after it was composed (this rebuild overwrites the whole
+    // entry), which in turn would make the top-up pass in
+    // broadcastPipeline.js compose the same collage again and again.
+    // Bounded strictly by the stored expiry and by a fingerprint match —
+    // an expired or content-stale image is never carried forward, so
+    // this can only ever preserve a URL that is genuinely still usable.
+    const carriedImage = isStoredImageStillValid(previous, fingerprint, now) ? previous : null;
+
     next.push({
       eventId,
       fingerprint,
       text: product.text,
       // Recorded from the broadcast that already happened; never requested.
-      imageUrl: product.imageUrl ?? null,
-      imageExpiresAt: product.imageExpiresAt ?? null,
+      imageUrl: product.imageUrl ?? (carriedImage ? carriedImage.imageUrl : null),
+      imageExpiresAt: product.imageExpiresAt ?? (carriedImage ? carriedImage.imageExpiresAt : null),
       createdAt: (previous && previous.createdAt) || nowIso,
       // Only advances when the content actually changed. This is what makes a
       // consumer's eligibility window jitter-free.

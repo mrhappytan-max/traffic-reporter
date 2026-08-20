@@ -30,6 +30,14 @@
 // dynamicCollage.js's module comment for the full fail-closed rationale
 // (including the three Production blockers — unbounded delay, unbounded
 // TDX usage, and per-event budget accumulation — this correction fixed).
+//
+// V57.1: an event with 0 pending LINE targets (already notified, or
+// incident-suppressed) is still eligible for a CCTV image FOR THE SHARED
+// TRAFFIC FEED ONLY — see topUpSharedFeedCctvImages at the bottom of this
+// file for the Production incident that motivated it. That pass runs
+// strictly after every push and every notified-state write, has its own
+// budget, reuses (never recomposes) a still-valid stored image, and
+// changes nothing about what this Worker sends its own subscribers.
 
 import { isWithinBroadcastHours } from './broadcastHours.js';
 import { computeEffectiveWindow } from './effectiveWindow.js';
@@ -54,6 +62,7 @@ import {
   persistIncidentSuppressionState,
 } from './incidentSuppression.js';
 import { resolveCctvEligibility, prepareCctvImageForEvent, CCTV_PREPARE_BUDGET_MS } from '../cctv/dynamicCollage.js';
+import { readSharedFeed, eventIdOf, fingerprintOf, isStoredImageStillValid } from './sharedFeed.js';
 
 function safeErrorMessage(err) {
   if (err && typeof err.message === 'string') return err.message;
@@ -181,6 +190,19 @@ export async function runLineBroadcast(
     cctvEligibleAccidentCount: 0,
     cctvImagesAttachedCount: 0,
     cctvSkippedByReason: {},
+    // V57.1 — the Shared-Feed-only CCTV top-up pass (see
+    // topUpSharedFeedCctvImages below). Deliberately SEPARATE counters
+    // from cctvImagesAttachedCount/cctvSkippedByReason above, which
+    // remain exactly what they always were: "what the real LINE push
+    // path did". Nothing counted here was ever pushed to LINE.
+    //   Attempted — CCTV pipeline actually invoked for the feed's sake
+    //   Attached  — that invocation produced a URL
+    //   Reused    — a still-valid stored image was carried forward with
+    //               ZERO frame fetches / compose / R2 publish
+    cctvFeedOnlyAttemptedCount: 0,
+    cctvFeedOnlyAttachedCount: 0,
+    cctvFeedOnlyReusedCount: 0,
+    cctvFeedOnlySkippedByReason: {},
     // V57 — the finished products of THIS run, in broadcast order: exactly
     // the events that survived every gate this pipeline applies (type
     // eligibility, 60-minute relevance, congestion clustering, incident
@@ -446,6 +468,12 @@ export async function runLineBroadcast(
   // Never recomputed/reset per event.
   const cctvRunDeadlineAt = Date.now() + (cctvPrepareBudgetMs ?? CCTV_PREPARE_BUDGET_MS);
 
+  // V57.1 — products this run finished but had NO pending LINE target for
+  // (already notified, or incident-suppressed). Collected here and handled
+  // AFTER the push loop by topUpSharedFeedCctvImages, never inside it — see
+  // that function's comment for why the ordering is the whole point.
+  const feedOnlyProducts = [];
+
   for (const { event, window, eventKeyStr, fingerprint, pendingTargets } of perEventPending) {
     const startMs = new Date(window.effectiveStart).getTime();
     const forecast = startMs > now.getTime();
@@ -462,7 +490,14 @@ export async function runLineBroadcast(
     const completedProduct = { eventKeyStr, fingerprint, text, event, imageUrl: null, imageExpiresAt: null };
     result.completedProducts.push(completedProduct);
 
-    if (pendingTargets.length === 0) continue;
+    if (pendingTargets.length === 0) {
+      // V57.1: still a candidate for a CCTV image — for the Shared Traffic
+      // Feed ONLY, never for a LINE re-push. Deferred to after this loop so
+      // it can never take budget (or wall-clock) away from an event that
+      // does have a real push to make. See topUpSharedFeedCctvImages.
+      feedOnlyProducts.push(completedProduct);
+      continue;
+    }
 
     // V1.8.5 — CCTV image enrichment: composed/published AT MOST ONCE
     // per event, BEFORE the per-target push loop, so every pending
@@ -545,10 +580,146 @@ export async function runLineBroadcast(
 
   result.partialPushFailures = partialFailureCountThisRun;
 
+  // V57.1 — every LINE push for this tick has now completed and every
+  // notified-state write for it has been committed. Only now do we top up
+  // the Shared Traffic Feed's images. Nothing below this line can push,
+  // re-push, or delay a LINE message.
+  await topUpSharedFeedCctvImages(env, result, feedOnlyProducts, {
+    now,
+    cctvRunCache,
+    cctvCodecOverride,
+    cctvPrepareBudgetMs,
+  });
+
   if (!anyWriteHappened && prunedKeys.length > 0) {
     const commit = await persistNotifiedState(env.TRAFFIC_KV, notifiedMap, result.lastLinePushAt, now, partialFailureCountThisRun);
     if (!commit.committed) result.lineErrors.push(`failed to record notified-state prune cleanup: ${commit.error}`);
   }
 
   return result;
+}
+
+// --- V57.1: Shared-Feed-only CCTV top-up ---------------------------------
+//
+// THE PRODUCTION BUG THIS FIXES (real incident, 2026-08-20 08:00–08:20
+// Asia/Taipei, 國1 南向 88K+000 交通事故):
+//
+//   08:10 tick — not a TDX tick, so the accident was only known from PBS.
+//                PBS-sourced accidents are structurally CCTV-ineligible
+//                (dynamicCollage.js's 'not-freeway-source' gate). Pushed
+//                text-only. Correct, and deliberately UNCHANGED here.
+//   08:20 tick — the TDX `freeway` twin of the same accident arrived. It
+//                WAS CCTV-eligible, the metadata cache was fresh, and all
+//                four quadrant cameras existed (87K+050 / 88K+590 /
+//                87K+490 / 89K+300). But incident suppression had already
+//                matched it to the PBS report, so pendingTargets === 0 and
+//                the push loop `continue`d BEFORE CCTV preparation ever
+//                ran. R2 confirms it: not one object was published that
+//                day. The Shared Feed therefore recorded imageUrl: null,
+//                and the consuming project could only ever send text.
+//
+// So a completed product's image was gated on THIS Worker's own delivery
+// state — "my subscribers already know" silently meant "nobody else may
+// ever get a picture". That is exactly the coupling the Shared Feed exists
+// to remove, and this pass removes it.
+//
+// WHAT THIS PASS DELIBERATELY DOES NOT DO
+//   - It does not push, re-push, or modify a single LINE message. It runs
+//     strictly AFTER the push loop and after every notified-state write,
+//     and it touches nothing but `completedProducts` (+ its own counters).
+//   - It does not relax CCTV eligibility. resolveCctvEligibility is called
+//     unchanged, so a PBS-sourced accident still gets nothing, no KM is
+//     ever guessed from free text, and camera matching is untouched.
+//   - It never runs on a read path. The whole function is reachable only
+//     from runLineBroadcast's real (non-dryRun, in-hours, not-fail-closed)
+//     Cron branch — GET /internal/shared-feed imports only readSharedFeed
+//     and selectFeedWindow, so serving the feed still makes 0 upstream
+//     calls of any kind.
+//
+// ANTI-REDO GUARD (the reason this cannot become a per-tick collage loop)
+// A still-valid stored image is REUSED, never recomposed: one read-only KV
+// read for the whole pass, then isStoredImageStillValid decides per event.
+// A collage is composed only when the feed has no image for that eventId,
+// or its stored expiry has already passed, or the content fingerprint
+// changed. Combined with sharedFeed.js's matching carry-forward, a single
+// accident costs at most one compose+publish per 15-minute image lifetime,
+// not one per 10-minute tick.
+//
+// BUDGET
+// Its own deadline, started here rather than sharing cctvRunDeadlineAt,
+// precisely because it begins after all pushes are done: giving it the
+// leftovers of the push path's budget would have made "did the feed get an
+// image?" depend on how busy this Worker's own broadcast happened to be —
+// the same coupling this whole change removes. Running out of budget is
+// just "no image this tick"; the next tick retries, and no already-valid
+// image is ever lost, because carrying one forward costs no budget at all.
+async function topUpSharedFeedCctvImages(env, result, feedOnlyProducts, { now, cctvRunCache, cctvCodecOverride, cctvPrepareBudgetMs }) {
+  if (feedOnlyProducts.length === 0) return;
+
+  // Cheapest gate first, and ZERO I/O — resolveCctvEligibility is pure.
+  // A PBS-sourced accident (or a non-accident, unsupported road, or an
+  // event with no reliable structured KM) exits here, so this pass cannot
+  // read KV, fetch a frame, or write to R2 on its behalf.
+  const eligible = feedOnlyProducts.filter((product) => resolveCctvEligibility(product.event).eligible);
+  if (eligible.length === 0) return;
+
+  // Exactly ONE read-only KV read for the whole pass, no matter how many
+  // candidates there are.
+  const feed = await readSharedFeed(env.TRAFFIC_KV);
+  if (!feed.kvAvailable) {
+    // Can't prove the feed lacks a valid image -> don't do expensive work
+    // on a guess. Fail-closed, same as every other CCTV failure mode.
+    result.cctvFeedOnlySkippedByReason['feed-unavailable'] = (result.cctvFeedOnlySkippedByReason['feed-unavailable'] || 0) + eligible.length;
+    return;
+  }
+  const storedById = new Map(
+    feed.events.filter((entry) => entry && typeof entry.eventId === 'string').map((entry) => [entry.eventId, entry])
+  );
+
+  const deadlineAt = Date.now() + (cctvPrepareBudgetMs ?? CCTV_PREPARE_BUDGET_MS);
+
+  for (const product of eligible) {
+    // The feed's OWN identity/fingerprint definitions (sharedFeed.js), not
+    // this pipeline's notification fingerprint — the stored entry we are
+    // comparing against was written with these, and there must be exactly
+    // one definition of "the same feed entry".
+    const eventId = eventIdOf(product.event);
+    const feedFingerprint = await fingerprintOf(product.event);
+    const stored = storedById.get(eventId);
+
+    if (isStoredImageStillValid(stored, feedFingerprint, now)) {
+      product.imageUrl = stored.imageUrl;
+      product.imageExpiresAt = stored.imageExpiresAt;
+      result.cctvFeedOnlyReusedCount += 1;
+      continue; // 0 frame fetches, 0 compose, 0 R2 publish
+    }
+
+    const remainingMs = deadlineAt - Date.now();
+    if (remainingMs <= 0) {
+      result.cctvFeedOnlySkippedByReason['run-budget-exhausted'] = (result.cctvFeedOnlySkippedByReason['run-budget-exhausted'] || 0) + 1;
+      continue;
+    }
+
+    result.cctvFeedOnlyAttemptedCount += 1;
+    const cctv = await prepareCctvImageForEvent(env, product.event, cctvRunCache, cctvCodecOverride, remainingMs);
+    if (cctv.ok) {
+      product.imageUrl = cctv.imageUrl;
+      product.imageExpiresAt = cctv.imageExpiresAt;
+      result.cctvFeedOnlyAttachedCount += 1;
+    } else {
+      result.cctvFeedOnlySkippedByReason[cctv.reason] = (result.cctvFeedOnlySkippedByReason[cctv.reason] || 0) + 1;
+    }
+  }
+
+  // Observability: the absence of any signal here is precisely what made
+  // the 2026-08-20 incident slow to diagnose. Logged only when this pass
+  // actually did something, so a quiet tick stays quiet.
+  if (result.cctvFeedOnlyAttemptedCount > 0 || result.cctvFeedOnlyReusedCount > 0) {
+    console.log(
+      `[line][feed-cctv] candidates=${feedOnlyProducts.length} eligible=${eligible.length} ` +
+        `attempted=${result.cctvFeedOnlyAttemptedCount} attached=${result.cctvFeedOnlyAttachedCount} ` +
+        `reused=${result.cctvFeedOnlyReusedCount} ` +
+        `skipped=${JSON.stringify(result.cctvFeedOnlySkippedByReason)}`
+    );
+  }
 }
