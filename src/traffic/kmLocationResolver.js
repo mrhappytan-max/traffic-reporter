@@ -28,14 +28,19 @@ import provincialDatasetDefault from '../../data/road-location/generated/provinc
 import freewayDatasetDefault from '../../data/road-location/generated/freeway.js';
 import freewayFacilitiesDatasetDefault from '../../data/road-location/generated/freewayFacilities.js';
 
-// PROVISIONAL tolerances — real official spacing hasn't been measured yet
-// (this repo has never received a real dataset; see raw/README.md and
-// PROJECT_HANDOFF.md's V1.8.6.5 section). Chosen from the DOCUMENTED
-// nominal spacing of each dataset (provincial markers: as coarse as
-// ~500m-1km apart in places; freeway markers: 100m apart), same
-// "recalibrate here once real data shows a mismatch" caveat
-// roadSectionLabel.js's own ROAD_ANCHORS table already carries — never
-// widened just to force a match where the real data doesn't support one.
+// Tolerances, verified against the real imported datasets (data.gov.tw
+// 7040 provincial + 95016 freeway milestones — see raw/README.md and
+// PROJECT_HANDOFF.md's V1.8.6.5 section for the full import). Real
+// provincial marker spacing measures ~100m/500m/1000m depending on
+// location, PLUS the as-installed chainage offset from the round KM value
+// documented on the source itself (e.g. a "9K" sign pair actually sitting
+// at 9K+015/9K+022 — see raw/provincial/SOURCE_META.json's own notes);
+// real freeway milestone spacing measures ~100m throughout. These
+// constants were kept at their pre-import values because they already
+// comfortably cover that real-world spacing+offset — same "recalibrate
+// here once real data shows a mismatch" caveat roadSectionLabel.js's own
+// ROAD_ANCHORS table already carries — never widened just to force a
+// match where the real data doesn't support one.
 export const PROVINCIAL_TOLERANCE_KM = 0.6;
 export const FREEWAY_MILESTONE_TOLERANCE_KM = 0.15;
 // Facilities (交流道/服務區) are sparse by nature (tens of km apart) — this
