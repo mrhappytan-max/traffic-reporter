@@ -143,7 +143,10 @@ export function normalizePbsEvent(raw) {
   const description = (raw.comment || '').trim();
   const happenedAt = parseHappenedAt(raw.happendate, raw.happentime);
   const updatedAt = parsePbsDateTime(raw.modDttm);
-  const { type, pbsCategory, classificationSource } = classifyPbsEvent({ roadtype: raw.roadtype, comment: description });
+  const { type, pbsCategory, classificationSource, nonCollisionAnomaly } = classifyPbsEvent({
+    roadtype: raw.roadtype,
+    comment: description,
+  });
   const displayKmMatch = extractDisplayKmMatch(description);
   const displayKM = displayKmMatch ? displayKmMatch.value : null;
 
@@ -173,6 +176,13 @@ export function normalizePbsEvent(raw) {
     latitude: toFiniteNumberOrNull(raw.y1),
     longitude: toFiniteNumberOrNull(raw.x1),
     sourceDetail: raw.srcdetail || '',
+    // V1.8.6.6 — see tdx/normalize.js's own nonCollisionAnomalyDetail
+    // comment: set only when classifyPbsEvent's non-collision-anomaly
+    // override fired; messageFormat.js's resolveOtherAnomalyDetail reads
+    // it directly, same reasoning as the TDX side (the raw `roadtype`
+    // field that may have carried the anomaly text isn't part of
+    // `title`/`description` alone).
+    ...(nonCollisionAnomaly ? { nonCollisionAnomalyDetail: nonCollisionAnomaly } : {}),
     // Extra fields beyond the base schema example, used by lifecycle/
     // cross-source-dedup — kept on the event rather than re-deriving them
     // repeatedly downstream.

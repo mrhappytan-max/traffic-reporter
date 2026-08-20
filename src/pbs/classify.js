@@ -13,6 +13,16 @@
 // provenance). `null` only when nothing matched at all (the final 'other'/
 // 'other' fallback). Never read by anything except
 // broadcastProvenance.js's debug record.
+//
+// V1.8.6.6 — same root-cause fix as tdx/normalize.js's mapRoadEventType
+// (see anomalyClassification.js's own module comment for the full
+// writeup): PBS's own `roadtype` field is a similarly BROAD bucket
+// (e.g. `roadtype:'事故'`, per this file's own existing test fixtures) —
+// a blunt ACCIDENT_PATTERNS match anywhere in `roadtype+comment` must not
+// shadow a more specific non-collision-hazard signal the SAME combined
+// text also carries (行人/動物 intrusion, etc.) — see the override below.
+
+import { detectNonCollisionAnomaly } from '../traffic/anomalyClassification.js';
 
 const ACCIDENT_PATTERNS = [/事故/, /擦撞/, /追撞/, /自撞/, /對撞/, /相撞/, /撞及/];
 const OBSTRUCTION_PATTERNS = [/散落物/, /輪胎皮/, /保險桿/, /布鉤繩/, /掉落物/, /異物/, /落物/];
@@ -50,7 +60,7 @@ function fieldForMatch(roadtype, comment, pattern) {
 
 /**
  * @param {{ roadtype?: string, comment?: string }} input
- * @returns {{ type: string, pbsCategory: string, classificationSource: {field:string,value:string}|null }}
+ * @returns {{ type: string, pbsCategory: string, classificationSource: {field:string,value:string}|null, nonCollisionAnomaly?: {emoji:string,label:string} }}
  */
 export function classifyPbsEvent({ roadtype, comment }) {
   const text = `${roadtype || ''} ${comment || ''}`;
@@ -60,6 +70,22 @@ export function classifyPbsEvent({ roadtype, comment }) {
     if (matchedPattern) {
       const match = text.match(matchedPattern);
       const field = fieldForMatch(roadtype, comment, matchedPattern);
+
+      // V1.8.6.6 — see this file's own module comment. Only ever fires
+      // when the blunt ACCIDENT_PATTERNS match won; never touches any
+      // other rule/type.
+      if (rule.type === 'accident') {
+        const anomaly = detectNonCollisionAnomaly(text);
+        if (anomaly) {
+          return {
+            type: 'other',
+            pbsCategory: 'other',
+            classificationSource: { field: 'non-collision-anomaly-override', value: truncateForDebug(text) },
+            nonCollisionAnomaly: anomaly,
+          };
+        }
+      }
+
       return {
         type: rule.type,
         pbsCategory: rule.pbsCategory,

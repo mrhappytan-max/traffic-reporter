@@ -64,6 +64,7 @@
 import { getRoadShortName, getRoadSectionLabel } from './roadSectionLabel.js';
 import { resolveKmLocation } from './kmLocationResolver.js';
 import { DEFAULT_CONGESTION_SEVERITY } from './congestionSeverity.js';
+import { detectNonCollisionAnomaly } from './anomalyClassification.js';
 
 const TYPE_EMOJI = {
   accident: '🚨',
@@ -124,17 +125,12 @@ const BIDIRECTIONAL_IMPACT_LINES = {
 // the headline. `無法通行` is deliberately excluded from this table (it
 // only says "impassable", not WHY — no specific icon/label to show
 // without guessing a cause that isn't actually in the source text).
-const ANOMALY_DETAIL_RULES = [
-  { emoji: '🌊', label: '道路積水', patterns: [/淹水/, /積水/, /涵洞/, /河川暴漲/, /溪水暴漲/] },
-  { emoji: '⛰️', label: '落石', patterns: [/落石/] },
-  { emoji: '⛰️', label: '邊坡坍方', patterns: [/坍方/, /路基流失/] },
-  { emoji: '🌳', label: '路樹倒塌', patterns: [/樹倒/] },
-  { emoji: '⚡', label: '電線倒塌', patterns: [/電線掉落/, /電線桿倒/] },
-  { emoji: '⚠️', label: '掉落物', patterns: [/掉落物/, /貨物散落/] },
-  { emoji: '🔥', label: '火災', patterns: [/火災/] },
-  { emoji: '⚠️', label: '橋梁異常', patterns: [/橋梁封閉/, /橋梁異常/] },
-  { emoji: '⚠️', label: '道路中斷', patterns: [/道路中斷/] },
-];
+//
+// V1.8.6.6 — the keyword table itself now lives in
+// anomalyClassification.js, shared with tdx/normalize.js's/
+// pbs/classify.js's own non-collision-anomaly classification override
+// (see that module's own comment) — one table, never two independently-
+// maintained copies that could drift apart.
 
 // PBS already carries a finer-grained, STRUCTURED category
 // (`pbsCategory` — see pbs/classify.js) for exactly this situation, more
@@ -156,14 +152,18 @@ const PBS_CATEGORY_ANOMALY_DETAIL = {
 // 第二套規則").
 /** @returns {{emoji:string,label:string}|null} null -> keep the generic "ℹ️ 路況異常" (never guessed beyond what the source text/category actually says). */
 export function resolveOtherAnomalyDetail(event) {
+  // V1.8.6.6 — highest priority: the EXACT SAME non-collision-anomaly
+  // detection tdx/normalize.js's mapRoadEventType already made (when its
+  // override fired — see that function's own comment) — never a second,
+  // independent scan that could disagree, and correctly finds the
+  // anomaly even when it came from a raw field (EventSubType/Category)
+  // that isn't part of `title`/`description` at all.
+  if (event.nonCollisionAnomalyDetail) return event.nonCollisionAnomalyDetail;
   if (event.pbsCategory && PBS_CATEGORY_ANOMALY_DETAIL[event.pbsCategory]) {
     return PBS_CATEGORY_ANOMALY_DETAIL[event.pbsCategory];
   }
   const text = `${event.title || ''} ${event.description || ''}`;
-  for (const rule of ANOMALY_DETAIL_RULES) {
-    if (rule.patterns.some((p) => p.test(text))) return { emoji: rule.emoji, label: rule.label };
-  }
-  return null;
+  return detectNonCollisionAnomaly(text);
 }
 
 // V1.4.1: congestion is no longer a single flat label — see

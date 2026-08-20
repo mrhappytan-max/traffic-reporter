@@ -1,6 +1,8 @@
 // The 60-minute relevance rule for a driving audience: only "happening
 // now" or "about to happen very soon" is worth an interruption.
 
+import { NON_COLLISION_ANOMALY_RULES } from './anomalyClassification.js';
+
 const SIXTY_MINUTES_MS = 60 * 60 * 1000;
 
 /**
@@ -76,10 +78,24 @@ const CONSTRUCTION_IMPACT_PATTERNS = [
 // list. 無法通行 is deliberately also here (not just under construction)
 // since an 'other'-classified record can describe the same impassable-
 // road situation without ever mentioning construction at all.
+// V1.8.6.6 — 行人闖入/動物闖入 patterns are pulled directly from
+// anomalyClassification.js's own NON_COLLISION_ANOMALY_RULES (never a
+// third, independently-typed copy) so a pedestrian/animal-on-roadway
+// advisory — correctly downgraded from 'accident' to 'other' by this
+// round's classification fix — still passes eligibility instead of
+// going silent. "eligibility 只決定要不要播，不能改事件類型" — this list
+// still only ever gates BROADCAST-WORTHINESS; it never touches `type`
+// itself (that's decided once, upstream, in tdx/normalize.js/
+// pbs/classify.js).
+const PEDESTRIAN_ANIMAL_INTRUSION_PATTERNS = NON_COLLISION_ANOMALY_RULES
+  .filter((rule) => rule.label === '行人闖入' || rule.label === '動物闖入')
+  .flatMap((rule) => rule.patterns);
+
 const OTHER_ANOMALY_PATTERNS = [
   /淹水/, /積水/, /涵洞/, /落石/, /坍方/, /路基流失/, /樹倒/, /電線掉落/, /電線桿倒/,
   /掉落物/, /貨物散落/, /火災/, /橋梁封閉/, /橋梁異常/, /河川暴漲/, /溪水暴漲/,
   /道路中斷/, /無法通行/,
+  ...PEDESTRIAN_ANIMAL_INTRUSION_PATTERNS,
 ];
 
 function broadcastText(event) {

@@ -40,6 +40,7 @@
 import { firstDefined, get } from './extract.js';
 import { classifyByKeyword, classifyAlertText } from './classify.js';
 import { classifyCongestionSeverity } from '../traffic/congestionSeverity.js';
+import { detectNonCollisionAnomaly } from '../traffic/anomalyClassification.js';
 
 const EVENT_TYPE_TEXT_MAP = {
   事故: 'accident',
@@ -82,24 +83,61 @@ function mapRoadEventType(raw, description) {
     ['Category', get(raw, 'Category')],
   ].filter(([, v]) => v !== undefined && v !== null && v !== '');
 
+  let result = null;
   for (const [field, candidate] of fieldCandidates) {
     const key = String(candidate).trim();
     const classificationSource = { field, value: truncateForDebug(key), fallback: false };
-    if (EVENT_TYPE_TEXT_MAP[key]) return { type: EVENT_TYPE_TEXT_MAP[key], classificationSource };
+    if (EVENT_TYPE_TEXT_MAP[key]) { result = { type: EVENT_TYPE_TEXT_MAP[key], classificationSource }; break; }
     const byKeyword = classifyByKeyword(key);
-    if (byKeyword !== 'other') return { type: byKeyword, classificationSource };
+    if (byKeyword !== 'other') { result = { type: byKeyword, classificationSource }; break; }
   }
 
-  // None of EventType/EventSubType/Category (if present at all) produced a
-  // recognized type — falls back to keyword-matching the free-text
-  // Description, same as always. `fallback: true` marks this branch
-  // explicitly so a provenance reader can tell "a structured field decided
-  // this" apart from "nothing structured matched, this is our own
-  // description-keyword guess" — even when the result is still 'other'.
-  return {
-    type: classifyByKeyword(description),
-    classificationSource: { field: 'Description', value: truncateForDebug(description), fallback: true },
-  };
+  if (!result) {
+    // None of EventType/EventSubType/Category (if present at all) produced
+    // a recognized type — falls back to keyword-matching the free-text
+    // Description, same as always. `fallback: true` marks this branch
+    // explicitly so a provenance reader can tell "a structured field
+    // decided this" apart from "nothing structured matched, this is our
+    // own description-keyword guess" — even when the result is still
+    // 'other'.
+    result = {
+      type: classifyByKeyword(description),
+      classificationSource: { field: 'Description', value: truncateForDebug(description), fallback: true },
+    };
+  }
+
+  // V1.8.6.6 — root-cause fix (2026-08-20 Production incident, "行人誤闖"
+  // broadcast as "🚨 交通事故"). See anomalyClassification.js's own module
+  // comment for the full writeup. TDX's real schema uses a BROAD
+  // `EventType` bucket (e.g. "事故") plus a more SPECIFIC `EventSubType` —
+  // the loop above stops at the FIRST field that matches, so a broad
+  // "事故" bucket on EventType alone can win before EventSubType/Category/
+  // Description ever get consulted, discarding a more specific
+  // non-collision-hazard signal (行人/動物 intrusion, etc.) they might
+  // carry. Checked across EVERY candidate field (not just whichever one
+  // "won" above) — catches the signal regardless of which field TDX
+  // happened to put it in. Only ever fires when the result was 'accident'
+  // — never touches any other type, never invents a NEW category, only
+  // downgrades a specific, known false-positive pattern to 'other' (with
+  // the matched hazard's own label/emoji, same shape
+  // messageFormat.js's resolveOtherAnomalyDetail already returns).
+  if (result.type === 'accident') {
+    const allTexts = [get(raw, 'EventType'), get(raw, 'EventSubType'), get(raw, 'Category'), description]
+      .filter((v) => v !== undefined && v !== null && v !== '')
+      .map((v) => String(v));
+    for (const text of allTexts) {
+      const anomaly = detectNonCollisionAnomaly(text);
+      if (anomaly) {
+        return {
+          type: 'other',
+          classificationSource: { field: 'non-collision-anomaly-override', value: truncateForDebug(text), fallback: false },
+          nonCollisionAnomaly: anomaly,
+        };
+      }
+    }
+  }
+
+  return result;
 }
 
 // Same candidate fields mapRoadEventType() reads from, concatenated so
@@ -225,7 +263,7 @@ export function normalizeRoadEvent(raw, source) {
     }
   }
 
-  const { type, classificationSource } = mapRoadEventType(raw, description);
+  const { type, classificationSource, nonCollisionAnomaly } = mapRoadEventType(raw, description);
 
   return {
     source,
@@ -250,6 +288,15 @@ export function normalizeRoadEvent(raw, source) {
     ...(endKM !== undefined ? { endKM } : {}),
     ...(blockedLanes !== undefined ? { blockedLanes } : {}),
     ...(locationDescription ? { locationDescription } : {}),
+    // V1.8.6.6 — set ONLY when mapRoadEventType's non-collision-anomaly
+    // override fired (see that function's own comment). Not debug-only —
+    // messageFormat.js's resolveOtherAnomalyDetail reads this directly so
+    // display uses the EXACT SAME detection classification already made,
+    // never a second independent text scan that could disagree with it
+    // (the raw field that carried the anomaly text isn't necessarily part
+    // of `title`/`description`, so a from-scratch re-scan of those two
+    // alone could miss it).
+    ...(nonCollisionAnomaly ? { nonCollisionAnomalyDetail: nonCollisionAnomaly } : {}),
     // V1.8.6.4 (provenance gap) — debug-only origin metadata, never read
     // by the formatter/fingerprint/eligibility/dedupe/CCTV-eligibility
     // (all of those destructure only their own named fields — see
