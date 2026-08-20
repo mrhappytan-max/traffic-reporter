@@ -10,7 +10,8 @@
     "deploy": "wrangler deploy",
     "start": "wrangler dev",
     "test": "node --test",
-    "smoke:wasm": "node scripts/wranglerSmoke/runWasmSmoke.mjs"
+    "smoke:wasm": "node scripts/wranglerSmoke/runWasmSmoke.mjs",
+    "update:road-location-data": "node scripts/updateRoadLocationData.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.123.0"

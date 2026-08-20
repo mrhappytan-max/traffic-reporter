@@ -56,6 +56,7 @@ import {
 } from './notified.js';
 import { clusterCongestionEvents } from './congestionCluster.js';
 import { formatEventMessage, resolveOtherAnomalyDetail } from './messageFormat.js';
+import { resolveKmLocation } from './kmLocationResolver.js';
 import { pushLineMessages } from '../line/pushMessage.js';
 import {
   readIncidentSuppressionState,
@@ -540,12 +541,26 @@ export async function runLineBroadcast(
       // this can never affect the push/notified-state outcome above,
       // which already completed by the time this runs.
       const anomalyDetail = event.type === 'other' ? resolveOtherAnomalyDetail(event) : null;
+      // V1.8.6.5 — same "call the pure function again for this consumer"
+      // pattern as anomalyDetail/resolveOtherAnomalyDetail above:
+      // resolveKmLocation() is 0-I/O and deterministic, so calling it a
+      // second time here (messageFormat.js already called it once, to
+      // build `text`) is cheap and never a second, divergent decision —
+      // same event, same inputs, same result.
+      const kmLocationResolution = resolveKmLocation({
+        road: event.road,
+        direction: event.direction,
+        startKM: event.startKM,
+        endKM: event.endKM,
+        displayKM: event.displayKM,
+      });
       const imageAttached = messages.length > 1;
       const record = buildProvenanceRecord({
         event,
         formattedOutput: text,
         eligibilityReason: eligibilityReasonByEvent.get(event) || null,
         anomalyDetail,
+        kmLocationResolution,
         image: {
           attached: imageAttached,
           urlPresent: imageAttached,

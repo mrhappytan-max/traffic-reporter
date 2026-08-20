@@ -86,6 +86,33 @@ function sanitizeSourceInfo(info) {
   };
 }
 
+// V1.8.6.5 — evidence-only view of kmLocationResolver.js's own result.
+// Deliberately drops `coordinate` (raw lat/lng) and `mapUrl` — this log
+// exists to answer "did the official dataset resolve this event, and
+// which tier of data did it use," not to duplicate a second copy of the
+// coordinate/link already visible in the LINE message itself that was
+// actually sent (see `formattedOutput` below). Never re-runs the
+// resolver's own decision — `resolution` must be the exact object
+// kmLocationResolver.js's resolveKmLocation() already returned for this
+// SAME event.
+function sanitizeKmLocationResolution(resolution) {
+  if (!resolution || typeof resolution !== 'object') return null;
+  if (!resolution.resolved) {
+    return { resolved: false, reason: resolution.reason || null };
+  }
+  return {
+    resolved: true,
+    dataset: resolution.dataset || null,
+    road: resolution.road || null,
+    targetKm: typeof resolution.targetKm === 'number' ? resolution.targetKm : null,
+    resolvedKm: typeof resolution.resolvedKm === 'number' ? resolution.resolvedKm : null,
+    locationLabel: resolution.locationLabel || null,
+    segmentFrom: resolution.segmentFrom || null,
+    segmentTo: resolution.segmentTo || null,
+    coordinateAvailable: Boolean(resolution.coordinate),
+  };
+}
+
 /**
  * Human-readable "why was this classified this way" trail, built ENTIRELY
  * from values the caller already has — never a second classification
@@ -121,10 +148,11 @@ export function describeClassificationEvidence(event, eligibilityReason, anomaly
  * @param {string} params.formattedOutput - the EXACT text formatEventMessage produced (what was actually sent)
  * @param {string} [params.eligibilityReason] - see describeClassificationEvidence
  * @param {{emoji:string,label:string}|null} [params.anomalyDetail] - see describeClassificationEvidence
+ * @param {object|null} [params.kmLocationResolution] - kmLocationResolver.js's resolveKmLocation() result for this SAME event (V1.8.6.5)
  * @param {{attached:boolean, urlPresent:boolean, expiresAt:string|null}} [params.image]
  * @param {Date} [params.now]
  */
-export function buildProvenanceRecord({ event, formattedOutput, eligibilityReason, anomalyDetail, image, now = new Date() }) {
+export function buildProvenanceRecord({ event, formattedOutput, eligibilityReason, anomalyDetail, kmLocationResolution, image, now = new Date() }) {
   return {
     timestamp: now.toISOString(),
     source: (event && event.source) || null,
@@ -152,6 +180,10 @@ export function buildProvenanceRecord({ event, formattedOutput, eligibilityReaso
     classificationSource: sanitizeSourceInfo(event && event.provenance && event.provenance.classificationSource),
     locationSource: sanitizeSourceInfo(event && event.provenance && event.provenance.locationSource),
     displayKMSource: sanitizeSourceInfo(event && event.provenance && event.provenance.displayKMSource),
+    // V1.8.6.5 — see sanitizeKmLocationResolution's own comment. null only
+    // when the caller didn't pass one at all (should never happen from
+    // broadcastPipeline.js — always call resolveKmLocation() first).
+    kmLocationResolution: sanitizeKmLocationResolution(kmLocationResolution),
     formattedOutput: formattedOutput || '',
     imageAttached: Boolean(image && image.attached),
     imageUrlPresent: Boolean(image && image.urlPresent),

@@ -39,13 +39,22 @@
 // the round's own principle
 // ("來源本來有的人類位置資訊 > 經可靠對照的路段名稱 > KM > 不顯示"):
 //   1. `event.locationDescription` (TDX-supplied human text, filtered)
-//   2. `getRoadSectionLabel()`'s curated anchor label (國1/國3 only —
+//   2. `resolveKmLocation()`'s official-open-data label (V1.8.6.5 — any
+//      road the imported government dataset actually covers; see
+//      kmLocationResolver.js. Fails closed to nothing when the dataset
+//      doesn't cover that road/KM — never a guess.)
+//   3. `getRoadSectionLabel()`'s curated anchor label (國1/國3 only —
 //      no fabricated anchor table was added for 台1/台3/etc since this
 //      repo has no independently-confirmed KM-anchor data for them;
 //      guessing interchange positions is exactly what this project's
 //      "不要猜" rule forbids)
-//   3. raw KM (unchanged, second line)
-//   4. nothing (bare road+direction only — never an invented address)
+//   4. raw KM (unchanged, second line)
+//   5. nothing (bare road+direction only — never an invented address)
+// A Google Maps URL (📍 地圖 ...) is a SEPARATE, additional trailing line
+// — shown whenever resolveKmLocation() produced a coordinate, regardless
+// of which tier above won the label line. It never duplicates label text
+// by construction: only one tier's TEXT is ever shown as the label, and
+// the map line is a link, not text repeated from elsewhere.
 // Deliberately NEVER extended to PBS's own `event.location` (areaNm) —
 // that field is already covered by V1.8.5.1's own explicit "KM must win
 // over a route-name-shaped location string" regression test, which this
@@ -53,6 +62,7 @@
 // file's own test suite).
 
 import { getRoadShortName, getRoadSectionLabel } from './roadSectionLabel.js';
+import { resolveKmLocation } from './kmLocationResolver.js';
 import { DEFAULT_CONGESTION_SEVERITY } from './congestionSeverity.js';
 
 const TYPE_EMOJI = {
@@ -256,23 +266,42 @@ function buildRoadLines(event) {
   const shortRoad = getRoadShortName(event.road) || event.road || '';
   const roadDirection = [shortRoad, event.direction].filter(Boolean).join(' ');
 
-  // Tier 1 (source's own human text) beats tier 2 (curated anchor
-  // table) — only fall back to getRoadSectionLabel()'s resolution when
-  // the source didn't supply usable location text of its own. See the
-  // V1.8.6.4 module comment above for the full priority rationale.
+  // V1.8.6.5 — official-open-data resolution. Pure/0-I/O (reads only the
+  // bundled generated datasets, never a network call — see
+  // kmLocationResolver.js's own module comment), so calling it once per
+  // message build is cheap; broadcastProvenance.js calls it again
+  // independently for its own evidence capture, same "call the pure
+  // function twice, once per consumer" pattern already established by
+  // resolveOtherAnomalyDetail.
+  const kmResolution = resolveKmLocation({
+    road: event.road,
+    direction: event.direction,
+    startKM: event.startKM,
+    endKM: event.endKM,
+    displayKM: event.displayKM,
+  });
+  const resolverLabel = kmResolution.resolved ? kmResolution.locationLabel : null;
+  const mapUrl = kmResolution.resolved ? kmResolution.mapUrl || null : null;
+
+  // Tier 1 (source's own human text) beats tier 2 (official KM Location
+  // Resolver) beats tier 3 (curated 國1/國3 anchor table) — only fall
+  // back to getRoadSectionLabel()'s resolution when neither of the first
+  // two produced usable location text. See the V1.8.6.4/V1.8.6.5 module
+  // comment above for the full priority rationale.
   const humanLocationText = pickHumanLocationText(event, roadDirection);
-  const section = humanLocationText ? null : getRoadSectionLabel({ road: event.road, startKM: event.startKM, endKM: event.endKM });
-  const sectionLabel = humanLocationText || (section && section.label);
+  const section =
+    humanLocationText || resolverLabel ? null : getRoadSectionLabel({ road: event.road, startKM: event.startKM, endKM: event.endKM });
+  const sectionLabel = humanLocationText || resolverLabel || (section && section.label);
   const firstLine = sectionLabel ? (roadDirection ? `${roadDirection}｜${sectionLabel}` : sectionLabel) : roadDirection;
 
   const structuredKmLine =
     event.startKM !== undefined || event.endKM !== undefined ? formatKmRange(event.startKM, event.endKM) : '';
   if (structuredKmLine) {
-    return { firstLine, secondLine: structuredKmLine };
+    return { firstLine, secondLine: structuredKmLine, mapUrl };
   }
 
   if (typeof event.displayKM === 'number' && Number.isFinite(event.displayKM)) {
-    return { firstLine, secondLine: formatKM(event.displayKM) };
+    return { firstLine, secondLine: formatKM(event.displayKM), mapUrl };
   }
 
   // Fallback (no KM recognizable at all, structured or displayKM): keep
@@ -290,7 +319,7 @@ function buildRoadLines(event) {
   // happens to duplicate the human location text already shown in
   // `sectionLabel` on line 1.
   if (secondLine && secondLine === sectionLabel) secondLine = '';
-  return { firstLine, secondLine };
+  return { firstLine, secondLine, mapUrl };
 }
 
 /**
@@ -300,7 +329,10 @@ function buildRoadLines(event) {
  *   hasn't started yet but falls inside the 60-minute window.
  */
 export function formatEventMessage(event, { forecast = false, minutesUntilStart = null } = {}) {
-  const { firstLine, secondLine } = buildRoadLines(event);
+  const { firstLine, secondLine, mapUrl } = buildRoadLines(event);
+  // V1.8.6.5: 📍 地圖 line — see the module comment above for why this is
+  // independent of which location-label tier won firstLine.
+  const mapLine = mapUrl ? `📍 地圖 ${mapUrl}` : null;
 
   if (forecast) {
     const lines = [
@@ -309,6 +341,7 @@ export function formatEventMessage(event, { forecast = false, minutesUntilStart 
       secondLine,
       minutesUntilStart != null ? `約${minutesUntilStart}分鐘後開始` : '即將開始',
       '建議提前改道',
+      mapLine,
     ].filter(Boolean);
     return lines.join('\n');
   }
@@ -339,6 +372,7 @@ export function formatEventMessage(event, { forecast = false, minutesUntilStart 
     firstLine,
     secondLine,
     impactLines,
+    mapLine,
     updatedHHMM ? `🕒 ${updatedHHMM}更新` : null,
   ].filter(Boolean);
 
