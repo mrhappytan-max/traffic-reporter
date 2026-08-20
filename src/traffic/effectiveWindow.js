@@ -25,6 +25,30 @@ import { parseChineseDateRange } from './parseChineseDate.js';
 const LIVE_SOURCES = new Set(['cms', 'bus-hsinchu', 'bus-hsinchu-county']);
 const LIVE_TYPES = new Set(['accident', 'congestion']);
 
+// V1.8.6.6 integration follow-up — real regression found while building
+// this round's Fixture B (國1 南向 92.8K "其他異常告警－行人誤闖"): the
+// non-collision-anomaly override (tdx/normalize.js's mapRoadEventType,
+// pbs/classify.js's classifyPbsEvent — see anomalyClassification.js)
+// downgrades `type` from 'accident' to 'other' for a pedestrian/animal
+// intrusion report, but 'other' is NOT a LIVE_TYPE above — it falls into
+// the "announced" bucket below, which requires a parseable Chinese date
+// range in the description (see test 5 in broadcastEligibility.test.js
+// for why that requirement is correct for a genuinely pre-announced
+// 'other' event, e.g. a flooding advisory that also carries a schedule).
+// A pedestrian-intrusion report has no such schedule — it is exactly as
+// "right now" as the collision report it was reclassified from, and
+// requiring a schedule string here would silently make the reclassified
+// event unbroadcastable, turning "wrong text" into "never sent" instead
+// of the correct fix. The override attaches `nonCollisionAnomalyDetail`
+// as its own marker for exactly this situation — checked here (not by
+// widening LIVE_TYPES to include all of 'other', which would change the
+// deliberately-tested flooding/rockslide/etc. announced-other behavior)
+// so ONLY an event that started life as a live accident-shaped report
+// keeps being treated as live after the type downgrade.
+function isLiveNonCollisionAnomaly(event) {
+  return Boolean(event && event.nonCollisionAnomalyDetail);
+}
+
 function isValidDateString(value) {
   if (!value) return false;
   const ms = new Date(value).getTime();
@@ -42,7 +66,7 @@ function isValidDateString(value) {
  * }}
  */
 export function computeEffectiveWindow(event, now = new Date()) {
-  const isLive = LIVE_SOURCES.has(event.source) || LIVE_TYPES.has(event.type);
+  const isLive = LIVE_SOURCES.has(event.source) || LIVE_TYPES.has(event.type) || isLiveNonCollisionAnomaly(event);
 
   if (isLive) {
     const effectiveStart = isValidDateString(event.startTime) ? event.startTime : now.toISOString();
