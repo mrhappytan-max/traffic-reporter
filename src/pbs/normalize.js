@@ -11,6 +11,7 @@
 import { normalizePbsRoad } from './roadName.js';
 import { classifyPbsEvent } from './classify.js';
 import { classifyCongestionSeverity } from '../traffic/congestionSeverity.js';
+import { buildUpstreamSnapshot } from '../traffic/pipelineTrace.js';
 
 const DIRECTION_MAP = {
   北上: '北向',
@@ -202,5 +203,19 @@ export function normalizePbsEvent(raw) {
     // eligibility/dedupe/CCTV-eligibility, debug-only (see
     // broadcastProvenance.js).
     provenance,
+    // V1.8.6.7 (Pipeline Trace) — same debug-only boundary as `provenance`
+    // above. PBS's raw shape has no EventSubType/Category analogue — only
+    // `roadtype` (mapped to the shared `EventType` field name, so the
+    // trace schema doesn't fork by source) and `direction`/`comment` are
+    // available; `road`/`direction` here are `raw.road`/`raw.direction`
+    // straight from the record, deliberately BEFORE
+    // normalizePbsRoad/normalizePbsDirection ran, so a genuine upstream-
+    // vs-normalized mismatch stays visible to the trace view.
+    pipelineTraceUpstream: buildUpstreamSnapshot({
+      eventType: raw.roadtype || null,
+      rawDirection: raw.direction || null,
+      upstreamUpdatedAt: updatedAt,
+      description,
+    }),
   };
 }

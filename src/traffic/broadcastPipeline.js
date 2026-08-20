@@ -75,6 +75,7 @@ import { resolveCctvEligibility, prepareCctvImageForEvent, CCTV_PREPARE_BUDGET_M
 import { PUBLISHED_IMAGE_TTL_SECONDS } from '../cctv/publishedImage.js';
 import { buildProvenanceRecord, recordBroadcastProvenance } from './broadcastProvenance.js';
 import { readSharedFeed, eventIdOf, fingerprintOf, isStoredImageStillValid } from './sharedFeed.js';
+import { buildTraceEntry } from './pipelineTrace.js';
 
 function safeErrorMessage(err) {
   if (err && typeof err.message === 'string') return err.message;
@@ -160,6 +161,14 @@ export async function runLineBroadcast(
     dryRun = false,
     cctvCodecOverride,
     cctvPrepareBudgetMs,
+    // V1.8.6.7 (Pipeline Trace) — Map<`${source}:${rawId}`, {dedupeResult,
+    // gatingResult}>, built by scheduled.js from data dedupe.js/
+    // crossSourceDedup.js ALREADY decided this run (new/updated TDX
+    // events, canonical-merge/unique-candidate PBS events) — never
+    // re-derived here. Optional; defaults to empty so every existing
+    // caller/test that doesn't pass it keeps working unchanged (trace
+    // entries simply carry dedupeResult/gatingResult:null in that case).
+    eventMeta = new Map(),
   }
 ) {
   const result = {
@@ -242,7 +251,34 @@ export async function runLineBroadcast(
     partialPushFailures: 0,
     lastLinePushAt: null,
     lineErrors: [],
+    // V1.8.6.7 (Pipeline Trace) — built below, one entry per event in
+    // `allEvents` (see traceInputByEvent). Populated even under dryRun/
+    // fail-closed (same "purely observational, safe under every mode"
+    // principle as ineligibleByReason/cctvEligibleAccidentCount above) —
+    // scheduled.js is the only caller that actually persists these to KV,
+    // and only on the real (non-dryRun) Cron path.
+    pipelineTraceEntries: [],
   };
+
+  // V1.8.6.7 (Pipeline Trace) — accumulates PARTIAL trace input per event
+  // (object identity keyed, same idiom as eligibilityReasonByEvent below)
+  // as this event's lifecycle progresses through the stages below; built
+  // into final immutable trace entries in ONE pass at the very end of this
+  // function (see the bottom of this function, after
+  // topUpSharedFeedCctvImages) — "在記憶體中累積，事件生命週期結束時
+  // centralized finalize 一次寫入", never a per-stage KV write. An event
+  // whose lifecycle ends early (ineligible, not-relevant) still gets its
+  // entry finalized at the end from whatever partial data it accumulated.
+  const traceInputByEvent = new Map();
+  function traceFor(event) {
+    let input = traceInputByEvent.get(event);
+    if (!input) {
+      const meta = eventMeta.get(`${event.source}:${event.rawId}`) || {};
+      input = { event, now, dedupeResult: meta.dedupeResult ?? null, gatingResult: meta.gatingResult ?? null };
+      traceInputByEvent.set(event, input);
+    }
+    return input;
+  }
 
   const hasToken = Boolean(env.LINE_CHANNEL_ACCESS_TOKEN);
   if (!hasToken) result.lineErrors.push('LINE_CHANNEL_ACCESS_TOKEN not configured');
@@ -299,6 +335,14 @@ export async function runLineBroadcast(
   for (const event of allEvents) {
     const { eligible, reason } = getBroadcastEligibility(event);
     eligibilityReasonByEvent.set(event, reason);
+    // V1.8.6.7 (Pipeline Trace) — every event in allEvents gets a trace
+    // input record right here, regardless of outcome; an ineligible
+    // event's lifecycle effectively ends at this exact point (it never
+    // reaches clustering/relevance/suppression below), so this is also
+    // the last chance to record it.
+    const trace = traceFor(event);
+    trace.eligibility = eligible;
+    trace.eligibilityReason = reason;
     if (eligible) {
       broadcastEligibleEvents.push(event);
     } else {
@@ -335,6 +379,16 @@ export async function runLineBroadcast(
   result.activeNowCount = relevant.filter(({ window }) => new Date(window.effectiveStart).getTime() <= now.getTime()).length;
   result.futureWithin60MinCount = result.broadcastRelevantCount - result.activeNowCount;
 
+  // V1.8.6.7 (Pipeline Trace) — an eligible event that isn't relevant yet
+  // (or isn't relevant anymore — e.g. effectiveWindow fail-closed to
+  // null) also has its lifecycle end right here; every relevant one gets
+  // `relevant:true` for now (an accident that gets suppressed below still
+  // reads relevant:true — suppression is a separate, later decision).
+  const relevantEventSet = new Set(relevant.map(({ event }) => event));
+  for (const { event } of withWindow) {
+    traceFor(event).relevant = relevantEventSet.has(event);
+  }
+
   // V1.5.1: accident-specific incident-level suppression — see
   // incidentSuppression.js. Read regardless of dryRun (debug/status
   // needs it for its own preview stats — never writes below when
@@ -359,6 +413,13 @@ export async function runLineBroadcast(
   );
   const incidentResolutionByEvent = new Map(incidentResults.map((r) => [r.event, r]));
 
+  // V1.8.6.7 (Pipeline Trace) — suppressionResult only ever applies to
+  // accident-typed events (see incidentSuppression.js's own scope); every
+  // other event's trace input keeps suppressionResult:null.
+  for (const r of incidentResults) {
+    traceFor(r.event).suppressionResult = r.reason;
+  }
+
   for (const r of incidentResults) {
     if (r.suppressed) {
       result.incidentSuppressedCount += 1;
@@ -373,9 +434,21 @@ export async function runLineBroadcast(
     if (!commit.committed) result.lineErrors.push(`failed to persist incident suppression state: ${commit.error}`);
   }
 
+  // V1.8.6.7 (Pipeline Trace) — the ONE finalize/build point, called
+  // right before every return in this function. Builds immutable trace
+  // entries from whatever partial input each event accumulated by this
+  // point in its lifecycle — never a per-stage write (see
+  // traceInputByEvent's own comment above).
+  function finalizeTrace() {
+    result.pipelineTraceEntries = [...traceInputByEvent.values()].map((input) => buildTraceEntry(input));
+  }
+
   const failClosed = !hasToken || !dedupeAvailable || !subsState.kvAvailable || !notifiedState.kvAvailable;
   result.lineReady = !failClosed;
-  if (failClosed) return result; // 0 push for every target, whether dry-run or real
+  if (failClosed) {
+    finalizeTrace();
+    return result; // 0 push for every target, whether dry-run or real
+  }
 
   // Per (event, target) pending list. A congestion cluster uses a
   // corridor-scoped notification key ("congestion:<road>:<direction>:
@@ -450,7 +523,10 @@ export async function runLineBroadcast(
 
   result.pendingTargetCount = perEventPending.reduce((sum, e) => sum + e.pendingTargets.length, 0);
 
-  if (dryRun) return result; // preview stops here — no push, no writes
+  if (dryRun) {
+    finalizeTrace();
+    return result; // preview stops here — no push, no writes
+  }
 
   // Prune notified-state entries dedupe.js just retired, in-memory; this
   // rides along with whatever write happens below (or gets its own small
@@ -466,6 +542,7 @@ export async function runLineBroadcast(
       const commit = await persistNotifiedState(env.TRAFFIC_KV, notifiedMap, result.lastLinePushAt, now, result.partialPushFailures);
       if (!commit.committed) result.lineErrors.push(`failed to record notified-state prune cleanup: ${commit.error}`);
     }
+    finalizeTrace();
     return result;
   }
 
@@ -510,7 +587,23 @@ export async function runLineBroadcast(
     const completedProduct = { eventKeyStr, fingerprint, text, event, imageUrl: null, imageExpiresAt: null };
     result.completedProducts.push(completedProduct);
 
+    // V1.8.6.7 (Pipeline Trace) — formattedOutput is recorded for EVERY
+    // event that reaches this point, whether or not it ends up with a
+    // pending target — same reasoning as `completedProduct` itself above
+    // (a Shared-Feed-only consumer's audience is independent of whether
+    // THIS Worker's own subscribers already got it).
+    traceFor(event).formattedOutput = text;
+
     if (pendingTargets.length === 0) {
+      const trace = traceFor(event);
+      trace.lineAttempted = 0;
+      trace.lineSucceeded = 0;
+      // Pure, zero-I/O — safe to compute here even though the real CCTV
+      // attempt (if any) only happens later, in topUpSharedFeedCctvImages
+      // (see that function's own comment for why the ordering matters).
+      // imagePrepared/imageUrlPresent/imageExpiresAt are patched onto this
+      // SAME trace input object right after that pass runs, below.
+      if (event.type === 'accident') trace.cctvEligible = resolveCctvEligibility(event).eligible;
       // V57.1: still a candidate for a CCTV image — for the Shared Traffic
       // Feed ONLY, never for a LINE re-push. Deferred to after this loop so
       // it can never take budget (or wall-clock) away from an event that
@@ -537,10 +630,19 @@ export async function runLineBroadcast(
     // event in this tick skips CCTV entirely (0 wait, not even an
     // attempt) rather than each getting its own fresh budget.
     let messages = [{ type: 'text', text }];
+    // V1.8.6.7 (Pipeline Trace) — tracks this event's CCTV outcome for the
+    // trace entry below; never a second CCTV attempt, purely a local
+    // reference to the SAME `cctv` result the real push path already
+    // computed (or an explicit note when it wasn't even attempted).
+    const traceForEvent = traceFor(event);
     if (event.type === 'accident') {
+      traceForEvent.cctvEligible = resolveCctvEligibility(event).eligible;
       const remainingRunBudgetMs = cctvRunDeadlineAt - Date.now();
       if (remainingRunBudgetMs <= 0) {
         result.cctvSkippedByReason['run-budget-exhausted'] = (result.cctvSkippedByReason['run-budget-exhausted'] || 0) + 1;
+        traceForEvent.imagePrepared = false;
+        traceForEvent.imageUrlPresent = false;
+        traceForEvent.cctvSkippedByReason = 'run-budget-exhausted';
       } else {
         const cctv = await prepareCctvImageForEvent(env, event, cctvRunCache, cctvCodecOverride, remainingRunBudgetMs);
         if (cctv.ok) {
@@ -549,11 +651,34 @@ export async function runLineBroadcast(
           // V57: reuse — never re-compose — the image this push already has.
           completedProduct.imageUrl = cctv.imageUrl;
           completedProduct.imageExpiresAt = cctv.imageExpiresAt;
+          traceForEvent.imagePrepared = true;
+          traceForEvent.imageUrlPresent = true;
+          traceForEvent.imageExpiresAt = cctv.imageExpiresAt;
         } else {
           result.cctvSkippedByReason[cctv.reason] = (result.cctvSkippedByReason[cctv.reason] || 0) + 1;
+          traceForEvent.imagePrepared = false;
+          traceForEvent.imageUrlPresent = false;
+          traceForEvent.cctvSkippedByReason = cctv.reason;
         }
       }
     }
+
+    // V1.8.6.7 (Pipeline Trace) / V1.8.6.5 pattern reused: computed ONCE
+    // here, for EVERY event that reaches this point (not gated on push
+    // success) — messageFormat.js already called resolveKmLocation() a
+    // moment ago, for this SAME event, to build `text` above; this is the
+    // same "call the pure, 0-I/O function again for a second consumer"
+    // pattern already established (see resolveOtherAnomalyDetail below),
+    // just no longer gated behind `successfulTargets.length > 0` so the
+    // trace entry gets it even for an event that didn't end up pushed.
+    const kmLocationResolution = resolveKmLocation({
+      road: event.road,
+      direction: event.direction,
+      startKM: event.startKM,
+      endKM: event.endKM,
+      displayKM: event.displayKM,
+    });
+    traceForEvent.kmLocationResolution = kmLocationResolution;
 
     const successfulTargets = [];
     // Best-effort per target — one target's failure never blocks another.
@@ -571,6 +696,8 @@ export async function runLineBroadcast(
         result.lineErrors.push(`push failed (${target.kind}): ${safeErrorMessage(err)}`);
       }
     }
+    traceForEvent.lineAttempted = pendingTargets.length;
+    traceForEvent.lineSucceeded = successfulTargets.length;
 
     const failedCount = pendingTargets.length - successfulTargets.length;
     if (successfulTargets.length > 0 && failedCount > 0) {
@@ -607,19 +734,10 @@ export async function runLineBroadcast(
       // this can never affect the push/notified-state outcome above,
       // which already completed by the time this runs.
       const anomalyDetail = event.type === 'other' ? resolveOtherAnomalyDetail(event) : null;
-      // V1.8.6.5 — same "call the pure function again for this consumer"
-      // pattern as anomalyDetail/resolveOtherAnomalyDetail above:
-      // resolveKmLocation() is 0-I/O and deterministic, so calling it a
-      // second time here (messageFormat.js already called it once, to
-      // build `text`) is cheap and never a second, divergent decision —
-      // same event, same inputs, same result.
-      const kmLocationResolution = resolveKmLocation({
-        road: event.road,
-        direction: event.direction,
-        startKM: event.startKM,
-        endKM: event.endKM,
-        displayKM: event.displayKM,
-      });
+      // kmLocationResolution: hoisted above (V1.8.6.7) — computed once for
+      // every event reaching this point, reused here unchanged from its
+      // original V1.8.6.5 "call the pure function again for this
+      // consumer" reasoning.
       const imageAttached = messages.length > 1;
       const record = buildProvenanceRecord({
         event,
@@ -651,11 +769,25 @@ export async function runLineBroadcast(
     cctvPrepareBudgetMs,
   });
 
+  // V1.8.6.7 (Pipeline Trace) — patch the trace input for every
+  // feed-only product NOW that topUpSharedFeedCctvImages has run (it
+  // mutates `completedProduct.imageUrl`/`imageExpiresAt` in place — see
+  // that function's own comment). Never a second CCTV attempt: this only
+  // reads the outcome the top-up pass already produced.
+  for (const product of feedOnlyProducts) {
+    const trace = traceFor(product.event);
+    trace.imagePrepared = Boolean(product.imageUrl);
+    trace.imageUrlPresent = Boolean(product.imageUrl);
+    trace.imageExpiresAt = product.imageExpiresAt || null;
+    if (product.cctvSkipReason) trace.cctvSkippedByReason = product.cctvSkipReason;
+  }
+
   if (!anyWriteHappened && prunedKeys.length > 0) {
     const commit = await persistNotifiedState(env.TRAFFIC_KV, notifiedMap, result.lastLinePushAt, now, partialFailureCountThisRun);
     if (!commit.committed) result.lineErrors.push(`failed to record notified-state prune cleanup: ${commit.error}`);
   }
 
+  finalizeTrace();
   return result;
 }
 
@@ -757,6 +889,11 @@ async function topUpSharedFeedCctvImages(env, result, feedOnlyProducts, { now, c
     const remainingMs = deadlineAt - Date.now();
     if (remainingMs <= 0) {
       result.cctvFeedOnlySkippedByReason['run-budget-exhausted'] = (result.cctvFeedOnlySkippedByReason['run-budget-exhausted'] || 0) + 1;
+      // V1.8.6.7 (Pipeline Trace) — mirrors `product.imageUrl` itself:
+      // recorded on the product object so runLineBroadcast's trace-patch
+      // pass (right after this function returns) can show WHY, without a
+      // second CCTV call.
+      product.cctvSkipReason = 'run-budget-exhausted';
       continue;
     }
 
@@ -768,6 +905,7 @@ async function topUpSharedFeedCctvImages(env, result, feedOnlyProducts, { now, c
       result.cctvFeedOnlyAttachedCount += 1;
     } else {
       result.cctvFeedOnlySkippedByReason[cctv.reason] = (result.cctvFeedOnlySkippedByReason[cctv.reason] || 0) + 1;
+      product.cctvSkipReason = cctv.reason;
     }
   }
 

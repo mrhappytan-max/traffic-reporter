@@ -1,58 +1,57 @@
 # ENGINEERING_STATUS.md — traffic-reporter (路況播報員)
 
-Current-state snapshot only — no long history here. For "why" and full round-by-round detail, see `PROJECT_HANDOFF.md` (§1–§21). For human-readable release notes, see `RELEASE_SUMMARY_V1.8.5.md`.
+Current-state snapshot only — no long history here. For "why" and full round-by-round detail, see `PROJECT_HANDOFF.md` (§1–§23). For human-readable release notes, see `RELEASE_SUMMARY_V1.8.5.md`.
 
 ---
 
-## ⚠️ Production branch split (discovered 2026-08-20) — read this before assuming "push to main = deployed"
+## ✅ Production branch split — RESOLVED (was: discovered 2026-08-20)
 
-**Production was NOT actually running `main`.** The Cloudflare Worker's real
-deploy source was `claude/v57.2-tdx-gated-freeway-broadcast`
-(`9c0de1dcfbc4410d7d0c0eda9bd9655cca15a41f`), a lineage branch created for
-V57/V57.1/V57.2 (Shared Traffic Feed, its CCTV top-up, TDX-gated freeway
-broadcast) that was never merged back into `main`. Meanwhile `main` kept
-moving on V1.8.6.4/V1.8.6.5 (provenance log, KM Location Resolver, short
-map URL) — 10 commits main never saw make it to Production, while
-Production carried 3 commits `main` never saw. Common ancestor:
-`ba74d48f2c98b41f1d5b2db8a60639001ecd1109`. This is the actual root cause
-of the "main 已修好但 Production 看不到" symptom investigated in the prior
-audit round — V1.8.6.5 was fully merged and documented as shipped, but was
-never running where users actually were.
+**Historical issue, now fixed.** Production's actual Cloudflare deploy
+source had diverged from `main` (`claude/v57.2-tdx-gated-freeway-broadcast`
+vs `main`'s own V1.8.6.4/V1.8.6.5 work — see `PROJECT_HANDOFF.md` §22 for
+the full root-cause writeup and merge methodology). Fixed by building
+`integration/v57.2-v1.8.6.5-production` (a real `--no-ff` merge of both
+lineages, every conflict resolved by tracing call paths, plus the
+V1.8.6.6 non-collision-anomaly fix, cherry-picked after verifying it was
+still genuinely needed) and fast-forwarding `main` onto it —
+`main` now IS the reconciled branch; nothing was rebased, no merge commit
+was needed for the fast-forward itself, and no content was lost from
+either lineage.
 
-**Fix applied this round:** `integration/v57.2-v1.8.6.5-production`,
-branched from latest `main` and merged (`--no-ff`, real 3-way merge, every
-conflict resolved by tracing call paths — never `ours`/`theirs`) with the
-V57.2 branch, carrying forward BOTH lineages' functionality in full, plus
-the V1.8.6.6 non-collision-anomaly fix (`fix/v1.8.6.6-anomaly-classification-audit`,
-cherry-picked — verified still genuinely needed post-merge, not assumed).
-See this file's "Latest completed work" section below for what building
-the two real-event regression fixtures found and fixed along the way.
-
-**This round deliberately did NOT**: merge into `main`, deploy, or change
-which branch Cloudflare's Worker actually watches — see "Next (safe
-actions)" below for the proposed permanent fix (reunify Production back
-onto `main`) and why it needs a human decision, not an autonomous one.
+**Standing preventive practice** (kept here, not deleted, since it's the
+actual lesson): a stray long-lived lineage branch can silently become
+Production's real deploy source again if it's never merged back — verify
+which branch Cloudflare's Worker actually watches per round, don't just
+assume `main`.
 
 ## Current Production version / main HEAD
 
 ```
-main HEAD:         0fa32236631ae582e1f65a3870053e666d036d58 (V1.8.6.5)
-Production HEAD:   9c0de1dcfbc4410d7d0c0eda9bd9655cca15a41f (claude/v57.2-tdx-gated-freeway-broadcast — NOT main; see above)
-Integration branch: integration/v57.2-v1.8.6.5-production (this round's merged, tested result — NOT yet deployed, NOT yet merged to main)
+main HEAD: 8cd97c3e61ac2eace7db66634a398450adb17e4b (V1.8.6.6 + V57/V57.1/V57.2 reconciled)
 ```
 
-Cloudflare auto-deploys on every push to whichever branch its Worker is
-actually configured to watch — historically assumed to be `main`, but see
-the branch-split warning above: that assumption silently stopped being
-true once the V57 lineage branch was created. Verify the real deploy
-source in the Cloudflare dashboard before relying on "push to main =
-deployed" again.
+Cloudflare auto-deploys on every push to `main` — no manual `wrangler deploy` needed under normal operation. (This document's own prior round is the reminder to periodically re-verify that's still actually true.)
 
 ## System status
 
 - Production live, operating normally.
 - `GET /health` — zero TDX/PBS/LINE network calls, reads only `health:snapshot:v1` + `tdx:usage:summary:v1` from KV.
 - TDX usage reconciliation ledger live and accumulating (`tdx:usage:summary:v1`).
+
+## Latest completed work — V1.8.6.7: 24h Pipeline Trace + 人工查修頁
+
+**Status: on branch `feature/v1.8.6.7-pipeline-trace-view`, NOT merged to main, NOT deployed.**
+
+Answers "上游抓到什麼 → 系統分類成什麼 → eligibility/dedupe/suppression/gating 做了什麼 → KM/CCTV enrichment 結果 → 最後 LINE/Shared Feed 送了什麼" for ANY event that entered this run's pipeline this Cron run — not just ones that actually got pushed (see `PROJECT_HANDOFF.md` §23 for the full design and `PRODUCT_DECISIONS.md` for why this is a separate log from `/admin/broadcast-provenance`, not a replacement for it).
+
+- **`GET /admin/pipeline-trace`** — JSON, Admin-Auth-gated, `?limit=`/`?source=`/`?road=`/`?rawId=`/`?status=` filters, `Cache-Control: no-store`, 0 upstream calls.
+- **`GET /admin/pipeline-trace-view`** — the actual product feature this round: a server-rendered, mobile-readable HTML 查修頁 for a non-programmer administrator. No client-side JavaScript at all (the existing Admin CSP has no script-src exception, and none was added) — `<details>/<summary>` for expand/collapse, a plain GET `<form>` for filters. Shows ✅/⚠️/❌/📷/🚫/🗺️ status badges per event, and automatically flags upstream-vs-normalized diffs (`buildTraceAnomalies` — DIRECTION_CHANGED, TYPE_SEMANTIC_MISMATCH, KM_CHANGED, MAP_MISSING, IMAGE_EXPECTED_BUT_MISSING, LINE_FAILED, SHARED_FEED_IMAGE_LOST) so an administrator never has to eyeball every field by hand.
+- **TTL: 24 hours** — every event that entered the pipeline this run gets a trace record, a much higher write volume than provenance's "successful pushes only" scope, so retention is deliberately shorter (24h vs provenance's 48h).
+- **Write pattern**: partial trace data accumulates in memory as an event moves through the pipeline (eligibility → relevance → suppression → CCTV → LINE push → Shared Feed persist), finalized into ONE immutable record and written with exactly one KV `put` per event, at the very end of that event's lifecycle this run. Never a per-stage write.
+- **0 additional TDX/PBS/CCTV/Google/LINE calls** — every field is copied from data the pipeline already computed this run; nothing here re-classifies, re-resolves KM, or re-queries CCTV.
+- **Privacy**: no full raw TDX/PBS payload, no Secret/Authorization header, no LINE userId/groupId/subscriber target, no access token, no admin credential. Description text capped at 120 chars.
+- A genuine, previously-untested gap found and closed while building this: reusing `resolveKmLocation()`/CCTV outcome/`incidentSuppression.js` results for the trace required hoisting a couple of already-existing pure computations slightly earlier in `broadcastPipeline.js`'s per-event loop (so the trace can see them even for a non-pushed event) — no behavior change to the real push path, confirmed by the full existing test suite passing unmodified.
+- Full suite: 937 tests (889 + 48 new), 934 pass, 3 known pre-existing failures unchanged (2× `pbs-relay/tests/*`, 1× wall-clock-dependent `healthQuotaDashboard.test.js`).
 
 ## Latest completed work — branch integration (main + V57.2 + V1.8.6.6), on `integration/v57.2-v1.8.6.5-production`
 
@@ -142,7 +141,6 @@ Total Upload: 7549.90 KiB / gzip 718.25 KiB
 
 ## Current known issues
 
-- **Production's deploy source and `main` have diverged** (see the branch-split warning at the top of this file) — this is the standing issue this round's integration branch addresses but does not itself resolve; resolving it requires a human decision to point Cloudflare's Worker at `integration/v57.2-v1.8.6.5-production` (or merge it into `main` and repoint there) — see "Next (safe actions)" below.
 - 3 existing, unrelated test failures in the full suite (same before and after this cycle, not a regression):
   - 2× `pbs-relay/tests/*` (missing `pbs-relay/src/cache.js`)
   - 1× `healthQuotaDashboard.test.js` test 6 (wall-clock-dependent, not TDX/PBS/LINE related)
@@ -159,7 +157,7 @@ Total Upload: 7549.90 KiB / gzip 718.25 KiB
 
 - Let the road-location dataset stay as-is until new/updated official data is deliberately imported — no action needed for normal operation.
 - If official data.gov.tw datasets 7040/95016/166496/8161 publish an update, re-run `npm run update:road-location-data` (see README.md's "Road location data maintenance" section) and re-verify the two acceptance resolutions above still make sense before merging.
-- **Proposed long-term fix for the branch split**: reunify Production's actual deploy source back onto `main` — either (a) merge `integration/v57.2-v1.8.6.5-production` into `main` and repoint Cloudflare's Worker at `main` (restores the documented "push to main = deployed" convention), or (b) repoint Cloudflare's Worker at the integration branch directly and retire the assumption that `main` is always the deploy source. Either way, this needs a human to actually change the Cloudflare Worker's configured branch and/or merge into `main` and deploy — explicitly out of scope for this round (see this file's branch-split section above for why: no merge into `main`, no deploy, no branch-pointer change was made this round). Whichever is chosen, the real preventive fix is procedural, not technical: treat "which branch does Cloudflare actually deploy from" as a fact to verify per round, not an assumption to carry forward — a stray lineage branch (like V57's) can silently become the real Production source again otherwise.
+- If/when `feature/v1.8.6.7-pipeline-trace-view` (this round's Pipeline Trace work — see "Latest completed work" above) is reviewed and approved, merge it into `main` the same way the branch-split fix was: fast-forward if `main` hasn't moved, otherwise a real merge — then Cloudflare's existing auto-deploy-on-push-to-`main` picks it up with no manual `wrangler deploy`.
 
 ## Do not
 

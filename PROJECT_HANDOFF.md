@@ -775,3 +775,80 @@ PBS 國道 gating (V57.2's `filteredFreewayEvents`), TDX authority, cross-source
 ### What this round deliberately did not do
 
 No merge into `main`. No deploy. No change to which branch Cloudflare's Worker actually watches. See `ENGINEERING_STATUS.md`'s "Next (safe actions)" for the proposed permanent fix (reunify Production's deploy source with `main`) — that decision needs a human to actually act on, not something to do autonomously mid-integration.
+
+**Update (next round):** the human reviewer approved this branch and fast-forwarded `main` onto it directly (`git merge --ff-only`) — see `ENGINEERING_STATUS.md`'s branch-split section, now marked RESOLVED. `main` HEAD as of that fast-forward: `8cd97c3e61ac2eace7db66634a398450adb17e4b`.
+
+## 23. V1.8.6.7 — 24h Pipeline Trace + 人工查修頁
+
+**Status: on branch `feature/v1.8.6.7-pipeline-trace-view`, branched from the post-reunification `main` (§22). NOT merged, NOT deployed.**
+
+### Purpose
+
+Turns "為什麼這筆事件的播報結果長這樣" into something a non-programmer administrator can answer by looking at a web page, for ANY event that entered this run's pipeline — not just ones that actually reached LINE. Answers, per event: 上游抓到什麼 → normalize/classify 成什麼 → eligibility/dedupe/suppression/gating 做了什麼 → KM/CCTV enrichment 結果 → 最後 LINE/Shared Feed 送了什麼 — and automatically highlights where those disagree (see "Anomaly detection" below), instead of requiring someone to manually diff 20+ fields per event.
+
+### Relationship to `broadcastProvenance.js` (V1.8.6.4) — both kept, different scope
+
+| | `broadcastProvenance.js` | `pipelineTrace.js` (this round) |
+|---|---|---|
+| Scope | Only events ACTUALLY pushed to ≥1 LINE target | EVERY event that entered the pipeline this run, including rejected/deduped/suppressed/gated ones |
+| Question answered | "為什麼那則已送出的 LINE 訊息長這樣" | "這筆事件到底發生了什麼事，不管有沒有送出" |
+| TTL | 48h | 24h (deliberately shorter — see "Performance" below) |
+| Write trigger | Only inside the `successfulTargets.length > 0` branch | Every event's lifecycle end, success or not |
+
+Neither module re-implements the other's classification/eligibility/KM-resolution logic — `pipelineTrace.js` literally imports and reuses `broadcastProvenance.js`'s `describeClassificationEvidence`, never a second copy of that rule.
+
+### Architecture — accumulate in memory, finalize once per event
+
+Per the task's own instruction ("每一筆事件只寫一次 KV，不要每個 stage 各寫一次"): `broadcastPipeline.js`'s `runLineBroadcast` keeps a `Map<event, partialTraceInput>` (`traceInputByEvent`), mutated as the event moves through eligibility → clustering/relevance → incident suppression → CCTV → the LINE push loop → the Shared-Feed-only top-up pass. A `finalizeTrace()` closure builds the final, immutable `buildTraceEntry(...)` records from whatever partial input each event accumulated, called right before every one of `runLineBroadcast`'s 4 return points (fail-closed, dryRun, outside-broadcast-hours, and the normal end) — so an event whose lifecycle ends early (ineligible, not relevant) still gets a complete, honest record from whatever it actually went through, never a crash or a missing entry.
+
+Two categories of event never reach `runLineBroadcast`'s `allEvents` at all, and get their own standalone trace entries built directly in `scheduled.js`, from arrays `dedupe.js`/`crossSourceDedup.js` already computed: a TDX-level duplicate (`summary.duplicateEvents`) and an unmatched 國道 PBS event (V57.2's own gate — `pbsSummary.freewayGatedEvents`).
+
+`sharedFeedPersisted`/`sharedFeedWithImage` can only be known AFTER Shared Feed persistence runs (a separate, later step in `scheduled.js`) — these two fields are patched onto the already-built trace entries by reading the ACTUAL persisted feed back (one extra `readSharedFeed` `get`, never a `list`) and matching by `eventKey`/`eventId`, right before the final `persistPipelineTraceEntries` write. This is deliberate: it catches a genuine disagreement between "did `runSharedFeedPersist` report `committed:true`" and "does this SPECIFIC event's image actually appear in the persisted blob" — exactly the class of bug (§20-era Shared-Feed-image-loss) this trace exists to make visible.
+
+### Schema
+
+```
+eventKey, status  (line-sent | eligible-no-target | suppressed | not-relevant |
+                    ineligible | duplicate | gated | merged | line-failed)
+identity:   timestamp, source, rawId, road
+upstream:   EventType, EventSubType, Category, descriptionSummary (≤120 chars),
+            rawDirection, rawStartKM, rawEndKM, upstreamUpdatedAt
+normalized: type, direction, startKM, endKM, displayKM, location,
+            classificationSource, classificationEvidence
+decision:   eligibility, eligibilityReason, dedupeResult, suppressionResult, gatingResult
+enrichment: kmLocationResolution (sanitized, no raw coordinate/mapUrl — same
+            view broadcastProvenance.js already uses), cctvEligible,
+            cctvSkippedByReason, imagePrepared, imageUrlPresent, imageExpiresAt
+delivery:   lineAttempted, lineSucceeded, formattedOutput,
+            sharedFeedPersisted, sharedFeedWithImage
+```
+
+`upstream` is captured ONCE, at normalize time (`tdx/normalize.js`/`pbs/normalize.js`), as a debug-only `event.pipelineTraceUpstream` field — same never-read-by-the-real-pipeline boundary already established by `event.provenance` (§20). `EventType`/`EventSubType`/`Category` reuse the SAME field names for both TDX and PBS (PBS's `roadtype` maps onto `EventType`; PBS has no analogue for the other two, so they stay `null`) so the schema never forks by source.
+
+### 0 additional upstream calls
+
+Every field is copied from data the SAME pipeline run already computed. Two specific reuses worth naming: `resolveKmLocation()` and `resolveCctvEligibility()`'s outcomes were previously only captured (for provenance) inside the `successfulTargets.length > 0` branch — this round hoists those exact same calls (same inputs, same event, same pure/0-I/O functions) slightly earlier in the per-event loop so a NON-pushed event's trace also gets them, without adding a second call site anywhere or changing what the successful-push branch itself computes. No new classification pass, no new KM resolution call beyond that hoist, no new CCTV query — verified by the full existing test suite passing unmodified (the 889 pre-existing tests) plus a dedicated "0 additional TDX/PBS/CCTV/LINE calls" test (scenario 26).
+
+### Anomaly detection (`buildTraceAnomalies`) — display-only, pure
+
+Given a trace record, returns `{severity, code, message}[]`, purely for the trace-view page and the JSON endpoint — never read by, or capable of influencing, the real pipeline. Checks implemented: `DIRECTION_CHANGED` (upstream vs normalized direction disagree), `TYPE_SEMANTIC_MISMATCH` (upstream subtype text reads like a non-collision hazard — reusing the same keyword categories `anomalyClassification.js` already encodes — while normalized `type` is still `accident`; this is exactly the class of bug V1.8.6.6 fixed, now with an early-warning display for a future recurrence), `KM_CHANGED`, `MAP_MISSING` (KM resolved but the formatted text has no `maps.google.com` link), `IMAGE_EXPECTED_BUT_MISSING` (CCTV prepared an image but the actual LINE push doesn't carry one), `LINE_FAILED`, `SHARED_FEED_IMAGE_LOST` (LINE has the image, the persisted Shared Feed doesn't).
+
+### The 查修頁 (`GET /admin/pipeline-trace-view`)
+
+Server-rendered HTML, zero client-side JavaScript — the existing Admin CSP (`security/adminAuth.js`'s `applyAdminSecurityHeaders`) is `default-src 'none'` with no `script-src` exception, and this page has no reason to ask for one: `<details>/<summary>` gives expand/collapse for the per-event 3-section (上游資料/系統處理/最終結果) breakdown, and filters are a plain GET `<form>` that reloads the page with new query params. Reuses `health.js`'s established mobile-first CSS conventions (card layout, pill badges, `-apple-system`/`PingFang TC` font stack) for visual consistency across the project's admin pages. Status/CCTV/map badges use the task's own fixed emoji vocabulary (✅⚠️❌📷🚫🗺️) so every page a human looks at uses the same small, learnable set throughout.
+
+### Performance / KV impact
+
+Trace volume is every Hsinchu-filtered event this run touched (typically low tens per tick), a meaningfully higher write rate than `broadcastProvenance.js`'s "successful pushes only" scope — this is WHY the TTL is 24h, not 48h: total stored volume is bounded by `events/tick × ticks/day`, self-limiting regardless of how long any single real-world event stays active, rather than by an unbounded growing history. The write path (`persistPipelineTraceEntries`) only ever calls `put`, one per event, never `list` — the Cron hot path never does a bounded/unbounded scan. The two read endpoints (`/admin/pipeline-trace`, `/admin/pipeline-trace-view`) both cap the KV `list` scan at `MAX_ENTRIES_SCANNED=500` and the response at `MAX_LIST_LIMIT=100`, same bounded-scan pattern as `broadcastProvenance.js`. `GET /health` was verified (structurally, via a source-grep test, not just behaviorally) to import nothing from `pipelineTrace.js` at all — it still only ever reads the pre-computed health snapshot.
+
+### Privacy boundary
+
+Never stores: the full raw TDX/PBS JSON payload, a Secret, an `Authorization` header, a LINE userId/groupId/subscriber target, an access token, or an admin credential. `descriptionSummary` is capped at 120 characters (vs. provenance's 80 — this log intentionally keeps a little more upstream text since its whole purpose is upstream-vs-normalized comparison, but still a hard cap, never the full text). Verified by a dedicated privacy test scanning a real persisted record's serialized JSON for every one of those terms.
+
+### Tests
+
+`test/pipelineTrace.test.js` (pure schema/anomaly-detection/KV read-write/admin-JSON-endpoint/privacy/TTL coverage, 29 tests), `test/pipelineTraceIntegration.test.js` (end-to-end through the real `runLineBroadcast`/`runScheduledTdxSync` — successful push, eligibility reject, dedupe duplicate, incident suppression, V57.2 freeway gating, no-subscriber, CCTV not-eligible/no-camera/success, LINE failure, Shared-Feed-with-image round trip, trace-write-failure isolation, 0-extra-calls, 13 tests), `test/pipelineTraceView.test.js` (the HTML page: Admin Auth, 405, mobile-readable rendering, anomaly banner display, GET-query filtering, empty state, 6 tests). Full suite: 937 tests (889 pre-existing + 48 new), 934 pass, the same 3 pre-existing unrelated failures as every prior round.
+
+### What this round deliberately did not do
+
+No merge into `main`. No deploy. No change to which branch Cloudflare's Worker actually watches. No real TDX/PBS/CCTV probe, no real LINE push — every test uses mock KV/R2/fetch, same conventions as the rest of this test suite.

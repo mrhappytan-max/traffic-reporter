@@ -11,6 +11,8 @@ import { handleHsinchuCctvProbe, handleHsinchuCctvFrame, handleHsinchuCctvCollag
 import { handlePublicCctvImage } from './cctv/publishedImage.js';
 import { handleBroadcastProvenance } from './traffic/broadcastProvenance.js';
 import { handleSharedFeed } from './traffic/sharedFeedHandler.js';
+import { handlePipelineTrace } from './traffic/pipelineTrace.js';
+import { handlePipelineTraceView } from './traffic/pipelineTraceView.js';
 
 // V1.6.3 — Admin Protection: every human-facing admin/debug page requires
 // HTTP Basic Auth (see security/adminAuth.js). Centralized here on
@@ -59,6 +61,14 @@ const HSINCHU_FRAME_PATHS = Array.from({ length: 4 }, (_, i) => `/admin/cctv-hsi
 // the generic GET-only ADMIN_PATHS dispatch.
 const BROADCAST_PROVENANCE_PATH = '/admin/broadcast-provenance';
 
+// V1.8.6.7: /admin/pipeline-trace (JSON) and /admin/pipeline-trace-view
+// (human-readable HTML) — same GET-only-with-explicit-405 treatment as
+// BROADCAST_PROVENANCE_PATH above, for the same reason: a wrong method
+// must never look like "route doesn't exist" (404) once past Admin Auth.
+const PIPELINE_TRACE_PATH = '/admin/pipeline-trace';
+const PIPELINE_TRACE_VIEW_PATH = '/admin/pipeline-trace-view';
+const METHOD_RESTRICTED_ADMIN_PATHS = new Set([BROADCAST_PROVENANCE_PATH, PIPELINE_TRACE_PATH, PIPELINE_TRACE_VIEW_PATH]);
+
 const ADMIN_PATHS = new Set([
   '/health',
   '/debug/status',
@@ -70,6 +80,8 @@ const ADMIN_PATHS = new Set([
   '/admin/cctv-hsinchu-collage',
   '/admin/cctv-hsinchu-publish-test',
   BROADCAST_PROVENANCE_PATH,
+  PIPELINE_TRACE_PATH,
+  PIPELINE_TRACE_VIEW_PATH,
   ...HSINCHU_FRAME_PATHS,
 ]);
 
@@ -86,6 +98,8 @@ function routeAdminGet(pathname, env, request) {
   if (pathname === '/admin/cctv-hsinchu-collage') return handleHsinchuCctvCollage(env);
   if (pathname === '/admin/cctv-hsinchu-publish-test') return handleHsinchuCctvPublishTest(env, request);
   if (pathname === BROADCAST_PROVENANCE_PATH) return handleBroadcastProvenance(env, request);
+  if (pathname === PIPELINE_TRACE_PATH) return handlePipelineTrace(env, request);
+  if (pathname === PIPELINE_TRACE_VIEW_PATH) return handlePipelineTraceView(env, request);
   const frameIndex = HSINCHU_FRAME_PATHS.indexOf(pathname);
   if (frameIndex !== -1) return handleHsinchuCctvFrame(env, frameIndex);
   return new Response('Not Found', { status: 404 });
@@ -105,10 +119,11 @@ export default {
       });
     }
 
-    // V1.8.6.4: this ONE admin path also answers 405 for any non-GET
-    // method (auth-gated first, same as every other admin path — a wrong
-    // method never bypasses Admin Auth to learn the route even exists).
-    if (url.pathname === BROADCAST_PROVENANCE_PATH && request.method !== 'GET') {
+    // V1.8.6.4 (extended V1.8.6.7): these admin paths also answer 405 for
+    // any non-GET method (auth-gated first, same as every other admin
+    // path — a wrong method never bypasses Admin Auth to learn the route
+    // even exists).
+    if (METHOD_RESTRICTED_ADMIN_PATHS.has(url.pathname) && request.method !== 'GET') {
       const denied = await requireAdminAuth(request, env);
       if (denied) return applyAdminSecurityHeaders(denied);
       return applyAdminSecurityHeaders(new Response('Method Not Allowed', { status: 405, headers: { Allow: 'GET' } }));

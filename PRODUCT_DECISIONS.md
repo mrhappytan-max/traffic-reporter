@@ -4,6 +4,28 @@ Deliberate product/architecture decisions and the reasoning behind them — not 
 
 ---
 
+## V1.8.6.7 — 24h Pipeline Trace + 查修頁
+
+### Why a second debug log instead of extending `broadcastProvenance.js`
+
+`broadcastProvenance.js` was deliberately scoped, from V1.8.6.4 onward, to "only a genuinely-sent LINE message" — that scope is what makes it cheap (few writes/day) and safe to keep at 48h TTL. Widening it to cover every rejected/deduped/suppressed/gated event as well would have changed its write volume by an order of magnitude and made its 48h TTL a real storage question, all for a fundamentally different question ("what happened to this event" vs. "why did that sent message look like that"). Two purpose-built logs, each cheap for its own scope, beat one log doing two jobs at two different costs. Neither re-implements the other's classification/eligibility/KM-resolution logic — see `PROJECT_HANDOFF.md` §23's comparison table.
+
+### Why 24h TTL, not 48h like provenance
+
+Directly follows from the scope decision above: Pipeline Trace's write volume (every Hsinchu-filtered event this run, not just successful pushes) is meaningfully higher than provenance's. A shorter TTL keeps total stored volume bounded by `events/tick × ticks/day` regardless of retention length, without needing a separate storage-growth mitigation. 24 hours also matches the actual use case this feature was built for — "查修" a specific recent incident, not build a historical archive (that's what `RELEASE_SUMMARY_*.md`/git history are for).
+
+### Why accumulate in memory and write once, not once per pipeline stage
+
+The task's own instruction ("每一筆事件只寫一次 KV，不要每個 stage 各寫一次") matches this project's existing "儘量少量 KV 操作" discipline (see e.g. `dedupe.js`'s own module comment: "writes only happen when something actually needs to change"). A per-stage write would multiply KV operations by the number of stages an event passes through for no additional information — the SAME final record is producible from one write at the end, and a partial multi-write record would also leave a genuinely ambiguous state on a mid-run crash (which stages actually got recorded?). One record, one write, at the one point an event's lifecycle for this run is actually over.
+
+### Why the trace page has zero client-side JavaScript
+
+The existing Admin CSP (`security/adminAuth.js`'s `applyAdminSecurityHeaders`, `default-src 'none'`, no `script-src` exception) was already a deliberate V1.6.3-era decision — "this project ships no external JS/CSS on any admin page." Extending that CSP just for this one page would have been the first exception to a rule that's held for every other admin page so far, for a feature (expand/collapse, GET-query filters) that native HTML (`<details>/<summary>`, a plain `<form method="get">`) already provides without any script at all. Keeping the CSP unchanged also keeps the Worker's own complexity/resource footprint down, per the task's own explicit instruction ("不要做花俏 Dashboard framework... 維持 Worker 簡單、快速、低資源").
+
+### Why upstream/normalized fields are captured at normalize time, not re-derived at trace-build time
+
+Same principle already established for `event.provenance` (V1.8.6.4) and `event.nonCollisionAnomalyDetail` (V1.8.6.6): a raw field's value is captured ONCE, where it's already in scope during normalization, as a debug-only field on the event object — never re-parsed from a stored raw payload (which this project's privacy boundary forbids storing at all) and never re-derived by a second, potentially-drifting piece of logic. This is also what makes "0 additional upstream calls" true by construction rather than by discipline: there is no code path in `pipelineTrace.js` that could reach for a raw TDX/PBS field it wasn't already handed.
+
 ## Branch integration (`integration/v57.2-v1.8.6.5-production`) — why full reconciliation, not "pick the newer branch"
 
 ### Why merge both lineages instead of just redeploying whichever branch is "more complete"

@@ -40,6 +40,7 @@
 import { firstDefined, get } from './extract.js';
 import { classifyByKeyword, classifyAlertText } from './classify.js';
 import { classifyCongestionSeverity } from '../traffic/congestionSeverity.js';
+import { buildUpstreamSnapshot } from '../traffic/pipelineTrace.js';
 import { detectNonCollisionAnomaly } from '../traffic/anomalyClassification.js';
 
 const EVENT_TYPE_TEXT_MAP = {
@@ -308,6 +309,24 @@ export function normalizeRoadEvent(raw, source) {
     // "V1.8.6.4 — provenance audit" section for the confidence-level
     // caveats on the location candidate field names themselves.
     provenance: { classificationSource, ...(locationSource ? { locationSource } : {}) },
+    // V1.8.6.7 (Pipeline Trace) — same debug-only, never-read-by-the-real-
+    // pipeline boundary as `provenance` above. Whitelisted raw-field
+    // snapshot ONLY (see pipelineTrace.js's buildUpstreamSnapshot) — never
+    // the full raw TDX record. `road`/`direction`/`startKM`/`endKM` here
+    // are the SAME local variables already extracted above for the
+    // normal fields (no second parse); EventType/EventSubType/Category
+    // are read fresh via `get()` purely for trace display (0 extra I/O —
+    // this is an in-memory object already fetched this run).
+    pipelineTraceUpstream: buildUpstreamSnapshot({
+      eventType: get(raw, 'EventType'),
+      eventSubType: get(raw, 'EventSubType'),
+      category: get(raw, 'Category'),
+      rawDirection: direction,
+      rawStartKM: startKM !== undefined ? startKM : null,
+      rawEndKM: endKM !== undefined ? endKM : null,
+      upstreamUpdatedAt: firstDefined(raw, ['LastUpdateTime', 'UpdateTime', 'SrcUpdateTime'], null) || null,
+      description,
+    }),
   };
 }
 

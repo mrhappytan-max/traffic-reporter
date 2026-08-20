@@ -26,7 +26,8 @@ import { readDedupeState } from './dedupe.js';
 import { PRODUCTION_TDX_SOURCE_IDS } from '../tdx/sources.js';
 import { persistProductionTdxEventCache, readProductionTdxEventCache } from './tdxEventCache.js';
 import { commitTdxUsageBatch, compactTdxUsageSummaryRecentDays } from '../tdx/usageLedger.js';
-import { runSharedFeedPersist } from './sharedFeed.js';
+import { runSharedFeedPersist, readSharedFeed } from './sharedFeed.js';
+import { buildTraceEntry, persistPipelineTraceEntries } from './pipelineTrace.js';
 
 /**
  * Shape-compatible with pipeline.js's buildSummary() output (every field
@@ -185,6 +186,30 @@ export async function runScheduledTdxSync(env, now = new Date()) {
   // comment), so vdSpeed.js's TDX calls are not reachable from any live
   // Production/debug/admin path today, only from its own unit tests.
 
+  // V1.8.6.7 (Pipeline Trace) — dedupeResult/gatingResult for every event
+  // that actually reaches runLineBroadcast's `allEvents`, sourced ENTIRELY
+  // from decisions dedupe.js/crossSourceDedup.js already made above (never
+  // re-derived): TDX new/updated events get dedupeResult; a TDX event
+  // matched by PBS this run (now the canonical merged event, same
+  // source:rawId as the original TDX identity — see buildCanonicalEvent)
+  // additionally gets gatingResult:'enriched-by-pbs-match'; a PBS event
+  // with no TDX match (source:'pbs') gets gatingResult:'unique-candidate'.
+  const traceEventMeta = new Map();
+  for (const event of summary.newEvents || []) {
+    traceEventMeta.set(`${event.source}:${event.rawId}`, { dedupeResult: 'new', gatingResult: null });
+  }
+  for (const event of summary.updatedEvents || []) {
+    traceEventMeta.set(`${event.source}:${event.rawId}`, { dedupeResult: 'updated', gatingResult: null });
+  }
+  for (const event of pbsSummary.canonicalEvents || []) {
+    const key = `${event.source}:${event.rawId}`;
+    const existing = traceEventMeta.get(key) || {};
+    traceEventMeta.set(key, { ...existing, gatingResult: 'enriched-by-pbs-match' });
+  }
+  for (const event of pbsSummary.uniquePbsEvents || []) {
+    traceEventMeta.set(`${event.source}:${event.rawId}`, { dedupeResult: null, gatingResult: 'unique-candidate' });
+  }
+
   const lineSummary = await runLineBroadcast(env, {
     allEvents: broadcastEvents,
     dedupeAvailable: summary.kvAvailable,
@@ -193,6 +218,7 @@ export async function runScheduledTdxSync(env, now = new Date()) {
     prunedKeys: summary.prunedKeys,
     now,
     dryRun: false,
+    eventMeta: traceEventMeta,
   });
 
   console.log(
@@ -278,5 +304,63 @@ export async function runScheduledTdxSync(env, now = new Date()) {
     sharedFeedSummary = { committed: false, error: err && err.message, eventCount: 0, withImageCount: 0 };
   }
 
-  return { ...summary, line: lineSummary, pbs: pbsSummary, sharedFeed: sharedFeedSummary };
+  // V1.8.6.7 — 24h Pipeline Trace. Deliberately the VERY LAST step, in its
+  // own try/catch, strictly AFTER Shared Feed persistence: this is the
+  // one place in the whole Cron run that can answer "did this event's
+  // image actually reach the Shared Feed" for the trace-view's own
+  // SHARED_FEED_IMAGE_LOST check (see pipelineTrace.js's own comment).
+  // Consumes ONLY data this run already computed (lineSummary's own
+  // per-event trace inputs, TDX's duplicateEvents, PBS's
+  // freewayGatedEvents) — never a new TDX/PBS/CCTV/LINE call. A failure
+  // here can never reduce or delay this Worker's own broadcast, which
+  // (including the Shared Feed write above) already fully completed.
+  let pipelineTraceSummary;
+  try {
+    // One extra, read-only KV get (not a `list`) so this run's trace
+    // entries can carry the ACTUAL persisted Shared Feed outcome, not
+    // just "did runSharedFeedPersist report committed:true" — the whole
+    // point of this check is to catch a case where those two disagree.
+    const feedAfterPersist = sharedFeedSummary.committed ? await readSharedFeed(env.TRAFFIC_KV) : { events: [] };
+    const feedById = new Map((feedAfterPersist.events || []).map((e) => [e.eventId, e]));
+
+    const patchedLineEntries = (lineSummary.pipelineTraceEntries || []).map((entry) => {
+      const feedEntry = feedById.get(entry.eventKey);
+      return {
+        ...entry,
+        delivery: {
+          ...entry.delivery,
+          sharedFeedPersisted: Boolean(feedEntry),
+          sharedFeedWithImage: feedEntry ? Boolean(feedEntry.imageUrl) : false,
+        },
+      };
+    });
+
+    // V1.8.6.7 — events whose lifecycle ended BEFORE runLineBroadcast ever
+    // saw them: a TDX-level duplicate (dedupe.js — unchanged content, same
+    // as last run) never enters `pushableEvents`/`broadcastEvents` at all;
+    // a 國道 PBS event with no TDX match this run (V57.2's own gate — see
+    // crossSourceDedup.js) never enters `uniquePbsEvents`/`broadcastEvents`
+    // either. Both still "entered the pipeline" this run (they were
+    // fetched, normalized, Hsinchu-filtered) and are exactly the kind of
+    // "why didn't this broadcast" question this trace exists to answer —
+    // built here, directly, from arrays those two modules already
+    // computed above (summary.duplicateEvents, pbsSummary.freewayGatedEvents).
+    const dropoutEntries = [
+      ...(summary.duplicateEvents || []).map((event) => buildTraceEntry({ event, now, dedupeResult: 'duplicate' })),
+      ...(pbsSummary.freewayGatedEvents || []).map((event) =>
+        buildTraceEntry({ event, now, gatingResult: 'gated-freeway-no-tdx-match' })
+      ),
+    ];
+
+    pipelineTraceSummary = await persistPipelineTraceEntries(env.TRAFFIC_KV, [...patchedLineEntries, ...dropoutEntries], now);
+    console.log(
+      `[cron][pipeline-trace] attempted=${pipelineTraceSummary.attempted} ` +
+        `committed=${pipelineTraceSummary.committed} failed=${pipelineTraceSummary.failed}`
+    );
+  } catch (err) {
+    console.error(`[cron][pipeline-trace] persistence failed: ${err && err.message}`);
+    pipelineTraceSummary = { attempted: 0, committed: 0, failed: 0, error: err && err.message };
+  }
+
+  return { ...summary, line: lineSummary, pbs: pbsSummary, sharedFeed: sharedFeedSummary, pipelineTrace: pipelineTraceSummary };
 }
