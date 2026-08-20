@@ -3,13 +3,13 @@
 **Read this file before touching the repo.** It exists so a new AI/agent session can operate correctly without re-scanning the whole codebase or re-investigating history that is already solved. If something below conflicts with what you find in the code, trust the code and treat this file as stale — but update it once you understand why.
 
 ```
-STATUS: V1.8.5 Production live
-MAIN:   97756a8805b52acb8746aa7d14bbf89be51ee267
-DATE:   2026-08-18
+STATUS: V1.8.6.5 Production live
+MAIN:   ee0d159b65e703fec3d7fe16690228bea433d5fb
+DATE:   2026-08-20
 PHASE:  Production operation. No speculative feature work; only real-world bug fixes.
 ```
 
-See `RELEASE_SUMMARY_V1.8.5.md` for the human-readable version of what shipped in this round.
+See `RELEASE_SUMMARY_V1.8.5.md` for the human-readable version of the V1.8.5 round, and `ENGINEERING_STATUS.md` for the current-state snapshot (Production version, known issues, watch items) — this file stays the round-by-round "why" history; that one stays a single current-truth page.
 
 ---
 
@@ -648,3 +648,77 @@ Originally proposed-but-not-built by the provenance audit above; the design belo
 - **Explicitly untouched, verified by tests**: `event.type`, broadcast eligibility (the write happens strictly AFTER the decision, from a captured value, never feeds back into it), `notified.js`'s fingerprint (separate KV namespace, `computeNotificationFingerprint` untouched), Cron/TDX/PBS cadence, CCTV pipeline/metadata cache/R2, TDX usage ledger/quota dashboard.
 
 **Tests**: `test/broadcastProvenance.test.js` (24 tests) — pure record-building, TTL/isolation/append-only-uniqueness at the `recordBroadcastProvenance` level, write-timing through `runLineBroadcast` (success/all-fail/no-subscriber/deduped-second-run/KV-outage-isolation), content-safety (no LINE target/user/group id, no Secret/token), TDX vs. PBS field coverage, `formattedOutput` exactly matching the real pushed text, `listBroadcastProvenance` filtering/bounding, and the admin endpoint's 401/200/405/0-network-calls behavior via the real `src/index.js` Worker entry point (same convention as `test/adminAuth.test.js`). Plus the full existing `broadcastPipeline`/`broadcastCctvIntegration`/`broadcastEligibility`/`notified`/`broadcastRules`/`messageFormat`/`provincialRoadMessageClarity`/`adminAuth` suites (168 tests total across this targeted run) re-verified unaffected.
+
+---
+
+## 21. V1.8.6.5 — KM Location Resolver (公里數 → 司機看得懂的位置 + 地圖)
+
+**Status: merged to `main` (`ee0d159`), Production live.** Turns a raw event's KM value into a driver-readable official location — 省道: `縣市/鄉鎮/村里`; 國道: 前後交流道／服務區組成的路段名 — plus a coordinate and a Google Maps link, entirely from official government open data imported and compiled OFFLINE. Zero runtime network calls anywhere in this feature: no TDX/PBS/Google API lookups, ever. Display/provenance-only — see "What this round deliberately never touches" below.
+
+### Architecture
+
+Three layers, each independently testable:
+
+1. **Raw data** (`data/road-location/raw/`) — the official files themselves (or a normalized reduction of them), never bundled into the Worker.
+2. **Importer** (`scripts/updateRoadLocationData.mjs`, run via `npm run update:road-location-data`) — validates/normalizes/compacts raw → the 3 generated files. Deterministic, fail-loud on any schema mismatch (never silently drops a bad row), atomic replace (temp file + rename; a failed run never leaves a previously-good generated file half-written).
+3. **Generated data** (`data/road-location/generated/{provincial,freeway,freewayFacilities}.js`) — the ONLY thing the Worker actually bundles/reads at runtime. Plain `export default {metadata, points|facilities}` modules, each carrying `sourceName`/`sourceUrl`/`sourceAgency`/`fetchedAt`/`datasetUpdatedAt`/`recordCount`/`sha256`.
+
+`src/traffic/kmLocationResolver.js` exports `resolveKmLocation({road, direction, startKM, endKM, displayKM}, {datasetOverride}?)` — reads only the 3 generated files (0 I/O), never throws, and is called from exactly two places: `messageFormat.js` (to build the display label + map line) and `broadcastProvenance.js` (to build the debug-only `kmLocationResolution` evidence field) — same "call the pure function twice, once per consumer" pattern already established by `resolveOtherAnomalyDetail` (§20). `src/traffic/roadIdentity.js` provides `canonicalFreewayRoad`/`canonicalProvincialRoad` — data-driven (regex + Chinese-numeral conversion + a small nickname-alias table), not a hardcoded per-route special case; used by BOTH the importer (to normalize raw road names) and the resolver (to normalize an incoming event's road), so the two can never drift apart.
+
+### Official dataset sources
+
+| Dataset | Agency | Portal | What it gives |
+|---|---|---|---|
+| 7040 「省道里程坐標(里程牌標誌)」 | 交通部公路局 | data.gov.tw/dataset/7040 | Every provincial-road milepost sign: route, chainage, county/township/village, WGS84 |
+| 95016 「國道百公尺里程樁」 | 交通部高速公路局 | data.gov.tw/dataset/95016 | Every 100m freeway marker: route, chainage, WGS84 (KML) |
+| 166496 | 交通部高速公路局 | data.gov.tw/dataset/166496 | Freeway interchange (交流道) name + chainage, per route |
+| 8161 「國道服務區簡介一覽表」 | 交通部高速公路局 | data.gov.tw/dataset/8161 | Freeway service area (服務區) name + chainage |
+
+This dev sandbox has no outbound network access to any of these hosts (confirmed exhaustively, see the git history of `feature/v1.8.6.5-km-location-resolver`) — the raw files were downloaded by the project owner on a machine with real access and committed directly: `data/road-location/raw/provincial/provincial.csv` (dataset 7040, verbatim) and `data/road-location/archive/raw_official_sources.zip` (datasets 95016/166496/8161's raw materials — KML, CP950-encoded CSV, UTF-8 CSV, plus HTML mileage tables from freeway.gov.tw that were archived but NOT parsed this round). `data/road-location/archive/README_RAW_CONTRACT.md` and `VERIFY.json` document exactly what was collected, from where, with SHA-256s and QA notes (e.g. "chainage is as-installed, not idealised — a 9K sign is often 9K+015/9K+022 in practice").
+
+### Importer / update flow
+
+Two scripts, different jobs:
+
+- **`scripts/prepareFreewayRawFromArchive.py`** (Python, not Node — deliberately: the archive's nested KML zip has CP950-encoded filenames under the legacy CP437 flag, and the 166496 CSVs are themselves CP950-encoded; Python's stdlib handles both cleanly). Reads `data/road-location/archive/raw_official_sources.zip`, writes `data/road-location/raw/freeway/{milestones,facilities}/*.csv` in this project's own simple CSV contract (`路線名稱,百公尺樁號KM,WGS84_E,WGS84_N` / `路線名稱,里程KM,名稱,類型`). Excludes 台26 (a provincial-road identity, out of freeway scope) and 南港聯絡道 (no numeral form to canonicalize) — logged, not silently dropped. Re-run this whenever the archive is refreshed.
+- **`scripts/updateRoadLocationData.mjs`** (Node, `npm run update:road-location-data`) — the ONE deterministic importer that produces `data/road-location/generated/*.js`. `buildProvincial()` reads the REAL data.gov.tw 7040 column schema directly (`route_raw`/`km_m`/`lon_wgs84`/`lat_wgs84`/`county`/`township`/`village`/`install_position`) — an earlier, pre-real-data GUESSED contract (公路編號/樁號KM/設置位置) never matched the actual government file and was replaced once real data landed (see `data/road-location/raw/README.md` for the full current contract). Left/right sign pairs ~1m apart at the same physical marker are deduplicated (10m bucketing, prefers a 中央 sign) — 30,079 raw rows → 22,563 compact points. A `village` value containing a literal `"?"` (~150/30,079 rows — a confirmed source-side cp950→UTF-8 encoding artifact) is dropped, never guessed; falls back to county+township only.
+
+Run it any time the raw files change: `npm run update:road-location-data`. It fails loudly (non-zero exit, no file touched) on a missing required column or an unparsable value — never silently produces a partial/wrong dataset that could be mistaken for a verified one.
+
+### Generated data paths (what the Worker actually bundles)
+
+```
+data/road-location/generated/provincial.js        — 22,563 points
+data/road-location/generated/freeway.js            — 10,035 points (100m milestones)
+data/road-location/generated/freewayFacilities.js  — 227 facilities (207 IC + 20 SA)
+```
+
+### Resolver priority (`kmLocationResolver.js`)
+
+Target-KM selection: structured `startKM`+`endKM` midpoint > a single structured end > `event.displayKM` (PBS-only, lowest priority — see "PBS displayKM" below). Then: `canonicalFreewayRoad` tried first (freeway dataset), else `canonicalProvincialRoad` (provincial dataset); a road neither canonicalizer recognizes fails closed with `reason:'unknown-road'`. Provincial: nearest point within `PROVINCIAL_TOLERANCE_KM` (0.6km); label = the point's own free-text `設置位置` if present, else composed `county+township+village`. Freeway: nearest 100m milestone within `FREEWAY_MILESTONE_TOLERANCE_KM` (0.15km) for the coordinate; nearest bracketing facilities (within `FREEWAY_FACILITY_MAX_GAP_KM`=60km) for the label, direction-aware ordering (南/東=ascending KM, 北/西=descending, unknown=neutral ascending — never guessed).
+
+`messageFormat.js`'s label priority (full order, tier 2 is this round's addition): **1.** `event.locationDescription` (source's own human text, V1.8.6.4) **2.** `resolveKmLocation()`'s official label (this round) **3.** `getRoadSectionLabel()`'s old curated 國1/國3-only anchor table (pre-V1.8.6.4) **4.** raw KM (unchanged, its own line) **5.** nothing. A `📍 地圖 <url>` line is added independently whenever the resolver produced a coordinate, regardless of which tier won the label — the map is a separate concern from the label text, never a duplicate. Several pre-existing tests (`messageFormat.test.js`, `provincialRoadMessageClarity.test.js`) were updated where tier 2 now legitimately outranks tier 3 for roads/KMs the real dataset covers — the label text changed (e.g. old hand-typed "竹北－湖口" → official "竹北交流道－湖口服務區"), but every invariant those tests actually protect (KM always shown, a route-name-shaped `location` string never used as a label, a KM-shaped `LocationDescription` never used as a label) still holds and is still asserted.
+
+### Fail-closed logic
+
+`resolveKmLocation` wraps its entire body in try/catch and NEVER throws — every failure mode (unrecognized road, no dataset coverage for that road, nearest point outside tolerance, malformed input) converts to `{resolved:false, reason:'...'}`. A caller never needs its own try/catch. When `resolved` is false, `messageFormat.js`/`broadcastProvenance.js` fall back to exactly the V1.8.6.4 behavior — never a guess, never a blocked Cron tick. Verified directly: `test/kmLocationResolver.test.js` test 16 confirms a road genuinely outside the real dataset's coverage (`台99`, not a real route) still resolves `{resolved:false, reason:'no-data'}` against the REAL bundled data, not a mock.
+
+### PBS `displayKM` does NOT gain CCTV authority
+
+Unchanged from V1.8.5.1/V1.8.6.4 and still true after this round: `cctv/dynamicCollage.js`'s `eventTargetKm()` reads ONLY `startKM`/`endKM`, never `displayKM` — a PBS event can never become CCTV-eligible just because its free-text comment happened to mention a kilometer, and this round adds nothing that changes that. `resolveKmLocation` DOES accept `displayKM` as its own lowest-priority KM-selection input (so a PBS-sourced event can still get a resolved DISPLAY label/map line when it has no structured KM at all) — but this is purely a display/provenance decision inside `kmLocationResolver.js` itself; it never writes back to `event.startKM`/`event.endKM`, never touches `resolveCctvEligibility`, and CCTV eligibility's own KM-reliability boundary is completely untouched.
+
+### fingerprint / eligibility / suppression — unaffected, by construction
+
+`kmLocationResolver.js` is imported by exactly two files (`messageFormat.js`, `broadcastProvenance.js`) — neither `notified.js` (fingerprint), `incidentSuppression.js` (suppression), nor `broadcastRules.js` (eligibility) imports it or anything derived from it. `computeNotificationFingerprint`/`getBroadcastEligibility`/`resolveIncidentNotifications` all still read only `event.startKM`/`endKM`/`type`/`road`/`direction`/etc. exactly as before this round. This is a strict, verifiable display/provenance-only boundary, not just a convention.
+
+### What this round deliberately never touches
+
+TDX/PBS fetch cadence, Cron, TDX usage budget, subscriptions, notified-state semantics, accident/incident suppression semantics, CCTV eligibility/metadata-fetch policy/matching, R2 image policy, Shared Feed architecture, the 雙鐵 repos. Notification fingerprint / incident-suppression key / dedupe identity are all still computed exactly as before — this feature is strictly display/provenance enrichment layered on top.
+
+### Bundle size — now a real, growing number to watch
+
+Pre-real-data (scaffold only): 850.57 KiB / gzip 227.39 KiB. With the real dataset above bundled in: **7549.90 KiB / gzip 718.25 KiB** (`npx wrangler deploy --dry-run`). `provincial.js` alone is ~4.9MB uncompressed. Still comfortably within Cloudflare Workers' published script-size limits, but this is the real number the original spec's "storage decision made only after real measurement" was waiting for — re-measure whenever more official data is imported (more freeway routes, or the not-yet-parsed freeway.gov.tw cnid=1906 tables), and reconsider bundle-vs-KV if it keeps climbing. See `ENGINEERING_STATUS.md`'s "Watch items" for the standing reminder.
+
+### Tests
+
+`test/roadIdentity.test.js`, `test/kmLocationResolver.test.js` (incl. the two REQUIRED real acceptance resolutions, tests 17/18, run against the actual imported data — not a fixture), `test/kmLocationMessageIntegration.test.js`, `test/broadcastProvenanceKmLocation.test.js`, `test/updateRoadLocationData.test.js` (the importer's own `parseCsv` in isolation). Full suite: 819 tests, 816 pass, 3 fail — the same 3 pre-existing, unrelated failures as every prior round (2× `pbs-relay/tests/*`, 1× wall-clock-dependent `healthQuotaDashboard.test.js`).
