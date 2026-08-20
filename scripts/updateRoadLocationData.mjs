@@ -94,11 +94,18 @@ function readSourceMeta(dir) {
   } catch (err) {
     fail(`${metaPath}: not valid JSON (${err.message})`);
   }
+  // V1.8.6.5 — accepts both this project's own documented SOURCE_META.json
+  // shape (raw/README.md §4: sourceName/sourceUrl/sourceAgency/
+  // datasetUpdatedAt) AND the real-world shape the operator's own data-
+  // collection tooling actually produced for raw/provincial/SOURCE_META.json
+  // (dataset_title/source_portal/source_authority/dataset_modified) —
+  // reading metadata robustly is a code decision, not a change to the raw
+  // file's own content, so this file is never rewritten to match.
   return {
-    sourceName: parsed.sourceName ?? null,
-    sourceUrl: parsed.sourceUrl ?? null,
-    sourceAgency: parsed.sourceAgency ?? null,
-    datasetUpdatedAt: parsed.datasetUpdatedAt ?? null,
+    sourceName: parsed.sourceName ?? parsed.dataset_title ?? null,
+    sourceUrl: parsed.sourceUrl ?? parsed.source_portal ?? null,
+    sourceAgency: parsed.sourceAgency ?? parsed.source_authority ?? null,
+    datasetUpdatedAt: parsed.datasetUpdatedAt ?? parsed.dataset_modified ?? null,
   };
 }
 
@@ -133,34 +140,73 @@ function sha256Of(strings) {
   return hash.digest('hex');
 }
 
+// V1.8.6.5 — matches the REAL official schema (data.gov.tw dataset 7040,
+// "省道里程坐標(里程牌標誌)"), confirmed once the operator actually
+// committed the raw file — see data/road-location/raw/provincial/
+// SOURCE_META.json for the full column list/provenance/notes. This
+// REPLACES an earlier, pre-real-data guessed contract (公路編號/樁號KM/
+// 設置位置/...) that turned out not to match the government file's own
+// column names at all; see raw/README.md for the current documented
+// contract.
+const PROVINCIAL_REQUIRED_COLUMNS = ['route_raw', 'km_m', 'lon_wgs84', 'lat_wgs84'];
+// Real-world chainage is as-installed, not idealised: every physical
+// marker is published as a LEFT+RIGHT sign pair ~1m apart (install_
+// position 左側/右側), or a single 中央 sign — see SOURCE_META.json's own
+// notes. Bucketing to the nearest 10m collapses each such pair into one
+// generated point (10m << the real ~100m/500m/1km marker spacing, so
+// this can never merge two genuinely distinct markers) — cuts the
+// generated dataset roughly in half without losing any resolvable
+// precision (kmLocationResolver.js's own PROVINCIAL_TOLERANCE_KM is 0.6km,
+// far coarser than 10m). Prefers a 中央 (single, bidirectional) sign over
+// a 左側/右側 half of a pair when both exist in the same bucket.
+const PROVINCIAL_DEDUPE_BUCKET_METERS = 10;
+
 function buildProvincial() {
   const dir = path.join(RAW_DIR, 'provincial');
   const files = listCsvFiles(dir);
   const meta = readSourceMeta(dir);
   const rawTexts = files.map((f) => readFileSync(f, 'utf8'));
 
-  const points = [];
+  const byBucket = new Map(); // "<road>|<bucket>" -> point, 中央-preferred
   for (const file of files) {
-    const rows = readRows(file, ['公路編號', '樁號KM']);
+    const rows = readRows(file, PROVINCIAL_REQUIRED_COLUMNS);
     for (const { record, rowNum } of rows) {
-      const road = canonicalProvincialRoad(record['公路編號']);
-      if (!road) fail(`${file}: row ${rowNum}: "${record['公路編號']}" is not a recognizable provincial road (公路編號)`);
-      const km = parseNumber(record['樁號KM'], file, rowNum, '樁號KM');
+      const road = canonicalProvincialRoad(record['route_raw']);
+      if (!road) fail(`${file}: row ${rowNum}: "${record['route_raw']}" is not a recognizable provincial road (route_raw)`);
+      const kmMeters = parseNumber(record['km_m'], file, rowNum, 'km_m');
+      const km = kmMeters / 1000;
 
-      const county = record['縣市'] || null;
-      const township = record['鄉鎮'] || null;
-      const village = record['村里'] || null;
-      const label = record['設置位置'] || null;
-      if (!label && !(county && township)) {
-        fail(`${file}: row ${rowNum}: needs either "設置位置" or both "縣市"+"鄉鎮" to produce a usable label`);
+      const county = record['county'] || null;
+      const township = record['township'] || null;
+      // ~150 of 30,079 rows (all in `village` only) carry a literal "?"
+      // where the real file has a rare CJK character that didn't survive
+      // the source's own cp950->UTF-8 conversion (a raw-data encoding
+      // artifact, confirmed present in the committed file itself — see
+      // raw/provincial/SOURCE_META.json's own notes for the same class of
+      // known issue). Never guessed/reconstructed (that would be exactly
+      // the "不要猜" this project forbids) — just dropped, falling back to
+      // the still-fully-accurate county+township label instead of
+      // showing a driver a broken "?" glyph.
+      const villageRaw = record['village'] || null;
+      const village = villageRaw && villageRaw.includes('?') ? null : villageRaw;
+      if (!(county && township)) {
+        fail(`${file}: row ${rowNum}: needs both "county" and "township" to produce a usable label`);
       }
 
-      const lat = record['WGS84_N'] ? parseNumber(record['WGS84_N'], file, rowNum, 'WGS84_N') : null;
-      const lng = record['WGS84_E'] ? parseNumber(record['WGS84_E'], file, rowNum, 'WGS84_E') : null;
+      const lat = parseNumber(record['lat_wgs84'], file, rowNum, 'lat_wgs84');
+      const lng = parseNumber(record['lon_wgs84'], file, rowNum, 'lon_wgs84');
+      const isCenter = record['install_position'] === '中央';
 
-      points.push({ road, km, county, township, village, label, lat, lng });
+      const bucket = Math.round(kmMeters / PROVINCIAL_DEDUPE_BUCKET_METERS);
+      const key = `${road}|${bucket}`;
+      const existing = byBucket.get(key);
+      if (!existing || (isCenter && !existing.isCenter)) {
+        byBucket.set(key, { road, km, county, township, village, label: null, lat, lng, isCenter });
+      }
     }
   }
+
+  const points = [...byBucket.values()].map(({ isCenter, ...point }) => point);
   points.sort((a, b) => (a.road === b.road ? a.km - b.km : a.road.localeCompare(b.road)));
 
   return {

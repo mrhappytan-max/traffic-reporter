@@ -16,23 +16,35 @@
 // derive — that part stays intentionally tiny, same reasoning
 // roadSectionLabel.js already documents for its own ROAD_ALIASES.
 //
+// Suffix letter set (甲乙丙丁戊己庚辛壬癸) and the "臨NN"
+// temporary-detour-route pattern (台16臨29, 台8臨37, ...) were calibrated
+// against the REAL official dataset (data/road-location/raw/provincial/
+// provincial.csv, data.gov.tw 7040) once it was actually imported — not
+// guessed. The 10-character set is the complete, fixed heavenly-stem
+// sequence Taiwan's route-naming convention draws from (甲乙丙丁戊己庚辛
+// 壬癸); the real data was only observed to use up to 庚, but the full
+// set costs nothing extra and needs no future recalibration.
+//
 // Canonical output shapes (what the imported dataset's own `road` column
 // must already be normalized to by the importer — see
 // scripts/updateRoadLocationData.mjs):
-//   freeway:    "國道一號", "國道三號", ... (Chinese-numeral form, matching
-//               roadSectionLabel.js's own existing convention)
-//   provincial: "台3", "台13甲", "台61", ... (bare "台<digits><suffix?>",
-//               no "線" suffix, no leading zeros)
+//   freeway:    "國道一號", "國道三號甲", ... (Chinese-numeral form,
+//               matching roadSectionLabel.js's own existing convention,
+//               with a suffix letter appended after "號" when present)
+//   provincial: "台3", "台13甲", "台16臨29", ... (bare
+//               "台<digits><suffix?><臨NN?>", no "線" suffix, no leading
+//               zeros)
 // Returns null (never a guess) when the input doesn't look like a
 // recognizable freeway or provincial road name at all.
 
 const CHINESE_DIGIT = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+const SUFFIX_LETTERS = '甲乙丙丁戊己庚辛壬癸';
 
 // Converts 1-99 to a Chinese numeral, e.g. 3 -> "三", 61 -> "六十一",
 // 10 -> "十" (not "一十", matching how 國道十號 would actually be
-// written). Freeway route numbers never exceed two digits in practice,
-// but this is written generically (not a per-number lookup table) per
-// the same "資料驅動" requirement above.
+// written). Freeway/provincial route numbers never exceed two digits in
+// practice, but this is written generically (not a per-number lookup
+// table) per the same "資料驅動" requirement above.
 function arabicToChineseNumeral(n) {
   if (!Number.isInteger(n) || n < 1 || n > 99) return null;
   if (n < 10) return CHINESE_DIGIT[n];
@@ -58,8 +70,8 @@ const FREEWAY_NICKNAME_ALIASES = {
 };
 
 /**
- * @param {string} road - any raw road string ("國道1號"/"國道一號"/"中山高"/"台61線"/...)
- * @returns {string|null} canonical "國道X號" (Chinese numeral) form, or null if unrecognized as a freeway.
+ * @param {string} road - any raw road string ("國道1號"/"國道一號"/"國1"/"國3甲"/"中山高"/...)
+ * @returns {string|null} canonical "國道X號[suffix]" (Chinese numeral) form, or null if unrecognized as a freeway.
  */
 export function canonicalFreewayRoad(road) {
   if (!road) return null;
@@ -68,22 +80,26 @@ export function canonicalFreewayRoad(road) {
   if (FREEWAY_NICKNAME_ALIASES[trimmed]) return FREEWAY_NICKNAME_ALIASES[trimmed];
 
   // Already Chinese-numeral form — just normalize spacing/suffix.
-  const chineseMatch = trimmed.match(/^國道\s*([一二三四五六七八九十百]+)\s*號?$/);
-  if (chineseMatch) return `國道${chineseMatch[1]}號`;
+  const chineseMatch = trimmed.match(new RegExp(`^國道\\s*([一二三四五六七八九十百]+)\\s*號?\\s*([${SUFFIX_LETTERS}])?$`));
+  if (chineseMatch) return `國道${chineseMatch[1]}號${chineseMatch[2] || ''}`;
 
-  // Arabic-numeral form — convert digit(s) to Chinese numeral.
-  const arabicMatch = trimmed.match(/^國道\s*(\d{1,2})\s*號?$/);
+  // Arabic-numeral form — both the full "國道1號" shape and the short
+  // "國1"/"國3甲" shape actually used by the official freeway datasets
+  // (dataset 95016's own KML RoadName field, dataset 8161's 國道 column)
+  // — "道" and "號" are each independently optional. Converts the digit
+  // to Chinese numeral; any suffix letter is carried through as-is.
+  const arabicMatch = trimmed.match(new RegExp(`^國(?:道)?\\s*(\\d{1,2})\\s*(?:號)?\\s*([${SUFFIX_LETTERS}])?$`));
   if (arabicMatch) {
     const chinese = arabicToChineseNumeral(parseInt(arabicMatch[1], 10));
-    return chinese ? `國道${chinese}號` : null;
+    return chinese ? `國道${chinese}號${arabicMatch[2] || ''}` : null;
   }
 
   return null;
 }
 
 /**
- * @param {string} road - any raw road string ("台3線"/"台3"/"省道台13甲線"/...)
- * @returns {string|null} canonical "台<digits><suffix?>" form (no "線"), or null if unrecognized as a provincial road.
+ * @param {string} road - any raw road string ("台3線"/"台3"/"省道台13甲線"/"台16臨29"/...)
+ * @returns {string|null} canonical "台<digits><suffix?><臨NN?>" form (no "線"), or null if unrecognized as a provincial road.
  */
 export function canonicalProvincialRoad(road) {
   if (!road) return null;
@@ -91,9 +107,9 @@ export function canonicalProvincialRoad(road) {
   // not part of the route identity itself.
   const trimmed = String(road).trim().replace(/^省道/, '');
 
-  const match = trimmed.match(/^台(\d{1,3})([甲乙丙丁])?\s*(?:線)?$/);
+  const match = trimmed.match(new RegExp(`^台(\\d{1,3})([${SUFFIX_LETTERS}])?(臨\\d{1,3})?\\s*(?:線)?$`));
   if (!match) return null;
 
   const digits = String(parseInt(match[1], 10)); // strips any leading zero
-  return `台${digits}${match[2] || ''}`;
+  return `台${digits}${match[2] || ''}${match[3] || ''}`;
 }

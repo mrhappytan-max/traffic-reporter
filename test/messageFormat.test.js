@@ -99,9 +99,22 @@ test('7. congestion message matches the required new short format exactly', () =
     updatedAt: '2026-08-15T10:50:00+08:00',
   };
   const text = formatEventMessage(event);
+  // V1.8.6.5: the official KM Location Resolver (tier 2) now covers this
+  // road/KM with real data.gov.tw facility data, and outranks
+  // roadSectionLabel.js's old hand-curated anchor table (tier 3) — see
+  // messageFormat.js's own module comment for the full priority order.
+  // "竹北交流道－湖口服務區" (official facility names) replaces the old
+  // hand-typed "竹北－湖口"; a 📍 地圖 line is now also added.
   assert.equal(
     text,
-    ['🐢 壅塞', '國1 北向｜竹北－湖口路段', '91K+000～82K+400', '車多回堵\n請預留時間', '🕒 10:50更新'].join('\n')
+    [
+      '🐢 壅塞',
+      '國1 北向｜竹北交流道－湖口服務區路段',
+      '91K+000～82K+400',
+      '車多回堵\n請預留時間',
+      '📍 地圖 https://www.google.com/maps/search/?api=1&query=24.85875369,121.0106688',
+      '🕒 10:50更新',
+    ].join('\n')
   );
 });
 
@@ -194,12 +207,12 @@ test('3. start/end range -> KM is shown as a "start～end" range', () => {
   assert.equal(lines[2], '93K+300～94K+100');
 });
 
-test('4. structured KM present but NO resolvable section label (road outside roadSectionLabel.js\'s curated table) -> KM is still shown, never silently dropped', () => {
+test('4. structured KM present but NO resolvable section label (road outside roadSectionLabel.js\'s curated table AND outside the official V1.8.6.5 dataset) -> KM is still shown, never silently dropped', () => {
   const event = {
     type: 'construction',
-    road: '台1線', // not in roadSectionLabel.js's ROAD_ANCHORS/ROAD_ALIASES
+    road: '台199線', // not in roadSectionLabel.js's ROAD_ANCHORS/ROAD_ALIASES, and not a real provincial route (see kmLocationResolver.test.js test 16)
     direction: '南向',
-    location: '台1線 南向 90K+000 - 91K+000', // a location string that is NOT a KM display and must not be shown instead
+    location: '台199線 南向 90K+000 - 91K+000', // a location string that is NOT a KM display and must not be shown instead
     startKM: '90K+000',
     endKM: '91K+000',
     description: '施工',
@@ -207,8 +220,9 @@ test('4. structured KM present but NO resolvable section label (road outside roa
   };
   const text = formatEventMessage(event);
   const lines = text.split('\n');
-  assert.equal(lines[1], '台1線 南向'); // no section label, so plain road+direction
+  assert.equal(lines[1], '台199線 南向'); // no section label from any tier, so plain road+direction
   assert.equal(lines[2], '90K+000～91K+000'); // structured KM shown, not the location text
+  assert.ok(!text.includes('📍')); // no coordinate resolved either
 });
 
 // Required test 5's spirit: PBS itself never carries a structured KM
@@ -245,7 +259,12 @@ test('6. a PBS event with ONLY a parsed displayKM (no structured KM at all) show
   };
   const text = formatEventMessage(event);
   const lines = text.split('\n');
-  assert.equal(lines[1], '國1');
+  // V1.8.6.5: the resolver's own KM-selection priority treats displayKM as
+  // a valid (lowest-priority) target when no structured startKM/endKM is
+  // present — unlike the old tier-3 anchor table, which never looked at
+  // displayKM at all — so tier 2 now resolves here too (93.3K sits
+  // between the real 竹北/新竹 interchanges).
+  assert.equal(lines[1], '國1｜竹北交流道－新竹交流道路段');
   assert.equal(lines[2], '93K+300'); // NOT "中山高速公路-國道1號"
 });
 
@@ -279,9 +298,21 @@ test('12. regression — the real working "國1 南向｜新竹／科學園區�
     updatedAt: '2026-08-18T17:05:00+08:00',
   };
   const text = formatEventMessage(event);
+  // V1.8.6.5: tier 2 (official data.gov.tw facility data) now outranks
+  // the old hand-curated tier-3 anchor table for this KM too — "竹北交流
+  // 道－新竹交流道" (real interchange names bracketing 93.3K) replaces the
+  // old hand-typed "新竹／科學園區附近"; a 📍 地圖 line is now also added.
   assert.equal(
     text,
-    ['🚨 交通事故', '國1 南向｜新竹／科學園區附近', '93K+300', '事故影響通行', '請提前避開', '🕒 17:05更新'].join('\n')
+    [
+      '🚨 交通事故',
+      '國1 南向｜竹北交流道－新竹交流道路段',
+      '93K+300',
+      '事故影響通行',
+      '請提前避開',
+      '📍 地圖 https://www.google.com/maps/search/?api=1&query=24.80515882,121.0098376',
+      '🕒 17:05更新',
+    ].join('\n')
   );
 });
 
@@ -299,7 +330,9 @@ test('a congestion cluster candidate (numeric startKM/endKM from congestionClust
   };
   const text = formatEventMessage(clusterCandidate);
   // V1.4.1: defaults to "壅塞", not "嚴重壅塞" — see the test above.
-  assert.match(text, /^🐢 壅塞\n國3 北向｜竹林－關西路段\n90K\+000～79K\+000\n/);
+  // V1.8.6.5: tier 2 (official data) now resolves "竹林交流道－關西交流道"
+  // (real interchange names) instead of the old tier-3 "竹林－關西".
+  assert.match(text, /^🐢 壅塞\n國3 北向｜竹林交流道－關西交流道路段\n90K\+000～79K\+000\n/);
 });
 
 // --- V1.4.1: congestion severity (moderate/congested/severe) — see congestionSeverity.js ---

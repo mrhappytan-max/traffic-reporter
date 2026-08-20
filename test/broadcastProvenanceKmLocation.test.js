@@ -68,7 +68,7 @@ test('3. buildProvenanceRecord: kmLocationResolution omitted entirely -> null, n
   assert.equal(record.kmLocationResolution, null);
 });
 
-test('4. end-to-end: a real successful push writes a provenance record whose kmLocationResolution reflects the (currently empty) Production dataset — resolved:false, reason:"unknown-road" or "no-data", never a fabricated match', async () => {
+test('4. end-to-end: a real successful push writes a provenance record whose kmLocationResolution reflects the real imported Production dataset (data.gov.tw 7040), with coordinateAvailable true but no raw lat/lng/mapUrl in the stored record', async () => {
   const kv = createMockKV();
   const now = new Date('2026-08-20T08:00:00+08:00');
   await setUserEnabled(kv, 'U1', true, now);
@@ -101,5 +101,10 @@ test('4. end-to-end: a real successful push writes a provenance record whose kmL
   assert.equal(keys.length, 1);
   const record = JSON.parse(kv.store.get(keys[0]));
   assert.ok(record.kmLocationResolution);
-  assert.equal(record.kmLocationResolution.resolved, false);
+  assert.equal(record.kmLocationResolution.resolved, true);
+  assert.equal(record.kmLocationResolution.dataset, 'provincial');
+  assert.equal(record.kmLocationResolution.road, '台3');
+  assert.equal(record.kmLocationResolution.coordinateAvailable, true);
+  assert.equal('coordinate' in record.kmLocationResolution, false);
+  assert.equal('mapUrl' in record.kmLocationResolution, false);
 });

@@ -1,0 +1,11 @@
+{
+  "sourceName": "國道交流道與服務區里程",
+  "sourceUrl": "https://data.gov.tw/dataset/166496 ; https://data.gov.tw/dataset/8161",
+  "sourceAgency": "交通部高速公路局",
+  "datasetUpdatedAt": "2026-08-20",
+  "notes": [
+    "Normalized from data/road-location/archive/raw_official_sources.zip by scripts/prepareFreewayRawFromArchive.py — see that script's own header comment.",
+    "207 interchanges (dataset 166496) + 20 service areas (dataset 8161).",
+    "freeway.gov.tw cnid=1906 HTML mileage tables (also archived) were NOT parsed this round."
+  ]
+}

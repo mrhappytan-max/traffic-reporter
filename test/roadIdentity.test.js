@@ -27,6 +27,13 @@ test('canonicalFreewayRoad: historical nickname aliases resolve to canonical for
   assert.equal(canonicalFreewayRoad('二高'), '國道三號');
 });
 
+test('canonicalFreewayRoad: short "國N"/"國N甲" form (as used by the real dataset 95016 KML RoadName field and dataset 8161 國道 column) is recognized', () => {
+  assert.equal(canonicalFreewayRoad('國1'), '國道一號');
+  assert.equal(canonicalFreewayRoad('國3甲'), '國道三號甲');
+  assert.equal(canonicalFreewayRoad('國10'), '國道十號');
+  assert.equal(canonicalFreewayRoad('國道2甲'), '國道二號甲'); // full "道" prefix + suffix, no "號" (as in the real dataset 166496 filenames)
+});
+
 test('canonicalFreewayRoad: unrecognized / non-freeway text returns null, never a guess', () => {
   assert.equal(canonicalFreewayRoad('台3線'), null);
   assert.equal(canonicalFreewayRoad('中華路'), null);
@@ -44,6 +51,13 @@ test('canonicalProvincialRoad: strips "線" suffix and "省道" prefix, keeps th
 
 test('canonicalProvincialRoad: leading zeros are stripped', () => {
   assert.equal(canonicalProvincialRoad('台03線'), '台3');
+});
+
+test('canonicalProvincialRoad: full suffix-letter range and 臨NN temporary-detour routes, calibrated against the real official dataset', () => {
+  assert.equal(canonicalProvincialRoad('台1己'), '台1己');
+  assert.equal(canonicalProvincialRoad('台2庚'), '台2庚');
+  assert.equal(canonicalProvincialRoad('台16臨29'), '台16臨29');
+  assert.equal(canonicalProvincialRoad('台16臨29線'), '台16臨29');
 });
 
 test('canonicalProvincialRoad: unrecognized / non-provincial text returns null, never a guess', () => {

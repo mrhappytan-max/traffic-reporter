@@ -1,15 +1,11 @@
-// V1.8.6.5 — formatEventMessage()'s wiring to the KM Location Resolver.
-//
-// Production's generated road-location datasets are currently EMPTY (no
-// official raw data has been imported yet — see
-// data/road-location/raw/README.md); resolveKmLocation() therefore always
-// fails closed against them. That's exactly what this file proves:
-// against real Production data, formatEventMessage's output must be
-// byte-for-byte identical to its pre-V1.8.6.5 (V1.8.6.4) behavior — the
-// new tier-2 label and 📍 地圖 line must both stay silent — until real
-// official data is imported. The tier-2 label-selection/mapUrl LOGIC
-// itself (what happens once official data exists) is covered independently
-// and exhaustively, with TEST FIXTURE data, in test/kmLocationResolver.test.js.
+// V1.8.6.5 — formatEventMessage()'s wiring to the KM Location Resolver,
+// now exercised against the REAL imported official dataset (data.gov.tw
+// 7040/95016/166496/8161 — see PROJECT_HANDOFF.md's V1.8.6.5 section).
+// Tier-2 label-selection/mapUrl LOGIC itself (what happens for arbitrary
+// roads/KMs) is covered independently and exhaustively, with TEST FIXTURE
+// data, in test/kmLocationResolver.test.js — this file only checks the
+// end-to-end wiring: which tier wins the label line, and that the 📍 地圖
+// line shows up exactly when (and only when) a coordinate resolves.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,28 +16,32 @@ import {
 } from './fixtures.js';
 import { normalizeRoadEvent } from '../src/tdx/normalize.js';
 
-test('against real (currently empty) Production road-location data: no 📍 地圖 line appears on any message', () => {
+test('tier-1 human location text (locationDescription) still wins line 1 over the official resolver label (V1.8.6.4 priority unchanged)', () => {
   const event = normalizeRoadEvent(highwayTai3ConstructionWithLocationDescription, 'highway');
   const text = formatEventMessage(event);
-  assert.ok(!text.includes('📍'), text);
+  const lines = text.split('\n');
+  assert.equal(lines[1], '台3線 雙向｜關西－橫山路段');
 });
 
-test('against real (currently empty) Production road-location data: tier-1 human location text still wins line 1 (V1.8.6.4 behavior unchanged)', () => {
+test('a 📍 地圖 line is still added even when tier-1 text wins the label — the map is a separate concern from which tier supplied the label text', () => {
   const event = normalizeRoadEvent(highwayTai3ConstructionWithLocationDescription, 'highway');
   const text = formatEventMessage(event);
-  assert.ok(text.includes('關西－橫山路段'), text);
+  assert.match(text, /^📍 地圖 https:\/\/www\.google\.com\/maps\/search\/\?api=1&query=[\d.,-]+$/m);
 });
 
-test('against real (currently empty) Production road-location data: no locationDescription and no official-dataset match -> falls back exactly as V1.8.6.4 did (bare road+direction, raw KM line)', () => {
+test('no locationDescription, but the official dataset covers this road -> tier-2 (resolver) label wins line 1, not a bare road+direction fallback', () => {
   const event = normalizeRoadEvent(highwayTai3ConstructionNoLocationDescription, 'highway');
   const text = formatEventMessage(event);
   const lines = text.split('\n');
-  assert.equal(lines[1], '台3線 雙向'); // no section label resolved from any tier
-  assert.equal(lines[2], '78K+500～79K+200');
-  assert.ok(!text.includes('📍'));
+  // Real data.gov.tw 7040 coverage for 台3 at ~78.85K — see
+  // test/kmLocationResolver.test.js's own acceptance-test-adjacent cases
+  // for the resolver's own output shape; this only checks the label WON.
+  assert.equal(lines[1], '台3線 雙向｜新竹縣北埔鄉');
+  assert.equal(lines[2], '78K+500～79K+200'); // raw KM line is untouched, still shown
+  assert.ok(text.includes('📍 地圖 https://www.google.com/maps/search/?api=1&query='));
 });
 
-test('a freeway event with structured KM but no official dataset match falls back to the curated 國1/國3 anchor table (tier 3), unchanged from V1.8.6.4', () => {
+test('a freeway event with structured KM the official dataset covers resolves via the resolver (tier 2), not the old curated anchor table (tier 3)', () => {
   const event = normalizeRoadEvent(
     {
       EventID: 'FRW-TEST-1',
@@ -53,5 +53,26 @@ test('a freeway event with structured KM but no official dataset match falls bac
     'freeway'
   );
   const text = formatEventMessage(event);
-  assert.ok(text.includes('竹北附近') || text.includes('竹北'), text); // roadSectionLabel.js's own curated anchor, unaffected by V1.8.6.5
+  const lines = text.split('\n');
+  assert.equal(lines[1], '國1 北向｜竹北交流道附近');
+  assert.ok(text.includes('📍 地圖 https://www.google.com/maps/search/?api=1&query=24.82443422,121.0177405'));
+});
+
+test('a road/KM the official dataset genuinely does not cover falls back exactly as V1.8.6.4 did: no tier-2 label, no 📍 line', () => {
+  // 台99 is not a real provincial route — guaranteed absent from the
+  // real imported dataset (see kmLocationResolver.test.js test 16).
+  const event = normalizeRoadEvent(
+    {
+      EventID: 'HWY-TEST-NODATA',
+      EventTitle: '台99線事故',
+      EventType: '事故',
+      Description: '台99線路段發生事故',
+      Location: { FreeExpressHighway: { Road: '台99線', Direction: '南向', StartKM: '5K+000' } },
+    },
+    'highway'
+  );
+  const text = formatEventMessage(event);
+  const lines = text.split('\n');
+  assert.equal(lines[1], '台99線 南向'); // bare road+direction, no label from any tier
+  assert.ok(!text.includes('📍'));
 });

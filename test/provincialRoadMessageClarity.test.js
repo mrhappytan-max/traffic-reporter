@@ -98,12 +98,15 @@ test('1. 台3 construction with KM + genuine LocationDescription -> both the hum
 // 2. 台3沒有可靠 location text -> 不猜地址，正常顯示 KM.
 // ===========================================================================
 
-test('2. 台3 construction with KM but NO LocationDescription -> no invented section name, KM still shown', () => {
+test('2. 台3 construction with KM but NO LocationDescription -> falls to the official V1.8.6.5 KM Location Resolver (tier 2), never anything invented or carried over from the other fixture', () => {
   const { text } = normalizeAndFormat(highwayTai3ConstructionNoLocationDescription);
   const lines = text.split('\n');
-  assert.equal(lines[1], '台3線 雙向'); // no "｜..." suffix — nothing guessed
+  // V1.8.6.5: real data.gov.tw coverage for 台3 at this KM now resolves a
+  // genuine official label (tier 2) — this is real government data, not a
+  // guess, so it's expected here, unlike a hand-invented address would be.
+  assert.equal(lines[1], '台3線 雙向｜新竹縣北埔鄉');
   assert.equal(lines[2], '78K+500～79K+200');
-  assert.doesNotMatch(text, /關西|橫山/); // proves nothing was carried over/invented from the other fixture
+  assert.doesNotMatch(text, /關西|橫山/); // proves nothing was carried over/invented from the OTHER fixture's own locationDescription text specifically
 });
 
 // ===========================================================================
@@ -240,7 +243,14 @@ test('10. V1.8.5.1 regression still holds: a route-name-shaped `location` never 
   };
   const text = formatEventMessage(event);
   const lines = text.split('\n');
-  assert.equal(lines[1], '國1'); // no "｜..." suffix invented from `location`
+  // V1.8.6.5: the resolver now resolves a real official label at 93.3K
+  // (using displayKM as its lowest-priority target, per its own KM-
+  // selection rules) — the invariant this test actually protects (the raw
+  // route-name-shaped `location` text "中山高速公路-國道1號" must NEVER
+  // appear as the label) still holds; only the previously-bare fallback
+  // now shows real government data instead.
+  assert.equal(lines[1], '國1｜竹北交流道－新竹交流道路段');
+  assert.doesNotMatch(lines[1], /中山高速公路/); // the actual V1.8.5.1 invariant, still enforced
   assert.equal(lines[2], '93K+300'); // KM still wins, unchanged from V1.8.5.1
 });
 
@@ -289,6 +299,12 @@ test('11c. a LocationDescription that is itself just another KM string (e.g. "92
   );
   const text = formatEventMessage(event);
   const lines = text.split('\n');
-  assert.equal(lines[1], '台3線 南向'); // KM-shaped text rejected as a section label
+  // The actual invariant this test protects: the KM-shaped
+  // LocationDescription text "92K+000" itself must never appear as if it
+  // were a place name. V1.8.6.5: with that tier rejected, the resolver
+  // (tier 2) now supplies a real official label for this KM instead of
+  // the previous bare fallback — still not the rejected KM-shaped text.
+  assert.equal(lines[1], '台3線 南向｜新竹縣峨眉鄉富興村');
+  assert.doesNotMatch(lines[1], /92K\+000/); // the actual invariant, still enforced
   assert.equal(lines[2], '92K+000');
 });

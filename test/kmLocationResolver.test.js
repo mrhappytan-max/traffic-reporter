@@ -159,17 +159,37 @@ test('15. resolver never throws on malformed/garbage input', () => {
   assert.equal(resolveKmLocation(null).resolved, false);
 });
 
-test('16. against the REAL (currently empty) Production dataset — every road fails closed with "no-data", never a guess', () => {
+test('16. against the REAL Production dataset (data.gov.tw 7040/95016/166496/8161, imported V1.8.6.5) — a road genuinely outside its coverage still fails closed with "no-data", never a guess', () => {
   // No datasetOverride here — this exercises the actual bundled
-  // data/road-location/generated/*.js files. Until real official raw
-  // data is imported (see raw/README.md), these must stay empty, so this
-  // test also acts as a guard against TEST FIXTURE data ever leaking into
-  // Production's generated files.
-  const provincial = resolveKmLocation({ road: '台13甲', startKM: '9K+000' });
+  // data/road-location/generated/*.js files. `台99` is not a real
+  // provincial route, so this also guards against TEST FIXTURE data ever
+  // leaking into Production's generated files (it would never resolve).
+  const provincial = resolveKmLocation({ road: '台99', startKM: '9K+000' });
   assert.equal(provincial.resolved, false);
   assert.equal(provincial.reason, 'no-data');
+});
 
-  const freeway = resolveKmLocation({ road: '國道一號', direction: '南向', startKM: '88K+000' });
-  assert.equal(freeway.resolved, false);
-  assert.equal(freeway.reason, 'no-data');
+// V1.8.6.5 — the two REQUIRED real acceptance resolutions, run against the
+// actual imported official data (not a fixture, not a guess). Locks in the
+// exact values resolveKmLocation() produced once real raw data existed —
+// see PROJECT_HANDOFF.md's V1.8.6.5 section for the full report this was
+// taken from.
+test('17. REQUIRED acceptance test: 台13甲 9K+000 resolves to a real official location + coordinate', () => {
+  const result = resolveKmLocation({ road: '台13甲線', startKM: '9K+000' });
+  assert.equal(result.resolved, true);
+  assert.equal(result.dataset, 'provincial');
+  assert.equal(result.locationLabel, '苗栗縣造橋鄉造橋村');
+  assert.ok(result.coordinate);
+  assert.equal(result.mapUrl, 'https://www.google.com/maps/search/?api=1&query=24.6285049,120.8528022');
+});
+
+test('18. REQUIRED acceptance test: 國1 88K+000 南向 resolves to a real official segment + coordinate', () => {
+  const result = resolveKmLocation({ road: '國道一號', direction: '南向', startKM: '88K+000' });
+  assert.equal(result.resolved, true);
+  assert.equal(result.dataset, 'freeway');
+  assert.equal(result.segmentFrom, '湖口服務區');
+  assert.equal(result.segmentTo, '竹北交流道');
+  assert.equal(result.locationLabel, '湖口服務區－竹北交流道路段');
+  assert.ok(result.coordinate);
+  assert.equal(result.mapUrl, 'https://www.google.com/maps/search/?api=1&query=24.84951279,121.0179116');
 });

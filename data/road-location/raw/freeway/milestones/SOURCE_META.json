@@ -1,0 +1,10 @@
+{
+  "sourceName": "國道百公尺里程樁",
+  "sourceUrl": "https://data.gov.tw/dataset/95016",
+  "sourceAgency": "交通部高速公路局",
+  "datasetUpdatedAt": "2024-08-01",
+  "notes": [
+    "Normalized from data/road-location/archive/raw_official_sources.zip by scripts/prepareFreewayRawFromArchive.py — see that script's own header comment.",
+    "Excluded (out of freeway road-identity scope this round): {'南港聯絡道': 16, '台26': 37}"
+  ]
+}
