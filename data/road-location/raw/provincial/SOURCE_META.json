@@ -1,0 +1,71 @@
+{
+  "contract": "V1.8.6.5-raw",
+  "artifact": "provincial.csv",
+  "generated_at_utc": "2026-08-20T06:20:01Z",
+  "source_authority": "交通部公路局",
+  "source_portal": "https://data.gov.tw/dataset/7040",
+  "dataset_id": "7040",
+  "dataset_title": "省道里程坐標(里程牌標誌)",
+  "dataset_modified": "2026-06-29 16:46:39",
+  "dataset_update_frequency": {
+    "regularupdate": "1",
+    "Frequency": "1",
+    "unittime": "月"
+  },
+  "dataset_license": "1",
+  "coverage": {
+    "start": "2026-04-01",
+    "end": "2026-06-25"
+  },
+  "row_count": 30079,
+  "columns": [
+    "route_system",
+    "route_id",
+    "route_raw",
+    "route_code",
+    "km_m",
+    "km_label",
+    "km_raw",
+    "lon_wgs84",
+    "lat_wgs84",
+    "twd97_x",
+    "twd97_y",
+    "elev_m",
+    "county",
+    "township",
+    "village",
+    "maint_authority",
+    "maint_section",
+    "install_position",
+    "sign_no",
+    "sign_kind",
+    "sign_nature",
+    "sign_face",
+    "condition",
+    "is_thb",
+    "face_direction",
+    "survey_date",
+    "remark",
+    "source_dataset",
+    "source_file"
+  ],
+  "crs": "EPSG:4326 (WGS84) for lon/lat; EPSG:3826 (TWD97 TM2) for twd97_x/twd97_y",
+  "source_files": [
+    {
+      "name": "thb_7040_milepost.csv",
+      "bytes": 5246831,
+      "sha256": "db53339afa9463f8faa4f85dd73fb5623fbebeffe9369d44a9e89c0d67189373"
+    }
+  ],
+  "excluded_sources": [
+    "TDX",
+    "PBS"
+  ],
+  "notes": [
+    "Source file supplied by the operator: downloaded from the official data.gov.tw / 公路局 distribution in a normal browser (this container is blocked by the site WAF) and staged verbatim as raw/thb_7040_milepost.csv; SHA-256 recorded below. Original upload left unmodified.",
+    "Encoding cp950; all 23 declared source columns present and in the published order.",
+    "km_raw (起點樁號) is the as-installed chainage, so whole-kilometre signs are frequently recorded a few metres off the round value (e.g. the 台13甲 9K sign pair sits at 9K+015 / 9K+022). Resolve by 牌面內容 (sign_face), not by exact km_m equality.",
+    "1 m chainage gaps are left/right-side sign pairs at the same point (install_position 左側/右側, face_direction 順向/逆向); 中央 signs are 雙向.",
+    "32 rows carry 坐標-X/Y-TWD97 in TM2 zone 119 (EPSG:3825) instead of zone 121 (EPSG:3826); 6 further rows have an unexplained 90-320 m TWD97/WGS84 disagreement. The WGS84 columns are correct in every case. See VERIFY.json -> provincial_coordinate_consistency. Not corrected here."
+  ]
+}
