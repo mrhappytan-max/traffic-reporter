@@ -330,7 +330,11 @@ async function prepareCctvImageWork(env, eligibility, runCache, codecOverride, d
   const published = await publishCollageImage(env.CCTV_IMAGES, composed.bytes);
   if (!published.ok) return { ok: false, reason: 'r2-publish-failed' };
 
-  return { ok: true, imageUrl: publicImageUrl(env, published.id) };
+  // V57: imageExpiresAt comes straight from the R2 object's own
+  // customMetadata (publishedImage.js), never recomputed here — a
+  // recomputed value would drift LATER than the real expiry and could
+  // hand a consumer a URL that stops resolving mid-delivery.
+  return { ok: true, imageUrl: publicImageUrl(env, published.id), imageExpiresAt: published.expiresAt };
 }
 
 /**
@@ -363,7 +367,7 @@ async function prepareCctvImageWork(env, eligibility, runCache, codecOverride, d
  *   immediately to 'run-budget-exhausted' without starting any work —
  *   this is the same reason broadcastPipeline.js itself checks for
  *   before ever calling in, kept here too as a defensive floor.
- * @returns {Promise<{ok:true, imageUrl:string}|{ok:false, reason:string}>}
+ * @returns {Promise<{ok:true, imageUrl:string, imageExpiresAt:string}|{ok:false, reason:string}>}
  */
 export async function prepareCctvImageForEvent(env, event, runCache, codecOverride, budgetMs = CCTV_PREPARE_BUDGET_MS) {
   const eligibility = resolveCctvEligibility(event);

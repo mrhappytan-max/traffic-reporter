@@ -107,7 +107,12 @@ function objectKeyForId(id) {
  * @param {{put: Function}} bucket - env.CCTV_IMAGES
  * @param {ArrayBuffer|Uint8Array} jpegBytes
  * @param {Date} [now]
- * @returns {Promise<{ok:true, id:string, sizeBytes:number, expiresIn:number}|{ok:false}>}
+ * @returns {Promise<{ok:true, id:string, sizeBytes:number, expiresIn:number,
+ *   expiresAt:string}|{ok:false}>} `expiresAt` is the EXACT ISO string
+ *   written into the object's customMetadata (never a recomputed
+ *   approximation), so a caller can hand it onward — e.g. the V57 Shared
+ *   Traffic Feed's imageExpiresAt — without ever being optimistic about
+ *   when this URL actually stops resolving.
  */
 export async function publishCollageImage(bucket, jpegBytes, now = new Date()) {
   const id = generateOpaqueId();
@@ -123,7 +128,7 @@ export async function publishCollageImage(bucket, jpegBytes, now = new Date()) {
     return { ok: false };
   }
 
-  return { ok: true, id, sizeBytes: jpegBytes.byteLength, expiresIn: PUBLISHED_IMAGE_TTL_SECONDS };
+  return { ok: true, id, sizeBytes: jpegBytes.byteLength, expiresIn: PUBLISHED_IMAGE_TTL_SECONDS, expiresAt };
 }
 
 /**

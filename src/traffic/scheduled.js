@@ -26,6 +26,7 @@ import { readDedupeState } from './dedupe.js';
 import { PRODUCTION_TDX_SOURCE_IDS } from '../tdx/sources.js';
 import { persistProductionTdxEventCache, readProductionTdxEventCache } from './tdxEventCache.js';
 import { commitTdxUsageBatch, compactTdxUsageSummaryRecentDays } from '../tdx/usageLedger.js';
+import { runSharedFeedPersist } from './sharedFeed.js';
 
 /**
  * Shape-compatible with pipeline.js's buildSummary() output (every field
@@ -146,7 +147,8 @@ export async function runScheduledTdxSync(env, now = new Date()) {
         `kvAvailable=${pbsSummary.kvAvailable} committed=${pbsSummary.committed} ` +
         `raw=${pbsSummary.rawCount} hsinchu=${pbsSummary.hsinchuCount} active=${pbsSummary.activeCount} ` +
         `cleared=${pbsSummary.clearedCount} stale=${pbsSummary.staleCount} filtered=${pbsSummary.filteredCount} ` +
-        `crossSourceDuplicates=${pbsSummary.crossSourceDuplicateCount} canonical=${pbsSummary.canonicalEventCount}`
+        `crossSourceDuplicates=${pbsSummary.crossSourceDuplicateCount} canonical=${pbsSummary.canonicalEventCount} ` +
+        `freewayGated=${pbsSummary.freewayGatedCount ?? 0}` // V57.2: 國道 PBS events with no TDX match this run — never broadcast, observability only
     );
   } catch (err) {
     // Belt-and-suspenders: PBS must never be able to take down the Cron
@@ -250,5 +252,31 @@ export async function runScheduledTdxSync(env, now = new Date()) {
     console.error(`[cron][tdx-usage] summary compaction failed: ${compaction.error ?? ''}`);
   }
 
-  return { ...summary, line: lineSummary, pbs: pbsSummary };
+  // V57 — persist this run's completed products (the exact finished text, and
+  // the CCTV image URL this run already published) so another project can
+  // consume them read-only. See src/traffic/sharedFeed.js.
+  //
+  // Deliberately the LAST step, in its own try/catch, and consuming only
+  // `lineSummary.completedProducts` which is already in memory: it fetches
+  // nothing, composes nothing, and this Worker's own TDX/PBS pipeline, LINE
+  // broadcast, health snapshot and usage ledger have all fully completed
+  // before it starts. A failure here can never reduce or delay this Worker's
+  // own broadcast — it is log-only, best effort.
+  let sharedFeedSummary;
+  try {
+    sharedFeedSummary = await runSharedFeedPersist(env, {
+      completedProducts: lineSummary.completedProducts,
+      now,
+    });
+    console.log(
+      `[cron][shared-feed] committed=${sharedFeedSummary.committed} ` +
+        `events=${sharedFeedSummary.eventCount} withImage=${sharedFeedSummary.withImageCount} ` +
+        `error=${sharedFeedSummary.error ?? 'none'}`
+    );
+  } catch (err) {
+    console.error(`[cron][shared-feed] persistence failed: ${err && err.message}`);
+    sharedFeedSummary = { committed: false, error: err && err.message, eventCount: 0, withImageCount: 0 };
+  }
+
+  return { ...summary, line: lineSummary, pbs: pbsSummary, sharedFeed: sharedFeedSummary };
 }

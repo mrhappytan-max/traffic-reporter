@@ -108,9 +108,41 @@ test('crossSourceDedup: a matched PBS event becomes canonical and is excluded fr
   assert.equal(uniquePbsEvents[0].rawId, 'PBS-2');
 });
 
-test('no TDX events at all -> every PBS event is unique, no canonical events, no crash', () => {
-  const { canonicalEvents, duplicatePbsEvents, uniquePbsEvents } = crossSourceDedup([pbsEvent()], []);
+test('no TDX events at all -> a non-freeway PBS event is unique, no canonical events, no crash', () => {
+  // V57.2: pbsEvent()'s default road (國道一號) is now gated instead of
+  // unique when unmatched — see the dedicated V57.2 tests below. This
+  // test's own point (general "no TDX -> unique" behavior) is unrelated
+  // to that rule, so it uses a non-freeway road to keep testing it.
+  const { canonicalEvents, duplicatePbsEvents, uniquePbsEvents, filteredFreewayEvents } = crossSourceDedup(
+    [pbsEvent({ road: '台68' })],
+    []
+  );
   assert.equal(canonicalEvents.length, 0);
   assert.equal(duplicatePbsEvents.length, 0);
   assert.equal(uniquePbsEvents.length, 1);
+  assert.equal(filteredFreewayEvents.length, 0);
+});
+
+// --- V57.2: 國道 PBS events with no TDX match are gated, never unique ---
+
+test('V57.2: an unmatched 國道 PBS event goes into filteredFreewayEvents, never uniquePbsEvents', () => {
+  const { uniquePbsEvents, filteredFreewayEvents } = crossSourceDedup([pbsEvent()], []); // default road: 國道一號
+  assert.equal(uniquePbsEvents.length, 0);
+  assert.equal(filteredFreewayEvents.length, 1);
+  assert.equal(filteredFreewayEvents[0].rawId, 'PBS-1');
+});
+
+test('V57.2: an unmatched 省道/highway (non-國道) PBS event is unaffected — stays in uniquePbsEvents', () => {
+  const { uniquePbsEvents, filteredFreewayEvents } = crossSourceDedup([pbsEvent({ road: '台68' })], []);
+  assert.equal(uniquePbsEvents.length, 1);
+  assert.equal(filteredFreewayEvents.length, 0);
+});
+
+test('V57.2: a MATCHED 國道 PBS event still merges into a canonical TDX-identity event, completely unaffected by the gate', () => {
+  const pbs = pbsEvent({ description: '回堵4K，內線事故，約87.8公里' }); // matches tdxEvent()
+  const { canonicalEvents, uniquePbsEvents, filteredFreewayEvents } = crossSourceDedup([pbs], [tdxEvent()]);
+  assert.equal(canonicalEvents.length, 1);
+  assert.equal(canonicalEvents[0].source, 'freeway'); // TDX identity, not PBS
+  assert.equal(uniquePbsEvents.length, 0);
+  assert.equal(filteredFreewayEvents.length, 0);
 });

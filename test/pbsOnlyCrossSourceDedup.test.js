@@ -8,7 +8,9 @@
 //
 // Covers the task's required scenarios E-H:
 //   E. PBS-only tick uses a <=30-min cached TDX event for cross-source dedup
-//   F. A >30-min-old cached TDX event is NOT used
+//   F. A >30-min-old cached TDX event is NOT used (as of V57.2: for a
+//      國道 PBS event, this means gated/not-broadcast, not "broadcast as
+//      new" — see crossSourceDedup.js's own header comment)
 //   G. The cached TDX event is used ONLY for cross-source dedup — never
 //      creates a TDX new/updated event
 //   H. Night-sleep tick: PBS fetches normally, TDX still makes 0 calls
@@ -146,7 +148,7 @@ test('E. 08:00 TDX sees the accident; 08:10 PBS reports the SAME accident -> not
 
 // --- F. A >30-min-old cached TDX event is NOT used ---
 
-test('F. a >30-min-old cached TDX event is ignored -> PBS event broadcasts as new, not suppressed', async () => {
+test('F. a >30-min-old cached TDX event is ignored -> a 國道 PBS event is NOT broadcast (V57.2: TDX-only gate for 國道, no PBS fallback)', async () => {
   const env = await envWithSubscriber();
   const pbsCalls = [];
   env.PBS_RELAY_TOKEN = 'relay-token';
@@ -170,7 +172,11 @@ test('F. a >30-min-old cached TDX event is ignored -> PBS event broadcasts as ne
 
   assert.equal(hits.length, 0); // still a PBS-only tick: 0 TDX calls
   assert.equal(result.pbs.crossSourceDuplicateCount, 0); // stale cache -> no match at all
-  assert.equal(pushed.length, 1); // treated as a genuinely new/unmatched PBS event -> broadcast
+  // V57.2: this is a 國道 PBS event (road: 國道一號) — unmatched means
+  // gated, never broadcast, regardless of how it got unmatched (stale
+  // cache here; genuinely never-reported by TDX in other scenarios).
+  assert.equal(pushed.length, 0);
+  assert.equal(result.pbs.freewayGatedCount, 1);
 });
 
 // --- G. cached TDX event used ONLY for cross-source dedup, never creates a TDX new/update ---

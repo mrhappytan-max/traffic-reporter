@@ -7,6 +7,31 @@
 // (same rawId across runs) — cross-source dedup is about two DIFFERENT
 // rawIds (one TDX, one PBS) from the SAME point in time describing one
 // real event, decided fresh every run.
+//
+// V57.2 — "TDX 唯一播報閘門" for 國道 (freeway): a PBS 國道 event that does
+// NOT match a TDX event this run must NEVER become an independent
+// broadcast candidate. Production history: PBS reports a 國道 incident
+// first, gets pushed under its own source:'pbs' rawId, writes notified-
+// state AND an incident-suppression record for that road/direction/km —
+// then TDX's own, more-authoritative report of the SAME incident arrives
+// minutes later and is silently suppressed as "already notified" (0
+// pending targets), even though this Worker's real subscribers only ever
+// saw the less-reliable PBS version. The product decision going forward:
+// TDX decides whether a 國道 incident broadcasts at all; PBS may still
+// enrich/confirm a MATCHED TDX event (unchanged, see buildCanonicalEvent),
+// but an unmatched 國道 PBS event goes into `filteredFreewayEvents` below
+// — NOT `uniquePbsEvents` — so it structurally never reaches
+// mergeForBroadcast()'s output, never reaches broadcastPipeline.js's
+// `allEvents`, and therefore can never touch getBroadcastEligibility,
+// notified.js, incidentSuppression.js, or the Shared Feed's
+// completedProducts. This is the ONLY gate for this rule (see this
+// module's own crossSourceDedup() below) — deliberately not duplicated
+// anywhere downstream. 省道/highway PBS events (isFreewayRoadName false)
+// are completely unaffected — this rule is 國道-only, per instruction.
+// `isFreewayRoadName` reuses roadName.js's own existing freeway
+// classification (the exact canonical shape normalizePbsRoad() already
+// produces for a freeway road) rather than inventing a second, parallel
+// road-name pattern here.
 
 import {
   CROSS_SOURCE_MAX_DISTANCE_METERS,
@@ -14,6 +39,7 @@ import {
   CROSS_SOURCE_MAX_KM_DIFF,
 } from './pbsConfig.js';
 import { mostSevereCongestion } from '../traffic/congestionSeverity.js';
+import { isFreewayRoadName } from './roadName.js';
 
 // PBS types collapse several distinct real categories into "other" — two
 // "other" events should still be allowed to match each other (e.g. PBS
@@ -174,10 +200,11 @@ export function buildCanonicalEvent(tdxEvent, pbsEvent) {
  *     identity, so it keeps its existing notified-state/dedupe/
  *     congestion-cluster behavior;
  *   - a TDX event with no match passes through untouched;
- *   - `uniquePbsEvents` (active, Hsinchu-filtered, no TDX match) are
- *     appended as-is — already unified-event-shaped (source:'pbs',
- *     rawId: the PBS UID) via normalizePbsEvent, so each gets its own
- *     independent notified-state identity.
+ *   - `uniquePbsEvents` (active, Hsinchu-filtered, no TDX match, and —
+ *     as of V57.2 — NEVER a 國道 event; see crossSourceDedup()'s own
+ *     header comment) are appended as-is — already unified-event-shaped
+ *     (source:'pbs', rawId: the PBS UID) via normalizePbsEvent, so each
+ *     gets its own independent notified-state identity.
  *
  * If two PBS events somehow match the same TDX rawId in one run, only
  * the last `canonicalEvents` entry for that key is kept — still exactly
@@ -199,22 +226,34 @@ export function mergeForBroadcast(tdxEvents, canonicalEvents, uniquePbsEvents) {
  * @param {object[]} pbsEvents - active (non-cleared, non-stale), Hsinchu-
  *   filtered PBS events
  * @param {object[]} tdxEvents - this run's Hsinchu-filtered TDX events
- * @returns {{ canonicalEvents: object[], duplicatePbsEvents: object[], uniquePbsEvents: object[] }}
+ * @returns {{ canonicalEvents: object[], duplicatePbsEvents: object[],
+ *   uniquePbsEvents: object[], filteredFreewayEvents: object[] }}
+ *   `uniquePbsEvents` are real broadcast candidates (mergeForBroadcast
+ *   appends them as-is) — never includes an unmatched 國道 event as of
+ *   V57.2, see this module's own header comment. `filteredFreewayEvents`
+ *   is observability-only (PBS's own internal tracking/log/stats — see
+ *   pipeline.js's buildSummary) — never fed into mergeForBroadcast.
  */
 export function crossSourceDedup(pbsEvents, tdxEvents) {
   const canonicalEvents = [];
   const duplicatePbsEvents = [];
   const uniquePbsEvents = [];
+  const filteredFreewayEvents = [];
 
   for (const pbsEvent of pbsEvents) {
     const match = findCrossSourceMatch(pbsEvent, tdxEvents);
     if (match) {
       canonicalEvents.push(buildCanonicalEvent(match, pbsEvent));
       duplicatePbsEvents.push(pbsEvent);
+    } else if (isFreewayRoadName(pbsEvent.road)) {
+      // V57.2: a 國道 PBS event with no TDX match this run — never a
+      // broadcast candidate. See module header comment for the full
+      // rationale; this is the one and only gate for this rule.
+      filteredFreewayEvents.push(pbsEvent);
     } else {
       uniquePbsEvents.push(pbsEvent);
     }
   }
 
-  return { canonicalEvents, duplicatePbsEvents, uniquePbsEvents };
+  return { canonicalEvents, duplicatePbsEvents, uniquePbsEvents, filteredFreewayEvents };
 }

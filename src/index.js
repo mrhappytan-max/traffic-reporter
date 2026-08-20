@@ -10,6 +10,7 @@ import { handleCctvProbe } from './tdx/cctvProbe.js';
 import { handleHsinchuCctvProbe, handleHsinchuCctvFrame, handleHsinchuCctvCollage, handleHsinchuCctvPublishTest } from './tdx/hsinchuCctvProbe.js';
 import { handlePublicCctvImage } from './cctv/publishedImage.js';
 import { handleBroadcastProvenance } from './traffic/broadcastProvenance.js';
+import { handleSharedFeed } from './traffic/sharedFeedHandler.js';
 
 // V1.6.3 — Admin Protection: every human-facing admin/debug page requires
 // HTTP Basic Auth (see security/adminAuth.js). Centralized here on
@@ -128,6 +129,18 @@ export default {
     if (request.method === 'GET' && url.pathname.startsWith(PUBLIC_CCTV_IMAGE_PREFIX)) {
       const id = url.pathname.slice(PUBLIC_CCTV_IMAGE_PREFIX.length);
       return handlePublicCctvImage(env, id);
+    }
+
+    // V57 — Shared Traffic Feed. Deliberately NOT in ADMIN_PATHS: this is a
+    // machine-to-machine route reached over a Cloudflare Service Binding, and
+    // Admin Basic Auth is the wrong credential for that caller. It carries its
+    // own bearer token (TRAFFIC_FEED_SECRET) instead, checked inside the
+    // handler, which also returns 503 rather than opening up if that secret is
+    // absent. Matched on pathname ALONE so a non-GET verb gets an honest 405
+    // instead of a misleading 404 — the read-only contract has to be visible to
+    // a caller that tries to write.
+    if (url.pathname === '/internal/shared-feed') {
+      return handleSharedFeed(request, env);
     }
 
     if (url.pathname === '/webhook' && request.method === 'POST') {

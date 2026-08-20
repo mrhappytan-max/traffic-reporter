@@ -83,7 +83,7 @@ async function runPbsCore(env, now) {
 
 function buildSummary(core, tdxEvents, commitResult) {
   const { rawItems, hsinchuFiltered, clearedEvents, staleEvents, activeEvents, pbsOk, pbsError, attempts, durationMs, relayConfigured, relayOk, relayStatus, relayCache, relayUpstreamDurationMs, lifecycleState } = core;
-  const { canonicalEvents, duplicatePbsEvents, uniquePbsEvents } = crossSourceDedup(activeEvents, tdxEvents);
+  const { canonicalEvents, duplicatePbsEvents, uniquePbsEvents, filteredFreewayEvents } = crossSourceDedup(activeEvents, tdxEvents);
 
   return {
     pbsOk,
@@ -111,12 +111,20 @@ function buildSummary(core, tdxEvents, commitResult) {
     canonicalEventCount: canonicalEvents.length,
     canonicalEvents,
     uniquePbsEvents,
+    // V57.2 — 國道 PBS events with no TDX match this run: never a
+    // broadcast candidate (see crossSourceDedup.js's own header comment),
+    // kept here purely for internal observability/log/stats, exactly as
+    // the product spec allows ("可以保留作內部觀察、log、統計或原始資料
+    // 來源").
+    freewayGatedCount: filteredFreewayEvents.length,
+    freewayGatedEvents: filteredFreewayEvents,
     activeEvents,
     rawSample: rawItems.slice(0, 2),
     normalizedSample: hsinchuFiltered.slice(0, 3),
     clearedSample: clearedEvents.slice(0, 2),
     staleSample: staleEvents.slice(0, 2),
     crossSourceSample: canonicalEvents.slice(0, 2),
+    freewayGatedSample: filteredFreewayEvents.slice(0, 2),
   };
 }
 
