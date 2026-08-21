@@ -67,6 +67,18 @@ export const MAX_LIST_LIMIT = 100;
 // broadcast path, but still kept cheap and predictable regardless of how
 // many entries exist within the 24h TTL window.
 const MAX_ENTRIES_SCANNED = 500;
+// V1.8.7.3 — root cause of "Pipeline Trace 篩選失效"/"看不到最新事件":
+// see listPipelineTrace's own comment for the full write-up. This bounds
+// the KEY-ENUMERATION pass (cheap `kv.list()` calls, no record bodies
+// read yet) to a generous number of PAGES, high enough to comfortably
+// reach the true end of a realistic 24h key range (this module's own
+// PERFORMANCE note above puts worst-case daily volume in the low
+// thousands) — deliberately NOT the same knob as MAX_ENTRIES_SCANNED,
+// which governs something else entirely (how many of the NEWEST keys are
+// then actually read+filtered). Only a defensive ceiling against a
+// genuinely pathological key count (e.g. a future TTL/pruning bug) — the
+// real termination condition is always `page.list_complete`.
+const MAX_LIST_PAGES = 40;
 
 function safeErrorMessage(err) {
   if (err && typeof err.message === 'string') return err.message;
@@ -247,6 +259,18 @@ export function buildTraceEntry({
   processingDurationMs = null, // number | null — wall-clock ms this event's own CCTV attempt actually took, win or lose
   singleSlotIndex = null, // number | null — this event's own 1-based attempt number this run, single-strategy only
   singleSlotLimit = null, // number | null — MAX_SINGLE_CCTV_EVENTS_PER_RUN at the time of this attempt, single-strategy only
+  // V1.8.7.3 — minimal STAGE-LEVEL breakdown of processingDurationMs
+  // above, single-strategy only (see cctv/dynamicCollage.js's
+  // prepareSingleCctvImageWork, the only writer of these three) — added
+  // specifically to answer "which stage of the single-CCTV budget is
+  // actually consuming time" from real Production evidence, per this
+  // round's own instruction. Deliberately just three small numbers/one
+  // short string, never the frame bytes, the stream URL, or any other
+  // candidate/metadata payload — same whitelist-only discipline as
+  // selectedCamera above.
+  frameFetchDurationMs = null, // number | null — ms extractFirstJpegFrame's fetch+body-read took, when it was reached
+  r2PublishDurationMs = null, // number | null — ms publishCollageImage's R2 PUT took, when it was reached
+  timeoutStage = null, // 'metadata' | 'candidate-selection' | 'frame-fetch' | 'r2-publish' | null — which stage was in flight when this attempt's budget ran out (only set on a 'prepare-timeout' outcome)
 } = {}) {
   const anomalyDetail = event && event.nonCollisionAnomalyDetail ? event.nonCollisionAnomalyDetail : null;
   const upstream = (event && event.pipelineTraceUpstream) || buildUpstreamSnapshot({});
@@ -338,6 +362,10 @@ export function buildTraceEntry({
       processingDurationMs,
       singleSlotIndex,
       singleSlotLimit,
+      // V1.8.7.3 — see the param comments above.
+      frameFetchDurationMs,
+      r2PublishDurationMs,
+      timeoutStage,
     },
     delivery: {
       lineAttempted,
@@ -426,10 +454,23 @@ export async function listPipelineTrace(kv, { limit = DEFAULT_LIST_LIMIT, source
   try {
     const keys = [];
     let cursor;
+    let pages = 0;
     for (;;) {
       const page = await kv.list({ prefix: `${TRACE_KEY_PREFIX}:`, cursor });
       for (const k of page.keys || []) keys.push(k.name);
-      if (page.list_complete || !page.cursor || keys.length >= MAX_ENTRIES_SCANNED) break;
+      pages += 1;
+      // V1.8.7.3 — deliberately NOT `keys.length >= MAX_ENTRIES_SCANNED`
+      // here: that condition used to cut key-enumeration off after just
+      // one list() page on any day with real trace volume above a single
+      // page, which silently stranded the scan on the OLDEST slice of the
+      // 24h key range and made both the unfiltered view and every
+      // filtered query miss genuinely-matching newest records (see
+      // MAX_LIST_PAGES's comment above for the full write-up). Enumeration
+      // now always continues until the true end of the range
+      // (list_complete/no cursor) or the much more generous MAX_LIST_PAGES
+      // safety ceiling — MAX_ENTRIES_SCANNED is applied only below, to the
+      // now-correctly-identified newest keys.
+      if (page.list_complete || !page.cursor || pages >= MAX_LIST_PAGES) break;
       cursor = page.cursor;
     }
 

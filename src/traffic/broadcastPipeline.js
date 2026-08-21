@@ -768,6 +768,14 @@ export async function runLineBroadcast(
         // them, so an accident's trace entry keeps both null.
         if (cctv.singleSlotIndex !== undefined) traceForEvent.singleSlotIndex = cctv.singleSlotIndex;
         if (cctv.singleSlotLimit !== undefined) traceForEvent.singleSlotLimit = cctv.singleSlotLimit;
+        // V1.8.7.3 (Pipeline Trace stage diagnostics) — same
+        // only-ever-set-by-the-single-camera-path pattern as
+        // singleSlotIndex/singleSlotLimit above; each is only present on
+        // `cctv` when prepareSingleCctvImageWork actually reached that
+        // stage, so an accident's (quad) trace entry keeps all three null.
+        if (cctv.frameFetchDurationMs !== undefined) traceForEvent.frameFetchDurationMs = cctv.frameFetchDurationMs;
+        if (cctv.r2PublishDurationMs !== undefined) traceForEvent.r2PublishDurationMs = cctv.r2PublishDurationMs;
+        if (cctv.timeoutStage !== undefined) traceForEvent.timeoutStage = cctv.timeoutStage;
 
         if (cctv.ok) {
           result.cctvImagesAttachedCount += 1;
@@ -934,6 +942,10 @@ export async function runLineBroadcast(
     // V1.8.7.1 — same budget-diagnostic fields as the real push path.
     if (product.singleSlotIndex !== undefined) trace.singleSlotIndex = product.singleSlotIndex;
     if (product.singleSlotLimit !== undefined) trace.singleSlotLimit = product.singleSlotLimit;
+    // V1.8.7.3 — same stage-diagnostic fields as the real push path above.
+    if (product.frameFetchDurationMs !== undefined) trace.frameFetchDurationMs = product.frameFetchDurationMs;
+    if (product.r2PublishDurationMs !== undefined) trace.r2PublishDurationMs = product.r2PublishDurationMs;
+    if (product.timeoutStage !== undefined) trace.timeoutStage = product.timeoutStage;
   }
 
   if (!anyWriteHappened && prunedKeys.length > 0) {
@@ -1087,12 +1099,16 @@ async function topUpSharedFeedCctvImages(
       if (cctv.selectedCamera) product.selectedCamera = cctv.selectedCamera; // V1.8.7.0 — single-strategy only
       if (cctv.singleSlotIndex !== undefined) product.singleSlotIndex = cctv.singleSlotIndex; // V1.8.7.1
       if (cctv.singleSlotLimit !== undefined) product.singleSlotLimit = cctv.singleSlotLimit; // V1.8.7.1
+      if (cctv.frameFetchDurationMs !== undefined) product.frameFetchDurationMs = cctv.frameFetchDurationMs; // V1.8.7.3
+      if (cctv.r2PublishDurationMs !== undefined) product.r2PublishDurationMs = cctv.r2PublishDurationMs; // V1.8.7.3
       result.cctvFeedOnlyAttachedCount += 1;
     } else {
       result.cctvFeedOnlySkippedByReason[cctv.reason] = (result.cctvFeedOnlySkippedByReason[cctv.reason] || 0) + 1;
       product.cctvSkipReason = cctv.reason;
       if (cctv.singleSlotIndex !== undefined) product.singleSlotIndex = cctv.singleSlotIndex; // V1.8.7.1
       if (cctv.singleSlotLimit !== undefined) product.singleSlotLimit = cctv.singleSlotLimit; // V1.8.7.1
+      if (cctv.frameFetchDurationMs !== undefined) product.frameFetchDurationMs = cctv.frameFetchDurationMs; // V1.8.7.3
+      if (cctv.timeoutStage !== undefined) product.timeoutStage = cctv.timeoutStage; // V1.8.7.3
     }
   }
 
