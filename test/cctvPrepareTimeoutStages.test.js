@@ -319,21 +319,38 @@ test('A3b: end-to-end (runLineBroadcast) — a genuine per-event timeout never b
 
 // =======================================================================
 // Case 2 (國3 102K+100) — independent diagnosis, NOT the same cause as case 1
+//
+// V1.8.7.5 integration note: at the time this file was originally
+// written, 國3 was NOT in CCTV_SUPPORTED_ROADS (V1.8.7.3's own diagnosis
+// — see this file's own module comment above — correctly found
+// 'unsupported-road' as case 2's THEN-current, accurate root cause). This
+// file is now integrated onto a `main` where V1.8.7.5 has since added a
+// real, Production-confirmed 國道三號 registry entry (see
+// cctv/dynamicCollage.js's own CCTV_SUPPORTED_ROADS and its V1.8.7.4→
+// V1.8.7.5 comment for the full provenance) — so case 2 is no longer
+// ineligible. The two tests below were updated to assert the CURRENT,
+// integrated behavior (eligible, cache-miss fail-closed under this
+// file's own no-metadata-seeded fixture) rather than silently keep
+// asserting a now-superseded finding — see test/freeway3CctvAudit.test.js
+// for the FULL 國3 CCTV regression suite (real fixture, camera
+// selection, dirty-data protection, etc); these two tests exist only to
+// keep this file's own case-2 narrative consistent with reality, not to
+// re-cover ground that file already owns.
 // =======================================================================
 
-test('B1: case 2 — 國3 102K+100 is cctvEligible=false with reason=unsupported-road (fail-closed, NOT a prepare-timeout, NOT the same cause as case 1)', () => {
+test('B1: case 2 — 國3 102K+100 is now cctvEligible=true (V1.8.7.5 added a confirmed 國3 registry entry) — was unsupported-road when this file was first written, per V1.8.7.3\'s own then-current, correct diagnosis', () => {
   const eligibility = resolveCctvEligibility(case2Event());
-  assert.equal(eligibility.eligible, false);
-  assert.equal(eligibility.reason, 'unsupported-road');
+  assert.equal(eligibility.eligible, true);
+  assert.equal(eligibility.imageStrategy, 'single');
 });
 
-test('B2: case 2 regression — the full pipeline for a 國3 dynamic-shoulder event pushes LINE text + persists to Shared Feed, with 0 CCTV attempt and 0 frame fetch', async () => {
+test('B2: case 2 regression — the full pipeline for a 國3 dynamic-shoulder event pushes LINE text + persists to Shared Feed; with no CCTV metadata cache seeded, CCTV fails closed to metadata-cache-unavailable (0 frame fetch) rather than unsupported-road', async () => {
   const kv = createMockKV();
   await enrollUser(kv);
   // Deliberately NO CCTV metadata cache seeded, and fetch throws on any
   // freeway.gov.tw call — proves this event never even reaches the
-  // frame-fetch stage, confirming case 2 is an eligibility gate, not a
-  // timeout.
+  // frame-fetch stage, confirming this is a cache-miss (fail-closed), not
+  // a frame-fetch failure.
   const { fetchFn, hits } = makeConfigurableFetch({});
   originalFetch = globalThis.fetch;
   globalThis.fetch = fetchFn;
@@ -342,11 +359,11 @@ test('B2: case 2 regression — the full pipeline for a 國3 dynamic-shoulder ev
   const result = await runLineBroadcast(env, { allEvents: [case2Event()], dedupeAvailable: true, now: NOW, cctvCodecOverride: TEST_CODEC });
 
   assert.equal(result.pushSucceeded, 1); // LINE text still succeeds
-  assert.equal(hits.frame, 0); // never attempted a frame fetch — this is not a frame-fetch failure
+  assert.equal(hits.frame, 0); // never attempted a frame fetch — metadata cache miss happens first
   const trace = result.pipelineTraceEntries[0];
-  assert.equal(trace.enrichment.cctvEligible, false);
-  assert.equal(trace.enrichment.imagePrepared, null); // never attempted at all, not "attempted and failed"
-  assert.equal(trace.enrichment.cctvSkippedByReason, null); // this field is for an ATTEMPTED-but-failed outcome; ineligible events never set it
+  assert.equal(trace.enrichment.cctvEligible, true);
+  assert.equal(trace.enrichment.imagePrepared, false); // attempted, failed closed on the cache miss
+  assert.equal(trace.enrichment.cctvSkippedByReason, 'metadata-cache-unavailable');
   assert.equal(result.completedProducts.length, 1);
   assert.ok(result.completedProducts[0].text); // Shared Feed product still exists, text-only
   assert.equal(result.completedProducts[0].imageUrl, null);
