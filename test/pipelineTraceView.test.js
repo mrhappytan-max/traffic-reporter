@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../src/index.js';
 import { recordPipelineTrace, buildTraceEntry, buildUpstreamSnapshot } from '../src/traffic/pipelineTrace.js';
+import { handlePipelineTraceView, formatTaipeiListTime } from '../src/traffic/pipelineTraceView.js';
 
 function createMockKV() {
   const store = new Map();
@@ -219,24 +220,22 @@ test('view page distinguishes "非播報時段" from "事件已結束" from "事
 
 // --- V1.8.6.9a: mobile UX pass — Taiwan time / closed-vocab filters / dark mode ---
 
-test('V1.8.6.9a: per-row summary time is Asia/Taipei, not raw UTC (04:00 UTC must render as 12:00, not 04:00)', async () => {
+test('V1.8.6.9a: per-row summary time is Asia/Taipei, not raw UTC (04:00 UTC must render as 12:xx Taipei, not 04:xx)', async () => {
   const kv = createMockKV();
   // 2026-08-20T04:00:00Z is noon in Taipei (UTC+8). The pre-fix bug used
   // toISOString().slice(11,16) on this exact timestamp, which renders
-  // "04:00" — the precise real-device complaint this round fixes.
+  // "04:00" — the precise real-device complaint this round fixes. `now`
+  // (the render-time reference for the relative-date correction below)
+  // is pinned to the SAME Taipei calendar day so this test only exercises
+  // the UTC-offset fix, not the today/yesterday logic.
   const utcNoonTaipei = new Date('2026-08-20T04:00:00.000Z');
+  const renderNow = new Date('2026-08-20T10:00:00.000Z'); // 18:00 Taipei, same day
   await recordPipelineTrace(kv, buildTraceEntry({ event: accidentEvent({ rawId: 'TZ1' }), now: utcNoonTaipei, eligibility: true }), NOW);
   const env = { ADMIN_PASSWORD, TRAFFIC_KV: kv };
-  originalFetch = globalThis.fetch;
-  globalThis.fetch = throwingFetch('upstream');
-  try {
-    const res = await worker.fetch(adminRequest('/admin/pipeline-trace-view', { auth: basicAuthHeader(ADMIN_USERNAME, ADMIN_PASSWORD) }), env);
-    const html = await res.text();
-    assert.match(html, /col-time">12:00</);
-    assert.doesNotMatch(html, /col-time">04:00</);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  const res = await handlePipelineTraceView(env, adminRequest('/admin/pipeline-trace-view'), renderNow);
+  const html = await res.text();
+  assert.match(html, /col-time">今天 12:00</);
+  assert.doesNotMatch(html, /col-time">今天 04:00</);
 });
 
 test('V1.8.6.9a: page states explicitly that times are Asia/Taipei, not UTC', async () => {
@@ -338,4 +337,147 @@ test('V1.8.6.9a: CCTV badge uses a distinct teal class, map badge uses a distinc
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+// --- V1.8.6.9a correction round: relative list time / D. 事件時間軸 / LINE honesty ---
+
+test('V1.8.6.9a correction: formatTaipeiListTime — same Taipei calendar day -> 今天 HH:mm', () => {
+  const now = new Date('2026-08-21T10:00:00.000Z'); // 18:00 Taipei, Aug 21
+  const iso = '2026-08-21T04:10:00.000Z'; // 12:10 Taipei, same Taipei day as `now`
+  assert.equal(formatTaipeiListTime(iso, now), '今天 12:10');
+});
+
+test('V1.8.6.9a correction: formatTaipeiListTime — previous Taipei calendar day -> 昨天 HH:mm', () => {
+  const now = new Date('2026-08-21T01:00:00.000Z'); // 09:00 Taipei, Aug 21
+  const iso = '2026-08-20T15:50:00.000Z'; // 23:50 Taipei, Aug 20
+  assert.equal(formatTaipeiListTime(iso, now), '昨天 23:50');
+});
+
+test('V1.8.6.9a correction: formatTaipeiListTime — older than yesterday -> M/D HH:mm', () => {
+  const now = new Date('2026-08-25T00:00:00.000Z'); // Aug 25 Taipei
+  const iso = '2026-08-20T12:13:00.000Z'; // 20:13 Taipei, Aug 20
+  assert.equal(formatTaipeiListTime(iso, now), '8/20 20:13');
+});
+
+test('V1.8.6.9a correction: formatTaipeiListTime crosses the Taipei midnight boundary correctly — 20 real minutes apart but different Taipei calendar days must say 昨天, not 今天', () => {
+  const now = new Date('2026-08-20T16:10:00.000Z'); // 00:10 Taipei, Aug 21 (just past midnight)
+  const iso = '2026-08-20T15:50:00.000Z'; // 23:50 Taipei, Aug 20 (20 minutes earlier)
+  assert.equal(formatTaipeiListTime(iso, now), '昨天 23:50');
+});
+
+test('V1.8.6.9a correction: formatTaipeiListTime — same Taipei calendar day despite being nearly 24h apart must say 今天, not 昨天', () => {
+  const now = new Date('2026-08-20T15:55:00.000Z'); // 23:55 Taipei, Aug 20
+  const iso = '2026-08-20T00:05:00.000Z'; // 08:05 Taipei, Aug 20 — same day, ~15.8h earlier
+  assert.equal(formatTaipeiListTime(iso, now), '今天 08:05');
+});
+
+test('V1.8.6.9a correction: list column actually renders 今天/昨天/M-D through the real page, not just the pure helper', async () => {
+  const kv = createMockKV();
+  const renderNow = new Date('2026-08-21T01:00:00.000Z'); // 09:00 Taipei, Aug 21
+  await recordPipelineTrace(kv, buildTraceEntry({ event: accidentEvent({ rawId: 'TODAY1' }), now: new Date('2026-08-21T00:10:00.000Z'), eligibility: true }), NOW); // 08:10 Taipei Aug 21 -> 今天
+  await recordPipelineTrace(kv, buildTraceEntry({ event: accidentEvent({ rawId: 'YEST1' }), now: new Date('2026-08-20T15:50:00.000Z'), eligibility: true }), NOW); // 23:50 Taipei Aug 20 -> 昨天
+  await recordPipelineTrace(kv, buildTraceEntry({ event: accidentEvent({ rawId: 'OLD1' }), now: new Date('2026-08-18T12:13:00.000Z'), eligibility: true }), NOW); // 20:13 Taipei Aug 18 -> 8/18
+  const env = { ADMIN_PASSWORD, TRAFFIC_KV: kv };
+  const res = await handlePipelineTraceView(env, adminRequest('/admin/pipeline-trace-view'), renderNow);
+  const html = await res.text();
+  assert.match(html, /col-time">今天 08:10</);
+  assert.match(html, /col-time">昨天 23:50</);
+  assert.match(html, /col-time">8\/18 20:13</);
+});
+
+test('V1.8.6.9a correction: detail page has a D. 事件時間軸 section with 上游更新/系統抓取 in Asia/Taipei', async () => {
+  const kv = createMockKV();
+  const event = accidentEvent({
+    rawId: 'TIMELINE1',
+    pipelineTraceUpstream: buildUpstreamSnapshot({ eventType: '事故', rawDirection: '北向', upstreamUpdatedAt: '2026-08-20T03:30:00.000Z' }), // 11:30 Taipei
+  });
+  await recordPipelineTrace(kv, buildTraceEntry({ event, now: new Date('2026-08-20T04:00:00.000Z'), eligibility: true }), NOW); // 12:00 Taipei
+  const env = { ADMIN_PASSWORD, TRAFFIC_KV: kv };
+  const res = await handlePipelineTraceView(env, adminRequest('/admin/pipeline-trace-view'), new Date('2026-08-20T10:00:00.000Z'));
+  const html = await res.text();
+  assert.match(html, /D\. 事件時間軸（Asia\/Taipei）/);
+  assert.match(html, /上游更新[\s\S]*?2026-08-20 11:30/);
+  assert.match(html, /系統抓取[\s\S]*?2026-08-20 12:00/);
+});
+
+test('V1.8.6.9a correction: LINE timeline — successfully sent but schema has no independent push timestamp -> honest "已播報（未保存獨立時間）", never identity.timestamp masquerading as push time', async () => {
+  const kv = createMockKV();
+  await recordPipelineTrace(kv, buildTraceEntry({
+    event: accidentEvent({ rawId: 'SENT1' }), now: NOW, eligibility: true, lineAttempted: 1, lineSucceeded: 1,
+  }), NOW);
+  const env = { ADMIN_PASSWORD, TRAFFIC_KV: kv };
+  const res = await handlePipelineTraceView(env, adminRequest('/admin/pipeline-trace-view'), NOW);
+  const html = await res.text();
+  assert.match(html, /LINE 播報[\s\S]*?已播報（未保存獨立時間）/);
+});
+
+test('V1.8.6.9a correction: LINE timeline — never played shows 未播報 + the existing status/reason (suppressed example)', async () => {
+  const kv = createMockKV();
+  const event = accidentEvent({ rawId: 'SUPPRESSED1' });
+  await recordPipelineTrace(kv, buildTraceEntry({
+    event, now: NOW, eligibility: true, suppressionResult: 'same-incident-no-escalation', lineAttempted: 0, lineSucceeded: 0,
+  }), NOW);
+  const env = { ADMIN_PASSWORD, TRAFFIC_KV: kv };
+  const res = await handlePipelineTraceView(env, adminRequest('/admin/pipeline-trace-view'), NOW);
+  const html = await res.text();
+  assert.match(html, /LINE 播報[\s\S]*?未播報（⚠️ 已抑制（同一事故））/);
+});
+
+test('V1.8.6.9a correction: LINE timeline — attempted but failed shows 未播報 + line-failed status, never a fabricated time', async () => {
+  const kv = createMockKV();
+  const event = accidentEvent({ rawId: 'FAILED1' });
+  await recordPipelineTrace(kv, buildTraceEntry({
+    event, now: NOW, eligibility: true, lineAttempted: 1, lineSucceeded: 0,
+  }), NOW);
+  const env = { ADMIN_PASSWORD, TRAFFIC_KV: kv };
+  const res = await handlePipelineTraceView(env, adminRequest('/admin/pipeline-trace-view'), NOW);
+  const html = await res.text();
+  assert.match(html, /LINE 播報[\s\S]*?未播報（❌ LINE 推播失敗）/);
+});
+
+test('V1.8.6.9a correction: if the trace schema ever gains a real push timestamp field, the timeline uses it instead of the honest fallback', async () => {
+  const kv = createMockKV();
+  const entry = buildTraceEntry({ event: accidentEvent({ rawId: 'FUTURE1' }), now: NOW, eligibility: true, lineAttempted: 1, lineSucceeded: 1 });
+  entry.delivery.linePushedAt = '2026-08-20T04:05:00.000Z'; // 12:05 Taipei — simulates a future schema addition
+  await recordPipelineTrace(kv, entry, NOW);
+  const env = { ADMIN_PASSWORD, TRAFFIC_KV: kv };
+  const res = await handlePipelineTraceView(env, adminRequest('/admin/pipeline-trace-view'), NOW);
+  const html = await res.text();
+  assert.match(html, /LINE 播報[\s\S]*?2026-08-20 12:05/);
+  assert.doesNotMatch(html, /未保存獨立時間/);
+});
+
+test('V1.8.6.9a correction: imageExpiresAt and UpdatedAt in the detail sections are Asia/Taipei, never raw ISO', async () => {
+  const kv = createMockKV();
+  const event = accidentEvent({
+    rawId: 'ISOFMT1',
+    pipelineTraceUpstream: buildUpstreamSnapshot({ eventType: '事故', rawDirection: '北向', upstreamUpdatedAt: '2026-08-20T03:30:00.000Z' }), // 11:30 Taipei
+  });
+  await recordPipelineTrace(kv, buildTraceEntry({
+    event, now: new Date('2026-08-20T04:00:00.000Z'), eligibility: true, cctvEligible: true, imagePrepared: true, imageUrlPresent: true,
+    imageExpiresAt: '2026-08-20T05:00:00.000Z', // 13:00 Taipei
+  }), NOW);
+  const env = { ADMIN_PASSWORD, TRAFFIC_KV: kv };
+  const res = await handlePipelineTraceView(env, adminRequest('/admin/pipeline-trace-view'), new Date('2026-08-20T10:00:00.000Z'));
+  const html = await res.text();
+  assert.doesNotMatch(html, /2026-08-20T03:30:00\.000Z/);
+  assert.doesNotMatch(html, /2026-08-20T05:00:00\.000Z/);
+  assert.match(html, /2026-08-20 11:30/); // UpdatedAt, Taipei
+  assert.match(html, /2026-08-20 13:00/); // imageExpiresAt, Taipei
+});
+
+test('V1.8.6.9a correction: /admin/pipeline-trace (JSON API) contract is unchanged — raw UTC ISO, no Taipei formatting applied', async () => {
+  const kv = createMockKV();
+  const event = accidentEvent({
+    rawId: 'JSON1',
+    pipelineTraceUpstream: buildUpstreamSnapshot({ eventType: '事故', rawDirection: '北向', upstreamUpdatedAt: '2026-08-20T03:30:00.000Z' }),
+  });
+  await recordPipelineTrace(kv, buildTraceEntry({ event, now: new Date('2026-08-20T04:00:00.000Z'), eligibility: true }), NOW);
+  const env = { ADMIN_PASSWORD, TRAFFIC_KV: kv };
+  const auth = basicAuthHeader(ADMIN_USERNAME, ADMIN_PASSWORD);
+  const res = await worker.fetch(adminRequest('/admin/pipeline-trace', { auth }), env);
+  const body = await res.json();
+  const record = body.records.find((r) => r.identity.rawId === 'JSON1');
+  assert.equal(record.identity.timestamp, '2026-08-20T04:00:00.000Z');
+  assert.equal(record.upstream.upstreamUpdatedAt, '2026-08-20T03:30:00.000Z');
 });

@@ -111,17 +111,38 @@ function formatTaipeiInstant(iso) {
   return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
 }
 
-// V1.8.6.9a — the per-row summary column ONLY ever showed a bare HH:MM
-// (kept intentionally compact for the collapsed row), but the PRE-fix
-// version built it from `new Date(...).toISOString().slice(11, 16)` —
-// raw UTC, never Taipei. That is the exact real-device bug this round
-// fixes: a page full of ~noon-Taipei events (04:00 UTC) reads as a wall
-// of identical "04:00"/"04:10" rows with no way to tell they're actually
-// 8 hours off. Reuses the SAME taipeiParts() as formatTaipeiInstant, one
-// definition of "what time is it in Taipei" for this whole page.
-function formatTaipeiHHMM(iso) {
+// V1.8.6.9a correction — the per-row summary column's original fix only
+// went as far as a bare HH:MM in Taipei time; the actual acceptance
+// requirement (section 1 of the correction round) is a human-readable
+// RELATIVE date, same idiom as every chat app: 今天 12:10 / 昨天 23:50 /
+// 8/20 20:13 for anything older. Bare HH:MM alone is ambiguous the moment
+// the 24h trace window straddles midnight — "12:10" could be today or
+// yesterday with no way to tell at a glance, which is a real instance of
+// the same underlying problem (a management page silently forcing the
+// reader to do date arithmetic in their head) as the original bug.
+//
+// Reuses the SAME taipeiParts() as formatTaipeiInstant, so this stays a
+// single definition of "what time is it in Taipei" for the whole page.
+// `now` is threaded in as an explicit parameter (never `new Date()` read
+// directly inside this function) specifically so a test can pin it —
+// "今天"/"昨天" are meaningless without a fixed reference point, and this
+// project's standing rule is no wall-clock-dependent test.
+export function formatTaipeiListTime(iso, now = new Date()) {
   const p = taipeiParts(iso);
-  return p ? `${p.hour}:${p.minute}` : '--:--';
+  if (!p) return '--:--';
+  const nowP = taipeiParts(now);
+  const hhmm = `${p.hour}:${p.minute}`;
+  if (!nowP) return hhmm;
+  // Compare Taipei CALENDAR days, not a raw 24h subtraction (which would
+  // wrongly call 23:50-yesterday-to-00:10-today "not even a day apart").
+  // Date.UTC on the already-Taipei-shifted y/m/d gives a clean day-count
+  // difference with no timezone involved in the subtraction itself.
+  const eventDayMs = Date.UTC(p.year, Number(p.month) - 1, Number(p.day));
+  const nowDayMs = Date.UTC(nowP.year, Number(nowP.month) - 1, Number(nowP.day));
+  const diffDays = Math.round((nowDayMs - eventDayMs) / 86400000);
+  if (diffDays === 0) return `今天 ${hhmm}`;
+  if (diffDays === 1) return `昨天 ${hhmm}`;
+  return `${Number(p.month)}/${Number(p.day)} ${hhmm}`;
 }
 
 function formatEventWindow(eventWindow) {
@@ -154,6 +175,34 @@ function renderField(label, value) {
   return `<div class="row"><div class="label">${escapeHtml(label)}</div><div class="value">${value === null || value === undefined || value === '' ? '<span class="dim">—</span>' : escapeHtml(value)}</div></div>`;
 }
 
+// V1.8.6.9a correction — pipelineTrace.js's own schema (see that file's
+// buildTraceEntry doc comment / delivery block) has NO independent "when
+// did LINE actually push" field: `delivery.lineAttempted`/
+// `lineSucceeded` are COUNTS for this run, never a timestamp, and
+// `identity.timestamp` is when THIS TRACE ENTRY was recorded (i.e. when
+// this run's pipeline processed the event), not necessarily the same
+// instant a LINE push actually completed. Presenting identity.timestamp
+// AS the LINE push time would be exactly the kind of fabricated-precision
+// this project's "不要猜" rule forbids — so this checks a handful of
+// plausible future field names first (a real schema addition is then
+// picked up automatically, no second UI change needed) and otherwise
+// says so honestly rather than inventing a value. No schema change was
+// made this round to add one — see PRODUCT_DECISIONS.md for why.
+function linePushTimestamp(delivery) {
+  return (delivery && (delivery.linePushedAt || delivery.lineSucceededAt || delivery.notifiedAt)) || null;
+}
+
+function renderLineTimelineField(entry) {
+  const { delivery, status } = entry;
+  if (typeof delivery.lineSucceeded === 'number' && delivery.lineSucceeded > 0) {
+    const ts = linePushTimestamp(delivery);
+    if (ts) return renderField('LINE 播報', formatTaipeiInstant(ts));
+    return renderField('LINE 播報', '已播報（未保存獨立時間）');
+  }
+  const meta = statusMeta(status);
+  return renderField('LINE 播報', `未播報（${meta.emoji} ${meta.label}）`);
+}
+
 function renderDetail(entry) {
   const { identity, upstream, normalized, decision, enrichment, delivery } = entry;
   return `
@@ -169,7 +218,7 @@ function renderDetail(entry) {
     ${renderField('方向', upstream.rawDirection)}
     ${renderField('StartKM', upstream.rawStartKM)}
     ${renderField('EndKM', upstream.rawEndKM)}
-    ${renderField('UpdatedAt', upstream.upstreamUpdatedAt)}
+    ${renderField('UpdatedAt（Asia/Taipei）', formatTaipeiInstant(upstream.upstreamUpdatedAt))}
   </div>
   <div class="detail-section">
     <h4>B. 系統處理</h4>
@@ -199,20 +248,26 @@ function renderDetail(entry) {
     ${renderField('lineSucceeded', delivery.lineSucceeded)}
     ${renderField('imagePrepared', enrichment.imagePrepared === null ? null : enrichment.imagePrepared ? '是' : '否')}
     ${renderField('imageUrlPresent', enrichment.imageUrlPresent === null ? null : enrichment.imageUrlPresent ? '是' : '否')}
-    ${renderField('imageExpiresAt', enrichment.imageExpiresAt)}
+    ${renderField('imageExpiresAt（Asia/Taipei）', formatTaipeiInstant(enrichment.imageExpiresAt))}
     ${renderField('sharedFeedPersisted', delivery.sharedFeedPersisted === null ? null : delivery.sharedFeedPersisted ? '是' : '否')}
     ${renderField('sharedFeedWithImage', delivery.sharedFeedWithImage === null ? null : delivery.sharedFeedWithImage ? '是' : '否')}
+  </div>
+  <div class="detail-section">
+    <h4>D. 事件時間軸（Asia/Taipei）</h4>
+    ${renderField('上游更新', formatTaipeiInstant(upstream.upstreamUpdatedAt))}
+    ${renderField('系統抓取', formatTaipeiInstant(identity.timestamp))}
+    ${renderLineTimelineField(entry)}
   </div>
 </div>`;
 }
 
-function renderRow(entry) {
+function renderRow(entry, now) {
   const anomalies = buildTraceAnomalies(entry);
   const meta = statusMeta(entry.status);
   const cctv = cctvBadge(entry);
   const map = mapBadge(entry);
   const anomalyCls = anomalySeverityClass(anomalies);
-  const timeLabel = formatTaipeiHHMM(entry.identity.timestamp);
+  const timeLabel = formatTaipeiListTime(entry.identity.timestamp, now);
 
   return `
 <details class="trace-row ${anomalyCls ? `row-${anomalyCls}` : ''}">
@@ -383,8 +438,13 @@ ${!kvAvailable ? '<div class="empty">⚠️ 無法讀取 KV，暫無資料</div>
  * listPipelineTrace, same bounded scan as the JSON endpoint. Cache-
  * Control: no-store applied by applyAdminSecurityHeaders (index.js),
  * same as every other admin page.
+ *
+ * `now` is an explicit, optional third parameter (defaulting to the real
+ * clock) purely so a test can pin "今天"/"昨天" without being
+ * wall-clock-dependent — index.js's route table never passes it, so
+ * normal traffic always gets the real current time.
  */
-export async function handlePipelineTraceView(env, request) {
+export async function handlePipelineTraceView(env, request, now = new Date()) {
   const url = new URL(request.url);
   const filters = {
     source: url.searchParams.get('source') || '',
@@ -402,7 +462,7 @@ export async function handlePipelineTraceView(env, request) {
     status: filters.status || undefined,
   });
 
-  const rows = records.map(renderRow).join('\n');
+  const rows = records.map((entry) => renderRow(entry, now)).join('\n');
   const html = renderPage({ rows, filters, count: records.length, kvAvailable });
 
   return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
