@@ -362,6 +362,11 @@ const PAGE_STYLE = `
     border-radius: 8px; padding: 8px 12px; margin: 0 0 16px;
   }
   .tz-banner strong { color: #e8e9ec; }
+  .filter-banner {
+    font-size: 13px; color: #3fb950; background: #12261a; border: 1px solid #1f4a2d;
+    border-radius: 8px; padding: 8px 12px; margin: -8px 0 16px;
+  }
+  .filter-banner-none { color: #9aa1ac; background: #171b21; border-color: #2a2f3a; }
   .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; background: #1b1f26; padding: 12px; border-radius: 12px; border: 1px solid #262b34; }
   .filters input, .filters select {
     flex: 1 1 120px; min-width: 90px; padding: 8px 10px; border: 1px solid #333a46; border-radius: 8px;
@@ -415,6 +420,54 @@ const PAGE_STYLE = `
   .footer a { color: #58a6ff; text-decoration: none; display: block; padding: 4px 0; }
 `;
 
+// V1.8.7.6 — real Production mobile testing reported filtering appearing
+// to have no effect (results still included non-matching source/status
+// rows after submitting 來源=TDX國道 + 狀態=已播報). Exhaustive
+// investigation this round — full HTML-form→query-string→handler→
+// listPipelineTrace→predicate→render trace, plus a real headless-Chromium
+// reproduction that drives the ACTUAL <select> elements and submit
+// button (not a hand-built query string) — found every layer already
+// correct: the resulting query string, the filter predicates (AND
+// semantics, confirmed correct in V1.8.7.3 and unchanged here), and the
+// rendered output all matched exactly what a correct filter should
+// produce, at both small and realistic (2000+ key, paginated) scale. See
+// PROJECT_HANDOFF.md's own V1.8.7.6 section for the full writeup,
+// including why the leading hypothesis is a stale CLIENT-side view (the
+// admin's phone showing a response that never actually reflected the
+// just-submitted query) rather than a server defect — something this
+// module cannot fully rule out or fix on its own (no client JS is
+// permitted on this page — see the module's own top comment — so there
+// is no way to add an unload-based bfcache opt-out here).
+//
+// Two concrete, in-scope improvements made instead of guessing at a
+// server-side "fix" for a defect no reproduction could find:
+//   1. renderActiveFiltersBanner below — prints EXACTLY which filter
+//      values the server actually received and applied for THIS
+//      response, in the response body itself. The next time this is
+//      reported, comparing "what I selected" against this banner's own
+//      text immediately tells whether the server ever saw the intended
+//      query at all — turning "the filter doesn't work" into either
+//      "the banner shows the wrong values" (a genuine, now-diagnosable
+//      server/query bug) or "the banner shows the right values but rows
+//      don't match" (an actual predicate bug, also now diagnosable) or
+//      "the banner matches what was picked and the rows are correct"
+//      (client-side staleness — reload/clear-cache, not a code fix).
+//   2. Strengthened cache-prevention headers (see handlePipelineTraceView's
+//      Cache-Control override below) — belt-and-suspenders on top of the
+//      existing applyAdminSecurityHeaders no-store, since this round's
+//      leading hypothesis is exactly the kind of stale-response symptom
+//      overly-aggressive HTTP/bfcache caching produces.
+function renderActiveFiltersBanner(filters) {
+  const parts = [];
+  if (filters.source) parts.push(`來源=${sourceLabel(filters.source)}（${escapeHtml(filters.source)}）`);
+  if (filters.road) parts.push(`道路=${escapeHtml(filters.road)}`);
+  if (filters.rawId) parts.push(`rawId=${escapeHtml(filters.rawId)}`);
+  if (filters.status) parts.push(`狀態=${escapeHtml(statusMeta(filters.status).label)}（${escapeHtml(filters.status)}）`);
+  if (filters.limit) parts.push(`筆數=${escapeHtml(filters.limit)}`);
+  if (parts.length === 0) return '<p class="filter-banner filter-banner-none">目前未套用任何篩選（顯示全部）</p>';
+  return `<p class="filter-banner">✅ 目前套用篩選：${parts.join('　')}</p>`;
+}
+
 function renderPage({ rows, filters, count, kvAvailable }) {
   return `<!doctype html>
 <html lang="zh-Hant">
@@ -430,6 +483,7 @@ function renderPage({ rows, filters, count, kvAvailable }) {
 <p class="subtitle">最近 24 小時事件，最新在上。點一列展開查看上游資料／系統處理／最終結果。</p>
 <p class="tz-banner">🕒 以下時間皆為 <strong>Asia/Taipei（台灣時間，UTC+8）</strong>，不是 UTC。</p>
 ${renderFilterForm(filters)}
+${renderActiveFiltersBanner(filters)}
 ${!kvAvailable ? '<div class="empty">⚠️ 無法讀取 KV，暫無資料</div>' : count === 0 ? '<div class="empty">這個篩選條件下沒有資料</div>' : rows}
 <div class="footer">
   <a href="/admin/pipeline-trace">查看原始 JSON</a>
@@ -473,5 +527,22 @@ export async function handlePipelineTraceView(env, request, now = new Date()) {
   const rows = records.map((entry) => renderRow(entry, now)).join('\n');
   const html = renderPage({ rows, filters, count: records.length, kvAvailable });
 
-  return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+  // V1.8.7.6 — belt-and-suspenders on top of applyAdminSecurityHeaders'
+  // own Cache-Control:no-store (index.js wraps every ADMIN_PATHS response
+  // in that already) — set directly on THIS response too so it holds
+  // even if this handler is ever exercised outside that wrapper (e.g. a
+  // future direct call/test), and add Expires:0 as a second, older-cache
+  // signal some intermediaries/older mobile browser cache implementations
+  // still honor independently of Cache-Control. See this file's own
+  // renderActiveFiltersBanner comment for why this round added this: a
+  // stale CLIENT-visible response is the leading hypothesis for the
+  // reported "filter has no effect" symptom, after exhaustive
+  // investigation found every server-side layer already correct.
+  return new Response(html, {
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+      Expires: '0',
+    },
+  });
 }
