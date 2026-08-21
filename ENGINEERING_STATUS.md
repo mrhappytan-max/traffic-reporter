@@ -82,6 +82,27 @@ Cloudflare auto-deploys on every push to `main` — no manual `wrangler deploy` 
 - `GET /health` — zero TDX/PBS/LINE network calls, reads only `health:snapshot:v1` + `tdx:usage:summary:v1` from KV.
 - TDX usage reconciliation ledger live and accumulating (`tdx:usage:summary:v1`).
 
+## 🔗 Shared Traffic Feed — Producer/Consumer Authority Boundary
+
+**traffic-reporter is the Shared Traffic Feed's sole content authority.** TDX/PBS ingestion, classification, broadcast eligibility, time-window rules, dedupe/suppression, KM/direction/road resolution, message formatting, and CCTV are all decided HERE — a `completedProducts` entry in the feed means "already judged, ready to broadcast as-is." A consumer (e.g. 雙鐵進站小幫手/hsinchu-thsr-line-bot) is not expected, and must never need, to re-judge that content — its own job is reliable TRANSPORT: reading the feed, paging through it completely, and delivering what it finds.
+
+**This session/repo never modifies a consumer.** `hsinchu-thsr-line-bot` and any other Shared Feed consumer — their code, their Cloudflare Dashboard, their LINE channel, their Production config — are out of scope for every round done from this repo, permanently, not just for one task. A consumer-side problem gets diagnosed and evidence handed across the repo boundary (a Pipeline-Trace-style writeup, a reproduction, a suggested fix) — it does not get fixed by this session reaching into that repo. See `PROJECT_HANDOFF.md` §30 for the full boundary writeup and the V57.3 pagination fix that motivated writing this down formally.
+
+**Producer never builds consumer-specific logic.** The feed stays generic: no "is this what 雙鐵 wants" branching, no consumer-subscription awareness, no per-consumer type whitelist, no consumer-version detection. Every `completedProducts` entry goes out the same way to whoever reads the feed.
+
+## Latest completed work — V57.3: Shared Feed Pagination (integrated onto latest main)
+
+**Status: on branch `integration/v57.3-shared-feed-pagination`, branched from main (V1.8.7.2), NOT merged, NOT deployed.** See `PROJECT_HANDOFF.md` §30 for the full design writeup.
+
+A previously-completed Producer fix (`claude/v57.3-shared-feed-pagination`, commit `cda1e63`, built against an older `main`) cherry-picked cleanly onto latest `main` — **0 conflicts**, since it only ever touched `sharedFeed.js`/`sharedFeedHandler.js`/`test/sharedFeed.test.js`/`README.md`, none of which V1.8.7.0/.1/.2 touched.
+
+- **The bug this fixes**: `GET /internal/shared-feed` only ever returned the newest `limit` (≤50) entries of the window and set `truncated:true` — anything beyond that was invisible to a consumer, which couldn't even record that it had skipped those events. Not theoretical: a deploy that changes message text or fingerprint shape re-broadcasts many events in one tick, and a real 60-event window silently dropped 10 with no trace.
+- **The fix (additive, backward-compatible)**: `selectFeedWindow`/`handleSharedFeed` gained `offset` — `total` is always the FULL window count (never the page size), `truncated` now means "more entries exist past this page" (false on the last page), `clampOffset` bounds it to `0..MAX_STORED_EVENTS`, and the handler echoes `offset`/`limit` so a consumer can detect pagination support. A call that omits `offset` gets byte-for-byte the same response it always did; `schemaVersion` stays `1`.
+- **0 upstream calls, still**: pagination reads only the existing `traffic:shared-feed` KV blob — no new TDX/PBS/CCTV/Google/LINE calls, verified directly.
+- **V1.8.7.0/.1/.2 fully preserved**: dynamic-shoulder classification, CCTV single-strategy fairness (per-event budget + cap), and the 4-line short LINE message are all untouched and re-verified clean on top of this integration.
+
+7 tests from the original commit (120-event/4-page no-gap-no-overlap walk, truncated semantics on/off the last page, past-the-end offset, `clampOffset` bounds, backward-compatible omitted-offset response, handler offset echo, 0-upstream-calls during paging) plus a 243-test targeted regression sweep across every directly-affected file — all pass, 0 conflicts, 0 regressions.
+
 ## Latest completed work — V1.8.7.2: Dynamic Shoulder Message Simplification
 
 **Status: on branch `fix/v1.8.7.2-dynamic-shoulder-message-short`, branched from main (V1.8.7.1, merged), NOT merged, NOT deployed.** See `PROJECT_HANDOFF.md` §29 for the full design writeup.
