@@ -273,6 +273,26 @@ export function clampWindowMinutes(value) {
   return Math.min(Math.floor(parsed), MAX_WINDOW_MINUTES);
 }
 
+/**
+ * V57.3 — page offset into the window, newest-first.
+ *
+ * The window can legitimately hold more entries than MAX_LIMIT (a deploy that
+ * changes message text or fingerprint shape re-broadcasts many events at once),
+ * and a consumer that can only ever see the newest MAX_LIMIT of them silently
+ * loses the rest: it never learns they exist, so it cannot even record that it
+ * skipped them. Offset lets a consumer walk the whole window.
+ *
+ * Ordering is deterministic (updatedAt desc, then eventId asc), so an offset is
+ * stable within one snapshot. Across snapshots it can shift by a page boundary;
+ * that is harmless because a consumer re-reads the entire window every round
+ * and dedups its own deliveries.
+ */
+export function clampOffset(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return Math.min(Math.floor(parsed), MAX_STORED_EVENTS);
+}
+
 export function clampLimit(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_LIMIT;
@@ -301,9 +321,10 @@ export function toPublicEvent(entry) {
 }
 
 /** Pure. Newest-first window selection with truncation reporting. */
-export function selectFeedWindow(events, { windowMinutes, limit, now = new Date() } = {}) {
+export function selectFeedWindow(events, { windowMinutes, limit, offset, now = new Date() } = {}) {
   const minutes = clampWindowMinutes(windowMinutes);
   const max = clampLimit(limit);
+  const start = clampOffset(offset);
   const cutoffMs = now.getTime() - minutes * 60_000;
 
   const withinWindow = (Array.isArray(events) ? events : []).filter((entry) => {
@@ -317,9 +338,13 @@ export function selectFeedWindow(events, { windowMinutes, limit, now = new Date(
   return {
     windowMinutes: minutes,
     limit: max,
+    offset: start,
+    // `total` is always the FULL window count, never the page size — it is how
+    // a consumer knows there is more to fetch.
     total: sorted.length,
-    truncated: sorted.length > max,
-    events: sorted.slice(0, max).map(toPublicEvent),
+    // "there are entries beyond the end of this page", not "data was lost".
+    truncated: sorted.length > start + max,
+    events: sorted.slice(start, start + max).map(toPublicEvent),
   };
 }
 

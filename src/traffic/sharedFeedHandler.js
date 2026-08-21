@@ -56,6 +56,9 @@ export async function handleSharedFeed(request, env, now = new Date()) {
   const selection = selectFeedWindow(feed.events, {
     windowMinutes: url.searchParams.get('windowMinutes'),
     limit: url.searchParams.get('limit'),
+    // V57.3 — additive and backwards compatible: a caller that omits `offset`
+    // gets byte-for-byte the response it always did.
+    offset: url.searchParams.get('offset'),
     now,
   });
 
@@ -64,6 +67,10 @@ export async function handleSharedFeed(request, env, now = new Date()) {
     generatedAt: now.toISOString(),
     snapshotUpdatedAt: feed.updatedAt,
     windowMinutes: selection.windowMinutes,
+    // Echoed so a consumer can tell a paging-aware producer from an older one
+    // that silently ignored `offset` — see the consumer's page loop.
+    offset: selection.offset,
+    limit: selection.limit,
     total: selection.total,
     truncated: selection.truncated,
     events: selection.events,

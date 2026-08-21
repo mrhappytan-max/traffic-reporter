@@ -189,3 +189,24 @@ dryRun、fail-closed、以及 08:00–22:00 Asia/Taipei 播報時段之外。
 - Cloudflare Secret：`TRAFFIC_FEED_SECRET`（未設定時端點回 503）
 - KV：沿用既有 `TRAFFIC_KV`，只新增一把 key `traffic:shared-feed`（無 TTL，生命週期由 blob 內的 retention 規則管理）
 - 不需要新增任何 binding、不需要更動 `wrangler.jsonc`
+
+### V57.3｜Shared Feed 視窗分頁（`offset`）
+
+視窗可能容納超過一頁（`limit` 上限 50）的項目——一次改動播報文字或 fingerprint
+形狀的部署，會讓大量事件在同一個 tick 重新播出。只讀得到最新一頁的消費端會
+**無聲地遺失其餘事件**：它從不知道那些事件存在，因此連「已跳過」都無法記錄。
+
+```
+GET /internal/shared-feed?windowMinutes=90&limit=50&offset=50
+```
+
+- `offset`（選用，0～200）：在視窗內的位移，newest-first。
+- 回應新增 `offset` 與 `limit` 欄位；`total` 一律是**整個視窗**的項目數，
+  不是本頁筆數——這正是消費端judge「還有沒有下一頁」的依據。
+- `truncated` 語意為「本頁之後還有項目」，最後一頁為 `false`。
+- **完全向後相容**：不帶 `offset` 的呼叫得到與 V57.2 完全相同的回應。
+  `schemaVersion` 維持 `1`。
+- 排序是決定性的（`updatedAt` 遞減，再以 `eventId` 遞增），因此同一份快照內
+  `offset` 穩定。跨快照可能位移一個頁界；這無害——消費端每輪重讀整個視窗，
+  並以自己的投遞去重處理重複。
+- 分頁**不增加任何 upstream 呼叫**：資料一律來自 KV `traffic:shared-feed`。
