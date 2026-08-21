@@ -223,10 +223,30 @@ export function buildTraceEntry({
   lineSucceeded = null, // number | null
   sharedFeedPersisted = null, // boolean | null
   sharedFeedWithImage = null, // boolean | null
+  // V1.8.7.0 (Dynamic Shoulder) — imageStrategy/selectedCamera/
+  // rangeResolution are PIPELINE-computed outcomes for THIS run (which
+  // strategy was used, which camera won, what the range resolved to) —
+  // unlike eventSemantic/shoulderState below, they cannot be derived from
+  // `event` alone, so they're threaded in by the caller (see
+  // broadcastPipeline.js's traceForEvent.imageStrategy/selectedCamera/
+  // rangeResolution assignments) exactly like imagePrepared/
+  // imageUrlPresent/imageExpiresAt already are.
+  imageStrategy = null, // 'quad' | 'single' | null
+  selectedCamera = null, // string | null — minimal `${cctvId}@${locationMile}` reference, NEVER the raw CCTV record (see enrichment block below)
+  rangeResolution = null, // {segmentFrom, segmentTo, locationLabel} | null
 } = {}) {
   const anomalyDetail = event && event.nonCollisionAnomalyDetail ? event.nonCollisionAnomalyDetail : null;
   const upstream = (event && event.pipelineTraceUpstream) || buildUpstreamSnapshot({});
   const eventActive = eventTimeStatus === null ? null : eventTimeStatus === 'active';
+  // V1.8.7.0 — unlike imageStrategy/selectedCamera/rangeResolution above,
+  // these two ARE derivable directly from `event` itself (the SAME
+  // `event.dynamicShoulder` tdx/normalize.js's detectDynamicShoulder
+  // attached — see that module's own comment), so no new parameter is
+  // needed for them — same "read straight off the event" pattern
+  // `identity.road`/`identity.source` below already use.
+  const dynamicShoulder = event && event.dynamicShoulder;
+  const eventSemantic = dynamicShoulder ? 'dynamic-shoulder' : null;
+  const shoulderState = dynamicShoulder ? dynamicShoulder.state : null;
 
   const status = computeStatus({
     dedupeResult,
@@ -259,6 +279,16 @@ export function buildTraceEntry({
       location: (event && event.location) || null,
       classificationSource: (event && event.provenance && event.provenance.classificationSource) || null,
       classificationEvidence: describeClassificationEvidence(event, eligibilityReason, anomalyDetail),
+      // V1.8.7.0 (Dynamic Shoulder) — derived directly from
+      // event.dynamicShoulder above; null/null for every event that
+      // isn't one. Deliberately NOT a second classificationEvidence —
+      // this reuses the SAME evidence dynamicShoulderClassification.js
+      // itself already captured (see event.dynamicShoulder.evidence,
+      // carried through unchanged, never re-derived here) rather than
+      // building a parallel evidence trail.
+      eventSemantic,
+      shoulderState,
+      dynamicShoulderEvidence: dynamicShoulder ? dynamicShoulder.evidence : null,
     },
     decision: {
       eligibility,
@@ -283,6 +313,13 @@ export function buildTraceEntry({
       imagePrepared,
       imageUrlPresent,
       imageExpiresAt,
+      // V1.8.7.0 (Dynamic Shoulder) — see the param comments above.
+      // selectedCamera is a minimal `${cctvId}@${locationMile}` string
+      // ONLY (never the raw CCTV metadata record — this module's own
+      // whitelist-only discipline, same as buildUpstreamSnapshot above).
+      imageStrategy,
+      selectedCamera,
+      rangeResolution,
     },
     delivery: {
       lineAttempted,

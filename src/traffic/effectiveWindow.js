@@ -49,6 +49,24 @@ function isLiveNonCollisionAnomaly(event) {
   return Boolean(event && event.nonCollisionAnomalyDetail);
 }
 
+// V1.8.7.0 — same reasoning as isLiveNonCollisionAnomaly directly above:
+// a dynamic-shoulder OPEN/STOPPED report describes the road's CURRENT
+// state (the shoulder is open/closed for through-traffic RIGHT NOW), not
+// a pre-announced future schedule — its `type` still classifies as
+// 'control' (see tdx/normalize.js/dynamicShoulderClassification.js),
+// which is NOT a LIVE_TYPE above, so without this check every
+// dynamic-shoulder event would fall into the "announced" bucket and
+// require a parseable Chinese date range in its Description — a real
+// TDX dynamic-shoulder record carries no such schedule text at all, so
+// effectiveStart would always resolve to null and the event would never
+// broadcast. Checked via `event.dynamicShoulder`'s presence (attached
+// only when real text evidence was found — see that module), never by
+// widening LIVE_TYPES to include all of 'control' (which would also
+// affect every OTHER control-typed event, not just this one).
+function isLiveDynamicShoulder(event) {
+  return Boolean(event && event.dynamicShoulder && event.dynamicShoulder.state);
+}
+
 function isValidDateString(value) {
   if (!value) return false;
   const ms = new Date(value).getTime();
@@ -66,7 +84,8 @@ function isValidDateString(value) {
  * }}
  */
 export function computeEffectiveWindow(event, now = new Date()) {
-  const isLive = LIVE_SOURCES.has(event.source) || LIVE_TYPES.has(event.type) || isLiveNonCollisionAnomaly(event);
+  const isLive =
+    LIVE_SOURCES.has(event.source) || LIVE_TYPES.has(event.type) || isLiveNonCollisionAnomaly(event) || isLiveDynamicShoulder(event);
 
   if (isLive) {
     const effectiveStart = isValidDateString(event.startTime) ? event.startTime : now.toISOString();

@@ -41,6 +41,23 @@ function eventKey(event) {
 // Only fields that actually matter to a driver go into the fingerprint.
 // updatedAt is deliberately excluded — a timestamp-only change must never
 // count as a "major update" on its own.
+//
+// V1.8.7.0 — `dynamicShoulderState` is appended ONLY when
+// `event.dynamicShoulder` is present (see
+// dynamicShoulderClassification.js) — every other event's fingerprint
+// shape is byte-for-byte unchanged, so this can never affect
+// accident/construction/closure/etc fingerprinting ("不要破壞既有
+// accident/construction fingerprint"). Explicit, not incidental: a
+// dynamic-shoulder record's own `description` text usually already
+// differs between an OPEN and a STOPPED report (different upstream
+// wording), which would often change the fingerprint on its own — but
+// relying on that would be fragile if TDX ever republishes the SAME
+// rawId with an unchanged description but a genuinely different state.
+// Including the classified state directly guarantees OPEN<->STOPPED is
+// ALWAYS a fingerprint change ("必須視為重要內容更新，重新推播"),
+// regardless of exact upstream wording, while the same state reported
+// again with the same content still fingerprints identically ("同一
+// state、同一內容：維持既有 dedupe，不重播").
 export function computeFingerprint(event) {
   return JSON.stringify({
     type: event.type ?? null,
@@ -49,6 +66,7 @@ export function computeFingerprint(event) {
     startKM: event.startKM ?? null,
     endKM: event.endKM ?? null,
     blockedLanes: event.blockedLanes ?? null,
+    ...(event.dynamicShoulder ? { dynamicShoulderState: event.dynamicShoulder.state } : {}),
   });
 }
 

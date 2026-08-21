@@ -109,8 +109,10 @@ import {
   TARGET_ROAD_ID,
   TARGET_ROAD_NAME_PATTERN,
   selectFourQuadrantCandidates,
+  selectSingleShoulderCandidate,
   composeCollageFromCandidates,
   buildCollageHeaderLines,
+  extractFirstJpegFrame,
 } from '../tdx/hsinchuCctvProbe.js';
 import { resolveRoadKey, parseKM } from '../traffic/roadSectionLabel.js';
 import { publishCollageImage } from './publishedImage.js';
@@ -219,6 +221,17 @@ function eventTargetKm(event) {
   return start ?? end;
 }
 
+// V1.8.7.0 — true for an event that carries a real dynamic-shoulder
+// classification (see dynamicShoulderClassification.js) — checked
+// alongside `type === 'accident'` below so this module gains a SECOND
+// CCTV-eligible event category without altering what "eligible" means
+// for an accident at all. `event.dynamicShoulder` is only ever present
+// when tdx/normalize.js's detectDynamicShoulder actually found real text
+// evidence — see that module's own comment.
+function isDynamicShoulderEvent(event) {
+  return Boolean(event && event.dynamicShoulder && event.dynamicShoulder.state);
+}
+
 /**
  * Pure, synchronous, ZERO I/O — decides whether `event` is even a
  * candidate for CCTV enrichment, and if so, resolves the exact
@@ -226,17 +239,38 @@ function eventTargetKm(event) {
  * path for a pure eligibility count (see broadcastPipeline.js's
  * cctvEligibleAccidentCount) without triggering any network activity.
  *
+ * V1.8.7.0 — now covers TWO event categories, distinguished by
+ * `imageStrategy` on the returned eligibility object:
+ *   - accident            -> imageStrategy:'quad'   (unchanged behavior —
+ *     see prepareCctvImageWork / the original 4-quadrant collage)
+ *   - dynamic-shoulder     -> imageStrategy:'single' (see
+ *     prepareSingleCctvImageWork below) — one representative camera for
+ *     the event's own KM RANGE, never a 2x2 collage. `reason:
+ *     'not-accident'` is deliberately UNCHANGED wording for "neither
+ *     category" — existing callers/tests that check this exact string
+ *     for a plain construction/closure/etc event keep working unchanged.
+ *
  * @param {object} event
- * @returns {{eligible:true, roadKey:string, roadId:string, roadNamePattern:RegExp, roadShortName:string, targetKm:number}
+ * @returns {{eligible:true, imageStrategy:'quad', roadKey:string, roadId:string,
+ *     roadNamePattern:RegExp, roadShortName:string, targetKm:number}
+ *   |{eligible:true, imageStrategy:'single', roadKey:string, roadId:string,
+ *     roadNamePattern:RegExp, roadShortName:string, direction:string,
+ *     startKm:number|null, endKm:number|null, targetKm:number}
  *   |{eligible:false, reason:'not-accident'|'not-freeway-source'|'unresolvable-road'|'unsupported-road'|'no-reliable-km'}}
  */
 export function resolveCctvEligibility(event) {
-  if (!event || event.type !== 'accident') return { eligible: false, reason: 'not-accident' };
-  // V1.8.5 V1: only TDX Freeway-sourced accidents (see tdx/sources.js —
+  const isAccident = Boolean(event && event.type === 'accident');
+  const isDynamicShoulder = isDynamicShoulderEvent(event);
+  if (!isAccident && !isDynamicShoulder) return { eligible: false, reason: 'not-accident' };
+
+  // V1.8.5 V1: only TDX Freeway-sourced events (see tdx/sources.js —
   // source:'freeway' is the confirmed 國道 RoadEvent feed). Never PBS,
   // never 'highway' (省道) — those don't have a confirmed CCTV road
   // mapping in this round's registry either way, but gating on source
   // here keeps the reason distinct/observable from "road not supported."
+  // Applies equally to accident and dynamic-shoulder — TDX's own dynamic
+  // shoulder mechanism is itself a Freeway (國道) feature, so this was
+  // never expected to need loosening for the new category.
   if (event.source !== 'freeway') return { eligible: false, reason: 'not-freeway-source' };
 
   const roadKey = resolveRoadKey(event.road);
@@ -245,11 +279,31 @@ export function resolveCctvEligibility(event) {
   const supported = CCTV_SUPPORTED_ROADS[roadKey];
   if (!supported) return { eligible: false, reason: 'unsupported-road' };
 
+  if (isDynamicShoulder) {
+    const startKm = parseKM(event.startKM);
+    const endKm = parseKM(event.endKM);
+    if (startKm === null && endKm === null) return { eligible: false, reason: 'no-reliable-km' };
+    const targetKm = startKm !== null && endKm !== null ? (startKm + endKm) / 2 : startKm ?? endKm;
+    return {
+      eligible: true,
+      imageStrategy: 'single',
+      roadKey,
+      roadId: supported.roadId,
+      roadNamePattern: supported.roadNamePattern,
+      roadShortName: supported.shortName,
+      direction: event.direction,
+      startKm,
+      endKm,
+      targetKm,
+    };
+  }
+
   const targetKm = eventTargetKm(event);
   if (targetKm === null) return { eligible: false, reason: 'no-reliable-km' };
 
   return {
     eligible: true,
+    imageStrategy: 'quad',
     roadKey,
     roadId: supported.roadId,
     roadNamePattern: supported.roadNamePattern,
@@ -338,6 +392,61 @@ async function prepareCctvImageWork(env, eligibility, runCache, codecOverride, d
 }
 
 /**
+ * V1.8.7.0 — Dynamic Shoulder single-camera CCTV work. Deliberately a
+ * SEPARATE, much cheaper path from prepareCctvImageWork (quad) above —
+ * see this module's own performance requirement: only 1 frame fetch, NO
+ * 2x2 collage composition, and — the biggest saving — NO JPEG
+ * decode/encode round-trip at all. A single already-JPEG-encoded frame
+ * from freeway.gov.tw is published to R2 EXACTLY as fetched (raw bytes,
+ * unchanged), the same way an accident's composed collage bytes are
+ * published, just skipping the decode/re-encode/compose step entirely
+ * since there is nothing to compose — one frame IS the final image.
+ * Camera SELECTION still reuses the shared eligible-CCTV-pool builder
+ * (selectSingleShoulderCandidate, see hsinchuCctvProbe.js) — never a
+ * second metadata-filtering pass — and frame fetching still reuses the
+ * SAME extractFirstJpegFrame this module's quad path uses (identical
+ * trusted-hostname check, size cap, and per-fetch timeout handling) — no
+ * second CCTV frame-fetch pipeline was built for this ("不要為 dynamic
+ * shoulder 建第二套 CCTV pipeline").
+ */
+async function prepareSingleCctvImageWork(env, eligibility, runCache, deadlineAt) {
+  const metadata = await getFreewayCctvMetadata(env, runCache);
+  if (!metadata.ok) return { ok: false, reason: metadata.reason };
+
+  const candidate = selectSingleShoulderCandidate(metadata.records, {
+    roadId: eligibility.roadId,
+    roadNamePattern: eligibility.roadNamePattern,
+    direction: eligibility.direction,
+    startKm: eligibility.startKm,
+    endKm: eligibility.endKm,
+  });
+  if (!candidate) return { ok: false, reason: 'no-camera' };
+
+  const frameTimeoutMs = Math.max(MIN_FRAME_TIMEOUT_MS, deadlineAt - Date.now());
+  const frame = await extractFirstJpegFrame(candidate.videoStreamUrl, { timeoutMs: frameTimeoutMs });
+  if (!frame.ok) return { ok: false, reason: 'no-frames' }; // same reason as the quad path's own "every fetch failed" outcome
+
+  // Same pre-publish deadline re-check as the quad path — see
+  // prepareCctvImageWork's own comment for why this matters (avoid a
+  // wasted R2 write for a result the outer race is about to discard
+  // anyway).
+  if (Date.now() >= deadlineAt) return { ok: false, reason: 'prepare-timeout' };
+
+  const published = await publishCollageImage(env.CCTV_IMAGES, frame.bytes);
+  if (!published.ok) return { ok: false, reason: 'r2-publish-failed' };
+
+  return {
+    ok: true,
+    imageUrl: publicImageUrl(env, published.id),
+    imageExpiresAt: published.expiresAt,
+    // V1.8.7.0 — Pipeline Trace wants a MINIMAL camera reference (never
+    // the full raw CCTV payload — see pipelineTrace.js's own whitelist
+    // discipline): the device id plus its own KM, nothing else.
+    selectedCamera: `${candidate.cctvId}@${candidate.locationMile}`,
+  };
+}
+
+/**
  * Orchestrates the FULL dynamic CCTV pipeline for one accident event:
  * eligibility -> shared metadata (cache-only, memoized this run) ->
  * four-quadrant select (same ratified algorithm, this event's own
@@ -377,7 +486,17 @@ export async function prepareCctvImageForEvent(env, event, runCache, codecOverri
   if (budgetMs <= 0) return { ok: false, reason: 'run-budget-exhausted' };
 
   const deadlineAt = Date.now() + budgetMs;
-  const work = prepareCctvImageWork(env, eligibility, runCache, codecOverride, deadlineAt).catch(() => ({
+  // V1.8.7.0 — strategy dispatch, decided ONCE by resolveCctvEligibility
+  // above (never re-decided here): 'single' for a dynamic-shoulder event
+  // (prepareSingleCctvImageWork — 1 frame, no collage, no decode/encode),
+  // 'quad' for an accident (prepareCctvImageWork, unchanged). Both share
+  // the exact same budget/timeout/deadline handling below — only the
+  // work itself differs.
+  const work = (
+    eligibility.imageStrategy === 'single'
+      ? prepareSingleCctvImageWork(env, eligibility, runCache, deadlineAt)
+      : prepareCctvImageWork(env, eligibility, runCache, codecOverride, deadlineAt)
+  ).catch(() => ({
     ok: false,
     reason: 'prepare-error',
   }));

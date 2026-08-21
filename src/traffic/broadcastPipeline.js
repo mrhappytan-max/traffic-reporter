@@ -86,6 +86,17 @@ function eventKeyOf(event) {
   return `${event.source}:${event.rawId}`;
 }
 
+// V1.8.7.0 — the SAME cheap, zero-I/O gate resolveCctvEligibility itself
+// applies first (see dynamicCollage.js) — checked here too, BEFORE ever
+// calling resolveCctvEligibility, purely to decide whether to enter the
+// CCTV block at all (mirrors this file's own pre-existing
+// `event.type === 'accident'` early-out, now covering the SECOND
+// CCTV-eligible event category this round adds — see that module's own
+// comment for why an accident's own gate is completely unaffected).
+function isCctvCandidateEvent(event) {
+  return Boolean(event && (event.type === 'accident' || (event.dynamicShoulder && event.dynamicShoulder.state)));
+}
+
 /**
  * "When was this event's CURRENT content first established?" — reused
  * from dedupe.js's own bookkeeping (lastSeenAt is only rewritten on
@@ -625,7 +636,11 @@ export async function runLineBroadcast(
       // (see that function's own comment for why the ordering matters).
       // imagePrepared/imageUrlPresent/imageExpiresAt are patched onto this
       // SAME trace input object right after that pass runs, below.
-      if (event.type === 'accident') trace.cctvEligible = resolveCctvEligibility(event).eligible;
+      if (isCctvCandidateEvent(event)) {
+        const elig = resolveCctvEligibility(event);
+        trace.cctvEligible = elig.eligible;
+        if (elig.eligible) trace.imageStrategy = elig.imageStrategy;
+      }
       // V57.1: still a candidate for a CCTV image — for the Shared Traffic
       // Feed ONLY, never for a LINE re-push. Deferred to after this loop so
       // it can never take budget (or wall-clock) away from an event that
@@ -657,8 +672,16 @@ export async function runLineBroadcast(
     // reference to the SAME `cctv` result the real push path already
     // computed (or an explicit note when it wasn't even attempted).
     const traceForEvent = traceFor(event);
-    if (event.type === 'accident') {
-      traceForEvent.cctvEligible = resolveCctvEligibility(event).eligible;
+    // V1.8.7.0 — see isCctvCandidateEvent's own comment: now covers both
+    // accident (imageStrategy 'quad', unchanged) and dynamic-shoulder
+    // (imageStrategy 'single', new this round) — resolveCctvEligibility
+    // itself decides which, prepareCctvImageForEvent dispatches on it
+    // (see dynamicCollage.js), never a second, parallel CCTV code path
+    // here.
+    if (isCctvCandidateEvent(event)) {
+      const elig = resolveCctvEligibility(event);
+      traceForEvent.cctvEligible = elig.eligible;
+      if (elig.eligible) traceForEvent.imageStrategy = elig.imageStrategy;
       const remainingRunBudgetMs = cctvRunDeadlineAt - Date.now();
       if (remainingRunBudgetMs <= 0) {
         result.cctvSkippedByReason['run-budget-exhausted'] = (result.cctvSkippedByReason['run-budget-exhausted'] || 0) + 1;
@@ -676,6 +699,10 @@ export async function runLineBroadcast(
           traceForEvent.imagePrepared = true;
           traceForEvent.imageUrlPresent = true;
           traceForEvent.imageExpiresAt = cctv.imageExpiresAt;
+          // V1.8.7.0 — only ever set by the single-camera (dynamic-
+          // shoulder) path; the quad path's own result never carries
+          // this, so an accident's trace entry keeps selectedCamera:null.
+          if (cctv.selectedCamera) traceForEvent.selectedCamera = cctv.selectedCamera;
         } else {
           result.cctvSkippedByReason[cctv.reason] = (result.cctvSkippedByReason[cctv.reason] || 0) + 1;
           traceForEvent.imagePrepared = false;
@@ -701,6 +728,24 @@ export async function runLineBroadcast(
       displayKM: event.displayKM,
     });
     traceForEvent.kmLocationResolution = kmLocationResolution;
+    // V1.8.7.0 — Pipeline Trace's dynamic-shoulder-specific range display
+    // (section 12 of this round's task). Deliberately NOT a second
+    // resolveKmRange() call — kmLocationResolution above already carries
+    // segmentFrom/segmentTo/locationLabel from the SAME underlying
+    // resolveKmLocation() this event's own message text was built from
+    // (see messageFormat.js's buildRoadLines); this just picks those same
+    // three fields out for trace display, one resolution, one place it's
+    // computed. Only ever set for a dynamic-shoulder event — every other
+    // event's trace entry keeps rangeResolution:null.
+    if (event.dynamicShoulder) {
+      traceForEvent.rangeResolution = kmLocationResolution.resolved
+        ? {
+            segmentFrom: kmLocationResolution.segmentFrom,
+            segmentTo: kmLocationResolution.segmentTo,
+            locationLabel: kmLocationResolution.locationLabel,
+          }
+        : null;
+    }
 
     const successfulTargets = [];
     // Best-effort per target — one target's failure never blocks another.
@@ -802,6 +847,10 @@ export async function runLineBroadcast(
     trace.imageUrlPresent = Boolean(product.imageUrl);
     trace.imageExpiresAt = product.imageExpiresAt || null;
     if (product.cctvSkipReason) trace.cctvSkippedByReason = product.cctvSkipReason;
+    // V1.8.7.0 — same single-camera-only field as the real push path
+    // above (see traceForEvent.selectedCamera there) — only ever set by
+    // topUpSharedFeedCctvImages' own single-strategy attempt below.
+    if (product.selectedCamera) trace.selectedCamera = product.selectedCamera;
   }
 
   if (!anyWriteHappened && prunedKeys.length > 0) {
@@ -924,6 +973,7 @@ async function topUpSharedFeedCctvImages(env, result, feedOnlyProducts, { now, c
     if (cctv.ok) {
       product.imageUrl = cctv.imageUrl;
       product.imageExpiresAt = cctv.imageExpiresAt;
+      if (cctv.selectedCamera) product.selectedCamera = cctv.selectedCamera; // V1.8.7.0 — single-strategy only
       result.cctvFeedOnlyAttachedCount += 1;
     } else {
       result.cctvFeedOnlySkippedByReason[cctv.reason] = (result.cctvFeedOnlySkippedByReason[cctv.reason] || 0) + 1;

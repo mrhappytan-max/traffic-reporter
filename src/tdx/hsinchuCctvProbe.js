@@ -279,8 +279,14 @@ function isServiceAreaCctv(record) {
 /** Normalizes a raw RoadDirection/Direction field value to 'S', 'N', or
  * null (unrecognized). Accepts TDX's short codes ('S'/'N') as well as
  * common textual variants defensively — TDX field content has been
- * observed to vary in casing/verbosity across endpoints. */
-function normalizeDirection(rawDirection) {
+ * observed to vary in casing/verbosity across endpoints.
+ *
+ * V1.8.7.0: exported so cctv/dynamicCollage.js's single-camera Dynamic
+ * Shoulder selector can normalize an EVENT's own `direction` field
+ * ('南向'/'北向'/etc, the SAME free-text shape this function already
+ * accepts) to the identical S/N form the CCTV metadata pool uses —
+ * never a second, independently-written direction parser. */
+export function normalizeDirection(rawDirection) {
   if (typeof rawDirection !== 'string') return null;
   const value = rawDirection.trim().toUpperCase();
   if (value === 'S' || value === '南' || value === '南向' || value.startsWith('SOUTH')) return 'S';
@@ -305,6 +311,46 @@ function normalizeDirection(rawDirection) {
  * preserve the exact original fixed-target behavior for every existing
  * caller (handleHsinchuCctvProbe below).
  */
+// V1.8.7.0 — extracted, UNCHANGED, from selectFourQuadrantCandidates'
+// own former inline loop, specifically so cctv/dynamicCollage.js's
+// single-camera Dynamic Shoulder selector (selectSingleShoulderCandidate
+// below) can reuse the EXACT SAME "eligible mainline CCTV pool" build —
+// same road-match, same service-area exclusion (checked BEFORE any
+// distance/range comparison, for the same reason documented on
+// isServiceAreaCctv), same required-field checks — rather than a second,
+// independently-maintained copy that could quietly drift (e.g. one day
+// stop excluding service-area cameras from the single-camera path only).
+// `targetKm` is optional here (unlike the 4-quadrant caller, which always
+// has one fixed incident point) because the single-camera selector below
+// ranks primarily by RANGE membership, not distance-to-a-point — when
+// omitted, `distanceKm` is simply absent from each pool entry.
+function buildEligibleCctvPool(records, { roadId, roadNamePattern, targetKm }) {
+  const usable = [];
+  for (const record of records) {
+    if (!isTargetRoad(record, { roadId, roadNamePattern })) continue;
+    if (isServiceAreaCctv(record)) continue; // 服務區/休息站/服務站 — never a mainline incident camera, regardless of KM proximity
+    const cctvId = firstDefinedField(record, ['CCTVID', 'CCTVId', 'ID']);
+    const videoStreamUrl = firstDefinedField(record, ['VideoStreamURL']);
+    const locationMile = firstDefinedField(record, ['LocationMile']);
+    if (!cctvId || !videoStreamUrl) continue; // unusable without an ID or an image URL
+    const km = parseKM(locationMile);
+    if (km === null) continue; // can't place into a quadrant/range without a parseable KM
+    const direction = normalizeDirection(firstDefinedField(record, ['RoadDirection', 'Direction']));
+    if (direction === null) continue; // can't place into a quadrant/range without a known direction
+    usable.push({
+      cctvId,
+      roadDirection: direction,
+      locationMile,
+      positionLon: firstDefinedField(record, ['PositionLon']),
+      positionLat: firstDefinedField(record, ['PositionLat']),
+      videoStreamUrl,
+      km,
+      ...(typeof targetKm === 'number' ? { distanceKm: Math.abs(km - targetKm) } : {}),
+    });
+  }
+  return usable;
+}
+
 export function selectFourQuadrantCandidates(
   records,
   { roadId = TARGET_ROAD_ID, roadNamePattern = TARGET_ROAD_NAME_PATTERN, targetKm = TARGET_KM } = {}
@@ -315,29 +361,7 @@ export function selectFourQuadrantCandidates(
   // exclusion happened AFTER picking "nearest," a nearby service-area
   // camera could still win a quadrant before being caught — see
   // isServiceAreaCctv's module comment.
-  const usable = [];
-  for (const record of records) {
-    if (!isTargetRoad(record, { roadId, roadNamePattern })) continue;
-    if (isServiceAreaCctv(record)) continue; // 服務區/休息站/服務站 — never a mainline incident camera, regardless of KM proximity
-    const cctvId = firstDefinedField(record, ['CCTVID', 'CCTVId', 'ID']);
-    const videoStreamUrl = firstDefinedField(record, ['VideoStreamURL']);
-    const locationMile = firstDefinedField(record, ['LocationMile']);
-    if (!cctvId || !videoStreamUrl) continue; // unusable without an ID or an image URL
-    const km = parseKM(locationMile);
-    if (km === null) continue; // can't place into a quadrant without a parseable KM
-    const direction = normalizeDirection(firstDefinedField(record, ['RoadDirection', 'Direction']));
-    if (direction === null) continue; // can't place into a quadrant without a known direction
-    usable.push({
-      cctvId,
-      roadDirection: direction,
-      locationMile,
-      positionLon: firstDefinedField(record, ['PositionLon']),
-      positionLat: firstDefinedField(record, ['PositionLat']),
-      videoStreamUrl,
-      km,
-      distanceKm: Math.abs(km - targetKm),
-    });
-  }
+  const usable = buildEligibleCctvPool(records, { roadId, roadNamePattern, targetKm });
 
   return QUADRANTS.map((quadrant) => {
     const inDirection = usable.filter((c) => c.roadDirection === quadrant.direction);
@@ -351,6 +375,81 @@ export function selectFourQuadrantCandidates(
 
     return nearest(NEAR_RADIUS_KM) ?? nearest(WIDE_RADIUS_KM);
   });
+}
+
+// V1.8.7.0 — Dynamic Shoulder single-camera selector. Reuses
+// buildEligibleCctvPool (the SAME road-match/service-area-exclusion/
+// required-field pool selectFourQuadrantCandidates itself builds from —
+// see that function's own comment), applying a DIFFERENT ranking rule
+// suited to "one representative camera for a KM RANGE, same direction as
+// the event" rather than "four fixed points around one incident KM":
+//
+//   1. Same direction AND within [startKm, endKm] (inclusive) — of those,
+//      the one closest to the range's own MIDPOINT ("最具代表性的一支").
+//      A camera physically inside the affected range is definitionally
+//      the most representative view of it, regardless of exactly how far
+//      from the midpoint it sits within that range.
+//   2. No in-range candidate — falls back to the SAME nearest-by-distance
+//      rule used everywhere else in this module (±NEAR_RADIUS_KM first,
+///     widening to ±WIDE_RADIUS_KM), ranked against the range midpoint,
+//      same direction only ("使用既有可靠距離規則找最近的同方向鏡頭").
+//   3. Still nothing — null. The caller (dynamicCollage.js) treats this
+//      exactly like any other CCTV failure: text-only push, never a
+//      reason to withhold the notification itself.
+//
+// Returns a SINGLE candidate object (or null) — the same per-candidate
+// shape (`{cctvId, roadDirection, locationMile, positionLon, positionLat,
+// videoStreamUrl}`) selectFourQuadrantCandidates' own entries have, minus
+// the fixed 4-slot array wrapper, since there is exactly one slot here.
+//
+// @param {object[]} records - raw CCTV metadata records (same shape as
+//   selectFourQuadrantCandidates' own `records` parameter).
+// @param {{roadId?:string, roadNamePattern?:RegExp, direction:string,
+//   startKm:number|null, endKm:number|null}} options - `direction` is the
+//   EVENT's own free-text direction ('南向' etc — normalized internally
+//   via normalizeDirection, same as every CCTV metadata record's own
+//   direction field); at least one of startKm/endKm must be a finite
+//   number, or this returns null immediately (no reliable position to
+//   search around).
+// @returns {{cctvId:string, roadDirection:'S'|'N', locationMile:string,
+//   positionLon:*, positionLat:*, videoStreamUrl:string}|null}
+export function selectSingleShoulderCandidate(
+  records,
+  { roadId = TARGET_ROAD_ID, roadNamePattern = TARGET_ROAD_NAME_PATTERN, direction, startKm, endKm } = {}
+) {
+  const wantDirection = normalizeDirection(direction);
+  if (wantDirection === null) return null;
+
+  const hasStart = typeof startKm === 'number' && Number.isFinite(startKm);
+  const hasEnd = typeof endKm === 'number' && Number.isFinite(endKm);
+  if (!hasStart && !hasEnd) return null;
+
+  const rangeLo = hasStart && hasEnd ? Math.min(startKm, endKm) : hasStart ? startKm : endKm;
+  const rangeHi = hasStart && hasEnd ? Math.max(startKm, endKm) : hasStart ? startKm : endKm;
+  const midpointKm = (rangeLo + rangeHi) / 2;
+
+  const pool = buildEligibleCctvPool(records, { roadId, roadNamePattern, targetKm: midpointKm }).filter(
+    (c) => c.roadDirection === wantDirection
+  );
+  if (pool.length === 0) return null;
+
+  // Priority 1: physically inside the event's own range — closest to the
+  // midpoint wins ("最具代表性的一支").
+  const inRange = pool.filter((c) => c.km >= rangeLo && c.km <= rangeHi);
+  if (inRange.length > 0) {
+    return inRange.reduce((best, c) => (c.distanceKm < best.distanceKm ? c : best));
+  }
+
+  // Priority 2: same fallback distance strategy used throughout this
+  // module — nearest within NEAR_RADIUS_KM, else nearest within
+  // WIDE_RADIUS_KM, else give up (never reach further to force a match).
+  const nearest = (maxRadiusKm) => {
+    const withinRadius = pool.filter((c) => c.distanceKm <= maxRadiusKm);
+    if (withinRadius.length === 0) return null;
+    return withinRadius.reduce((best, c) => (c.distanceKm < best.distanceKm ? c : best));
+  };
+
+  return nearest(NEAR_RADIUS_KM) ?? nearest(WIDE_RADIUS_KM);
 }
 
 // Only these 6 fields are ever persisted — per spec, "只保存". distanceKm

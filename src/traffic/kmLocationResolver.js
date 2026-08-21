@@ -229,3 +229,63 @@ export function resolveKmLocation(input, { datasetOverride } = {}) {
     return failClosed('resolver-error');
   }
 }
+
+// V1.8.7.0 — Dynamic Shoulder range → human-readable section name
+// ("○○交流道－○○交流道路段"). Deliberately a THIN wrapper over
+// resolveKmLocation, NOT a second resolution engine: resolveKmLocation's
+// own selectTargetKm() already averages startKM/endKM into the range's
+// MIDPOINT when both are present, and buildFreewaySegment() already
+// brackets that midpoint with the nearest facility BEFORE it and the
+// nearest facility AFTER it (direction-aware ordering, same official
+// generated freewayFacilities.js dataset, same fail-closed "too-far"/
+// "no-data" reasons) — which is exactly "the two interchanges bracketing
+// this whole range," not just "the interchange nearest one endpoint."
+// Reusing it here means: zero new facility-matching logic, zero new
+// direction-ordering logic, and zero risk of this function's own
+// section-name text ever drifting from what resolveKmLocation would
+// independently produce for the same input.
+//
+// This function only RESHAPES the result into the range-shaped contract
+// this round's task spec asks for (`resolveKmRange({road, direction,
+// startKM, endKM}) -> {resolved, road, direction, startKm, endKm,
+// segmentFrom, segmentTo, locationLabel, representativeCoordinate,
+// mapUrl}`) — `startKm`/`endKm` are the PARSED numeric values (via the
+// same parseKM already used everywhere else in this codebase), so a
+// caller never needs to re-parse the original TDX-formatted strings
+// itself. Never guesses a facility, never calls Google/TDX at runtime
+// (see resolveKmLocation's own module comment) — fails closed
+// (`resolved:false`) for exactly the same reasons resolveKmLocation
+// itself does: unrecognized road, no matching dataset, or nearest
+// facility beyond FREEWAY_FACILITY_MAX_GAP_KM.
+//
+// @param {{road:string, direction?:string, startKM?:string|number, endKM?:string|number}} input
+// @param {{datasetOverride?: object}} [options] - TEST-ONLY, see resolveKmLocation.
+// @returns {{resolved:boolean, reason?:string, road?:string, direction?:string,
+//   startKm?:number|null, endKm?:number|null, segmentFrom?:string|null,
+//   segmentTo?:string|null, locationLabel?:string|null,
+//   representativeCoordinate?:{lat:number,lng:number}|null, mapUrl?:string|null}}
+//   Never throws (resolveKmLocation itself never throws).
+export function resolveKmRange(input, options = {}) {
+  const { road, direction, startKM, endKM } = input || {};
+  const resolution = resolveKmLocation({ road, direction, startKM, endKM }, options);
+
+  const startKm = parseKM(startKM);
+  const endKm = parseKM(endKM);
+
+  if (!resolution.resolved) {
+    return { resolved: false, reason: resolution.reason, road, direction, startKm, endKm };
+  }
+
+  return {
+    resolved: true,
+    road: resolution.road,
+    direction,
+    startKm,
+    endKm,
+    segmentFrom: resolution.segmentFrom,
+    segmentTo: resolution.segmentTo,
+    locationLabel: resolution.locationLabel,
+    representativeCoordinate: resolution.coordinate,
+    mapUrl: resolution.mapUrl,
+  };
+}

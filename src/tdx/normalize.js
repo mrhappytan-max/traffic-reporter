@@ -42,6 +42,7 @@ import { classifyByKeyword, classifyAlertText } from './classify.js';
 import { classifyCongestionSeverity } from '../traffic/congestionSeverity.js';
 import { buildUpstreamSnapshot } from '../traffic/pipelineTrace.js';
 import { detectNonCollisionAnomaly } from '../traffic/anomalyClassification.js';
+import { detectDynamicShoulder } from '../traffic/dynamicShoulderClassification.js';
 
 const EVENT_TYPE_TEXT_MAP = {
   事故: 'accident',
@@ -266,6 +267,19 @@ export function normalizeRoadEvent(raw, source) {
 
   const { type, classificationSource, nonCollisionAnomaly } = mapRoadEventType(raw, description);
 
+  // V1.8.7.0 — Dynamic Shoulder (機動開放路肩) detection. Deliberately
+  // independent of, and additive to, the `type` classification just
+  // above — see dynamicShoulderClassification.js's own module comment
+  // for why this never touches `type` itself, and never hardcodes a
+  // numeric EventSubType. Checked against the SAME raw fields
+  // mapRoadEventType already reads (no second parse of the raw record).
+  const dynamicShoulder = detectDynamicShoulder({
+    eventType: get(raw, 'EventType'),
+    eventSubType: get(raw, 'EventSubType'),
+    category: get(raw, 'Category'),
+    description,
+  });
+
   return {
     source,
     type,
@@ -298,6 +312,12 @@ export function normalizeRoadEvent(raw, source) {
     // of `title`/`description`, so a from-scratch re-scan of those two
     // alone could miss it).
     ...(nonCollisionAnomaly ? { nonCollisionAnomalyDetail: nonCollisionAnomaly } : {}),
+    // V1.8.7.0 — see dynamicShoulderClassification.js. Absent entirely
+    // (never a null/false placeholder) unless real text evidence was
+    // found — every downstream consumer branches on this field's
+    // PRESENCE, so "absent" and "not dynamic shoulder" are the same thing
+    // by construction, never a separate case to handle.
+    ...(dynamicShoulder ? { dynamicShoulder } : {}),
     // V1.8.6.4 (provenance gap) — debug-only origin metadata, never read
     // by the formatter/fingerprint/eligibility/dedupe/CCTV-eligibility
     // (all of those destructure only their own named fields — see

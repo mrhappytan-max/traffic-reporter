@@ -215,6 +215,15 @@ function hasClosureImpactSignal(event) {
  * when present, otherwise falls back to `location` as the "stable
  * position" signal (some sources — CMS, bus alerts — never carry KM).
  */
+// V1.8.7.0 — `dynamicShoulderState` appended ONLY when
+// `event.dynamicShoulder` is present, same guard and same reasoning as
+// dedupe.js#computeFingerprint's own addition — see that function's
+// comment. This is the fingerprint that actually gates a real per-target
+// LINE re-push (targetNeedsNotification, see broadcastPipeline.js), so
+// this is the one that must change on OPEN<->STOPPED for
+// "必須視為重要內容更新，重新推播" to actually hold at the point where it
+// matters; dedupe.js's own copy above governs the separate new/updated/
+// duplicate KV-state classification.
 export function computeNotificationFingerprint(event) {
   const position =
     event.startKM !== undefined || event.endKM !== undefined
@@ -228,5 +237,6 @@ export function computeNotificationFingerprint(event) {
     ...position,
     blockedLanes: event.blockedLanes ?? null,
     closureImpact: hasClosureImpactSignal(event),
+    ...(event.dynamicShoulder ? { dynamicShoulderState: event.dynamicShoulder.state } : {}),
   });
 }
