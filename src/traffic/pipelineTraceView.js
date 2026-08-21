@@ -8,6 +8,26 @@
 // fast, and low-resource exactly as instructed ("不要做花俏 Dashboard
 // framework").
 //
+// V1.8.6.9a — mobile UX pass, three real-device findings fixed:
+//   1. Every timestamp on this page is now Asia/Taipei (see
+//      formatTaipeiHHMM/formatTaipeiInstant below) — the per-row summary
+//      time column used to show the RAW UTC hour via toISOString(),
+//      which is exactly why a page full of ~12:00 Taipei events read as
+//      a wall of "04:00"/"04:10". A fixed banner at the top states this
+//      explicitly so a reader never has to guess which timezone they're
+//      looking at.
+//   2. source/status are fixed, closed vocabularies (see SOURCE_LABELS/
+//      STATUS_META below, both already the single source of truth for
+//      those labels) — the filter form now offers them as <select>
+//      dropdowns built FROM those same objects, never a second,
+//      hand-typed option list that could drift from the labels actually
+//      shown on each row. road/rawId stay free-text `<input>` — they are
+//      genuinely open-ended values, a dropdown would be wrong for them.
+//   3. Dark theme throughout (see PAGE_STYLE) — this project's existing
+//      admin pages (health.js/pipelineTraceView's own prior version) are
+//      light-only; this is the first to go dark, on this page
+//      specifically per real mobile-at-night usage.
+//
 // Reads via listPipelineTrace/buildTraceAnomalies (pipelineTrace.js) —
 // this module renders ONLY; it holds no KV logic and computes no
 // classification/eligibility/anomaly decisions of its own.
@@ -70,13 +90,38 @@ function cctvBadge(entry) {
 // already used throughout this project (broadcastHours.js/
 // parseChineseDate.js) — never `Date`'s own locale-dependent
 // toLocaleString, which would silently follow the SERVER's timezone.
-function formatTaipeiInstant(iso) {
+function taipeiParts(iso) {
   if (!iso) return null;
   const ms = new Date(iso).getTime();
   if (!Number.isFinite(ms)) return null;
   const shifted = new Date(ms + 8 * 60 * 60 * 1000);
   const pad = (n) => String(n).padStart(2, '0');
-  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())} ${pad(shifted.getUTCHours())}:${pad(shifted.getUTCMinutes())}`;
+  return {
+    year: shifted.getUTCFullYear(),
+    month: pad(shifted.getUTCMonth() + 1),
+    day: pad(shifted.getUTCDate()),
+    hour: pad(shifted.getUTCHours()),
+    minute: pad(shifted.getUTCMinutes()),
+  };
+}
+
+function formatTaipeiInstant(iso) {
+  const p = taipeiParts(iso);
+  if (!p) return null;
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
+}
+
+// V1.8.6.9a — the per-row summary column ONLY ever showed a bare HH:MM
+// (kept intentionally compact for the collapsed row), but the PRE-fix
+// version built it from `new Date(...).toISOString().slice(11, 16)` —
+// raw UTC, never Taipei. That is the exact real-device bug this round
+// fixes: a page full of ~noon-Taipei events (04:00 UTC) reads as a wall
+// of identical "04:00"/"04:10" rows with no way to tell they're actually
+// 8 hours off. Reuses the SAME taipeiParts() as formatTaipeiInstant, one
+// definition of "what time is it in Taipei" for this whole page.
+function formatTaipeiHHMM(iso) {
+  const p = taipeiParts(iso);
+  return p ? `${p.hour}:${p.minute}` : '--:--';
 }
 
 function formatEventWindow(eventWindow) {
@@ -167,7 +212,7 @@ function renderRow(entry) {
   const cctv = cctvBadge(entry);
   const map = mapBadge(entry);
   const anomalyCls = anomalySeverityClass(anomalies);
-  const timeLabel = entry.identity.timestamp ? new Date(entry.identity.timestamp).toISOString().slice(11, 16) : '--:--';
+  const timeLabel = formatTaipeiHHMM(entry.identity.timestamp);
 
   return `
 <details class="trace-row ${anomalyCls ? `row-${anomalyCls}` : ''}">
@@ -178,8 +223,8 @@ function renderRow(entry) {
     <span class="col-km">${escapeHtml(entry.normalized.startKM ?? '')}</span>
     <span class="col-type">${escapeHtml(typeLabel(entry.upstream.EventType))} → ${escapeHtml(typeLabel(entry.normalized.type))}</span>
     <span class="pill pill-${meta.cls}">${meta.emoji} ${escapeHtml(meta.label)}</span>
-    ${cctv ? `<span class="badge">${cctv.emoji} ${cctv.label}</span>` : ''}
-    ${map ? `<span class="badge">${map.emoji} ${map.label}</span>` : ''}
+    ${cctv ? `<span class="badge badge-cctv">${cctv.emoji} ${cctv.label}</span>` : ''}
+    ${map ? `<span class="badge badge-map">${map.emoji} ${map.label}</span>` : ''}
     ${anomalies.length > 0 ? `<span class="badge badge-${anomalyCls}">${anomalies.length} 項異常</span>` : ''}
   </summary>
   ${renderAnomalies(anomalies)}
@@ -187,70 +232,124 @@ function renderRow(entry) {
 </details>`;
 }
 
+// V1.8.6.9a — source/status are closed vocabularies (every value a row
+// can ever show is one of these two objects' own keys — see
+// sourceLabel/statusMeta above) — the filter <select> options are built
+// FROM those same objects so the dropdown can never list a value that
+// doesn't actually match anything, and never drifts out of sync with
+// what a row actually displays.
+function renderSelect({ name, value, options, placeholder }) {
+  const optionsHtml = options
+    .map(([optValue, label]) => `<option value="${escapeHtml(optValue)}" ${value === optValue ? 'selected' : ''}>${escapeHtml(label)}</option>`)
+    .join('');
+  return `<select name="${name}" aria-label="${escapeHtml(placeholder)}">
+    <option value="" ${value ? '' : 'selected'}>${escapeHtml(placeholder)}</option>
+    ${optionsHtml}
+  </select>`;
+}
+
 function renderFilterForm(filters) {
+  const sourceSelect = renderSelect({
+    name: 'source',
+    value: filters.source || '',
+    placeholder: '來源（全部）',
+    options: Object.entries(SOURCE_LABELS).map(([value, label]) => [value, `${label}（${value}）`]),
+  });
+  const statusSelect = renderSelect({
+    name: 'status',
+    value: filters.status || '',
+    placeholder: '狀態（全部）',
+    options: Object.entries(STATUS_META).map(([value, meta]) => [value, `${meta.emoji} ${meta.label}`]),
+  });
+
   return `
 <form class="filters" method="get">
-  <input type="text" name="source" placeholder="來源 (freeway/highway/pbs)" value="${escapeHtml(filters.source || '')}">
-  <input type="text" name="road" placeholder="道路" value="${escapeHtml(filters.road || '')}">
+  ${sourceSelect}
+  <input type="text" name="road" placeholder="道路（例：國道一號）" value="${escapeHtml(filters.road || '')}">
   <input type="text" name="rawId" placeholder="rawId" value="${escapeHtml(filters.rawId || '')}">
-  <input type="text" name="status" placeholder="狀態" value="${escapeHtml(filters.status || '')}">
+  ${statusSelect}
   <input type="number" name="limit" min="1" max="${MAX_LIST_LIMIT}" placeholder="筆數（預設 ${DEFAULT_LIST_LIMIT}）" value="${escapeHtml(filters.limit || '')}">
   <button type="submit">篩選</button>
   <a class="clear" href="/admin/pipeline-trace-view">清除</a>
 </form>`;
 }
 
+// V1.8.6.9a — dark theme throughout, per real mobile-at-night usage.
+// Palette anchored to the task's own hex bases (#0f1115 page /
+// #1b1f26 card), state colors picked for solid contrast against those
+// darks (verified readable — near-white text, never pure #fff, muted
+// gray for secondary text, distinct green/amber/red/teal/blue tiers).
+// `color-scheme: dark` on :root also nudges the BROWSER's own native
+// form-control chrome (scrollbars, autofill, date pickers) toward dark
+// by default in Safari/Chrome, on top of the explicit input/select/
+// button overrides below — belt and suspenders, since native control
+// theming varies by engine.
 const PAGE_STYLE = `
-  :root { color-scheme: light; }
+  :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   body {
     margin: 0; padding: 16px; max-width: 960px; margin-left: auto; margin-right: auto;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
-    font-size: 16px; line-height: 1.5; background: #f4f5f7; color: #1a1a1a;
+    font-size: 16px; line-height: 1.5; background: #0f1115; color: #e8e9ec;
   }
-  h1 { font-size: 20px; margin: 0 0 4px; }
-  .subtitle { font-size: 14px; color: #555; margin: 0 0 16px; }
-  .filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; background: #fff; padding: 12px; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
-  .filters input { flex: 1 1 120px; min-width: 90px; padding: 6px 8px; border: 1px solid #ccc; border-radius: 8px; font-size: 14px; }
-  .filters button { padding: 6px 14px; border: none; border-radius: 8px; background: #1a5fb4; color: #fff; font-size: 14px; }
-  .filters .clear { align-self: center; font-size: 13px; color: #666; text-decoration: none; padding: 0 6px; }
-  .trace-row { background: #fff; border-radius: 10px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.06); overflow: hidden; }
-  .trace-row.row-warn { border-left: 4px solid #b8860b; }
-  .trace-row.row-bad { border-left: 4px solid #c31c1c; }
+  h1 { font-size: 20px; margin: 0 0 4px; color: #f2f3f5; }
+  .subtitle { font-size: 14px; color: #9aa1ac; margin: 0 0 8px; }
+  .tz-banner {
+    font-size: 13px; color: #9aa1ac; background: #171b21; border: 1px solid #2a2f3a;
+    border-radius: 8px; padding: 8px 12px; margin: 0 0 16px;
+  }
+  .tz-banner strong { color: #e8e9ec; }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; background: #1b1f26; padding: 12px; border-radius: 12px; border: 1px solid #262b34; }
+  .filters input, .filters select {
+    flex: 1 1 120px; min-width: 90px; padding: 8px 10px; border: 1px solid #333a46; border-radius: 8px;
+    font-size: 14px; background: #20242c; color: #e8e9ec;
+  }
+  .filters input::placeholder { color: #6b7280; opacity: 1; }
+  .filters select { color-scheme: dark; }
+  .filters button { padding: 8px 16px; border: none; border-radius: 8px; background: #2f6fdb; color: #fff; font-size: 14px; font-weight: 600; }
+  .filters button:active { background: #2557b0; }
+  .filters .clear { align-self: center; font-size: 13px; color: #9aa1ac; text-decoration: none; padding: 0 6px; }
+  .filters .clear:active { color: #e8e9ec; }
+  .trace-row { background: #1b1f26; border: 1px solid #262b34; border-radius: 10px; margin-bottom: 8px; overflow: hidden; }
+  .trace-row.row-warn { border-left: 4px solid #d29922; }
+  .trace-row.row-bad { border-left: 4px solid #f85149; }
   .trace-row summary {
     display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
     padding: 10px 12px; cursor: pointer; font-size: 14px; list-style: none;
   }
   .trace-row summary::-webkit-details-marker { display: none; }
-  .trace-row summary::before { content: '▸'; color: #888; margin-right: 2px; }
+  .trace-row summary::before { content: '▸'; color: #6b7280; margin-right: 2px; }
   .trace-row[open] summary::before { content: '▾'; }
-  .col-time { font-variant-numeric: tabular-nums; color: #555; font-size: 13px; min-width: 42px; }
-  .col-source { font-size: 12px; background: #eef0f3; border-radius: 6px; padding: 1px 6px; }
-  .col-road { font-weight: 600; }
-  .col-km { color: #555; font-size: 13px; }
-  .col-type { color: #555; font-size: 13px; }
+  .trace-row[open] { background: #20242c; }
+  .col-time { font-variant-numeric: tabular-nums; color: #9aa1ac; font-size: 13px; min-width: 42px; }
+  .col-source { font-size: 12px; background: #262b34; color: #c3c9d1; border-radius: 6px; padding: 1px 6px; }
+  .col-road { font-weight: 600; color: #f2f3f5; }
+  .col-km { color: #9aa1ac; font-size: 13px; }
+  .col-type { color: #9aa1ac; font-size: 13px; }
   .pill { display: inline-block; border-radius: 999px; padding: 2px 10px; font-size: 13px; font-weight: 600; }
-  .pill-ok { background: #e6f6ea; color: #1a7f37; }
-  .pill-warn { background: #fff6dc; color: #8a6100; }
-  .pill-bad { background: #fdecec; color: #c31c1c; }
-  .pill-unknown { background: #eef0f3; color: #555; }
-  .badge { font-size: 12px; background: #eef0f3; border-radius: 6px; padding: 2px 6px; }
-  .badge-warn { background: #fff6dc; color: #8a6100; }
-  .badge-bad { background: #fdecec; color: #c31c1c; }
+  .pill-ok { background: #12261a; color: #3fb950; }
+  .pill-warn { background: #2b2111; color: #e3b341; }
+  .pill-bad { background: #2d1214; color: #f85149; }
+  .pill-unknown { background: #262b34; color: #9aa1ac; }
+  .badge { font-size: 12px; background: #262b34; color: #c3c9d1; border-radius: 6px; padding: 2px 6px; }
+  .badge-warn { background: #2b2111; color: #e3b341; }
+  .badge-bad { background: #2d1214; color: #f85149; }
+  .badge-cctv { background: #102b2a; color: #2dd4bf; }
+  .badge-map { background: #0f2038; color: #58a6ff; }
   .anomalies { padding: 0 12px 8px; }
   .anomaly { font-size: 13px; padding: 4px 0; }
-  .anomaly-error { color: #c31c1c; }
-  .anomaly-warning { color: #8a6100; }
-  .detail { display: flex; flex-direction: column; gap: 10px; padding: 4px 12px 14px; border-top: 1px solid #eee; }
-  .detail-section h4 { font-size: 13px; margin: 8px 0 4px; color: #333; }
-  .row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; border-bottom: 1px solid #f2f2f2; font-size: 13px; }
-  .row .label { color: #666; }
-  .row .value { font-weight: 500; text-align: right; word-break: break-word; }
-  .dim { color: #aaa; }
-  .formatted-output { white-space: pre-wrap; background: #f8f8f8; border-radius: 8px; padding: 8px; font-size: 13px; margin: 4px 0; }
-  .empty { text-align: center; color: #777; padding: 40px 0; }
-  .footer { text-align: center; font-size: 13px; color: #666; margin-top: 20px; }
-  .footer a { color: #1a5fb4; text-decoration: none; display: block; padding: 4px 0; }
+  .anomaly-error { color: #f85149; }
+  .anomaly-warning { color: #e3b341; }
+  .detail { display: flex; flex-direction: column; gap: 10px; padding: 4px 12px 14px; border-top: 1px solid #262b34; }
+  .detail-section h4 { font-size: 13px; margin: 8px 0 4px; color: #c3c9d1; }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; border-bottom: 1px solid #21252c; font-size: 13px; }
+  .row .label { color: #9aa1ac; }
+  .row .value { font-weight: 500; text-align: right; word-break: break-word; color: #e8e9ec; }
+  .dim { color: #6b7280; }
+  .formatted-output { white-space: pre-wrap; background: #12151a; border: 1px solid #262b34; border-radius: 8px; padding: 8px; font-size: 13px; margin: 4px 0; color: #e8e9ec; }
+  .empty { text-align: center; color: #9aa1ac; padding: 40px 0; }
+  .footer { text-align: center; font-size: 13px; color: #9aa1ac; margin-top: 20px; }
+  .footer a { color: #58a6ff; text-decoration: none; display: block; padding: 4px 0; }
 `;
 
 function renderPage({ rows, filters, count, kvAvailable }) {
@@ -259,12 +358,14 @@ function renderPage({ rows, filters, count, kvAvailable }) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>路況播報員 Pipeline Trace 查修頁</title>
 <style>${PAGE_STYLE}</style>
 </head>
 <body>
 <h1>🔍 Pipeline Trace 查修頁</h1>
 <p class="subtitle">最近 24 小時事件，最新在上。點一列展開查看上游資料／系統處理／最終結果。</p>
+<p class="tz-banner">🕒 以下時間皆為 <strong>Asia/Taipei（台灣時間，UTC+8）</strong>，不是 UTC。</p>
 ${renderFilterForm(filters)}
 ${!kvAvailable ? '<div class="empty">⚠️ 無法讀取 KV，暫無資料</div>' : count === 0 ? '<div class="empty">這個篩選條件下沒有資料</div>' : rows}
 <div class="footer">

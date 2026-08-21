@@ -216,3 +216,126 @@ test('view page distinguishes "非播報時段" from "事件已結束" from "事
     globalThis.fetch = originalFetch;
   }
 });
+
+// --- V1.8.6.9a: mobile UX pass — Taiwan time / closed-vocab filters / dark mode ---
+
+test('V1.8.6.9a: per-row summary time is Asia/Taipei, not raw UTC (04:00 UTC must render as 12:00, not 04:00)', async () => {
+  const kv = createMockKV();
+  // 2026-08-20T04:00:00Z is noon in Taipei (UTC+8). The pre-fix bug used
+  // toISOString().slice(11,16) on this exact timestamp, which renders
+  // "04:00" — the precise real-device complaint this round fixes.
+  const utcNoonTaipei = new Date('2026-08-20T04:00:00.000Z');
+  await recordPipelineTrace(kv, buildTraceEntry({ event: accidentEvent({ rawId: 'TZ1' }), now: utcNoonTaipei, eligibility: true }), NOW);
+  const env = { ADMIN_PASSWORD, TRAFFIC_KV: kv };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = throwingFetch('upstream');
+  try {
+    const res = await worker.fetch(adminRequest('/admin/pipeline-trace-view', { auth: basicAuthHeader(ADMIN_USERNAME, ADMIN_PASSWORD) }), env);
+    const html = await res.text();
+    assert.match(html, /col-time">12:00</);
+    assert.doesNotMatch(html, /col-time">04:00</);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('V1.8.6.9a: page states explicitly that times are Asia/Taipei, not UTC', async () => {
+  const env = { ADMIN_PASSWORD, TRAFFIC_KV: createMockKV() };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = throwingFetch('upstream');
+  try {
+    const res = await worker.fetch(adminRequest('/admin/pipeline-trace-view', { auth: basicAuthHeader(ADMIN_USERNAME, ADMIN_PASSWORD) }), env);
+    const html = await res.text();
+    assert.match(html, /Asia\/Taipei/);
+    assert.match(html, /UTC\+8/);
+    assert.match(html, /不是 UTC/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('V1.8.6.9a: source/status filters are closed-vocabulary <select> dropdowns, not free-text inputs', async () => {
+  const env = { ADMIN_PASSWORD, TRAFFIC_KV: createMockKV() };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = throwingFetch('upstream');
+  try {
+    const res = await worker.fetch(adminRequest('/admin/pipeline-trace-view', { auth: basicAuthHeader(ADMIN_USERNAME, ADMIN_PASSWORD) }), env);
+    const html = await res.text();
+    assert.match(html, /<select name="source"/);
+    assert.match(html, /<select name="status"/);
+    assert.doesNotMatch(html, /<input[^>]*name="source"/);
+    assert.doesNotMatch(html, /<input[^>]*name="status"/);
+    // road/rawId remain genuinely open-ended free text.
+    assert.match(html, /<input type="text" name="road"/);
+    assert.match(html, /<input type="text" name="rawId"/);
+    // option lists reuse the exact same source-of-truth labels rendered on rows.
+    assert.match(html, /<option value="freeway"[^>]*>TDX 國道（freeway）<\/option>/);
+    assert.match(html, /<option value="line-sent"[^>]*>✅ 已播報<\/option>/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('V1.8.6.9a: selecting a source/status via query string pre-selects the matching <option>', async () => {
+  const env = { ADMIN_PASSWORD, TRAFFIC_KV: createMockKV() };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = throwingFetch('upstream');
+  try {
+    const res = await worker.fetch(adminRequest('/admin/pipeline-trace-view?source=pbs&status=line-failed', { auth: basicAuthHeader(ADMIN_USERNAME, ADMIN_PASSWORD) }), env);
+    const html = await res.text();
+    assert.match(html, /<option value="pbs" selected>/);
+    assert.match(html, /<option value="line-failed" selected>/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('V1.8.6.9a: page renders in dark mode — dark background, color-scheme dark, no large pure-white background', async () => {
+  const env = { ADMIN_PASSWORD, TRAFFIC_KV: createMockKV() };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = throwingFetch('upstream');
+  try {
+    const res = await worker.fetch(adminRequest('/admin/pipeline-trace-view', { auth: basicAuthHeader(ADMIN_USERNAME, ADMIN_PASSWORD) }), env);
+    const html = await res.text();
+    assert.match(html, /<meta name="color-scheme" content="dark">/);
+    assert.match(html, /color-scheme:\s*dark/);
+    assert.match(html, /background:\s*#0f1115/);
+    assert.doesNotMatch(html, /background:\s*#fff(?:fff)?\b/i);
+    assert.doesNotMatch(html, /background-color:\s*#fff(?:fff)?\b/i);
+    // Inputs/selects/buttons must also be dark-themed, and placeholders visible.
+    assert.match(html, /\.filters input, \.filters select \{[^}]*background: #20242c/);
+    assert.match(html, /::placeholder \{ color: #6b7280/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('V1.8.6.9a: CCTV badge uses a distinct teal class, map badge uses a distinct blue class', async () => {
+  const kv = createMockKV();
+  await recordPipelineTrace(
+    kv,
+    buildTraceEntry({
+      event: accidentEvent(),
+      now: NOW,
+      eligibility: true,
+      cctvEligible: true,
+      imagePrepared: true,
+      imageUrlPresent: true,
+      kmLocationResolution: { resolved: true, dataset: 'freeway', locationLabel: '竹北交流道' },
+    }),
+    NOW
+  );
+  const env = { ADMIN_PASSWORD, TRAFFIC_KV: kv };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = throwingFetch('upstream');
+  try {
+    const res = await worker.fetch(adminRequest('/admin/pipeline-trace-view', { auth: basicAuthHeader(ADMIN_USERNAME, ADMIN_PASSWORD) }), env);
+    const html = await res.text();
+    assert.match(html, /badge badge-cctv/);
+    assert.match(html, /badge badge-map/);
+    assert.match(html, /\.badge-cctv \{ background: #102b2a; color: #2dd4bf/);
+    assert.match(html, /\.badge-map \{ background: #0f2038; color: #58a6ff/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

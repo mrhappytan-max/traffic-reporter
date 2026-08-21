@@ -82,6 +82,20 @@ Cloudflare auto-deploys on every push to `main` — no manual `wrangler deploy` 
 - `GET /health` — zero TDX/PBS/LINE network calls, reads only `health:snapshot:v1` + `tdx:usage:summary:v1` from KV.
 - TDX usage reconciliation ledger live and accumulating (`tdx:usage:summary:v1`).
 
+## Latest completed work — V1.8.6.9a: Pipeline Trace Mobile UX / Taiwan Time / Dark Mode
+
+**Status: on branch `feature/v1.8.6.9a-pipeline-trace-mobile-ux`, branched from main (V1.8.6.9), NOT merged, NOT deployed.** See `PROJECT_HANDOFF.md` §26 for the full design writeup.
+
+Fixes three real-device UX problems reported against `/admin/pipeline-trace-view` (查修頁) — presentation-layer only, `pipelineTrace.js`'s KV/classification/anomaly logic is untouched:
+
+- **Time-display bug**: the per-row summary column built its `HH:MM` via `new Date(...).toISOString().slice(11,16)` — raw UTC. A page full of ~noon-Taipei events (04:00 UTC) rendered as a wall of identical "04:00"/"04:10" rows, with no way for an administrator to tell they were 8 hours off. Fixed with a new `formatTaipeiHHMM()` built on the SAME `taipeiParts()` fixed-UTC+8-offset helper this page's detail section already used correctly for `事件有效時間` — one definition of "what time is it in Taipei" for the whole page, no more. A fixed banner now states explicitly at the top of the page: "🕒 以下時間皆為 Asia/Taipei（台灣時間，UTC+8），不是 UTC。"
+- **Free-text filters for closed-vocabulary fields**: `source`/`status` are now `<select>` dropdowns, built directly from `SOURCE_LABELS`/`STATUS_META` — the exact same objects already used to render each row's own badges — so the dropdown can never offer a value that doesn't match a row, and can never drift out of sync with what's displayed. `road`/`rawId` deliberately stay free-text `<input>` — they're genuinely open-ended values.
+- **Pure-white background, uncomfortable at night**: page is now dark-themed (`#0f1115` background / `#1b1f26` cards, near-white but not pure-white primary text, muted gray secondary text), with `color-scheme: dark` + `<meta name="color-scheme" content="dark">`, plus explicit dark styling on every input/select/button and a visible (not too-faint) placeholder color, so native browser form-control chrome and this page's own CSS agree. Status colors kept distinct and accessible: ✅ green, ⚠️ amber, ❌ red, 📷 CCTV teal, 🗺️ map blue.
+
+No UI framework introduced; still zero client-side JavaScript (`<details>/<summary>` for expand/collapse, a plain GET `<form>` for filters) — same Admin CSP (`default-src 'none'`, no script-src exception) as before, unchanged.
+
+`test/pipelineTraceView.test.js`: 13 tests (7 pre-existing, unchanged and still passing, + 6 new for this round), plus `pipelineTrace.js`'s own JSON-endpoint/integration suites re-run unchanged. Full suite: 1014 tests / 1011 pass, same 3 pre-existing unrelated failures as every prior round (2× `pbs-relay/tests/*`, 1× wall-clock-dependent `/health` month-baseline test).
+
 ## Latest completed work — V1.8.6.9: Mobile-first Deployment Guard
 
 **Status: on branch `feature/v1.8.6.9-mobile-deployment-guard`, NOT merged, NOT deployed.** See `PROJECT_HANDOFF.md` §25 for the full design writeup.
