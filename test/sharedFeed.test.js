@@ -11,6 +11,7 @@ import {
   selectFeedWindow,
   clampWindowMinutes,
   clampLimit,
+  clampOffset,
   toPublicEvent,
   runSharedFeedPersist,
 } from '../src/traffic/sharedFeed.js';
@@ -594,4 +595,115 @@ test('publishCollageImage returns the exact expiresAt it stored in R2 metadata',
   assert.equal(published.ok, true);
   assert.equal(published.expiresAt, puts[0].options.customMetadata.expiresAt);
   assert.equal(published.expiresAt, new Date(NOW.getTime() + published.expiresIn * 1000).toISOString());
+});
+
+// ---------------------------------------------------------------------------
+// V57.3 — window paging.
+//
+// The window can legitimately hold more entries than MAX_LIMIT: a deploy that
+// changes message text or fingerprint shape re-broadcasts many events at once.
+// A consumer that can only ever see the newest page loses the rest silently —
+// it never learns they exist, so it cannot even record that it skipped them.
+// ---------------------------------------------------------------------------
+
+test('offset pages through a window larger than one page, with no gaps or overlaps', () => {
+  const stored = Array.from({ length: 120 }, (_, i) => storedEvent(`e${String(i).padStart(3, '0')}`, i / 60));
+
+  const seen = [];
+  let offset = 0;
+  for (let page = 0; page < 4; page += 1) {
+    const result = selectFeedWindow(stored, { windowMinutes: 90, limit: 50, offset, now: NOW });
+    assert.equal(result.offset, offset);
+    assert.equal(result.total, 120, 'total is always the FULL window count, never the page size');
+    seen.push(...result.events.map((e) => e.eventId));
+    if (!result.truncated) break;
+    offset += result.events.length;
+  }
+
+  assert.equal(seen.length, 120);
+  assert.equal(new Set(seen).size, 120, 'pages must not overlap');
+});
+
+test('truncated means "more beyond this page", and is false on the last page', () => {
+  const stored = Array.from({ length: 60 }, (_, i) => storedEvent(`e${String(i).padStart(3, '0')}`, 1));
+
+  assert.equal(selectFeedWindow(stored, { limit: 50, offset: 0, now: NOW }).truncated, true);
+  const last = selectFeedWindow(stored, { limit: 50, offset: 50, now: NOW });
+  assert.equal(last.truncated, false);
+  assert.equal(last.events.length, 10);
+});
+
+test('an offset past the end returns an empty page rather than wrapping', () => {
+  const stored = [storedEvent('only', 1)];
+  const result = selectFeedWindow(stored, { limit: 50, offset: 50, now: NOW });
+  assert.deepEqual(result.events, []);
+  assert.equal(result.total, 1);
+  assert.equal(result.truncated, false);
+});
+
+test('offset is clamped to safe bounds', () => {
+  assert.equal(clampOffset(undefined), 0);
+  assert.equal(clampOffset('-5'), 0);
+  assert.equal(clampOffset('abc'), 0);
+  assert.equal(clampOffset('999999'), 200);
+  assert.equal(clampOffset('25'), 25);
+});
+
+test('omitting offset is byte-for-byte the response a pre-V57.3 caller always got', async () => {
+  const env = await seededEnv();
+  const body = await (await handleSharedFeed(feedRequest(), env, NOW)).json();
+
+  assert.equal(body.offset, 0);
+  assert.equal(body.limit, 50);
+  assert.equal(body.total, 1);
+  assert.equal(body.truncated, false);
+  assert.equal(body.events.length, 1);
+});
+
+test('the handler honours and echoes offset so a consumer can detect paging support', async () => {
+  const kv = createMockKV({
+    [SHARED_FEED_KEY]: JSON.stringify({
+      schemaVersion: 1,
+      events: Array.from({ length: 4 }, (_, i) => storedEvent(`e${i}`, i + 1)),
+      updatedAt: NOW.toISOString(),
+    }),
+  });
+  const env = { TRAFFIC_KV: kv, TRAFFIC_FEED_SECRET: 'feed-secret' };
+
+  const first = await (await handleSharedFeed(feedRequest({ query: '?limit=2&offset=0' }), env, NOW)).json();
+  assert.equal(first.offset, 0);
+  assert.equal(first.truncated, true);
+  assert.deepEqual(first.events.map((e) => e.eventId), ['e0', 'e1']);
+
+  const second = await (await handleSharedFeed(feedRequest({ query: '?limit=2&offset=2' }), env, NOW)).json();
+  assert.equal(second.offset, 2);
+  assert.equal(second.truncated, false);
+  assert.deepEqual(second.events.map((e) => e.eventId), ['e2', 'e3']);
+});
+
+test('paging still makes ZERO upstream calls', async () => {
+  const kv = createMockKV({
+    [SHARED_FEED_KEY]: JSON.stringify({
+      schemaVersion: 1,
+      events: Array.from({ length: 120 }, (_, i) => storedEvent(`e${String(i).padStart(3, '0')}`, 1)),
+      updatedAt: NOW.toISOString(),
+    }),
+  });
+  const env = { TRAFFIC_KV: kv, TRAFFIC_FEED_SECRET: 'feed-secret' };
+
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    throw new Error('unexpected upstream fetch');
+  };
+  try {
+    for (const offset of [0, 50, 100]) {
+      const response = await handleSharedFeed(feedRequest({ query: `?offset=${offset}` }), env, NOW);
+      assert.equal(response.status, 200);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(fetchCalls, 0);
 });
