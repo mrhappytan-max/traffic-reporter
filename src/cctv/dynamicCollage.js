@@ -409,10 +409,24 @@ async function prepareCctvImageWork(env, eligibility, runCache, codecOverride, d
  * second CCTV frame-fetch pipeline was built for this ("不要為 dynamic
  * shoulder 建第二套 CCTV pipeline").
  */
-async function prepareSingleCctvImageWork(env, eligibility, runCache, deadlineAt) {
+// V1.8.7.3 — `stageTracker` is a plain `{stage:string}` object the CALLER
+// (prepareSingleCctvImageForEvent) creates fresh per attempt and mutates
+// here as each stage starts, PURELY so the caller can report
+// `timeoutStage` if the OUTER withTimeout race's timer wins while this
+// function is still mid-flight — reading `stageTracker.stage` at that
+// moment is the only way to know which stage was in progress, since the
+// function itself never gets to return in that case (see
+// prepareSingleCctvImageForEvent below). Never written to Pipeline Trace
+// directly by this function — only the caller decides what to do with it.
+// Per this round's own instruction ("不要存完整 CCTV payload"), the
+// returned duration fields below are plain numbers only — never the frame
+// bytes, the stream URL, or any other candidate/metadata payload.
+async function prepareSingleCctvImageWork(env, eligibility, runCache, deadlineAt, stageTracker) {
+  if (stageTracker) stageTracker.stage = 'metadata';
   const metadata = await getFreewayCctvMetadata(env, runCache);
   if (!metadata.ok) return { ok: false, reason: metadata.reason };
 
+  if (stageTracker) stageTracker.stage = 'candidate-selection';
   const candidate = selectSingleShoulderCandidate(metadata.records, {
     roadId: eligibility.roadId,
     roadNamePattern: eligibility.roadNamePattern,
@@ -422,18 +436,37 @@ async function prepareSingleCctvImageWork(env, eligibility, runCache, deadlineAt
   });
   if (!candidate) return { ok: false, reason: 'no-camera' };
 
+  // V1.8.7.3 — frameFetchDurationMs covers BOTH "frame fetch" and "frame
+  // response/body read" as one combined measurement, deliberately: they
+  // happen inside one already-ratified, shared function
+  // (extractFirstJpegFrame, also used unchanged by the quad path) that
+  // reads the response body as a byte stream until a complete JPEG is
+  // found, so the connect/fetch and the body-read are not two separable
+  // awaits from this call site without modifying that shared function —
+  // which this round does not do, per "不要為 dynamic shoulder 建第二套
+  // CCTV pipeline" (a second, parallel frame-fetch implementation just to
+  // split this one number in two would be exactly that).
+  if (stageTracker) stageTracker.stage = 'frame-fetch';
+  const frameFetchStartedAt = Date.now();
   const frameTimeoutMs = Math.max(MIN_FRAME_TIMEOUT_MS, deadlineAt - Date.now());
   const frame = await extractFirstJpegFrame(candidate.videoStreamUrl, { timeoutMs: frameTimeoutMs });
-  if (!frame.ok) return { ok: false, reason: 'no-frames' }; // same reason as the quad path's own "every fetch failed" outcome
+  const frameFetchDurationMs = Date.now() - frameFetchStartedAt;
+  if (!frame.ok) return { ok: false, reason: 'no-frames', frameFetchDurationMs }; // same reason as the quad path's own "every fetch failed" outcome
 
+  if (stageTracker) stageTracker.stage = 'r2-publish';
   // Same pre-publish deadline re-check as the quad path — see
   // prepareCctvImageWork's own comment for why this matters (avoid a
   // wasted R2 write for a result the outer race is about to discard
-  // anyway).
-  if (Date.now() >= deadlineAt) return { ok: false, reason: 'prepare-timeout' };
+  // anyway). Now that we're past the frame fetch, `frameFetchDurationMs`
+  // is already known, so it's still reported even on this path — an
+  // admin reading Pipeline Trace can see "the frame fetch itself finished
+  // in Xms, but only after the budget had already run out."
+  if (Date.now() >= deadlineAt) return { ok: false, reason: 'prepare-timeout', timeoutStage: 'r2-publish', frameFetchDurationMs };
 
+  const r2PublishStartedAt = Date.now();
   const published = await publishCollageImage(env.CCTV_IMAGES, frame.bytes);
-  if (!published.ok) return { ok: false, reason: 'r2-publish-failed' };
+  const r2PublishDurationMs = Date.now() - r2PublishStartedAt;
+  if (!published.ok) return { ok: false, reason: 'r2-publish-failed', frameFetchDurationMs, r2PublishDurationMs };
 
   return {
     ok: true,
@@ -443,6 +476,9 @@ async function prepareSingleCctvImageWork(env, eligibility, runCache, deadlineAt
     // the full raw CCTV payload — see pipelineTrace.js's own whitelist
     // discipline): the device id plus its own KM, nothing else.
     selectedCamera: `${candidate.cctvId}@${candidate.locationMile}`,
+    // V1.8.7.3 — stage-level timing, see this function's own comment above.
+    frameFetchDurationMs,
+    r2PublishDurationMs,
   };
 }
 
@@ -503,21 +539,67 @@ async function prepareSingleCctvImageWork(env, eligibility, runCache, deadlineAt
 // string) was reused for the latter rather than inventing a third,
 // redundant one.
 //
-// Numbers chosen conservatively, not tuned to exactly match Production's
-// 3-event evidence: SINGLE_CCTV_PER_EVENT_BUDGET_MS (1500ms) is ample
-// for one MJPEG frame capture + one small R2 PUT (a single frame fetch
-// alone already has its own MIN_FRAME_TIMEOUT_MS/FRAME_TIMEOUT_MS floor/
-// ceiling elsewhere in this pipeline — 1500ms sits comfortably inside
-// that). MAX_SINGLE_CCTV_EVENTS_PER_RUN (5) comfortably covers real
-// Production's own 3-event evidence with headroom for a busier day,
-// while keeping the worst-case total (7.5s) a small, bounded addition
-// next to this pipeline's own pre-existing accepted quad budget (4s) —
-// see PRODUCT_DECISIONS.md for the full reasoning, including why quad's
-// OWN budget window is deliberately kept on a completely SEPARATE clock
-// (broadcastPipeline.js's own `cctvRunDeadlineAt`, now lazily anchored
-// to the first accident this run actually reaches — see that file) so
-// neither strategy can silently shrink the other's nominal allotment.
-export const SINGLE_CCTV_PER_EVENT_BUDGET_MS = 1500;
+// V1.8.7.3 — CORRECTION: 1500ms confirmed too short by real Production
+// evidence (2026-08-21 afternoon: eligible dynamic-shoulder events, e.g.
+// 國1 南向 87K+290～90K+900, reading cctvSkippedByReason:'prepare-timeout'
+// despite everything upstream — classification, range resolution, LINE
+// push, Shared Feed — succeeding). This module has NO real-network
+// sandbox access to re-measure the actual frame-fetch latency directly
+// (TDX/freeway.gov.tw egress is blocked in dev, and this round is
+// explicitly forbidden from making a real probe) — so the 1500ms->6000ms
+// change below is grounded in the ONE piece of hard evidence already
+// checked into this same codebase, not a guess:
+// tdx/hsinchuCctvProbe.js's OWN FRAME_TIMEOUT_MS (5000ms) is the
+// pre-existing, separately-established "how long a single real
+// extractFirstJpegFrame call against a live freeway.gov.tw MJPEG stream
+// may reasonably need" ceiling — used, unmodified, by that module's own
+// admin single-frame probe endpoint (handleHsinchuCctvFrame) when
+// invoked with no override. The old 1500ms single-event budget gave the
+// SAME extractFirstJpegFrame call (this path reuses it verbatim, see
+// prepareSingleCctvImageWork below) less than a third of that
+// already-accepted baseline once metadata/candidate-selection overhead
+// is subtracted — i.e. this path was, by the codebase's own prior
+// standard, always going to spuriously timeout on a perfectly normal
+// frame fetch, not just a genuinely slow one. R2 publish
+// (publishCollageImage) is Cloudflare-internal, not the public internet
+// hop to freeway.gov.tw, and metadata is cache-only (a single KV read,
+// memoized once per run) — neither is expected to be the dominant cost,
+// but both still need to fit inside whatever's left after the frame
+// fetch, hence some added margin beyond FRAME_TIMEOUT_MS itself rather
+// than setting the budget to exactly 5000ms.
+//
+// New value: SINGLE_CCTV_PER_EVENT_BUDGET_MS = 6000ms — comfortably
+// covers a full FRAME_TIMEOUT_MS-class (5000ms) frame fetch PLUS margin
+// for R2 publish and metadata/selection overhead, without being
+// unbounded. MAX_SINGLE_CCTV_EVENTS_PER_RUN stays 5 (unchanged) — this
+// round adjusts how long EACH event's own slot may take, not how many
+// slots exist; Production's own evidence (3 shoulder events/tick) still
+// fits with headroom, and lowering the cap was never asked for and would
+// only make MORE events skip CCTV outright, the opposite of this fix's
+// goal. Worst-case added wall-clock for the whole single-CCTV portion of
+// one run is now 5 * 6000ms = 30s — CPU-time (the dimension Cloudflare
+// Workers actually meters/limits) is unaffected by this change, since
+// essentially all of that added time is spent awaiting network I/O
+// (fetch/KV/R2), not executing JS; see PRODUCT_DECISIONS.md for the full
+// writeup. All of A2's preserved-invariants are unaffected by this
+// change since it only touches the two numeric constants below, not the
+// independent-per-event-budget / per-run-cap / fail-fast-on-cap-reached
+// architecture itself (unchanged from V1.8.7.1):
+//   - independent per-event budget: unchanged (still a fresh deadline
+//     anchored at THIS event's own turn, see prepareSingleCctvImageForEvent)
+//   - first-event-slow never starves 2nd/3rd: unchanged (no shared clock)
+//   - global safety cap: unchanged (MAX_SINGLE_CCTV_EVENTS_PER_RUN, same value)
+//   - no unlimited image-fetching: unchanged (still a hard budgetMs ceiling)
+//   - accident quad mechanism: untouched, byte-for-byte (separate constant,
+//     separate clock — see CCTV_PREPARE_BUDGET_MS above)
+//   - single-event failure isolation: unchanged (still per-event try/catch
+//     + withTimeout, one event's outcome never affects another's)
+//   - CCTV never blocks the LINE text push: unchanged (still fully async,
+//     awaited only within this module's own budget, never gates the text)
+//   - 0 extra TDX/PBS/Google calls: unchanged (still cache-only metadata,
+//     still zero new imports of tdx/auth.js or tdx/client.js)
+//   - CCTV metadata cache-only: unchanged (getFreewayCctvMetadata untouched)
+export const SINGLE_CCTV_PER_EVENT_BUDGET_MS = 6000;
 export const MAX_SINGLE_CCTV_EVENTS_PER_RUN = 5;
 
 /**
@@ -547,12 +629,30 @@ async function prepareSingleCctvImageForEvent(env, eligibility, runCache, { budg
   runCache.singleEventsAttempted = slotIndex;
 
   const deadlineAt = Date.now() + budgetMs;
-  const work = prepareSingleCctvImageWork(env, eligibility, runCache, deadlineAt).catch(() => ({ ok: false, reason: 'prepare-error' }));
+  // V1.8.7.3 — shared with prepareSingleCctvImageWork so that IF the
+  // outer withTimeout race below is won by the timer (not by `work`
+  // itself resolving), we can still report which stage was in flight at
+  // that moment — see that function's own comment on stageTracker.
+  const stageTracker = { stage: 'metadata' };
+  const work = prepareSingleCctvImageWork(env, eligibility, runCache, deadlineAt, stageTracker).catch(() => ({ ok: false, reason: 'prepare-error' }));
   // Same withTimeout race the quad path already uses — a slow frame
   // fetch/R2 publish for THIS event resolves 'prepare-timeout' at THIS
   // event's own budget boundary, never borrowing time from (or lending
-  // time to) any other event this run.
-  const result = await withTimeout(work, budgetMs, { ok: false, reason: 'prepare-timeout' });
+  // time to) any other event this run. A distinct sentinel (never
+  // `stageTracker.stage` read HERE, at call time) is raced instead of a
+  // pre-built result object — `stageTracker.stage` must be read LAZILY,
+  // only once the timer has actually fired, or it would always capture
+  // whatever stage was current at the moment this line ran (typically
+  // still 'metadata', since `work` has barely started) rather than the
+  // stage `work` had actually reached by the time it genuinely lost the
+  // race. `timeoutStage` is only ever attached HERE (never by
+  // prepareSingleCctvImageWork's own internal pre-publish recheck, which
+  // already knows exactly where it is and sets its own 'r2-publish' value
+  // directly) — this is specifically the "the outer race's timer won, and
+  // stageTracker is our only window into where `work` was" case.
+  const TIMED_OUT = Symbol('single-cctv-timed-out');
+  const raced = await withTimeout(work, budgetMs, TIMED_OUT);
+  const result = raced === TIMED_OUT ? { ok: false, reason: 'prepare-timeout', timeoutStage: stageTracker.stage } : raced;
   return { ...result, singleSlotIndex: slotIndex, singleSlotLimit: cap };
 }
 

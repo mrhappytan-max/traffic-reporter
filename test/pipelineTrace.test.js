@@ -366,6 +366,131 @@ test('limit defaults to 30, caps at 100', async () => {
   assert.equal(overCap.length <= 100, true);
 });
 
+// --- V1.8.7.3: paginated KV list() — filter-before-limit, no stale-scan bias --
+//
+// createMockKV()'s list() above always returns list_complete:true in one
+// call, which can never reproduce the real Cloudflare pagination bug (the
+// old `keys.length >= MAX_ENTRIES_SCANNED` break fired after exactly ONE
+// list() page). This second mock KV enforces a real page size + cursor,
+// like the real binding, so these tests actually exercise the
+// MAX_LIST_PAGES fix rather than a no-op single-page scan.
+
+function createPaginatedMockKV({ pageSize = 1000 } = {}) {
+  const store = new Map();
+  return {
+    store,
+    async get(key) {
+      return store.has(key) ? store.get(key) : null;
+    },
+    async put(key, value, options) {
+      store.set(key, value);
+      this.lastPutOptions = options;
+    },
+    async list({ prefix = '', cursor } = {}) {
+      const allKeys = [...store.keys()].filter((k) => k.startsWith(prefix)).sort();
+      const start = cursor ? Number(cursor) : 0;
+      const slice = allKeys.slice(start, start + pageSize);
+      const nextStart = start + slice.length;
+      const list_complete = nextStart >= allKeys.length;
+      return {
+        keys: slice.map((name) => ({ name })),
+        list_complete,
+        cursor: list_complete ? undefined : String(nextStart),
+      };
+    },
+  };
+}
+
+test('V1.8.7.3 — 31: key-enumeration continues past one list() page to reach the true newest records (reproduces the Production filter-failure bug)', async () => {
+  const kv = createPaginatedMockKV({ pageSize: 1000 });
+  // 1500 stale "noise" records first (oldest — lexicographically first keys),
+  // none of which match the filter below.
+  for (let i = 0; i < 1500; i += 1) {
+    const t = new Date(NOW.getTime() - (2000 - i) * 60000);
+    await recordPipelineTrace(
+      kv,
+      buildTraceEntry({
+        event: accidentEvent({ rawId: `NOISE${i}`, source: 'pbs', road: '台68' }),
+        now: t,
+        eligibility: false,
+        eligibilityReason: 'construction-no-impact-keyword',
+      }),
+      t,
+    );
+  }
+  // 5 genuinely-matching recent records (newest keys — lexicographically last).
+  for (let i = 0; i < 5; i += 1) {
+    const t = new Date(NOW.getTime() + i * 1000);
+    await recordPipelineTrace(
+      kv,
+      buildTraceEntry({
+        event: accidentEvent({ rawId: `MATCH${i}`, source: 'freeway', road: '國道一號' }),
+        now: t,
+        eligibility: true,
+        lineAttempted: 1,
+        lineSucceeded: 1,
+      }),
+      t,
+    );
+  }
+  const { records } = await listPipelineTrace(kv, { source: 'freeway', status: 'line-sent' });
+  assert.equal(records.length, 5, 'must find all 5 real matches, not 0 — the old bug truncated the scan to the first (oldest, all-noise) list() page');
+  for (const r of records) {
+    assert.equal(r.identity.source, 'freeway');
+    assert.equal(r.status, 'line-sent');
+  }
+});
+
+test('V1.8.7.3 — 32: filter-before-limit — a small limit still returns real matches even when thousands of non-matching newer/older records exist outside the returned slice', async () => {
+  const kv = createPaginatedMockKV({ pageSize: 1000 });
+  for (let i = 0; i < 1200; i += 1) {
+    const t = new Date(NOW.getTime() - (1300 - i) * 1000);
+    await recordPipelineTrace(
+      kv,
+      buildTraceEntry({ event: accidentEvent({ rawId: `N${i}`, source: 'pbs' }), now: t, eligibility: false, eligibilityReason: 'construction-no-impact-keyword' }),
+      t,
+    );
+  }
+  const matchTime = new Date(NOW.getTime() + 500);
+  await recordPipelineTrace(
+    kv,
+    buildTraceEntry({ event: accidentEvent({ rawId: 'ONLY-MATCH', source: 'freeway' }), now: matchTime, eligibility: true, lineAttempted: 1, lineSucceeded: 1 }),
+    matchTime,
+  );
+  const { records } = await listPipelineTrace(kv, { source: 'freeway', status: 'line-sent', limit: 5 });
+  assert.equal(records.length, 1);
+  assert.equal(records[0].identity.rawId, 'ONLY-MATCH');
+});
+
+test('V1.8.7.3 — 33: unfiltered default view surfaces the true newest record, not a stale record stranded on the first list() page', async () => {
+  const kv = createPaginatedMockKV({ pageSize: 1000 });
+  for (let i = 0; i < 1500; i += 1) {
+    const t = new Date(NOW.getTime() - (2000 - i) * 1000);
+    await recordPipelineTrace(kv, buildTraceEntry({ event: accidentEvent({ rawId: `OLD${i}` }), now: t }), t);
+  }
+  const newestTime = new Date(NOW.getTime() + 9999);
+  await recordPipelineTrace(kv, buildTraceEntry({ event: accidentEvent({ rawId: 'NEWEST' }), now: newestTime }), newestTime);
+  const { records } = await listPipelineTrace(kv, { limit: 1 });
+  assert.equal(records.length, 1);
+  assert.equal(records[0].identity.rawId, 'NEWEST');
+});
+
+test('V1.8.7.3 — 34: MAX_LIST_PAGES safety ceiling still bounds the number of list() calls (no unbounded scan)', async () => {
+  const kv = createPaginatedMockKV({ pageSize: 10 });
+  let listCalls = 0;
+  const originalList = kv.list.bind(kv);
+  kv.list = async (...args) => {
+    listCalls += 1;
+    return originalList(...args);
+  };
+  for (let i = 0; i < 5000; i += 1) {
+    const t = new Date(NOW.getTime() - (6000 - i) * 1000);
+    await recordPipelineTrace(kv, buildTraceEntry({ event: accidentEvent({ rawId: `P${i}` }), now: t }), t);
+  }
+  await listPipelineTrace(kv, {});
+  assert.ok(listCalls <= 40, `expected list() calls bounded by MAX_LIST_PAGES (40), got ${listCalls}`);
+});
+
 // --- 28/29: GET /admin/pipeline-trace via the real Worker entry point --
 
 const ADMIN_USERNAME = 'admin';
