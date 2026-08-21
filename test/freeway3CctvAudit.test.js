@@ -1,24 +1,24 @@
-// V1.8.7.4 — 國3 CCTV Support Audit.
+// V1.8.7.4 → V1.8.7.5 — 國3 CCTV Support: Audit, then Enablement.
 //
-// TASK: real Production evidence showed 國3 南向 102K+100～103K+070 (a
-// dynamic-shoulder event) had no CCTV image, previously diagnosed
-// (V1.8.7.3) as cctvEligible=false/reason='unsupported-road'. This round
-// audits whether real 國3 CCTV metadata already exists anywhere this
-// codebase can reach, BEFORE assuming "the program just hasn't been
-// taught about it yet" — see dynamicCollage.js's own V1.8.7.4 comment for
-// the full audit writeup this file's tests pin down.
+// V1.8.7.4 audited whether real 國3 CCTV metadata already existed
+// anywhere this codebase could reach, and concluded — correctly, for
+// that round — that it did not: no real, Production-confirmed CCTV
+// RoadID/RoadName for 國道三號 existed in this repository, only a
+// synthetic test fixture (RoadID:'000030' in test/hsinchuCctvProbe.test.js,
+// commented "wrong road -> excluded") and an unrelated KM/facility
+// dataset. 國3 was deliberately NOT added to CCTV_SUPPORTED_ROADS.
 //
-// CONCLUSION: no real, Production-confirmed CCTV RoadID/RoadName for
-// 國道三號 exists anywhere in this repository — only (a) unrelated KM/
-// facility data for 國3 (a different TDX dataset entirely), and (b) one
-// SYNTHETIC test fixture (RoadID:'000030') explicitly built to test
-// "wrong road excluded" logic, never captured from a real TDX response.
-// Per this round's own "只有資料來源與測試證據足夠的道路才加入"
-// instruction, 國3 is therefore NOT added to CCTV_SUPPORTED_ROADS this
-// round. These tests pin that conclusion down as an explicit, checked
-// fact — not a thing nobody thought to look at — and confirm 國1's
-// existing CCTV pipeline (dynamic-shoulder single + accident quad) is
-// completely unaffected by this audit.
+// V1.8.7.5 closes that gap: a separate, explicitly read-only inspection
+// of Production's real TRAFFIC_KV `cctv:freeway-metadata:v1` cache (NOT
+// made from this session's own dev sandbox — no TDX call, no admin
+// probe, no frame fetch) confirmed real cached Production data: RoadID
+// `'000030'`, RoadName `'國道3號'`, 706 real 國3 records (S 361 / N 345),
+// including 3 real cameras inside/near the original real event's own
+// 102K+100～103K+070 range. 國3 is now added to CCTV_SUPPORTED_ROADS.
+// This file's tests were updated accordingly — the ones that used to pin
+// down "國3 correctly stays unsupported" now pin down "國3 correctly
+// becomes supported," and the file gained the new fixture-accurate
+// candidate-selection tests this round's own task specified.
 //
 // No real TDX/PBS/CCTV/LINE network call anywhere in this file — every
 // fetch is mocked, KV/R2 are in-memory mocks; a throwing mock fetch on
@@ -29,9 +29,9 @@ import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { runLineBroadcast } from '../src/traffic/broadcastPipeline.js';
 import { setUserEnabled } from '../src/traffic/subscriptions.js';
-import { resolveCctvEligibility } from '../src/cctv/dynamicCollage.js';
+import { resolveCctvEligibility, prepareCctvImageForEvent } from '../src/cctv/dynamicCollage.js';
 import { resolveRoadKey } from '../src/traffic/roadSectionLabel.js';
-import { CCTV_URL } from '../src/tdx/hsinchuCctvProbe.js';
+import { CCTV_URL, selectSingleShoulderCandidate } from '../src/tdx/hsinchuCctvProbe.js';
 import { resetTdxTokenCache } from '../src/tdx/auth.js';
 import { decodeJpeg, encodeJpeg } from './testJpegCodec.js';
 
@@ -79,7 +79,7 @@ async function seedMetadataCache(kv, records) {
   await kv.put('cctv:freeway-metadata:v1', JSON.stringify({ records, fetchedAt: new Date().toISOString() }));
 }
 
-function cctvRecord(overrides) {
+function cctv1Record(overrides) {
   return {
     CCTVID: 'CCTV-DEFAULT',
     RoadID: '000010',
@@ -92,6 +92,36 @@ function cctvRecord(overrides) {
     ...overrides,
   };
 }
+
+// Real-field-shape fixtures modeled on the Production read-only
+// inspection's own reported samples — real RoadID/RoadName/field names,
+// synthetic (non-production) VideoStreamURL host paths, matching this
+// project's existing test convention of never embedding a real
+// freeway.gov.tw camera endpoint in test code.
+function cctv3Record(overrides) {
+  return {
+    CCTVID: 'CCTV-N3-DEFAULT',
+    SubAuthorityCode: 'NFB-NR',
+    RoadID: '000030',
+    RoadName: '國道3號',
+    RoadDirection: 'S',
+    LocationMile: '102K+603',
+    PositionLon: 120.96917412094,
+    PositionLat: 24.7586395461787,
+    RoadSection: { Start: '新竹系統交流道', End: '茄苳交流道' },
+    VideoStreamURL: 'https://cctv3.freeway.gov.tw/n3-102603.jpg',
+    ...overrides,
+  };
+}
+
+// The 3 real cameras reported inside/near the real event's own range
+// (102K+100～103K+070), modeled on the real reported KM/direction/CCTVID
+// shape.
+const REAL_RANGE_RECORDS = [
+  cctv3Record({ CCTVID: 'CCTV-N3-N-102.000-M', RoadDirection: 'N', LocationMile: '102K+000', VideoStreamURL: 'https://cctv3.freeway.gov.tw/n3-102000.jpg' }),
+  cctv3Record({ CCTVID: 'CCTV-N3-S-102.603-M', RoadDirection: 'S', LocationMile: '102K+603', VideoStreamURL: 'https://cctv3.freeway.gov.tw/n3-102603.jpg' }),
+  cctv3Record({ CCTVID: 'CCTV-N3-S-103.020-M', RoadDirection: 'S', LocationMile: '103K+020', VideoStreamURL: 'https://cctv3.freeway.gov.tw/n3-103020.jpg' }),
+];
 
 function freeway3Event(overrides = {}) {
   return {
@@ -107,6 +137,23 @@ function freeway3Event(overrides = {}) {
     endTime: null,
     updatedAt: '2026-08-21T15:49:00+08:00',
     dynamicShoulder: { state: 'OPEN', evidence: { field: 'Description', value: 'x' } },
+    ...overrides,
+  };
+}
+
+function freeway3AccidentEvent(overrides = {}) {
+  return {
+    source: 'freeway',
+    rawId: 'FRW3-ACC-1',
+    type: 'accident',
+    road: '國道三號',
+    direction: '南向',
+    startKM: '102K+500',
+    endKM: '102K+700',
+    description: '事故',
+    startTime: '2026-08-21T13:55:00+08:00',
+    endTime: null,
+    updatedAt: '2026-08-21T13:55:00+08:00',
     ...overrides,
   };
 }
@@ -198,80 +245,144 @@ async function enrollUser(kv, id = 'U1') {
 }
 
 // =======================================================================
-// 1. 國3 recognized as a supported freeway for KM/section labels, but NOT
-//    (yet) for CCTV — the audit's central distinction.
+// 1. 國3 registry recognized.
 // =======================================================================
 
-test('1. 國3 road identity resolves (roadSectionLabel.js DOES know 國道三號) — proves the road itself is a known entity, unrelated to CCTV support', () => {
-  const roadKey = resolveRoadKey('國道三號');
-  assert.equal(roadKey, '國道三號', '國3 must still resolve as a real, known road key — this audit never touched road identity/KM resolution');
-});
-
-// =======================================================================
-// 2. 國3 dynamic shoulder CCTV eligibility — current, audited, correct
-//    status is unsupported-road (never no-camera, never a guessed success).
-// =======================================================================
-
-test('2. 國3 dynamic-shoulder event: cctvEligible=false, reason=unsupported-road (audited conclusion, not a fresh diagnosis)', () => {
+test('1. 國3 is now a recognized supported freeway — CCTV_SUPPORTED_ROADS contains 國道三號 (behavior-level check, via resolveCctvEligibility)', () => {
   const eligibility = resolveCctvEligibility(freeway3Event());
-  assert.equal(eligibility.eligible, false);
-  assert.equal(eligibility.reason, 'unsupported-road');
+  assert.equal(eligibility.eligible, true);
+  assert.notEqual(eligibility.reason, 'unsupported-road');
+});
+
+test('1b. 國3 road identity still resolves via roadSectionLabel.js (unchanged — this round never touched road-identity resolution)', () => {
+  assert.equal(resolveRoadKey('國道三號'), '國道三號');
 });
 
 // =======================================================================
-// 3. 國3 never reaches candidate selection — proves this is an
-//    eligibility-gate outcome, not a failed camera search.
+// 2/3. 國3 真實 RoadID/RoadName confirmed values.
 // =======================================================================
 
-test('3. 國3 full pipeline never attempts a frame fetch — 0 CCTV attempt, confirming the gate fires before candidate selection', async () => {
+test('2. 國3 real RoadID 000030 — a record with this RoadID (and no RoadName at all) is recognized', () => {
+  const eligibility = resolveCctvEligibility(freeway3AccidentEvent());
+  assert.equal(eligibility.eligible, true);
+  assert.equal(eligibility.roadId, '000030');
+});
+
+test('3. 國3 real RoadName 國道3號 (arabic numeral) matches the registry pattern', () => {
+  const eligibility = resolveCctvEligibility(freeway3Event());
+  assert.match('國道3號', eligibility.roadNamePattern);
+});
+
+// =======================================================================
+// 4. 國3 dynamic shoulder CCTV eligible.
+// =======================================================================
+
+test('4. 國3 dynamic-shoulder event: cctvEligible=true, imageStrategy=single', () => {
+  const eligibility = resolveCctvEligibility(freeway3Event());
+  assert.equal(eligibility.eligible, true);
+  assert.equal(eligibility.imageStrategy, 'single');
+});
+
+// =======================================================================
+// 5. 102K+100～103K+070 → selects CCTV-N3-S-102.603-M, direction S.
+// =======================================================================
+
+test('5. 國3 102K+100～103K+070 real fixture: selects CCTV-N3-S-102.603-M (南向, KM 102.603) — the real range-midpoint winner', () => {
+  const eligibility = resolveCctvEligibility(freeway3Event());
+  const candidate = selectSingleShoulderCandidate(REAL_RANGE_RECORDS, {
+    roadId: eligibility.roadId,
+    roadNamePattern: eligibility.roadNamePattern,
+    direction: eligibility.direction,
+    startKm: eligibility.startKm,
+    endKm: eligibility.endKm,
+  });
+  assert.ok(candidate);
+  assert.equal(candidate.cctvId, 'CCTV-N3-S-102.603-M');
+  assert.equal(candidate.roadDirection, 'S');
+  assert.equal(candidate.km, 102.603);
+});
+
+// =======================================================================
+// 6. 國3 direction-aware.
+// =======================================================================
+
+test('6. 國3 candidate selection is direction-aware — a 北向 event does NOT select the 南向 camera', () => {
+  const northEligibility = resolveCctvEligibility(freeway3Event({ direction: '北向' }));
+  const candidate = selectSingleShoulderCandidate(REAL_RANGE_RECORDS, {
+    roadId: northEligibility.roadId,
+    roadNamePattern: northEligibility.roadNamePattern,
+    direction: northEligibility.direction,
+    startKm: northEligibility.startKm,
+    endKm: northEligibility.endKm,
+  });
+  // Only one N candidate exists in range (102.000); a 北向 search must
+  // select IT, never the 南向 102.603/103.020 cameras.
+  assert.ok(candidate);
+  assert.equal(candidate.roadDirection, 'N');
+  assert.equal(candidate.cctvId, 'CCTV-N3-N-102.000-M');
+});
+
+// =======================================================================
+// 7. no-camera fail-closed (genuinely no candidate, not unsupported-road).
+// =======================================================================
+
+test('7. 國3 with 0 matching cameras in the metadata cache -> no-camera, never unsupported-road (eligible=true, search genuinely came up empty)', async () => {
   const kv = createMockKV();
   await enrollUser(kv);
-  // Deliberately NO CCTV metadata cache seeded, and fetch throws on any
-  // freeway.gov.tw call — if this event ever reached candidate selection/
-  // frame-fetch, this test would fail loudly.
-  const { fetchFn, hits } = makeConfigurableFetch({});
+  await seedMetadataCache(kv, [cctv1Record()]); // only 國1 records cached — nothing for 國3
+  const { fetchFn } = makeConfigurableFetch({});
   originalFetch = globalThis.fetch;
   globalThis.fetch = fetchFn;
 
   const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv, CCTV_IMAGES: r2Bucket() };
   const result = await runLineBroadcast(env, { allEvents: [freeway3Event()], dedupeAvailable: true, now: NOW, cctvCodecOverride: TEST_CODEC });
 
-  assert.equal(hits.frame, 0);
+  assert.equal(result.pushSucceeded, 1);
+  const trace = result.pipelineTraceEntries[0];
+  assert.equal(trace.enrichment.cctvEligible, true);
+  assert.equal(trace.enrichment.cctvSkippedByReason, 'no-camera');
 });
 
 // =======================================================================
-// 4. direction-awareness is N/A this round — 國3 was not added, so there
-//    is no direction-aware candidate selection to exercise for it yet.
-//    This test documents that explicitly rather than silently skipping it.
+// 8. 國3 accident quad eligibility.
 // =======================================================================
 
-test('4. 國3 direction-aware candidate selection is not exercised this round (國3 not added to CCTV_SUPPORTED_ROADS) — both directions correctly gate identically', () => {
-  const south = resolveCctvEligibility(freeway3Event({ direction: '南向' }));
-  const north = resolveCctvEligibility(freeway3Event({ direction: '北向' }));
-  assert.equal(south.eligible, false);
-  assert.equal(south.reason, 'unsupported-road');
-  assert.equal(north.eligible, false);
-  assert.equal(north.reason, 'unsupported-road');
+test('8. 國3 accident: cctvEligible=true, imageStrategy=quad', () => {
+  const eligibility = resolveCctvEligibility(freeway3AccidentEvent());
+  assert.equal(eligibility.eligible, true);
+  assert.equal(eligibility.imageStrategy, 'quad');
 });
 
-// =======================================================================
-// 5. no-camera vs unsupported-road — must stay structurally distinct.
-// =======================================================================
-
-test('5. 國3 correctly reports unsupported-road, NEVER no-camera — no-camera would falsely imply a real nearby-camera search was attempted and failed', () => {
-  const eligibility = resolveCctvEligibility(freeway3Event());
-  assert.notEqual(eligibility.reason, 'no-camera');
-  assert.equal(eligibility.reason, 'unsupported-road');
-});
-
-// =======================================================================
-// 6. 國1 dynamic-shoulder single CCTV — regression, completely unaffected.
-// =======================================================================
-
-test('6. 國1 87K+290 dynamic-shoulder regression — imagePrepared=true, imageStrategy=single, unaffected by this audit', async () => {
+test('8b. 國3 accident quad — insufficient candidates (only 2 of 4 quadrants fillable) still fails closed to no-camera/partial, never crashes or forces a wrong camera', async () => {
   const kv = createMockKV();
   await enrollUser(kv);
-  await seedMetadataCache(kv, [cctvRecord({ CCTVID: 'CCTV-89', LocationMile: '89K+000', VideoStreamURL: 'https://cctv1.freeway.gov.tw/89.jpg' })]);
+  // Only 2 same-direction-nearby records — real quad selection may fill
+  // fewer than 4 quadrants; composeCollageFromCandidates already handles
+  // partial fills (this is pre-existing, unmodified behavior, just
+  // exercised here against 國3 for the first time).
+  await seedMetadataCache(kv, [
+    cctv3Record({ CCTVID: 'CCTV-N3-S-BEFORE', RoadDirection: 'S', LocationMile: '102K+300', VideoStreamURL: 'https://cctv3.freeway.gov.tw/before.jpg' }),
+    cctv3Record({ CCTVID: 'CCTV-N3-S-AFTER', RoadDirection: 'S', LocationMile: '102K+700', VideoStreamURL: 'https://cctv3.freeway.gov.tw/after.jpg' }),
+  ]);
+  const frame = await makeSolidJpeg(4, 4, [9, 9, 9]);
+  const { fetchFn } = makeConfigurableFetch({ 'before.jpg': { bytes: frame }, 'after.jpg': { bytes: frame } });
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv, CCTV_IMAGES: r2Bucket() };
+  const result = await runLineBroadcast(env, { allEvents: [freeway3AccidentEvent()], dedupeAvailable: true, now: NOW, cctvCodecOverride: TEST_CODEC });
+
+  assert.equal(result.pushSucceeded, 1); // text always still succeeds regardless of partial/no image
+});
+
+// =======================================================================
+// 9. 國1 regression.
+// =======================================================================
+
+test('9a. 國1 87K+290 dynamic-shoulder regression — imagePrepared=true, imageStrategy=single, unaffected by 國3\'s addition', async () => {
+  const kv = createMockKV();
+  await enrollUser(kv);
+  await seedMetadataCache(kv, [cctv1Record({ CCTVID: 'CCTV-89', LocationMile: '89K+000', VideoStreamURL: 'https://cctv1.freeway.gov.tw/89.jpg' })]);
   const frameBytes = await makeSolidJpeg(4, 4, [1, 2, 3]);
   const { fetchFn } = makeConfigurableFetch({ '89.jpg': { bytes: frameBytes } });
   originalFetch = globalThis.fetch;
@@ -287,18 +398,14 @@ test('6. 國1 87K+290 dynamic-shoulder regression — imagePrepared=true, imageS
   assert.equal(trace.enrichment.imagePrepared, true);
 });
 
-// =======================================================================
-// 7. 國1 accident quad CCTV — regression, completely unaffected.
-// =======================================================================
-
-test('7. 國1 accident quad regression — imageStrategy=quad, 4-frame collage mechanism unaffected by this audit', async () => {
+test('9b. 國1 accident quad regression — imageStrategy=quad, still exactly 4 frame fetches, unaffected by 國3\'s addition', async () => {
   const kv = createMockKV();
   await enrollUser(kv);
   const records = [
-    cctvRecord({ CCTVID: 'S-BEFORE', RoadDirection: 'S', LocationMile: '81K+900', VideoStreamURL: 'https://cctv1.freeway.gov.tw/s-before.jpg' }),
-    cctvRecord({ CCTVID: 'S-AFTER', RoadDirection: 'S', LocationMile: '82K+300', VideoStreamURL: 'https://cctv1.freeway.gov.tw/s-after.jpg' }),
-    cctvRecord({ CCTVID: 'N-BEFORE', RoadDirection: 'N', LocationMile: '81K+950', VideoStreamURL: 'https://cctv1.freeway.gov.tw/n-before.jpg' }),
-    cctvRecord({ CCTVID: 'N-AFTER', RoadDirection: 'N', LocationMile: '82K+400', VideoStreamURL: 'https://cctv1.freeway.gov.tw/n-after.jpg' }),
+    cctv1Record({ CCTVID: 'S-BEFORE', RoadDirection: 'S', LocationMile: '81K+900', VideoStreamURL: 'https://cctv1.freeway.gov.tw/s-before.jpg' }),
+    cctv1Record({ CCTVID: 'S-AFTER', RoadDirection: 'S', LocationMile: '82K+300', VideoStreamURL: 'https://cctv1.freeway.gov.tw/s-after.jpg' }),
+    cctv1Record({ CCTVID: 'N-BEFORE', RoadDirection: 'N', LocationMile: '81K+950', VideoStreamURL: 'https://cctv1.freeway.gov.tw/n-before.jpg' }),
+    cctv1Record({ CCTVID: 'N-AFTER', RoadDirection: 'N', LocationMile: '82K+400', VideoStreamURL: 'https://cctv1.freeway.gov.tw/n-after.jpg' }),
   ];
   await seedMetadataCache(kv, records);
   const frameSpecs = {};
@@ -313,27 +420,84 @@ test('7. 國1 accident quad regression — imageStrategy=quad, 4-frame collage m
   const result = await runLineBroadcast(env, { allEvents: [freeway1AccidentEvent()], dedupeAvailable: true, now: NOW, cctvCodecOverride: TEST_CODEC });
 
   assert.equal(result.pushSucceeded, 1);
-  assert.equal(hits.frame, 4); // still exactly 4 frames for an accident — quad mechanism untouched
+  assert.equal(hits.frame, 4);
   const trace = result.pipelineTraceEntries[0];
   assert.equal(trace.enrichment.imageStrategy, 'quad');
   assert.equal(trace.enrichment.imagePrepared, true);
 });
 
 // =======================================================================
-// 8. Shared Feed image regression — 國1 imageUrl/imageExpiresAt still populate.
+// 10. RoadID/RoadName dirty-data regression — cross-road contamination.
 // =======================================================================
 
-test('8. Shared Feed imageUrl/imageExpiresAt regression — still populated normally for a 國1 event', async () => {
+test('10a. a record with RoadID:000030 (國3) but a mismatched RoadName:國道1號 is correctly kept OUT of 國1\'s candidate pool (RoadID wins, no OR-fallback rescue)', () => {
+  const dirty = cctv3Record({ CCTVID: 'DIRTY-1', RoadName: '國道1號', LocationMile: '82K+100', RoadDirection: 'S', VideoStreamURL: 'https://cctv1.freeway.gov.tw/dirty1.jpg' });
+  const eligibility = resolveCctvEligibility(freeway1AccidentEvent()); // targetKm ~82.1
+  const candidate = selectSingleShoulderCandidate([dirty], {
+    roadId: eligibility.roadId,
+    roadNamePattern: eligibility.roadNamePattern,
+    direction: 'S',
+    startKm: 82,
+    endKm: 82.2,
+  });
+  assert.equal(candidate, null, 'a RoadID:000030 record must never be selected for a 國1 (roadId 000010) search, even though its RoadName says 國道1號');
+});
+
+test('10b. a record with RoadID:000010 (國1) but a mismatched RoadName:國道3號 is correctly kept OUT of 國3\'s candidate pool', () => {
+  const dirty = cctv1Record({ CCTVID: 'DIRTY-2', RoadName: '國道3號', LocationMile: '102K+603', RoadDirection: 'S', VideoStreamURL: 'https://cctv3.freeway.gov.tw/dirty2.jpg' });
+  const eligibility = resolveCctvEligibility(freeway3Event());
+  const candidate = selectSingleShoulderCandidate([dirty], {
+    roadId: eligibility.roadId,
+    roadNamePattern: eligibility.roadNamePattern,
+    direction: eligibility.direction,
+    startKm: eligibility.startKm,
+    endKm: eligibility.endKm,
+  });
+  assert.equal(candidate, null, 'a RoadID:000010 record must never be selected for a 國3 (roadId 000030) search, even though its RoadName says 國道3號');
+});
+
+test('10c. the SAME dirty pair correctly still resolves to their OWN authoritative road when queried the matching way — proves this is a precision fix, not a new exclusion of real records', () => {
+  const dirtyAsThreeButNamedOne = cctv3Record({ CCTVID: 'DIRTY-1', RoadName: '國道1號', LocationMile: '102K+603', RoadDirection: 'S', VideoStreamURL: 'https://cctv3.freeway.gov.tw/dirty1.jpg' });
+  const eligibility = resolveCctvEligibility(freeway3Event());
+  const candidate = selectSingleShoulderCandidate([dirtyAsThreeButNamedOne], {
+    roadId: eligibility.roadId,
+    roadNamePattern: eligibility.roadNamePattern,
+    direction: eligibility.direction,
+    startKm: eligibility.startKm,
+    endKm: eligibility.endKm,
+  });
+  assert.ok(candidate, 'RoadID:000030 must still correctly match a 國3 search — RoadID stays authoritative, not merely stricter');
+  assert.equal(candidate.cctvId, 'DIRTY-1');
+});
+
+test('10d. a record with NO RoadID at all still matches via RoadName fallback (unchanged behavior for the genuinely-no-RoadID case)', () => {
+  const noRoadId = cctv3Record({ CCTVID: 'NO-ROADID', RoadID: undefined, RoadName: '國道3號', LocationMile: '102K+603', RoadDirection: 'S', VideoStreamURL: 'https://cctv3.freeway.gov.tw/noid.jpg' });
+  const eligibility = resolveCctvEligibility(freeway3Event());
+  const candidate = selectSingleShoulderCandidate([noRoadId], {
+    roadId: eligibility.roadId,
+    roadNamePattern: eligibility.roadNamePattern,
+    direction: eligibility.direction,
+    startKm: eligibility.startKm,
+    endKm: eligibility.endKm,
+  });
+  assert.ok(candidate, 'a record with no RoadID at all must still be findable via its RoadName, unchanged fallback behavior');
+});
+
+// =======================================================================
+// 11. Shared Feed image regression (國3, real fixture).
+// =======================================================================
+
+test('11. Shared Feed imageUrl/imageExpiresAt — 國3 real fixture (102K+100～103K+070) populates normally', async () => {
   const kv = createMockKV();
   await enrollUser(kv);
-  await seedMetadataCache(kv, [cctvRecord({ CCTVID: 'CCTV-89', LocationMile: '89K+000', VideoStreamURL: 'https://cctv1.freeway.gov.tw/89.jpg' })]);
+  await seedMetadataCache(kv, REAL_RANGE_RECORDS);
   const frameBytes = await makeSolidJpeg(4, 4, [1, 2, 3]);
-  const { fetchFn } = makeConfigurableFetch({ '89.jpg': { bytes: frameBytes } });
+  const { fetchFn } = makeConfigurableFetch({ 'n3-102603.jpg': { bytes: frameBytes } });
   originalFetch = globalThis.fetch;
   globalThis.fetch = fetchFn;
 
   const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv, CCTV_IMAGES: r2Bucket() };
-  const result = await runLineBroadcast(env, { allEvents: [freeway1ShoulderEvent()], dedupeAvailable: true, now: NOW, cctvCodecOverride: TEST_CODEC });
+  const result = await runLineBroadcast(env, { allEvents: [freeway3Event()], dedupeAvailable: true, now: NOW, cctvCodecOverride: TEST_CODEC });
 
   assert.equal(result.completedProducts.length, 1);
   assert.ok(result.completedProducts[0].imageUrl);
@@ -341,14 +505,15 @@ test('8. Shared Feed imageUrl/imageExpiresAt regression — still populated norm
 });
 
 // =======================================================================
-// 9. Pipeline Trace reason regression — 國3 still shows the correct,
-//    audited reason, and never a raw CCTV payload.
+// 12. Pipeline Trace regression (國3, real fixture — full acceptance list).
 // =======================================================================
 
-test('9. Pipeline Trace for a 國3 event: cctvEligible=false, cctvSkippedByReason=null (never-attempted, not attempted-and-failed), LINE text still pushed', async () => {
+test('12. Pipeline Trace — 國3 real fixture: cctvEligible=true, imageStrategy=single, selectedCamera KM=102.603, imagePrepared=true, LINE text+image, no raw CCTV payload', async () => {
   const kv = createMockKV();
   await enrollUser(kv);
-  const { fetchFn } = makeConfigurableFetch({});
+  await seedMetadataCache(kv, REAL_RANGE_RECORDS);
+  const frameBytes = await makeSolidJpeg(4, 4, [1, 2, 3]);
+  const { fetchFn, pushCalls } = makeConfigurableFetch({ 'n3-102603.jpg': { bytes: frameBytes } });
   originalFetch = globalThis.fetch;
   globalThis.fetch = fetchFn;
 
@@ -357,27 +522,43 @@ test('9. Pipeline Trace for a 國3 event: cctvEligible=false, cctvSkippedByReaso
 
   assert.equal(result.pushSucceeded, 1);
   const trace = result.pipelineTraceEntries[0];
-  assert.equal(trace.enrichment.cctvEligible, false);
-  assert.equal(trace.enrichment.cctvSkippedByReason, null);
-  assert.equal(trace.enrichment.imagePrepared, null);
+  assert.equal(trace.enrichment.cctvEligible, true);
+  assert.equal(trace.enrichment.imageStrategy, 'single');
+  assert.equal(trace.enrichment.imagePrepared, true);
+  assert.equal(trace.enrichment.imageUrlPresent, true);
+  assert.notEqual(trace.enrichment.cctvSkippedByReason, 'unsupported-road');
+  assert.match(trace.enrichment.selectedCamera, /^CCTV-N3-S-102\.603-M@102K\+603$/);
+
+  // LINE push carried both text and image.
+  assert.equal(pushCalls.length, 1);
+  assert.equal(pushCalls[0].body.messages.length, 2);
+  assert.equal(pushCalls[0].body.messages[0].type, 'text');
+  assert.equal(pushCalls[0].body.messages[1].type, 'image');
+
+  // Whitelist discipline unchanged — no raw CCTV payload/stream URL ever
+  // reaches the trace record.
+  const serialized = JSON.stringify(trace);
+  assert.equal(serialized.includes('VideoStreamURL'), false);
+  assert.equal(serialized.includes('freeway.gov.tw'), false);
+  assert.equal(serialized.includes('RoadSection'), false);
 });
 
 // =======================================================================
-// 10. 0 extra TDX/PBS/Google calls — structural + behavioral confirmation.
+// 13. 0 extra TDX/PBS/Google calls.
 // =======================================================================
 
-test('10a. dynamicCollage.js imports nothing TDX-auth/client-related (structural — this audit added 0 new upstream call paths)', () => {
+test('13a. dynamicCollage.js imports nothing TDX-auth/client-related (structural — this round added 0 new upstream call paths)', () => {
   const src = readFileSync(new URL('../src/cctv/dynamicCollage.js', import.meta.url), 'utf8');
   assert.doesNotMatch(src, /from ['"].*tdx\/auth\.js['"]/);
   assert.doesNotMatch(src, /from ['"].*tdx\/client\.js['"]/);
 });
 
-test('10b. a full mixed 國1+國3 run makes 0 unexpected upstream calls — only the one real 國1 frame fetch and the mocked LINE endpoint', async () => {
+test('13b. a full mixed 國1+國3 run makes 0 unexpected upstream calls — only the two real frame fetches and the mocked LINE endpoint', async () => {
   const kv = createMockKV();
   await enrollUser(kv);
-  await seedMetadataCache(kv, [cctvRecord({ CCTVID: 'CCTV-89', LocationMile: '89K+000', VideoStreamURL: 'https://cctv1.freeway.gov.tw/89.jpg' })]);
+  await seedMetadataCache(kv, [cctv1Record({ CCTVID: 'CCTV-89', LocationMile: '89K+000', VideoStreamURL: 'https://cctv1.freeway.gov.tw/89.jpg' }), ...REAL_RANGE_RECORDS]);
   const frameBytes = await makeSolidJpeg(4, 4, [1, 2, 3]);
-  const { fetchFn, hits } = makeConfigurableFetch({ '89.jpg': { bytes: frameBytes } });
+  const { fetchFn, hits } = makeConfigurableFetch({ '89.jpg': { bytes: frameBytes }, 'n3-102603.jpg': { bytes: frameBytes } });
   originalFetch = globalThis.fetch;
   globalThis.fetch = fetchFn;
 
@@ -390,36 +571,38 @@ test('10b. a full mixed 國1+國3 run makes 0 unexpected upstream calls — only
   });
 
   assert.equal(result.pushSucceeded, 2);
-  assert.equal(hits.frame, 1); // only 國1's single frame — 國3 never attempts one
-  assert.equal(hits.other, 0); // 0 unexpected calls (would throw otherwise)
+  assert.equal(hits.frame, 2); // one per event, single strategy each
+  assert.equal(hits.other, 0);
 });
 
 // =======================================================================
-// Meta: pin down the audit's own evidence so a future round can trust it
-// without re-deriving it, and so the synthetic test fixture can never be
-// silently mistaken for real captured data.
+// Meta: audit-evidence pin-downs carried forward from V1.8.7.4, still valid.
 // =======================================================================
 
-test('11. the only RoadID:000030 in this test suite is the synthetic "wrong road -> excluded" fixture in hsinchuCctvProbe.test.js, explicitly commented as such — not real captured 國3 data', () => {
+test('the only RoadID:000030 in test/hsinchuCctvProbe.test.js is the pre-existing "wrong road -> excluded" synthetic fixture — still correctly excluded from 國1\'s pool (unaffected by 國3\'s addition; it is 國1\'s test, not 國3\'s)', () => {
   const src = readFileSync(new URL('./hsinchuCctvProbe.test.js', import.meta.url), 'utf8');
   const line = src.split('\n').find((l) => l.includes("RoadID: '000030'"));
-  assert.ok(line, 'expected to find the 000030 fixture line');
+  assert.ok(line);
   assert.match(line, /wrong road/i);
 });
 
-test('12. CCTV_SUPPORTED_ROADS remains 國道一號-only this round — a future addition must be a deliberate, evidence-backed change, not silent', () => {
-  // resolveCctvEligibility is the only public surface of the registry —
-  // asserting behavior (not reading the private constant directly) so
-  // this test tracks the real contract, not the module's internal shape.
-  assert.equal(resolveCctvEligibility(freeway3Event()).reason, 'unsupported-road');
-  assert.equal(resolveCctvEligibility({ source: 'freeway', type: 'accident', road: '國道一號', startKM: '82K+000', endKM: '82K+200' }).eligible, true);
-});
-
-test('13. hsinchuCctvProbe.js\'s real admin probe fetches the FULL unfiltered nationwide Freeway CCTV list (no $filter/$top on CCTV_URL) — confirms the metadata mechanism already captures 國3 records whenever a real probe runs in Production, even though this dev sandbox cannot read that cache', () => {
+test('hsinchuCctvProbe.js\'s real admin probe still fetches the FULL unfiltered nationwide Freeway CCTV list (no $filter/$top on CCTV_URL) — unchanged mechanism, now with a second registry entry benefiting from it', () => {
   assert.doesNotMatch(CCTV_URL, /\$filter=/);
   assert.doesNotMatch(CCTV_URL, /\$top=/);
-  const src = readFileSync(new URL('../src/tdx/hsinchuCctvProbe.js', import.meta.url), 'utf8');
-  // The full, unfiltered `records` array (not a road-filtered subset) is
-  // what gets handed to writeFreewayCctvMetadataCache.
-  assert.match(src, /await writeFreewayCctvMetadataCache\(env\.TRAFFIC_KV, records, new Date\(\)\)/);
+});
+
+test('prepareCctvImageForEvent (direct call, single strategy) succeeds end-to-end for the real 國3 fixture with a mock frame — no real network access needed to prove the wiring works', async () => {
+  const kv = createMockKV();
+  await seedMetadataCache(kv, REAL_RANGE_RECORDS);
+  const frameBytes = await makeSolidJpeg(4, 4, [7, 7, 7]);
+  const { fetchFn } = makeConfigurableFetch({ 'n3-102603.jpg': { bytes: frameBytes } });
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const env = { TRAFFIC_KV: kv, CCTV_IMAGES: r2Bucket() };
+  const result = await prepareCctvImageForEvent(env, freeway3Event(), {}, TEST_CODEC);
+  assert.equal(result.ok, true);
+  assert.ok(result.imageUrl);
+  assert.ok(result.imageExpiresAt);
+  assert.match(result.selectedCamera, /^CCTV-N3-S-102\.603-M@102K\+603$/);
 });

@@ -158,7 +158,7 @@ test('1. an eligible freeway accident with startKM/endKM resolves a DYNAMIC targ
   assert.notEqual(e2.targetKm, 82.1);
 });
 
-test('3. road alias mapping: 國道1號/中山高/中山高速公路 all resolve to the same supported road; a genuinely different freeway (國道三號) resolves to a DIFFERENT, unsupported road', async () => {
+test('3. road alias mapping: 國道1號/中山高/中山高速公路 all resolve to the same supported road; a genuinely different freeway (國道三號) resolves to a DIFFERENT road with its own identity', async () => {
   for (const roadText of ['國道一號', '國道1號', '中山高', '中山高速公路']) {
     const e = resolveCctvEligibility(accidentEvent({ road: roadText }));
     assert.equal(e.eligible, true, `expected "${roadText}" to resolve as eligible`);
@@ -166,9 +166,16 @@ test('3. road alias mapping: 國道1號/中山高/中山高速公路 all resolve
     assert.equal(e.roadShortName, '國1');
   }
 
+  // V1.8.7.5 — 國道三號 is now ALSO CCTV-supported (real Production
+  // RoadID/RoadName confirmed — see CCTV_SUPPORTED_ROADS's own comment),
+  // so this no longer demonstrates "unsupported"; it still demonstrates
+  // road resolution correctly keeping 國1/國3 as two distinct roads with
+  // their own roadId/roadShortName, never conflated.
   const e3 = resolveCctvEligibility(accidentEvent({ road: '國道三號' }));
-  assert.equal(e3.eligible, false);
-  assert.equal(e3.reason, 'unsupported-road');
+  assert.equal(e3.eligible, true);
+  assert.equal(e3.roadKey, '國道三號');
+  assert.equal(e3.roadShortName, '國3');
+  assert.notEqual(e3.roadId, resolveCctvEligibility(accidentEvent({ road: '國道一號' })).roadId);
 });
 
 test('4. missing KM (no startKM, no endKM) -> ineligible, text only', async () => {
@@ -177,11 +184,19 @@ test('4. missing KM (no startKM, no endKM) -> ineligible, text only', async () =
   assert.equal(e.reason, 'no-reliable-km');
 });
 
-test('5. unsupported/unresolvable road -> ineligible, text only', async () => {
-  const unsupported = resolveCctvEligibility(accidentEvent({ road: '國道三號' }));
-  assert.equal(unsupported.eligible, false);
-  assert.equal(unsupported.reason, 'unsupported-road');
-
+// V1.8.7.5 — roadSectionLabel.js's resolveRoadKey (which resolveCctvEligibility
+// relies on) currently only recognizes 國道一號/國道三號 at all (see that
+// module's own "Scope this round" comment) — and CCTV_SUPPORTED_ROADS now
+// covers both. There is therefore currently no real road TEXT that
+// resolves via resolveRoadKey yet still misses CCTV_SUPPORTED_ROADS
+// (exactly the gap 國3 itself used to sit in, V1.8.7.4→V1.8.7.5) — the
+// 'unsupported-road' branch in resolveCctvEligibility is unchanged and
+// still there, ready for the day a THIRD road gains resolveRoadKey
+// support before CCTV_SUPPORTED_ROADS catches up to it, same as 國3 did;
+// it simply has no live example to assert against today. 'unresolvable-
+// road' (a road resolveRoadKey has never heard of at all) remains fully
+// exercisable and asserted below.
+test('5. unresolvable road -> ineligible, text only (unsupported-road has no live example today — see comment above)', async () => {
   const unresolvable = resolveCctvEligibility(accidentEvent({ road: '台61線' }));
   assert.equal(unresolvable.eligible, false);
   assert.equal(unresolvable.reason, 'unresolvable-road');

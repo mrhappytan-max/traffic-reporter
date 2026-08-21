@@ -29,62 +29,46 @@
 //   - cctv/publishedImage.js's publishCollageImage — the V1.8.4 R2-backed
 //     publish layer, completely unchanged.
 //
-// CCTV_SUPPORTED_ROADS (below) is deliberately a closed, tiny registry:
-// only 國道一號 — its CCTV RoadID ('000010') and RoadName pattern were
-// independently confirmed against a real Production TDX CCTV/Freeway
-// response (V1.7). No other freeway's CCTV RoadID has ever been
-// observed from this development sandbox (TDX network egress is
-// blocked here) — adding another road (國道三號 included) requires first
-// confirming ITS real CCTV RoadID from an actual Production response,
-// never guessed from "the numbering probably follows the same scheme."
-// An accident on any other road — or one whose road text doesn't even
-// resolve via resolveRoadKey at all — falls through to text-only.
+// CCTV_SUPPORTED_ROADS (below) is a registry — every entry's CCTV RoadID/
+// RoadName pattern must be independently confirmed against a real
+// Production TDX CCTV/Freeway response before being added; never guessed
+// from "the numbering probably follows the same scheme." An accident on
+// any other, still-unconfirmed road — or one whose road text doesn't
+// even resolve via resolveRoadKey at all — falls through to text-only.
+// 國道一號's entry ('000010') was confirmed this way in V1.7; 國道三號's
+// entry ('000030') was confirmed this way in V1.8.7.5 (see below).
 //
 // V1.8.7.4 — 國3 support audit (real Production evidence: 國3 南向
 // 102K+100～103K+070 dynamic-shoulder event had no image, reason
 // 'unsupported-road' — motivated a full audit of whether 國3 CCTV
 // metadata already exists somewhere in this codebase before assuming the
-// program, not the road, is what's missing). CONCLUSION: no real,
-// Production-confirmed CCTV RoadID/RoadName for 國道三號 exists anywhere
-// this codebase can reach — audited and ruled out:
-//   - This module's own metadata cache (cctv/freewayCctvMetadataCache.js)
-//     is populated ONLY as a side effect of tdx/hsinchuCctvProbe.js's
-//     handleHsinchuCctvProbe, which DOES fetch the full, unfiltered
-//     nationwide Freeway CCTV response (CCTV_URL has no $filter/$top —
-//     see that module's own comment) and caches EVERY record it gets
-//     back, not just 國1's — so a real Production run of that probe
-//     almost certainly already has 國3's real records sitting in
-//     Production's own KV. But this is a DEV sandbox: TDX network egress
-//     is blocked here (reconfirmed via curl/WebFetch), there is no local
-//     copy of Production's real cache contents, and this round was
-//     explicitly instructed not to make any upstream call to check —
-//     so the real RoadID/RoadName value cannot be read from here either
-//     way. A future round with either real Production KV read access or
-//     explicit authorization to run the real probe can close this gap in
-//     one line (see CCTV_SUPPORTED_ROADS below) without touching
-//     anything else in this file.
-//   - data/road-location/ DOES have real, confirmed KM/facility data for
-//     國道三號 (used by roadSectionLabel.js/kmLocationResolver.js for
-//     section-label text) — but that is a completely different official
-//     dataset (interchange/milestone archives) from TDX's CCTV/Freeway
-//     feed, and confirms nothing about a CCTV RoadID.
-//   - The only 'RoadID: 000030' string anywhere in this repository is a
-//     SYNTHETIC test fixture in test/hsinchuCctvProbe.test.js, explicitly
-//     commented "wrong road -> excluded" — invented to test EXCLUSION
-//     logic, never captured from a real TDX response, and NOT evidence of
-//     what 國3's real RoadID actually is. Using it here would repeat
-//     exactly the "guessed from the numbering probably matches" mistake
-//     this module's own comment above already warns against.
-// Per this round's own explicit instruction ("只有資料來源與測試證據足夠
-// 的道路才加入"), 國3 is therefore NOT added to CCTV_SUPPORTED_ROADS this
-// round — the registry stays 國道一號-only, and 國3 continues to
-// correctly resolve 'unsupported-road' (accurate: this program doesn't
-// yet support it — a structurally different, and more honest, statement
-// than 'no-camera', which would incorrectly imply a real search for a
-// nearby camera was attempted and failed). See test/freeway3CctvAudit.test.js
-// for the tests that pin this conclusion down (so a future round can see
-// at a glance this was actively checked, not merely never considered),
-// and PROJECT_HANDOFF.md §31 / PRODUCT_DECISIONS.md for the full writeup.
+// program, not the road, is what's missing). That round's CONCLUSION was
+// that no real, Production-confirmed CCTV RoadID/RoadName for 國道三號
+// existed anywhere THIS CODEBASE could reach from its own dev sandbox —
+// TDX network egress is blocked here, and that round was explicitly
+// instructed not to make any upstream call — so 國3 was deliberately NOT
+// added at that time (see git history / PROJECT_HANDOFF.md §31 for that
+// round's own full writeup, including the confirmed fact that this
+// module's metadata cache already stores the FULL unfiltered nationwide
+// Freeway CCTV response, not just 國1's — meaning a real Production run
+// of the admin probe was always going to already hold 國3's real records
+// too, this codebase just couldn't read them from here).
+//
+// V1.8.7.5 — the gap V1.8.7.4 identified was closed by a separate,
+// explicitly read-only inspection of Production's real TRAFFIC_KV
+// `cctv:freeway-metadata:v1` cache (not made from this session's own dev
+// sandbox — no TDX call, no admin probe triggered, no frame fetch; see
+// PROJECT_HANDOFF.md §32 for the full provenance of this confirmation).
+// That inspection confirmed, from REAL cached Production data (706 國3
+// records, fetched 2026-08-18): RoadID `'000030'`, RoadName `'國道3號'`
+// (arabic numeral, not `國道三號`) — now the confirmed values below. It
+// also surfaced a real, small amount of dirty data worth recording here:
+// a handful of records carry a RoadID that disagrees with their own
+// RoadName (e.g. RoadID:'000030' paired with RoadName:'國道1號', or the
+// reverse) — see tdx/hsinchuCctvProbe.js's `isTargetRoad` (V1.8.7.5) for
+// the general (not road-specific) fix: RoadID is now authoritative
+// whenever present, closing the real cross-road-contamination risk this
+// created now that the registry covers more than one road.
 //
 // Fail-closed, at every single stage, per instruction: no reliable KM,
 // an unsupported/unresolvable road, a missing CCTV_IMAGES/TRAFFIC_KV
@@ -169,6 +153,15 @@ import { readFreewayCctvMetadataCache } from './freewayCctvMetadataCache.js';
 // second, independently-guessed copy of these values.
 const CCTV_SUPPORTED_ROADS = {
   國道一號: { roadId: TARGET_ROAD_ID, roadNamePattern: TARGET_ROAD_NAME_PATTERN, shortName: '國1' },
+  // V1.8.7.5 — roadId/roadNamePattern confirmed from real Production
+  // TRAFFIC_KV cctv:freeway-metadata:v1 data (706 real 國3 records, see
+  // this module's own comment above for the full provenance) — not
+  // guessed. RoadName is the arabic-numeral form '國道3號' in real
+  // records; '國道三號' is kept in the pattern purely for symmetry with
+  // 國1's own OR-pattern and as a defensive fallback, same idiom already
+  // used there, even though no real 國3 record has been observed using
+  // the Chinese-numeral spelling in RoadName.
+  國道三號: { roadId: '000030', roadNamePattern: /國道3號|國道三號/, shortName: '國3' },
 };
 
 // Hard time budget for ONE prepareCctvImageForEvent call — from "start

@@ -211,9 +211,31 @@ function escapeHtml(value) {
 // road this app has a confirmed CCTV roadId/roadNamePattern for — see
 // cctv/dynamicCollage.js's CCTV_SUPPORTED_ROADS. Defaults preserve the
 // exact original behavior for every existing (fixed-target) caller.
+// V1.8.7.5 — RoadID is now AUTHORITATIVE whenever present, never merely
+// one of two OR'd alternatives. Real Production metadata (confirmed via
+// a read-only Production TRAFFIC_KV inspection, cited in
+// cctv/dynamicCollage.js's CCTV_SUPPORTED_ROADS comment) contains a
+// small number of genuinely dirty records — a structured RoadID that
+// disagrees with its own free-text RoadName (e.g. RoadID:'000030' paired
+// with RoadName:'國道1號', or the reverse). Under the OLD pure-OR rule,
+// such a record could leak into BOTH roads' candidate pools at once
+// (matching one road by RoadID, the other by RoadName) — real
+// cross-road contamination risk now that this registry covers more than
+// one road, not merely a hypothetical. RoadID is the more specific,
+// structured field, so it wins outright whenever present: a record
+// whose RoadID clearly names a DIFFERENT road is excluded even if its
+// RoadName happens to match, rather than being rescued by that
+// mismatched text. RoadName-pattern matching is now used ONLY as a
+// fallback for the (today, apparently rare or nonexistent per this same
+// audit) case where a record carries no RoadID at all. This is a general
+// rule, not scoped to any specific road/KM — it changes how EVERY road's
+// pool is built, including the pre-existing 國1 fixed-target admin
+// endpoints, which is safe: no existing test or real 國1 record has ever
+// depended on the OR-fallback actually firing (RoadID:'000010' has
+// always been present and correct for real 國1 records).
 function isTargetRoad(record, { roadId = TARGET_ROAD_ID, roadNamePattern = TARGET_ROAD_NAME_PATTERN } = {}) {
   const recordRoadId = firstDefinedField(record, ['RoadID', 'RoadId']);
-  if (recordRoadId === roadId) return true;
+  if (recordRoadId !== null) return recordRoadId === roadId;
   const roadName = firstDefinedField(record, ['RoadName']);
   return typeof roadName === 'string' && roadNamePattern.test(roadName);
 }
