@@ -1,8 +1,52 @@
 # ENGINEERING_STATUS.md — traffic-reporter (路況播報員)
 
-Current-state snapshot only — no long history here. For "why" and full round-by-round detail, see `PROJECT_HANDOFF.md` (§1–§24). For human-readable release notes, see `RELEASE_SUMMARY_V1.8.5.md`.
+Current-state snapshot only — no long history here. For "why" and full round-by-round detail, see `PROJECT_HANDOFF.md` (§1–§25). For human-readable release notes, see `RELEASE_SUMMARY_V1.8.5.md`.
 
 ---
+
+## 🚀 正式發布流程（唯一來源）— V1.8.6.9
+
+**Production 唯一正式來源 = GitHub `main`.** This is the one and only
+sanctioned deploy chain — no feature branch, no integration branch, and
+no deploy hook may ever point anywhere else. See `PROJECT_HANDOFF.md`
+§25 for the full V1.8.6.9 design writeup; `PRODUCT_DECISIONS.md` for why
+each piece below is shaped the way it is.
+
+```
+feature branch
+  → tests
+  → fast-forward/merge into main
+  → push main
+  → Cloudflare Workers Builds auto-deploy
+  → automated verification (npm run verify:production)
+  → done
+```
+
+**Claude Browser (a human-in-the-loop session actually opening the
+Cloudflare Dashboard) is an EXCEPTION path, not a step of normal
+deployment.** It is only ever needed for something no repo-side script
+can see or change: a Dashboard-only setting drifting (Production branch
+pointer, the real Cron Trigger config, Secrets, a build hook
+misconfiguration) or a genuine Cloudflare platform incident. Normal
+deploys never require it.
+
+**Automated verification, no Admin password required:**
+
+```
+npm run verify:production      # alias: npm run deploy:verify
+npm run check:deployment-policy   # the static half of the above, standalone
+```
+
+`GET /version` (public, unauthenticated) is what makes password-free
+verification possible: `{service, appVersion, deployedCommit,
+deployedBranch, buildTime}`, nothing more sensitive. The Worker itself
+learns `deployedCommit`/`deployedBranch`/`buildTime` at BUILD time (see
+`scripts/generateBuildMetadata.mjs`, run automatically via package.json's
+`predeploy` hook on every `npm run deploy`) — never by calling GitHub or
+Cloudflare's API at runtime. `GET /admin/deployment-status` (Admin-Auth)
+carries the full picture — routes/bindings/secrets-presence/drift
+reasons/`dashboardOnlyChecks`; `GET /admin/deployment-status-view` is the
+same thing as a mobile-readable HTML page.
 
 ## ✅ Production branch split — RESOLVED (was: discovered 2026-08-20)
 
@@ -27,7 +71,7 @@ assume `main`.
 ## Current Production version / main HEAD
 
 ```
-main HEAD: 3858e0ad07b07c1c96bc8bdc6edfb70b5a354645 (V1.8.6.7 — 24h Pipeline Trace, fast-forwarded onto main)
+main HEAD: 462e2178be92fbf9ea964e9bcc2b3ce2e4a1d9a2 (V1.8.6.8 — Driver-Relevant Event Broadcast Time Policy, fast-forwarded onto main)
 ```
 
 Cloudflare auto-deploys on every push to `main` — no manual `wrangler deploy` needed under normal operation. (This document's own prior round is the reminder to periodically re-verify that's still actually true.)
@@ -37,6 +81,18 @@ Cloudflare auto-deploys on every push to `main` — no manual `wrangler deploy` 
 - Production live, operating normally.
 - `GET /health` — zero TDX/PBS/LINE network calls, reads only `health:snapshot:v1` + `tdx:usage:summary:v1` from KV.
 - TDX usage reconciliation ledger live and accumulating (`tdx:usage:summary:v1`).
+
+## Latest completed work — V1.8.6.9: Mobile-first Deployment Guard
+
+**Status: on branch `feature/v1.8.6.9-mobile-deployment-guard`, NOT merged, NOT deployed.** See `PROJECT_HANDOFF.md` §25 for the full design writeup.
+
+- **New public endpoint**: `GET /version` — `{service, appVersion, deployedCommit, deployedBranch, buildTime}`, unauthenticated, minimal, `Cache-Control: no-store`. Exists so an automated verifier can confirm "Production SHA == main SHA" without an Admin password.
+- **New Admin endpoints**: `GET /admin/deployment-status` (full JSON: drift detection, route/binding/secret presence, cron expectation, `dashboardOnlyChecks`) and `GET /admin/deployment-status-view` (same, as a mobile HTML page — 🔴 VERSION DRIFT banner or ✅ clean).
+- **Build-time identity injection**: `scripts/generateBuildMetadata.mjs` runs automatically before every `npm run deploy` (`predeploy` npm lifecycle hook), writing `src/generated/buildMetadata.js` from local `git`/CI env vars — 0 runtime GitHub/Cloudflare API calls, ever.
+- **`npm run verify:production`** (alias `npm run deploy:verify`) — the post-push verification script: local git state → static policy checks (`scripts/check-deployment-policy.mjs`) → `/version` reachability → commit/branch comparison → route smoke tests → summary. Gracefully reports `NETWORK_VERIFICATION_BLOCKED` (never a false FAIL) when this environment's own egress proxy denies the host — a real, concrete case hit and handled while building this (see PROJECT_HANDOFF.md §25 for the exact `x-deny-reason` header evidence).
+- **`/health`** now shows a display-only "部署" card (commit/branch/drift) — deliberately does NOT affect the page's own severity tier/HTTP status (checked the existing severity contract first, per the task's own instruction, and found doing so would have required touching dozens of pre-existing tests for an orthogonal fact).
+- **Docs**: this file, `PROJECT_HANDOFF.md`, `PRODUCT_DECISIONS.md`, and `README.md` now state ONE canonical deploy flow (`Production 唯一正式來源 = GitHub main`) — Claude Browser is explicitly an exception path (Dashboard-only drift/Secret/build-hook issues), never a normal deployment step.
+- 59 new tests, full suite 1008 tests / 1005 pass, same 3 pre-existing unrelated failures as every prior round.
 
 ## Latest completed work — V1.8.6.8: Driver-Relevant Event Broadcast Time Policy
 

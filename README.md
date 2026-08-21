@@ -21,13 +21,40 @@ npm install
 npm run dev
 ```
 
-## 部署
+## 部署（唯一正式流程，V1.8.6.9）
+
+**Production 唯一正式來源 = GitHub `main`。**
+
+```
+feature branch → tests → fast-forward/merge main → push main
+  → Cloudflare Workers Builds 自動部署 → 自動驗收
+```
+
+正常情況下不需要手動 `npm run deploy`——push 到 `main` 後 Cloudflare 會自動建置部署。
+push 完，跑一次自動驗收（不需要 Admin 密碼）：
+
+```bash
+npm run verify:production   # 別名：npm run deploy:verify
+```
+
+會依序驗證：本機 git 對 `main` 的認知、`wrangler.jsonc`/`package.json` 靜態設定、
+Production 是否可連線、`GET /version` 回報的 commit/branch 是否等於 push 的 `main` HEAD、
+重要 route 是否存在（200 或 401 都算存在，404 才是失敗）。若這個執行環境本身連不到
+`*.workers.dev`（已知會發生——見 `PROJECT_HANDOFF.md` §25），會明確標示
+`NETWORK_VERIFICATION_BLOCKED`，但仍完成所有本機可驗證的部分，不會因此整體回報失敗。
+
+只在 Dashboard-only 的設定漂移（Production branch 指向、真正的 Cron Trigger 設定、
+Secret、build hook）或 Cloudflare 平台本身異常時，才需要人親自打開 Cloudflare Dashboard
+確認——這是例外路徑，不是正常部署的一部分。
+
+需要手動本機部署（少見，正常流程用不到）時：
 
 ```bash
 npm run deploy
 ```
 
-（等同 `npx wrangler deploy`）
+（`predeploy` 會先自動產生 `src/generated/buildMetadata.js`，記錄這次部署的
+commit/branch，再執行 `wrangler deploy`。）
 
 ## 專案狀態
 

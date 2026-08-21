@@ -7,11 +7,15 @@
   "main": "src/index.js",
   "scripts": {
     "dev": "wrangler dev",
+    "predeploy": "node scripts/generateBuildMetadata.mjs",
     "deploy": "wrangler deploy",
     "start": "wrangler dev",
     "test": "node --test",
     "smoke:wasm": "node scripts/wranglerSmoke/runWasmSmoke.mjs",
-    "update:road-location-data": "node scripts/updateRoadLocationData.mjs"
+    "update:road-location-data": "node scripts/updateRoadLocationData.mjs",
+    "check:deployment-policy": "node scripts/check-deployment-policy.mjs",
+    "verify:production": "node scripts/verify-production-deploy.mjs",
+    "deploy:verify": "node scripts/verify-production-deploy.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.123.0"

@@ -13,6 +13,8 @@ import { handleBroadcastProvenance } from './traffic/broadcastProvenance.js';
 import { handleSharedFeed } from './traffic/sharedFeedHandler.js';
 import { handlePipelineTrace } from './traffic/pipelineTrace.js';
 import { handlePipelineTraceView } from './traffic/pipelineTraceView.js';
+import { handleDeploymentStatus, handleVersion } from './traffic/deploymentStatus.js';
+import { handleDeploymentStatusView } from './traffic/deploymentStatusView.js';
 
 // V1.6.3 — Admin Protection: every human-facing admin/debug page requires
 // HTTP Basic Auth (see security/adminAuth.js). Centralized here on
@@ -67,7 +69,23 @@ const BROADCAST_PROVENANCE_PATH = '/admin/broadcast-provenance';
 // must never look like "route doesn't exist" (404) once past Admin Auth.
 const PIPELINE_TRACE_PATH = '/admin/pipeline-trace';
 const PIPELINE_TRACE_VIEW_PATH = '/admin/pipeline-trace-view';
-const METHOD_RESTRICTED_ADMIN_PATHS = new Set([BROADCAST_PROVENANCE_PATH, PIPELINE_TRACE_PATH, PIPELINE_TRACE_VIEW_PATH]);
+
+// V1.8.6.9: /admin/deployment-status (JSON) and
+// /admin/deployment-status-view (HTML) — same GET-only-with-explicit-405
+// treatment as the paths above, for the same reason. See
+// traffic/deploymentStatus.js for what these actually report (build-time
+// commit/branch identity, drift detection, route/binding/secret
+// presence) — 0 TDX/PBS/CCTV/LINE/GitHub/Cloudflare API calls.
+const DEPLOYMENT_STATUS_PATH = '/admin/deployment-status';
+const DEPLOYMENT_STATUS_VIEW_PATH = '/admin/deployment-status-view';
+
+const METHOD_RESTRICTED_ADMIN_PATHS = new Set([
+  BROADCAST_PROVENANCE_PATH,
+  PIPELINE_TRACE_PATH,
+  PIPELINE_TRACE_VIEW_PATH,
+  DEPLOYMENT_STATUS_PATH,
+  DEPLOYMENT_STATUS_VIEW_PATH,
+]);
 
 const ADMIN_PATHS = new Set([
   '/health',
@@ -82,10 +100,22 @@ const ADMIN_PATHS = new Set([
   BROADCAST_PROVENANCE_PATH,
   PIPELINE_TRACE_PATH,
   PIPELINE_TRACE_VIEW_PATH,
+  DEPLOYMENT_STATUS_PATH,
+  DEPLOYMENT_STATUS_VIEW_PATH,
   ...HSINCHU_FRAME_PATHS,
 ]);
 
 const PUBLIC_CCTV_IMAGE_PREFIX = '/cctv/image/';
+
+// V1.8.6.9 — GET /version: public, deliberately UNAUTHENTICATED (see
+// traffic/deploymentStatus.js's own module comment and
+// PRODUCT_DECISIONS.md's V1.8.6.9 section for why). NOT in ADMIN_PATHS,
+// NOT routed through requireAdminAuth — an automated deploy verifier
+// (scripts/verify-production-deploy.mjs) must be able to confirm
+// "Production SHA == main SHA" without an Admin password. Deliberately
+// minimal — see getPublicVersionInfo() for the exact 5-field shape;
+// never bindings/secrets/routes/drift-reasons, those stay Admin-only.
+const VERSION_PATH = '/version';
 
 function routeAdminGet(pathname, env, request) {
   if (pathname === '/debug/tdx') return handleDebugTdx(env);
@@ -100,6 +130,8 @@ function routeAdminGet(pathname, env, request) {
   if (pathname === BROADCAST_PROVENANCE_PATH) return handleBroadcastProvenance(env, request);
   if (pathname === PIPELINE_TRACE_PATH) return handlePipelineTrace(env, request);
   if (pathname === PIPELINE_TRACE_VIEW_PATH) return handlePipelineTraceView(env, request);
+  if (pathname === DEPLOYMENT_STATUS_PATH) return handleDeploymentStatus(env);
+  if (pathname === DEPLOYMENT_STATUS_VIEW_PATH) return handleDeploymentStatusView(env);
   const frameIndex = HSINCHU_FRAME_PATHS.indexOf(pathname);
   if (frameIndex !== -1) return handleHsinchuCctvFrame(env, frameIndex);
   return new Response('Not Found', { status: 404 });
@@ -117,6 +149,14 @@ export default {
         status: 'ok',
         version: 'v1-bootstrap',
       });
+    }
+
+    // V1.8.6.9 — GET /version, public, no Admin Auth. See VERSION_PATH's
+    // own comment above. Checked as its own early GET-only match, same
+    // convention as the root `/` route right above — non-GET falls
+    // through to the generic 404 at the bottom, same as `/` does.
+    if (url.pathname === VERSION_PATH && request.method === 'GET') {
+      return handleVersion();
     }
 
     // V1.8.6.4 (extended V1.8.6.7): these admin paths also answer 405 for

@@ -13,6 +13,7 @@
 
 import { readHealthSnapshot } from './healthSnapshot.js';
 import { formatTaipeiTime } from './broadcastHours.js';
+import { getDeploymentStatus } from './deploymentStatus.js';
 import {
   readTdxUsageSummary,
   taipeiDateString,
@@ -551,7 +552,37 @@ function renderTdxUsageBody(summary, now) {
   </details>`;
 }
 
-function renderSnapshotBody(snapshot, usageSummary, now) {
+// V1.8.6.9 — deployment identity, DISPLAY-ONLY. Deliberately does NOT
+// participate in `status`/statusMeta/the page's HTTP status code —
+// checking this project's existing health severity contract (see
+// computeStatus in healthSnapshot.js and applyStaleness above) found it
+// tightly coupled to many existing tests that assert an exact "normal"
+// tier for TDX-schedule-state scenarios (skipped-by-schedule, sleeping)
+// using a bare `handleHealth(env)` call with no way to inject a "known
+// good" deployment state. Folding deployment drift into that same
+// severity computation would have meant updating every one of those
+// tests just to keep asserting the SAME thing they already correctly
+// assert about TDX/PBS/staleness — a needless, wide-blast-radius change
+// for a fact that is better shown as its own clearly-separated card
+// anyway (a version mismatch and "is the Cron pipeline healthy right
+// now" are two different questions a person glancing at this page would
+// ask separately). See PRODUCT_DECISIONS.md's V1.8.6.9 section for the
+// full reasoning. 0 I/O — getDeploymentStatus(env) is pure.
+function renderDeploymentCard(deploymentStatus) {
+  const pill = (ok, yes = '是', no = '否') => `<span class="pill ${ok ? 'pill-ok' : 'pill-bad'}">${ok ? yes : no}</span>`;
+  const shortSha = (sha) => (sha && sha !== 'unknown' ? sha.slice(0, 12) : sha || '（未知）');
+  return `
+  <div class="card">
+    <h2>部署</h2>
+    <div class="row"><span class="label">appVersion</span><span class="value">${escapeHtml(deploymentStatus.appVersion)}</span></div>
+    <div class="row"><span class="label">Commit</span><span class="value">${escapeHtml(shortSha(deploymentStatus.deployedCommit))}</span></div>
+    <div class="row"><span class="label">Branch</span><span class="value">${escapeHtml(deploymentStatus.deployedBranch)}</span></div>
+    <div class="row"><span class="label">版本漂移</span>${pill(!deploymentStatus.driftDetected, '否', '⚠️ 是')}</div>
+    <p class="hint"><a href="/admin/deployment-status-view">查看完整部署狀態 →</a></p>
+  </div>`;
+}
+
+function renderSnapshotBody(snapshot, usageSummary, now, deploymentStatus) {
   const { tdx, pbs, line, kv, broadcast } = snapshot;
 
   const tdxSourcesHtml = tdx.sources
@@ -614,7 +645,8 @@ function renderSnapshotBody(snapshot, usageSummary, now) {
     <div class="row"><span class="label">等待推送</span><span class="value">${broadcast.pendingTargetCount}</span></div>
     <div class="row"><span class="label">排除事件</span><span class="value">${broadcast.typeIneligibleCount}</span></div>
     ${ineligibleRows}
-  </div>`;
+  </div>
+  ${renderDeploymentCard(deploymentStatus)}`;
 }
 
 export async function handleHealth(env) {
@@ -639,12 +671,18 @@ export async function handleHealth(env) {
   // never an error, never affects this page's own status/staleness.
   const { summary: usageSummary } = await readTdxUsageSummary(env.TRAFFIC_KV);
 
+  // V1.8.6.9 — 0 I/O, 0 extra TDX/PBS/LINE/GitHub/Cloudflare calls (see
+  // deploymentStatus.js). Display-only — see renderDeploymentCard's own
+  // comment for why this deliberately does not participate in
+  // `status`/statusMeta/the HTTP status code below.
+  const deploymentStatus = getDeploymentStatus(env);
+
   const html = renderPage({
     statusMeta,
     statusLabel: statusMeta.label,
     generatedAtLabel: formatTaipeiTime(new Date(snapshot.generatedAt)),
     staleNotice,
-    body: renderSnapshotBody(snapshot, usageSummary, now),
+    body: renderSnapshotBody(snapshot, usageSummary, now, deploymentStatus),
     now,
   });
 

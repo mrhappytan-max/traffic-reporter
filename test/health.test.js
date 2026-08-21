@@ -245,3 +245,39 @@ test('KV read throwing -> treated as missing snapshot, safe 503, no throw out of
   const res = await handleHealth({ TRAFFIC_KV: brokenKv });
   assert.equal(res.status, 503);
 });
+
+// --- V1.8.6.9: deployment identity card — DISPLAY-ONLY (see health.js's
+// own renderDeploymentCard comment for why it deliberately never
+// participates in status/statusMeta/the HTTP status code) ----------------
+
+test('17: /health surfaces deployment identity (appVersion/commit/branch/drift) as its own card, with 0 additional TDX/PBS/LINE/GitHub/Cloudflare calls', withFetchGuard(async () => {
+  const res = await handleHealth({ TRAFFIC_KV: kv(baseSnapshot()) });
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(html, /appVersion/);
+  assert.match(html, /Commit/);
+  assert.match(html, /Branch/);
+  assert.match(html, /版本漂移/);
+}));
+
+test('a "normal" snapshot still renders 🟢 正常 even though this dev/test environment\'s build metadata always shows drift — deployment drift must NEVER downgrade the page\'s own status/HTTP code', async () => {
+  const snapshot = baseSnapshot({ status: 'normal', generatedAt: new Date(Date.now() - 2 * 60 * 1000).toISOString() });
+  const res = await handleHealth({ TRAFFIC_KV: kv(snapshot) });
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(html, /正常/);
+  assert.match(html, /🟢/);
+});
+
+test('a "critical" snapshot still returns 503 regardless of deployment drift state', async () => {
+  const snapshot = baseSnapshot({ status: 'critical', generatedAt: new Date().toISOString() });
+  const res = await handleHealth({ TRAFFIC_KV: kv(snapshot) });
+  assert.equal(res.status, 503);
+});
+
+test('the deployment card never leaks a Secret value, even when env carries real-looking ones', async () => {
+  const res = await handleHealth({ TRAFFIC_KV: kv(baseSnapshot()), ADMIN_PASSWORD: 'super-secret-admin-pw', LINE_CHANNEL_ACCESS_TOKEN: 'super-secret-line-token' });
+  const html = await res.text();
+  assert.equal(html.includes('super-secret-admin-pw'), false);
+  assert.equal(html.includes('super-secret-line-token'), false);
+});
