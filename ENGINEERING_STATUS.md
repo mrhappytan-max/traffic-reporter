@@ -82,9 +82,30 @@ Cloudflare auto-deploys on every push to `main` — no manual `wrangler deploy` 
 - `GET /health` — zero TDX/PBS/LINE network calls, reads only `health:snapshot:v1` + `tdx:usage:summary:v1` from KV.
 - TDX usage reconciliation ledger live and accumulating (`tdx:usage:summary:v1`).
 
+## Latest completed work — V1.8.7.2: Dynamic Shoulder Message Simplification
+
+**Status: on branch `fix/v1.8.7.2-dynamic-shoulder-message-short`, branched from main (V1.8.7.1, merged), NOT merged, NOT deployed.** See `PROJECT_HANDOFF.md` §29 for the full design writeup.
+
+Formatter-only change: shortens the dynamic-shoulder OPEN/STOPPED LINE message from 7 lines down to a fixed 4 — headline, road＋official section label, KM range, one state line. Removed for THIS event type only: the 📍 地圖/`maps.google.com` line, the safety-reminder sentences ("請依現場標誌及號誌行駛"/"請回主線車道"), and the 🕒 updated-time line. Product principle: a dynamic-shoulder push is a real-time status flip, not an incident narrative — the driver needs road/direction/section/KM/state, nothing else, and the accompanying single CCTV photo (unchanged, still attached) already shows current conditions.
+
+```
+🛣️ 機動開放路肩            ⛔ 路肩停止開放
+國1 南向｜竹北交流道－新竹交流道路段     國1 南向｜竹北交流道－新竹交流道路段
+91K+590～93K+320            91K+590～93K+320
+路肩開放通行                路肩停止開放
+```
+
+- `messageFormat.js`'s `formatEventMessage` gained a dedicated early-return short-circuit for a dynamic-shoulder event, checked first and returning IMMEDIATELY — bypasses the map-line/updated-time construction every other event type still gets, without touching that shared code for anyone else.
+- `buildRoadLines()` (road/section-label/KM-range resolution) is completely unchanged and still runs — the official interchange section label and the fail-closed "no facility resolved → bare road＋direction" fallback both still work exactly as before; only the SURROUNDING lines were removed.
+- `kmLocationResolver.js`/`resolveKmRange` and Pipeline Trace's `rangeResolution` are UNCHANGED and still fully populated — this round only removed a display line from the LINE message, never the underlying resolution data, which other event types (accident/construction) still use for their own 📍 地圖 line.
+- CCTV (`imageStrategy:'single'`, camera selection, per-event budget fairness, R2 publish, `imageExpiresAt`, Shared Feed image, CCTV top-up) is entirely untouched — verified directly.
+- accident/construction/congestion/other formatters are byte-identical to before this round.
+
+14 new tests in `test/dynamicShoulderMessageShort.test.js` (covering all 15 acceptance items). Targeted regression (251 tests across every directly-affected file) confirmed clean; full suite not re-run this round, per instruction (formatter-only change, confirmed impact scoped exactly as expected).
+
 ## Latest completed work — V1.8.7.1: Multi-event Single CCTV Budget / Fairness Fix
 
-**Status: on branch `fix/v1.8.7.1-single-cctv-budget-fairness`, branched from main (V1.8.7.0, merged), NOT merged, NOT deployed.** See `PROJECT_HANDOFF.md` §28 for the full design writeup.
+**Status: merged to main.** See `PROJECT_HANDOFF.md` §28 for the full design writeup.
 
 Fixes a real Production bug found via Pipeline Trace on the very first busy tick after V1.8.7.0 shipped: 3 dynamic-shoulder events in one Cron tick, only the FIRST got a CCTV image — the other two both read `cctvSkippedByReason:'run-budget-exhausted'`, despite all three being fully classified, range-resolved, LINE-pushed, and CCTV-eligible.
 

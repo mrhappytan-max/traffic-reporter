@@ -183,15 +183,22 @@ const CONGESTION_SEVERITY_DISPLAY = {
 // removal) and gets its own dedicated headline/impact wording — never the
 // generic "⚠️ 交通管制/交通管制中\n請配合疏導" TYPE_LABEL/TYPE_IMPACT_LINES
 // this event's underlying `type` ('control') would otherwise produce.
-// Wording deliberately keeps the two hard safety constraints from this
-// round's own spec: never implies unconditional permission ("一定可以
-// 走" is NOT here — "請依現場標誌及號誌行駛" keeps the actual authority
-// with the physical signage/signals, not this message), and STOPPED
-// explicitly tells the driver to return to the mainline ("請回主線車道"),
-// never just "be aware."
+//
+// V1.8.7.2 — SHORTENED per this round's own product principle: a
+// dynamic-shoulder push is a real-time status flip, not an incident
+// narrative — a driver needs road/direction/section/KM/state, nothing
+// else (see formatEventMessage's own dedicated short-circuit below,
+// which returns exactly 4 lines: headline, road+section, KM range, this
+// ONE state line — no map link, no safety-reminder sentence, no updated-
+// time line). `stateLine` (was `impactLines`, a two-line safety-reminder
+// pair) is now a single short line naming the state itself
+// ("路肩開放通行"/"路肩停止開放") — deliberately NOT the removed
+// "請依現場標誌及號誌行駛"/"請回主線車道" reminder sentences; the task's
+// own instruction was explicit those are no longer necessary TEXT for
+// this event type, not that the underlying legal/safety reality changed.
 const DYNAMIC_SHOULDER_DISPLAY = {
-  OPEN: { emoji: '🛣️', label: '機動開放路肩', impactLines: '路肩目前開放通行\n請依現場標誌及號誌行駛' },
-  STOPPED: { emoji: '⛔', label: '路肩停止開放', impactLines: '路肩恢復禁止行駛\n請回主線車道' },
+  OPEN: { emoji: '🛣️', label: '機動開放路肩', stateLine: '路肩開放通行' },
+  STOPPED: { emoji: '⛔', label: '路肩停止開放', stateLine: '路肩停止開放' },
 };
 
 function toTaipeiHHMM(isoString) {
@@ -362,49 +369,48 @@ export function formatEventMessage(event, { forecast = false, minutesUntilStart 
     return lines.join('\n');
   }
 
-  // V1.8.7.0 — checked FIRST, ahead of congestion/anomaly-detail/generic
-  // type wording: a dynamic-shoulder event's `type` is still 'control'
-  // (see dynamicShoulderClassification.js's own comment on why that's
-  // deliberately never changed), so without this it would render as the
-  // generic "⚠️ 交通管制" — technically not wrong, but not the dedicated,
-  // driver-actionable wording this round's task asks for. Direction/
-  // section-label/KM/map-line construction above (buildRoadLines) is
-  // completely unchanged — only the headline/impact wording differs.
+  // V1.8.7.0 / V1.8.7.2 — checked FIRST and returned IMMEDIATELY, ahead
+  // of congestion/anomaly-detail/generic-type wording, the map line, and
+  // the updated-time line every other event type still gets below. A
+  // dynamic-shoulder event's `type` is still 'control' (see
+  // dynamicShoulderClassification.js's own comment on why that's
+  // deliberately never changed), so without this branch it would render
+  // as the generic "⚠️ 交通管制" — technically not wrong, but not this
+  // round's dedicated, deliberately SHORT wording. `firstLine`/
+  // `secondLine` (road＋official section label, KM range) are the exact
+  // same values buildRoadLines() already produces for every other event
+  // type — including its own KM-only fallback when no section resolves
+  // (see that function's own tier comment) — only the surrounding lines
+  // (headline, state line) differ, and `mapLine`/an updated-time line
+  // are deliberately NEVER appended for this event type (see
+  // DYNAMIC_SHOULDER_DISPLAY's own comment for why). Exactly 4 lines,
+  // never more.
   const dynamicShoulderDisplay = event.dynamicShoulder && DYNAMIC_SHOULDER_DISPLAY[event.dynamicShoulder.state];
+  if (dynamicShoulderDisplay) {
+    return [`${dynamicShoulderDisplay.emoji} ${dynamicShoulderDisplay.label}`, firstLine, secondLine, dynamicShoulderDisplay.stateLine]
+      .filter(Boolean)
+      .join('\n');
+  }
 
   const congestionDisplay =
-    !dynamicShoulderDisplay && event.type === 'congestion'
+    event.type === 'congestion'
       ? CONGESTION_SEVERITY_DISPLAY[event.congestionSeverity] || CONGESTION_SEVERITY_DISPLAY[DEFAULT_CONGESTION_SEVERITY]
       : null;
 
   // V1.8.6.4: a genuinely-classifiable 'other' anomaly (積水/落石/坍方/...)
   // gets its own specific headline instead of always falling through to
   // the generic "路況異常" — see resolveOtherAnomalyDetail's own comment.
-  const anomalyDetail = !dynamicShoulderDisplay && !congestionDisplay && event.type === 'other' ? resolveOtherAnomalyDetail(event) : null;
+  const anomalyDetail = !congestionDisplay && event.type === 'other' ? resolveOtherAnomalyDetail(event) : null;
 
-  const emoji = dynamicShoulderDisplay
-    ? dynamicShoulderDisplay.emoji
-    : congestionDisplay
-      ? congestionDisplay.emoji
-      : anomalyDetail
-        ? anomalyDetail.emoji
-        : TYPE_EMOJI[event.type] || 'ℹ️';
-  const label = dynamicShoulderDisplay
-    ? dynamicShoulderDisplay.label
-    : congestionDisplay
-      ? congestionDisplay.label
-      : anomalyDetail
-        ? anomalyDetail.label
-        : TYPE_LABEL[event.type] || '路況異常';
+  const emoji = congestionDisplay ? congestionDisplay.emoji : anomalyDetail ? anomalyDetail.emoji : TYPE_EMOJI[event.type] || 'ℹ️';
+  const label = congestionDisplay ? congestionDisplay.label : anomalyDetail ? anomalyDetail.label : TYPE_LABEL[event.type] || '路況異常';
 
   // V1.8.6.4: a real, structured direction==='雙向' gets direction-aware
   // impact wording (see BIDIRECTIONAL_IMPACT_LINES's own comment) —
   // congestion keeps its own severity-driven impact text unchanged.
-  const impactLines = dynamicShoulderDisplay
-    ? dynamicShoulderDisplay.impactLines
-    : congestionDisplay
-      ? congestionDisplay.impactLines
-      : (event.direction === '雙向' && BIDIRECTIONAL_IMPACT_LINES[event.type]) || TYPE_IMPACT_LINES[event.type] || '請留意路況';
+  const impactLines = congestionDisplay
+    ? congestionDisplay.impactLines
+    : (event.direction === '雙向' && BIDIRECTIONAL_IMPACT_LINES[event.type]) || TYPE_IMPACT_LINES[event.type] || '請留意路況';
   const updatedHHMM = toTaipeiHHMM(event.updatedAt);
 
   const lines = [
