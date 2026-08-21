@@ -446,6 +446,116 @@ async function prepareSingleCctvImageWork(env, eligibility, runCache, deadlineAt
   };
 }
 
+// V1.8.7.1 — root cause of "only the first dynamic-shoulder event this
+// tick ever gets a CCTV image" (real Production evidence: 3 shoulder
+// events one Cron tick, only the first got imagePrepared:true, the other
+// two both read cctvSkippedByReason:'run-budget-exhausted'):
+// prepareCctvImageForEvent's `budgetMs` parameter used to be computed
+// EXCLUSIVELY from broadcastPipeline.js's own `cctvRunDeadlineAt` — ONE
+// absolute deadline anchored once before the whole per-event loop starts
+// and shared, sequentially, by every CCTV-eligible event in the run
+// (quad AND single alike). Whichever event reached the CCTV block FIRST
+// got however long its own real processing took out of that shared
+// clock; every LATER event only ever got "whatever's left" — which, for
+// a genuinely busy tick, is frequently at or below zero by the time a
+// second or third event's turn comes, even though a single frame fetch
+// is individually cheap and would easily have fit in its own small
+// budget. This was never a TDX/PBS/classification/KM-resolver/LINE/
+// Shared-Feed problem — Production's own Pipeline Trace already showed
+// all three events fully classified, range-resolved, LINE-pushed, and
+// CCTV-eligible; only the shared-clock CCTV budget allocation was wrong.
+//
+// FIX — single-strategy events stop sharing ANY clock with quad/
+// accidents, and stop sharing a "whatever's left" clock with each
+// OTHER: every eligible single event gets its OWN fixed, fresh
+// SINGLE_CCTV_PER_EVENT_BUDGET_MS budget, anchored at THAT event's own
+// turn (never inherited from an earlier event's elapsed time) — see
+// prepareSingleCctvImageForEvent below. This is deliberately the
+// simplest fix in the space the task laid out ("per-event single budget
+// + global cap") — no queue, no dynamic re-allocation, no second CCTV
+// pipeline: `prepareCctvImageForEvent`'s existing `withTimeout` race
+// (already used by the quad path) is reused unchanged, just given a
+// smaller, per-event-fresh budget instead of the shared run-wide one.
+//
+// A per-event budget alone would still let an unbounded NUMBER of
+// single events add up to an unbounded total delay in one tick ("不能讓
+// 無限多事件拖垮 Worker") — bounded instead by MAX_SINGLE_CCTV_EVENTS_PER_RUN,
+// a hard cap on how many single-strategy events get ANY CCTV attempt
+// per run, tracked on the SAME per-run `runCache` object every call
+// already shares (see getFreewayCctvMetadata's own memoization above —
+// same object, same "created once per Cron tick" lifecycle, both the
+// main push loop AND the Shared-Feed-only top-up pass share this SAME
+// object across ONE runLineBroadcast call, so the cap is correctly
+// enforced against the WHOLE run's single-event total, not per-phase).
+// Worst-case added wall-clock time this round's CCTV work can ever cost
+// a tick is therefore a fixed, known bound:
+// MAX_SINGLE_CCTV_EVENTS_PER_RUN * SINGLE_CCTV_PER_EVENT_BUDGET_MS —
+// still a hard ceiling, just a larger (and now genuinely FAIR) one than
+// the old single shared 4s window.
+//
+// Beyond the cap, an event gets `{ok:false, reason:'single-event-cap-
+// reached'}` — deliberately a DIFFERENT reason string from
+// 'prepare-timeout' (this per-event budget's own expiry) so an
+// administrator reading Pipeline Trace can always tell "we deliberately
+// stopped after N events this run" apart from "this specific event's
+// own frame fetch/publish genuinely ran out of time" — see
+// PRODUCT_DECISIONS.md for why 'prepare-timeout' (an existing reason
+// string) was reused for the latter rather than inventing a third,
+// redundant one.
+//
+// Numbers chosen conservatively, not tuned to exactly match Production's
+// 3-event evidence: SINGLE_CCTV_PER_EVENT_BUDGET_MS (1500ms) is ample
+// for one MJPEG frame capture + one small R2 PUT (a single frame fetch
+// alone already has its own MIN_FRAME_TIMEOUT_MS/FRAME_TIMEOUT_MS floor/
+// ceiling elsewhere in this pipeline — 1500ms sits comfortably inside
+// that). MAX_SINGLE_CCTV_EVENTS_PER_RUN (5) comfortably covers real
+// Production's own 3-event evidence with headroom for a busier day,
+// while keeping the worst-case total (7.5s) a small, bounded addition
+// next to this pipeline's own pre-existing accepted quad budget (4s) —
+// see PRODUCT_DECISIONS.md for the full reasoning, including why quad's
+// OWN budget window is deliberately kept on a completely SEPARATE clock
+// (broadcastPipeline.js's own `cctvRunDeadlineAt`, now lazily anchored
+// to the first accident this run actually reaches — see that file) so
+// neither strategy can silently shrink the other's nominal allotment.
+export const SINGLE_CCTV_PER_EVENT_BUDGET_MS = 1500;
+export const MAX_SINGLE_CCTV_EVENTS_PER_RUN = 5;
+
+/**
+ * Wraps prepareSingleCctvImageWork with this event's OWN independent
+ * budget + the per-run cap — see the module comment above for the full
+ * fairness design. `runCache.singleEventsAttempted` is a plain counter
+ * (not a Promise, unlike `runCache.metadataPromise`) — incremented
+ * BEFORE the async work starts so two events awaited concurrently (never
+ * actually happens today, this loop is sequential, but this is the
+ * correct behavior either way) could never both slip in under the cap by
+ * racing a stale read.
+ *
+ * @param {{budgetMs?:number, cap?:number}} [overrides] - TEST-ONLY (see
+ *   e.g. broadcastPipeline.js's own `cctvPrepareBudgetMs` precedent) —
+ *   lets a test exercise the timeout/cap boundaries in milliseconds
+ *   instead of really waiting SINGLE_CCTV_PER_EVENT_BUDGET_MS, or with a
+ *   cap smaller than MAX_SINGLE_CCTV_EVENTS_PER_RUN. Production
+ *   (scheduled.js) never passes this — both default to the real module
+ *   constants.
+ */
+async function prepareSingleCctvImageForEvent(env, eligibility, runCache, { budgetMs = SINGLE_CCTV_PER_EVENT_BUDGET_MS, cap = MAX_SINGLE_CCTV_EVENTS_PER_RUN } = {}) {
+  const attemptedSoFar = runCache.singleEventsAttempted || 0;
+  const slotIndex = attemptedSoFar + 1; // 1-based — this event's own attempt number this run, win or lose
+  if (attemptedSoFar >= cap) {
+    return { ok: false, reason: 'single-event-cap-reached', singleSlotIndex: slotIndex, singleSlotLimit: cap };
+  }
+  runCache.singleEventsAttempted = slotIndex;
+
+  const deadlineAt = Date.now() + budgetMs;
+  const work = prepareSingleCctvImageWork(env, eligibility, runCache, deadlineAt).catch(() => ({ ok: false, reason: 'prepare-error' }));
+  // Same withTimeout race the quad path already uses — a slow frame
+  // fetch/R2 publish for THIS event resolves 'prepare-timeout' at THIS
+  // event's own budget boundary, never borrowing time from (or lending
+  // time to) any other event this run.
+  const result = await withTimeout(work, budgetMs, { ok: false, reason: 'prepare-timeout' });
+  return { ...result, singleSlotIndex: slotIndex, singleSlotLimit: cap };
+}
+
 /**
  * Orchestrates the FULL dynamic CCTV pipeline for one accident event:
  * eligibility -> shared metadata (cache-only, memoized this run) ->
@@ -469,34 +579,55 @@ async function prepareSingleCctvImageWork(env, eligibility, runCache, deadlineAt
  * @param {{decodeJpeg,encodeJpeg}} [codecOverride] - TEST-ONLY, threaded
  *   through to composeCollageFromCandidates — see that function's doc
  *   comment.
- * @param {number} [budgetMs] - how many ms THIS call gets (defaults to
- *   the full CCTV_PREPARE_BUDGET_MS for a standalone call, e.g. in
- *   tests calling this function directly; broadcastPipeline.js always
- *   passes the run's REMAINING budget explicitly). <= 0 short-circuits
- *   immediately to 'run-budget-exhausted' without starting any work —
- *   this is the same reason broadcastPipeline.js itself checks for
- *   before ever calling in, kept here too as a defensive floor.
+ * @param {number} [budgetMs] - how many ms THIS call gets, for the QUAD
+ *   (accident) path only (defaults to the full CCTV_PREPARE_BUDGET_MS for
+ *   a standalone call, e.g. in tests calling this function directly;
+ *   broadcastPipeline.js always passes the run's REMAINING quad budget
+ *   explicitly). <= 0 short-circuits immediately to
+ *   'run-budget-exhausted' without starting any work — this is the same
+ *   reason broadcastPipeline.js itself checks for before ever calling
+ *   in, kept here too as a defensive floor.
+ *
+ *   V1.8.7.1 — this parameter is IGNORED for a `single` (dynamic-
+ *   shoulder) event: see prepareSingleCctvImageForEvent's own comment for
+ *   why single-strategy events use their own independent per-event
+ *   budget + a per-run cap instead of a caller-supplied shared deadline
+ *   (the root cause this round fixes — the old code passed the SAME
+ *   shared-deadline-derived `budgetMs` to both strategies, which is
+ *   exactly why a 2nd/3rd dynamic-shoulder event in one Cron tick used to
+ *   read `run-budget-exhausted` before ever attempting a frame fetch).
  * @returns {Promise<{ok:true, imageUrl:string, imageExpiresAt:string}|{ok:false, reason:string}>}
  */
-export async function prepareCctvImageForEvent(env, event, runCache, codecOverride, budgetMs = CCTV_PREPARE_BUDGET_MS) {
+export async function prepareCctvImageForEvent(
+  env,
+  event,
+  runCache,
+  codecOverride,
+  budgetMs = CCTV_PREPARE_BUDGET_MS,
+  singleBudgetOverrides = {} // TEST-ONLY, single-strategy only — see prepareSingleCctvImageForEvent's own doc comment
+) {
   const eligibility = resolveCctvEligibility(event);
   if (!eligibility.eligible) return { ok: false, reason: eligibility.reason };
 
   if (env.CCTV_IMAGES === undefined) return { ok: false, reason: 'no-r2-binding' };
+
+  // V1.8.7.1 — strategy dispatch, decided ONCE by resolveCctvEligibility
+  // above (never re-decided here). `single` (dynamic-shoulder) branches
+  // off completely here, into its own independent per-event-budget +
+  // per-run-cap wrapper — see that function's own comment for the full
+  // fairness design and why this is no longer a shared-deadline
+  // computation at all. `quad` (accident) keeps its EXACT pre-existing
+  // shared-run-deadline behavior below, byte-for-byte unchanged — this
+  // round never touches how an accident's own budget is computed
+  // ("事故 quad 的現有保護機制不能被破壞").
+  if (eligibility.imageStrategy === 'single') {
+    return prepareSingleCctvImageForEvent(env, eligibility, runCache, singleBudgetOverrides);
+  }
+
   if (budgetMs <= 0) return { ok: false, reason: 'run-budget-exhausted' };
 
   const deadlineAt = Date.now() + budgetMs;
-  // V1.8.7.0 — strategy dispatch, decided ONCE by resolveCctvEligibility
-  // above (never re-decided here): 'single' for a dynamic-shoulder event
-  // (prepareSingleCctvImageWork — 1 frame, no collage, no decode/encode),
-  // 'quad' for an accident (prepareCctvImageWork, unchanged). Both share
-  // the exact same budget/timeout/deadline handling below — only the
-  // work itself differs.
-  const work = (
-    eligibility.imageStrategy === 'single'
-      ? prepareSingleCctvImageWork(env, eligibility, runCache, deadlineAt)
-      : prepareCctvImageWork(env, eligibility, runCache, codecOverride, deadlineAt)
-  ).catch(() => ({
+  const work = prepareCctvImageWork(env, eligibility, runCache, codecOverride, deadlineAt).catch(() => ({
     ok: false,
     reason: 'prepare-error',
   }));

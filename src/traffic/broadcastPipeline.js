@@ -154,11 +154,20 @@ function clusterContentSince(members, { newUpdatedKeys, dedupeMapSnapshot, now }
  *   passes this.
  * @param {number} [options.cctvPrepareBudgetMs] - TEST-ONLY override of
  *   dynamicCollage.js's CCTV_PREPARE_BUDGET_MS. Represents the budget
- *   for THIS WHOLE RUN's CCTV enrichment (not per-event — see
- *   dynamicCollage.js's CCTV_PREPARE_BUDGET_MS comment for why that
- *   distinction matters), so a test can exercise the run-level timeout
- *   path in milliseconds instead of really waiting ~4s. Production
- *   never passes this (defaults to the real CCTV_PREPARE_BUDGET_MS).
+ *   for THIS WHOLE RUN's QUAD (accident) CCTV enrichment only (not
+ *   per-event — see dynamicCollage.js's CCTV_PREPARE_BUDGET_MS comment
+ *   for why that distinction matters; V1.8.7.1: single-strategy events no
+ *   longer share this budget at all — see `singleCctvBudgetOverrides`
+ *   below), so a test can exercise the run-level timeout path in
+ *   milliseconds instead of really waiting ~4s. Production never passes
+ *   this (defaults to the real CCTV_PREPARE_BUDGET_MS).
+ * @param {{budgetMs?:number, cap?:number}} [options.singleCctvBudgetOverrides] -
+ *   TEST-ONLY (V1.8.7.1) — overrides dynamicCollage.js's
+ *   SINGLE_CCTV_PER_EVENT_BUDGET_MS / MAX_SINGLE_CCTV_EVENTS_PER_RUN for
+ *   every dynamic-shoulder CCTV attempt this run, so a test can exercise
+ *   the per-event-timeout and per-run-cap boundaries in milliseconds/a
+ *   small count instead of really waiting 1.5s per event or seeding 6+
+ *   fixture events to hit the real cap. Production never passes this.
  */
 export async function runLineBroadcast(
   env,
@@ -172,6 +181,7 @@ export async function runLineBroadcast(
     dryRun = false,
     cctvCodecOverride,
     cctvPrepareBudgetMs,
+    singleCctvBudgetOverrides,
     // V1.8.6.7 (Pipeline Trace) — Map<`${source}:${rawId}`, {dedupeResult,
     // gatingResult}>, built by scheduled.js from data dedupe.js/
     // crossSourceDedup.js ALREADY decided this run (new/updated TDX
@@ -593,10 +603,29 @@ export async function runLineBroadcast(
   // every event the same fresh ~4s would let N eligible accidents in one
   // tick accumulate up to N*4s of possible delay before the LAST event's
   // text even gets considered. Fixed here: ONE deadline for the WHOLE
-  // run's CCTV enrichment, computed once, before the loop starts; each
-  // event below gets only whatever's LEFT of it (see the loop body).
-  // Never recomputed/reset per event.
-  const cctvRunDeadlineAt = Date.now() + (cctvPrepareBudgetMs ?? CCTV_PREPARE_BUDGET_MS);
+  // run's accident/quad CCTV enrichment, shared by every accident this
+  // run gets only whatever's LEFT of it (see the loop body).
+  //
+  // V1.8.7.1 — LAZILY anchored (was: computed unconditionally right
+  // here, before the loop) to the moment the FIRST accident this run
+  // actually reaches the CCTV block, rather than to "whenever this loop
+  // started." Dynamic-shoulder (single-strategy) events are now
+  // processed on their own, completely independent budget (see
+  // cctv/dynamicCollage.js's prepareSingleCctvImageForEvent) and are
+  // ALWAYS ordered before accidents in `perEventPending` (see its own
+  // construction above: `...otherRelevant, ...accidentRelevant`) — if
+  // this deadline were still anchored at loop-start, real wall-clock
+  // time spent on several shoulder events before the loop ever reaches
+  // an accident would silently eat into the accident's own nominal
+  // CCTV_PREPARE_BUDGET_MS window, even though the two strategies no
+  // longer share a resource. Anchoring lazily means an accident's own
+  // budget window starts counting only once accident-CCTV processing
+  // itself begins — genuinely unaffected by how many single events (or
+  // how slow they were) ran earlier in this SAME tick. Multiple
+  // accidents in one run still share this ONE (now lazily-anchored)
+  // deadline exactly as before — that pre-existing accident-vs-accident
+  // behavior is completely unchanged.
+  let cctvRunDeadlineAt = null;
 
   // V57.1 — products this run finished but had NO pending LINE target for
   // (already notified, or incident-suppressed). Collected here and handled
@@ -639,7 +668,10 @@ export async function runLineBroadcast(
       if (isCctvCandidateEvent(event)) {
         const elig = resolveCctvEligibility(event);
         trace.cctvEligible = elig.eligible;
-        if (elig.eligible) trace.imageStrategy = elig.imageStrategy;
+        if (elig.eligible) {
+          trace.imageStrategy = elig.imageStrategy;
+          trace.cctvBudgetClass = elig.imageStrategy === 'single' ? 'single-per-event' : 'quad-shared';
+        }
       }
       // V57.1: still a candidate for a CCTV image — for the Shared Traffic
       // Feed ONLY, never for a LINE re-push. Deferred to after this loop so
@@ -681,15 +713,62 @@ export async function runLineBroadcast(
     if (isCctvCandidateEvent(event)) {
       const elig = resolveCctvEligibility(event);
       traceForEvent.cctvEligible = elig.eligible;
-      if (elig.eligible) traceForEvent.imageStrategy = elig.imageStrategy;
-      const remainingRunBudgetMs = cctvRunDeadlineAt - Date.now();
-      if (remainingRunBudgetMs <= 0) {
-        result.cctvSkippedByReason['run-budget-exhausted'] = (result.cctvSkippedByReason['run-budget-exhausted'] || 0) + 1;
-        traceForEvent.imagePrepared = false;
-        traceForEvent.imageUrlPresent = false;
-        traceForEvent.cctvSkippedByReason = 'run-budget-exhausted';
-      } else {
-        const cctv = await prepareCctvImageForEvent(env, event, cctvRunCache, cctvCodecOverride, remainingRunBudgetMs);
+      if (elig.eligible) {
+        traceForEvent.imageStrategy = elig.imageStrategy;
+        // V1.8.7.1 (Pipeline Trace budget diagnostics) — cheapest,
+        // highest-signal addition per this round's own instruction ("選
+        // 最有診斷價值、資料量最小的欄位"): which budget REGIME this
+        // event's attempt used. Immediately explains, at a glance, why
+        // two events in the same trace list might behave differently —
+        // 'quad-shared' events compete for one run-wide deadline (see
+        // cctvRunDeadlineAt above), 'single-per-event' events each get
+        // their own fixed, independent slot (see dynamicCollage.js).
+        traceForEvent.cctvBudgetClass = elig.imageStrategy === 'single' ? 'single-per-event' : 'quad-shared';
+      }
+
+      // V1.8.7.1 — root-cause fix: single (dynamic-shoulder) and quad
+      // (accident) events no longer share ANY budget clock. Single
+      // dispatches straight into prepareCctvImageForEvent, which
+      // internally applies its own independent per-event budget + the
+      // per-run cap (see dynamicCollage.js's prepareSingleCctvImageForEvent)
+      // — never gated behind this file's own accident-only
+      // `remainingRunBudgetMs` pre-check, which used to (incorrectly)
+      // apply to single events too and is the exact reason a 2nd/3rd
+      // dynamic-shoulder event in one tick used to read
+      // 'run-budget-exhausted' before ever attempting a frame fetch.
+      const cctvStartedAt = Date.now();
+      let cctv;
+      if (elig.eligible && elig.imageStrategy === 'single') {
+        cctv = await prepareCctvImageForEvent(env, event, cctvRunCache, cctvCodecOverride, undefined, singleCctvBudgetOverrides);
+      } else if (elig.eligible) {
+        // Quad (accident) — EXACT pre-existing shared-run-deadline
+        // behavior, byte-for-byte unchanged, just lazily anchored (see
+        // cctvRunDeadlineAt's own declaration above) so preceding
+        // single-event processing time in this SAME tick can never
+        // erode an accident's own nominal CCTV_PREPARE_BUDGET_MS window.
+        if (cctvRunDeadlineAt === null) cctvRunDeadlineAt = Date.now() + (cctvPrepareBudgetMs ?? CCTV_PREPARE_BUDGET_MS);
+        const remainingRunBudgetMs = cctvRunDeadlineAt - Date.now();
+        if (remainingRunBudgetMs <= 0) {
+          cctv = { ok: false, reason: 'run-budget-exhausted' };
+        } else {
+          cctv = await prepareCctvImageForEvent(env, event, cctvRunCache, cctvCodecOverride, remainingRunBudgetMs);
+        }
+      }
+
+      if (cctv) {
+        // V1.8.7.1 (Pipeline Trace budget diagnostics) — how long THIS
+        // event's own CCTV attempt actually took, success or failure.
+        // Cheap (two Date.now() reads), and directly answers "was this
+        // genuinely slow, or did it fail fast" without needing to
+        // reconstruct timing from log lines.
+        traceForEvent.processingDurationMs = Date.now() - cctvStartedAt;
+        // V1.8.7.1 — only ever set by the single-camera (dynamic-
+        // shoulder) path (prepareSingleCctvImageForEvent always returns
+        // these, win or lose) — the quad path's result never carries
+        // them, so an accident's trace entry keeps both null.
+        if (cctv.singleSlotIndex !== undefined) traceForEvent.singleSlotIndex = cctv.singleSlotIndex;
+        if (cctv.singleSlotLimit !== undefined) traceForEvent.singleSlotLimit = cctv.singleSlotLimit;
+
         if (cctv.ok) {
           result.cctvImagesAttachedCount += 1;
           messages = [{ type: 'text', text }, { type: 'image', originalContentUrl: cctv.imageUrl, previewImageUrl: cctv.imageUrl }];
@@ -834,6 +913,7 @@ export async function runLineBroadcast(
     cctvRunCache,
     cctvCodecOverride,
     cctvPrepareBudgetMs,
+    singleCctvBudgetOverrides,
   });
 
   // V1.8.6.7 (Pipeline Trace) — patch the trace input for every
@@ -851,6 +931,9 @@ export async function runLineBroadcast(
     // above (see traceForEvent.selectedCamera there) — only ever set by
     // topUpSharedFeedCctvImages' own single-strategy attempt below.
     if (product.selectedCamera) trace.selectedCamera = product.selectedCamera;
+    // V1.8.7.1 — same budget-diagnostic fields as the real push path.
+    if (product.singleSlotIndex !== undefined) trace.singleSlotIndex = product.singleSlotIndex;
+    if (product.singleSlotLimit !== undefined) trace.singleSlotLimit = product.singleSlotLimit;
   }
 
   if (!anyWriteHappened && prunedKeys.length > 0) {
@@ -916,7 +999,12 @@ export async function runLineBroadcast(
 // the same coupling this whole change removes. Running out of budget is
 // just "no image this tick"; the next tick retries, and no already-valid
 // image is ever lost, because carrying one forward costs no budget at all.
-async function topUpSharedFeedCctvImages(env, result, feedOnlyProducts, { now, cctvRunCache, cctvCodecOverride, cctvPrepareBudgetMs }) {
+async function topUpSharedFeedCctvImages(
+  env,
+  result,
+  feedOnlyProducts,
+  { now, cctvRunCache, cctvCodecOverride, cctvPrepareBudgetMs, singleCctvBudgetOverrides }
+) {
   if (feedOnlyProducts.length === 0) return;
 
   // Cheapest gate first, and ZERO I/O — resolveCctvEligibility is pure.
@@ -939,7 +1027,15 @@ async function topUpSharedFeedCctvImages(env, result, feedOnlyProducts, { now, c
     feed.events.filter((entry) => entry && typeof entry.eventId === 'string').map((entry) => [entry.eventId, entry])
   );
 
-  const deadlineAt = Date.now() + (cctvPrepareBudgetMs ?? CCTV_PREPARE_BUDGET_MS);
+  // V1.8.7.1 — quad's OWN deadline for THIS pass, separate from the main
+  // push loop's own cctvRunDeadlineAt (unchanged — this pass has always
+  // had its own independent budget window, started here rather than
+  // shared with the push loop; see this function's own BUDGET section
+  // comment below). Lazily anchored for the exact same reason as the
+  // main loop's own cctvRunDeadlineAt: single-strategy products in this
+  // SAME `eligible` list are processed on their own independent budget
+  // (see below) and must never erode a later accident's nominal window.
+  let quadDeadlineAt = null;
 
   for (const product of eligible) {
     // The feed's OWN identity/fingerprint definitions (sharedFeed.js), not
@@ -957,27 +1053,46 @@ async function topUpSharedFeedCctvImages(env, result, feedOnlyProducts, { now, c
       continue; // 0 frame fetches, 0 compose, 0 R2 publish
     }
 
-    const remainingMs = deadlineAt - Date.now();
-    if (remainingMs <= 0) {
-      result.cctvFeedOnlySkippedByReason['run-budget-exhausted'] = (result.cctvFeedOnlySkippedByReason['run-budget-exhausted'] || 0) + 1;
-      // V1.8.6.7 (Pipeline Trace) — mirrors `product.imageUrl` itself:
-      // recorded on the product object so runLineBroadcast's trace-patch
-      // pass (right after this function returns) can show WHY, without a
-      // second CCTV call.
-      product.cctvSkipReason = 'run-budget-exhausted';
-      continue;
+    // V1.8.7.1 — same strategy dispatch as the main push loop above: a
+    // single (dynamic-shoulder) product goes straight to
+    // prepareCctvImageForEvent, which applies its own independent
+    // per-event budget + the SAME per-run cap (cctvRunCache is the one
+    // object shared across this whole runLineBroadcast call, main loop
+    // and top-up pass alike) — never gated behind this pass's own
+    // accident-only deadline pre-check below.
+    const elig = resolveCctvEligibility(product.event);
+    let cctv;
+    if (elig.eligible && elig.imageStrategy === 'single') {
+      result.cctvFeedOnlyAttemptedCount += 1;
+      cctv = await prepareCctvImageForEvent(env, product.event, cctvRunCache, cctvCodecOverride, undefined, singleCctvBudgetOverrides);
+    } else {
+      if (quadDeadlineAt === null) quadDeadlineAt = Date.now() + (cctvPrepareBudgetMs ?? CCTV_PREPARE_BUDGET_MS);
+      const remainingMs = quadDeadlineAt - Date.now();
+      if (remainingMs <= 0) {
+        result.cctvFeedOnlySkippedByReason['run-budget-exhausted'] = (result.cctvFeedOnlySkippedByReason['run-budget-exhausted'] || 0) + 1;
+        // V1.8.6.7 (Pipeline Trace) — mirrors `product.imageUrl` itself:
+        // recorded on the product object so runLineBroadcast's trace-patch
+        // pass (right after this function returns) can show WHY, without a
+        // second CCTV call.
+        product.cctvSkipReason = 'run-budget-exhausted';
+        continue;
+      }
+      result.cctvFeedOnlyAttemptedCount += 1;
+      cctv = await prepareCctvImageForEvent(env, product.event, cctvRunCache, cctvCodecOverride, remainingMs);
     }
 
-    result.cctvFeedOnlyAttemptedCount += 1;
-    const cctv = await prepareCctvImageForEvent(env, product.event, cctvRunCache, cctvCodecOverride, remainingMs);
     if (cctv.ok) {
       product.imageUrl = cctv.imageUrl;
       product.imageExpiresAt = cctv.imageExpiresAt;
       if (cctv.selectedCamera) product.selectedCamera = cctv.selectedCamera; // V1.8.7.0 — single-strategy only
+      if (cctv.singleSlotIndex !== undefined) product.singleSlotIndex = cctv.singleSlotIndex; // V1.8.7.1
+      if (cctv.singleSlotLimit !== undefined) product.singleSlotLimit = cctv.singleSlotLimit; // V1.8.7.1
       result.cctvFeedOnlyAttachedCount += 1;
     } else {
       result.cctvFeedOnlySkippedByReason[cctv.reason] = (result.cctvFeedOnlySkippedByReason[cctv.reason] || 0) + 1;
       product.cctvSkipReason = cctv.reason;
+      if (cctv.singleSlotIndex !== undefined) product.singleSlotIndex = cctv.singleSlotIndex; // V1.8.7.1
+      if (cctv.singleSlotLimit !== undefined) product.singleSlotLimit = cctv.singleSlotLimit; // V1.8.7.1
     }
   }
 

@@ -234,6 +234,19 @@ export function buildTraceEntry({
   imageStrategy = null, // 'quad' | 'single' | null
   selectedCamera = null, // string | null — minimal `${cctvId}@${locationMile}` reference, NEVER the raw CCTV record (see enrichment block below)
   rangeResolution = null, // {segmentFrom, segmentTo, locationLabel} | null
+  // V1.8.7.1 — minimal budget/fairness diagnostics (see this round's own
+  // "選最有診斷價值、資料量最小的欄位" instruction — deliberately NOT the
+  // full budgetAtStartMs/budgetRemainingMs pair the task's own example
+  // list offered; `cctvBudgetClass` + `singleSlotIndex`/`singleSlotLimit`
+  // already say the same thing more legibly, e.g. "this was slot 6 of a
+  // 5-slot single-per-event cap" is immediately actionable, a bare
+  // remaining-ms number is not, without cross-referencing a constant).
+  // Threaded in by broadcastPipeline.js exactly like imageStrategy above
+  // — pipeline-computed outcomes, never derivable from `event` alone.
+  cctvBudgetClass = null, // 'quad-shared' | 'single-per-event' | null — WHICH budget regime this event's CCTV attempt (if any) used
+  processingDurationMs = null, // number | null — wall-clock ms this event's own CCTV attempt actually took, win or lose
+  singleSlotIndex = null, // number | null — this event's own 1-based attempt number this run, single-strategy only
+  singleSlotLimit = null, // number | null — MAX_SINGLE_CCTV_EVENTS_PER_RUN at the time of this attempt, single-strategy only
 } = {}) {
   const anomalyDetail = event && event.nonCollisionAnomalyDetail ? event.nonCollisionAnomalyDetail : null;
   const upstream = (event && event.pipelineTraceUpstream) || buildUpstreamSnapshot({});
@@ -320,6 +333,11 @@ export function buildTraceEntry({
       imageStrategy,
       selectedCamera,
       rangeResolution,
+      // V1.8.7.1 — see the param comments above.
+      cctvBudgetClass,
+      processingDurationMs,
+      singleSlotIndex,
+      singleSlotLimit,
     },
     delivery: {
       lineAttempted,
