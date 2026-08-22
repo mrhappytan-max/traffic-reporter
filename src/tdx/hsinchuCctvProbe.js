@@ -757,6 +757,152 @@ function findMarker(buf, b1, b2, from = 0) {
   return -1;
 }
 
+// V1.8.7.7 — real Production incident (08:00 Asia/Taipei, 國3 南向 two
+// dynamic-shoulder events: 77K+150～78K+570 and 79K+250～89K+830): LINE
+// text broadcast normally, but the attached CCTV image rendered as a gray
+// broken-image icon — the image WAS attached (imagePrepared:true, a real
+// R2 object existed), it just wasn't a valid/complete JPEG.
+//
+// ROOT CAUSE: extractFirstJpegFrame previously located a frame's end by
+// scanning raw bytes for the FIRST 0xFFD9 (EOI) anywhere after the FIRST
+// 0xFFD8 (SOI) — see the old `findMarker(buf, 0xff, 0xd9, soiIndex + 2)`
+// call this function replaces. That is unsafe: a real camera JPEG very
+// commonly embeds a full EXIF thumbnail (itself a complete, tiny, nested
+// SOI...EOI JPEG) inside its APP1 segment, near the very start of the
+// file, well before the real image's own compressed scan data even
+// begins. A naive scan finds the THUMBNAIL's own EOI first and returns a
+// tiny, truncated slice of the real frame — headers + thumbnail only —
+// which is exactly the "gray broken image" symptom: a 200 response, a
+// successful R2 publish, a real imageUrl, but corrupt/incomplete bytes.
+//
+// This is why the accident (quad) collage path was NEVER at risk of
+// showing this to a user: composeQuadrantCollage decodes every fetched
+// frame through a real JPEG decoder (see cctv/jpegCodecWorker.js) before
+// ever drawing it, and that module's own comment already documents "a
+// cell can fetch a 200 response that isn't actually a valid/decodable
+// JPEG" as an anticipated case, falling back to a placeholder tile. The
+// V1.8.7.0 dynamic-shoulder SINGLE path was deliberately built to skip
+// that decode/encode round-trip entirely for performance ("one frame IS
+// the final image", see dynamicCollage.js's module comment) — which also
+// meant it published extractFirstJpegFrame's raw output completely
+// unvalidated. 國3 is not the cause; it is simply the first real camera
+// hardware whose frames happen to embed a thumbnail large/early enough to
+// trigger this — the underlying defect is general and was equally latent
+// for 國1, just not yet observed.
+//
+// FIX: findJpegImageEnd walks the JPEG marker structure starting at SOI
+// — skipping every header segment by its own declared length (so any
+// embedded thumbnail's internal SOI/EOI bytes are skipped OVER, never
+// scanned into) — until it reaches SOS (Start of Scan), then scans the
+// following entropy-coded scan data for the next GENUINE marker. Per the
+// JPEG spec's own mandatory byte-stuffing rule, a compliant encoder always
+// follows a literal 0xFF byte inside scan data with either a 0x00 stuff
+// byte or a restart marker (0xD0-0xD7) — so once past SOS, any 0xFF
+// followed by something else provably IS a real marker, never scan-data
+// content, which is what makes the ORIGINAL naive-scan idea safe again
+// once it's correctly scoped to start AFTER the header segments instead
+// of right after SOI. Operates correctly on a still-growing streamed
+// buffer: returns {complete:false} (never throws, never guesses) whenever
+// it needs bytes that haven't arrived yet, so the existing read loop
+// below simply tries again on the next chunk — the exact same "keep
+// reading until MAX_FRAME_BYTES/timeout" bounds as before are unchanged.
+// Never reads past this SAME frame's own real EOI — the existing
+// "stop and cancel the stream the instant a complete frame is found,
+// never peek into the next MJPEG frame" behavior (see this module's own
+// test coverage) is fully preserved.
+//
+// `findJpegImageEnd` (below walkJpegMarkers) additionally falls back to
+// the OLD pre-V1.8.7.7 plain "first FFD9 after SOI" scan whenever the
+// buffer does not decode as real marker-segment structure at a position
+// we've already fully received (walkJpegMarkers returns `null` for that
+// case specifically — genuinely malformed/non-marker bytes, never merely
+// "more data is still arriving," which always resolves to
+// `{complete:false}` instead, see each early-return above). This matters
+// because it's the only way to distinguish "not enough bytes yet" from
+// "this isn't real JPEG marker structure" — a real freeway.gov.tw camera
+// frame is always the latter case's opposite (well-formed), so this
+// fallback path is not expected to ever fire in Production; it exists so
+// callers/tests that intentionally use a simplified, non-marker-
+// structured byte sequence to stand in for "a complete JPEG frame" (this
+// module's own test suite does exactly that) keep working unchanged.
+function walkJpegMarkers(buf, soiIndex) {
+  let pos = soiIndex + 2;
+  while (true) {
+    if (pos + 1 >= buf.length) return { complete: false };
+    if (buf[pos] !== 0xff) return null; // genuinely not marker-structured at an already-received position — not a "wait for more data" case
+
+    // Marker codes may legitimately be preceded by 0xFF fill bytes.
+    let markerPos = pos;
+    while (markerPos + 1 < buf.length && buf[markerPos + 1] === 0xff) markerPos += 1;
+    if (markerPos + 1 >= buf.length) return { complete: false };
+    const marker = buf[markerPos + 1];
+    const afterMarker = markerPos + 2;
+
+    if (marker === 0xd9) return { complete: true, eoiIndex: markerPos };
+
+    // Standalone markers with no length field: TEM (0x01), RSTn (0xD0-0xD7).
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      pos = afterMarker;
+      continue;
+    }
+
+    if (marker === 0xda) {
+      // Start of Scan — length-prefixed header, then entropy-coded scan
+      // data (NOT length-prefixed) follows until the next genuine marker.
+      if (afterMarker + 1 >= buf.length) return { complete: false };
+      const segLen = (buf[afterMarker] << 8) | buf[afterMarker + 1];
+      if (segLen < 2) return null; // an SOS segment length must be >= 2 (it includes itself) — not real marker structure
+      let i = afterMarker + segLen;
+      let resumeAt = null;
+      while (true) {
+        if (i + 1 >= buf.length) return { complete: false };
+        if (buf[i] !== 0xff) {
+          i += 1;
+          continue;
+        }
+        const next = buf[i + 1];
+        if (next === 0x00 || (next >= 0xd0 && next <= 0xd7)) {
+          i += 2; // byte-stuffing or a restart marker — still scan data
+          continue;
+        }
+        if (next === 0xff) {
+          i += 1; // fill byte before a real marker — recheck from here
+          continue;
+        }
+        if (next === 0xd9) return { complete: true, eoiIndex: i };
+        // Some other marker (e.g. a progressive JPEG's next scan) —
+        // resume the outer marker walk from here rather than assuming EOI.
+        resumeAt = i;
+        break;
+      }
+      pos = resumeAt;
+      continue;
+    }
+
+    // Generic length-prefixed segment (APPn/EXIF, DQT, DHT, SOFn, COM, DRI, ...).
+    if (afterMarker + 1 >= buf.length) return { complete: false };
+    const segLen = (buf[afterMarker] << 8) | buf[afterMarker + 1];
+    if (segLen < 2) return null; // a marker segment length must be >= 2 (it includes itself) — not real marker structure
+    pos = afterMarker + segLen;
+  }
+}
+
+/**
+ * Public entry point — see walkJpegMarkers' own comment for the real
+ * fix and the fallback's rationale. `{complete:true, eoiIndex}` |
+ * `{complete:false}` (need more buffered bytes; caller's existing
+ * MAX_FRAME_BYTES/timeout bounds decide when to give up — never guessed
+ * here).
+ */
+function findJpegImageEnd(buf, soiIndex) {
+  const walked = walkJpegMarkers(buf, soiIndex);
+  if (walked) return walked;
+  // Fallback for non-marker-structured input only (see walkJpegMarkers'
+  // own comment) — the exact pre-V1.8.7.7 behavior.
+  const eoiIndex = findMarker(buf, 0xff, 0xd9, soiIndex + 2);
+  return eoiIndex === -1 ? { complete: false } : { complete: true, eoiIndex };
+}
+
 function concatChunks(chunks) {
   const total = chunks.reduce((sum, c) => sum + c.length, 0);
   const out = new Uint8Array(total);
@@ -826,10 +972,12 @@ export async function extractFirstJpegFrame(streamUrl, { timeoutMs = FRAME_TIMEO
       const buf = concatChunks(chunks);
       if (soiIndex === -1) soiIndex = findMarker(buf, 0xff, 0xd8);
       if (soiIndex !== -1) {
-        const eoiIndex = findMarker(buf, 0xff, 0xd9, soiIndex + 2);
-        if (eoiIndex !== -1) {
+        // V1.8.7.7 — findJpegImageEnd (not a naive first-FFD9 scan) — see
+        // its own comment for the real Production symptom this fixes.
+        const end = findJpegImageEnd(buf, soiIndex);
+        if (end.complete) {
           await reader.cancel().catch(() => {});
-          return { ok: true, bytes: buf.slice(soiIndex, eoiIndex + 2), contentType: res.headers.get('content-type') };
+          return { ok: true, bytes: buf.slice(soiIndex, end.eoiIndex + 2), contentType: res.headers.get('content-type') };
         }
       }
     }
