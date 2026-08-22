@@ -10,11 +10,11 @@
     "rule": "traffic-reporter is sole Shared Traffic Feed content authority; consumers must never re-judge completedProducts"
   },
   "git": {
-    "branch": "feature/meeting-room-engineering-memory-v1",
-    "headSha": "8e10a7ad04930e67b1446a063aa8ee7670889663",
-    "headDate": "2026-08-22T01:39:27+00:00",
-    "originMainSha": "8e10a7ad04930e67b1446a063aa8ee7670889663",
-    "workingTree": "dirty (9 changed file(s))"
+    "branch": "main",
+    "headSha": "56753bff98e975341d7c67cce6d750d188050767",
+    "headDate": "2026-08-22T02:48:48+00:00",
+    "originMainSha": "56753bff98e975341d7c67cce6d750d188050767",
+    "workingTree": "dirty (5 changed file(s))"
   },
   "version": {
     "packageJsonVersion": "0.1.0",
@@ -40,8 +40,8 @@
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-08-22T02:48:26.531Z",
-    "generatedFromCommit": "8e10a7ad04930e67b1446a063aa8ee7670889663",
+    "generatedAt": "2026-08-22T03:03:55.693Z",
+    "generatedFromCommit": "56753bff98e975341d7c67cce6d750d188050767",
     "generatorScript": "scripts/export-meeting-room.mjs"
   }
 }

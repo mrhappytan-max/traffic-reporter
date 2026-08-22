@@ -71,7 +71,7 @@ assume `main`.
 ## Current Production version / main HEAD
 
 ```
-main HEAD: a3d660917ee5149acdba620d2304a25db40713e6 (V1.8.7.7 — CCTV Gray Broken Image Fix, fast-forwarded onto main)
+main HEAD: 56753bff98e975341d7c67cce6d750d188050767 (Meeting Room Engineering Memory v1 — governance/tooling only, fast-forwarded onto main; latest functional release remains V1.8.7.7 at a3d6609)
 ```
 
 Cloudflare auto-deploys on every push to `main` — no manual `wrangler deploy` needed under normal operation. (This document's own prior round is the reminder to periodically re-verify that's still actually true.)
@@ -90,9 +90,11 @@ Cloudflare auto-deploys on every push to `main` — no manual `wrangler deploy` 
 
 **Producer never builds consumer-specific logic.** The feed stays generic: no "is this what 雙鐵 wants" branching, no consumer-subscription awareness, no per-consumer type whitelist, no consumer-version detection. Every `completedProducts` entry goes out the same way to whoever reads the feed.
 
-## Latest completed work — Meeting Room Engineering Memory v1
+## Latest completed work — Meeting Room Engineering Memory v1 — MERGED
 
-**Status: on branch `feature/meeting-room-engineering-memory-v1`. NOT merged, NOT a Production deploy (no functional code touched).** Permanent engineering-memory export system so a future ChatGPT/Claude/other Agent session can bootstrap this project without re-reading the whole repo history. See `PROJECT_HANDOFF.md` §36 for the full writeup.
+**Status: MERGED (fast-forward, no merge commit) into `main`. `main` HEAD: `56753bff98e975341d7c67cce6d750d188050767`. No functional code touched — this was a governance/tooling merge, not a Production feature deploy** (confirmed: 0 files under `src/`/`test/`/`wrangler.jsonc` in the diff, see `PROJECT_HANDOFF.md` §36's own diff-scope verification record). If Cloudflare's existing push-to-`main` auto-deploy fired as a result of this push, that is the platform's own standing behavior for any push to `main`, not a deliberate Production change made this round — no Cron/Binding/Secret/KV/R2/Worker setting was touched. Permanent engineering-memory export system so a future ChatGPT/Claude/other Agent session can bootstrap this project without re-reading the whole repo history. See `PROJECT_HANDOFF.md` §36 for the full writeup.
+
+`meeting-room-export/` was regenerated (`npm run finalize:release`) immediately after the merge, from the new `main` HEAD, so it correctly reflects "this governance tooling now exists on `main`" rather than the pre-merge feature-branch snapshot. Re-running the export changed only the volatile, self-referential fields (git HEAD, generated-at timestamp) — every curated/copied content file was byte-identical, confirming the export mechanism is deterministic for unchanged content. Google Drive sync: `GOOGLE_DRIVE_SYNC=PENDING` (`TRAFFIC_MEETING_ROOM_SYNC_DIR` unset in this sandbox — see the prior section's own disclosure; unchanged this round).
 
 - New: `scripts/export-meeting-room.mjs` — generates `meeting-room-export/` (8 human-readable `.md` + `SYSTEM_STATE.json` + `PRODUCTION_MANIFEST.json`) from this repo's own Source of Truth (git state, `wrangler.jsonc`, `package.json`, `src/` module scan, and verbatim copies of `PROJECT_HANDOFF.md`/`PRODUCT_DECISIONS.md`). Volatile facts (HEAD/branch/working tree/version) derived mechanically every run; narrative fields (current task/next action/blocker) default to evidence-grounded values, overridable via env vars. Docs-vs-code drift check built in. JSON validation + required-file validation + secret scan all run before success is reported.
 - New: `scripts/sync-meeting-room.mjs` — best-effort copy of the export to `TRAFFIC_MEETING_ROOM_SYNC_DIR` (a local filesystem path, e.g. a Google Drive Desktop-mounted folder). **Never fails a release** — reports `GOOGLE_DRIVE_SYNC=SUCCESS/FAILED/PENDING`. Hardened against a real bug caught while building/testing this round: on a non-Windows process, a Windows-style path (`H:\...`) is NOT rejected by Node's fs calls by default — it silently creates a meaninglessly-named local folder and would have falsely reported success. Now explicitly detected and refused.
