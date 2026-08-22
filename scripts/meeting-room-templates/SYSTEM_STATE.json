@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "project": "traffic-reporter",
+  "projectNameZh": "路況播報員",
+  "department": "路況工程部",
+  "repo": "mrhappytan-max/traffic-reporter",
+  "authorityRole": "producer",
+  "consumerBoundary": {
+    "neverModify": ["hsinchu-thsr-line-bot", "rail-traffic-consumer", "rail-line-gateway"],
+    "rule": "traffic-reporter is sole Shared Traffic Feed content authority; consumers must never re-judge completedProducts"
+  },
+  "git": {
+    "branch": "{{GIT_BRANCH}}",
+    "headSha": "{{GIT_HEAD}}",
+    "headDate": "{{GIT_HEAD_DATE}}",
+    "originMainSha": "{{ORIGIN_MAIN_HEAD}}",
+    "workingTree": "{{WORKING_TREE_STATUS}}"
+  },
+  "version": {
+    "packageJsonVersion": "{{PACKAGE_VERSION}}",
+    "latestCompleted": "{{LATEST_COMPLETED_VERSION}}"
+  },
+  "production": {
+    "status": "{{PRODUCTION_STATUS}}",
+    "verification": "{{PRODUCTION_VERIFICATION}}",
+    "deployMethod": "push to main -> Cloudflare Workers Builds auto-deploy",
+    "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
+  },
+  "currentPhase": "{{CURRENT_PHASE}}",
+  "currentTask": "{{CURRENT_TASK}}",
+  "knownBlocker": "{{KNOWN_BLOCKER}}",
+  "realWorldConfirmation": {
+    "status": "{{REAL_WORLD_CONFIRMATION}}",
+    "subject": "V1.8.7.7 CCTV gray broken image fix"
+  },
+  "nextAction": "{{NEXT_ACTION}}",
+  "authorityLevels": {
+    "levelA_selfServiceReadOnly": "own repo git log, own Worker/KV/test results only",
+    "levelB_requiresHumanApproval": "interactive login/OAuth, private dashboards, real KV content, any other department's resources (read or write)",
+    "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
+  },
+  "exportMeta": {
+    "generatedAt": "{{EXPORT_GENERATED_AT}}",
+    "generatedFromCommit": "{{GIT_HEAD}}",
+    "generatorScript": "scripts/export-meeting-room.mjs"
+  }
+}

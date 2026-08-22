@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "project": "traffic-reporter",
+  "projectNameZh": "路況播報員",
+  "department": "路況工程部",
+  "repo": "mrhappytan-max/traffic-reporter",
+  "authorityRole": "producer",
+  "consumerBoundary": {
+    "neverModify": ["hsinchu-thsr-line-bot", "rail-traffic-consumer", "rail-line-gateway"],
+    "rule": "traffic-reporter is sole Shared Traffic Feed content authority; consumers must never re-judge completedProducts"
+  },
+  "git": {
+    "branch": "feature/meeting-room-engineering-memory-v1",
+    "headSha": "8e10a7ad04930e67b1446a063aa8ee7670889663",
+    "headDate": "2026-08-22T01:39:27+00:00",
+    "originMainSha": "8e10a7ad04930e67b1446a063aa8ee7670889663",
+    "workingTree": "dirty (9 changed file(s))"
+  },
+  "version": {
+    "packageJsonVersion": "0.1.0",
+    "latestCompleted": "V1.8.7.7"
+  },
+  "production": {
+    "status": "DEPLOYED",
+    "verification": "Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why)",
+    "deployMethod": "push to main -> Cloudflare Workers Builds auto-deploy",
+    "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
+  },
+  "currentPhase": "Maintenance — awaiting real-world confirmation of latest release",
+  "currentTask": "None in progress — awaiting next assignment",
+  "knownBlocker": "V1.8.7.7 real-world confirmation pending — see 07_KNOWN_ISSUES.md",
+  "realWorldConfirmation": {
+    "status": "REAL_WORLD_CONFIRMATION_PENDING",
+    "subject": "V1.8.7.7 CCTV gray broken image fix"
+  },
+  "nextAction": "Await next task assignment, or real-world confirmation evidence for the latest release",
+  "authorityLevels": {
+    "levelA_selfServiceReadOnly": "own repo git log, own Worker/KV/test results only",
+    "levelB_requiresHumanApproval": "interactive login/OAuth, private dashboards, real KV content, any other department's resources (read or write)",
+    "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
+  },
+  "exportMeta": {
+    "generatedAt": "2026-08-22T02:48:26.531Z",
+    "generatedFromCommit": "8e10a7ad04930e67b1446a063aa8ee7670889663",
+    "generatorScript": "scripts/export-meeting-room.mjs"
+  }
+}

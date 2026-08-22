@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "project": "traffic-reporter",
+  "verifiedFromRepoAt": "2026-08-22T02:48:26.531Z",
+  "verifiedFromCommit": "8e10a7ad04930e67b1446a063aa8ee7670889663",
+  "note": "Everything in this file is derived from wrangler.jsonc/src/index.js in THIS repo checkout, verifiable by any future reader by re-running the export script. Fields the repo cannot itself verify (real Cloudflare Dashboard state) are explicitly marked unverified, never guessed.",
+  "worker": {
+    "name": "traffic-reporter",
+    "entryPoint": "src/index.js",
+    "compatibilityDate": "2026-08-15",
+    "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
+  },
+  "cron": {
+    "expression": "*/10 * * * *",
+    "note": "UTC in Cloudflare config; PBS runs every tick; TDX further gated inside scheduled handler to every 2nd tick (minute 00/20/40) and 08:00-21:59:59 Asia/Taipei only (src/traffic/tdxSchedule.js). Declared schedule from wrangler.jsonc -- verified from repo; the REAL Cloudflare Cron Trigger config is dashboard-only and not verifiable from here."
+  },
+  "bindings": {
+    "kv_namespaces": [
+      { "binding": "TRAFFIC_KV", "id": "a763ccea75b0481aa4da99fa43f8341a", "source": "wrangler.jsonc" }
+    ],
+    "r2_buckets": [
+      { "binding": "CCTV_IMAGES", "bucketName": "traffic-reporter-cctv-images", "source": "wrangler.jsonc" }
+    ],
+    "vpc_services": [
+      { "binding": "PBS_RELAY_WINDOWS", "serviceId": "01a008ab-4cc4-7c22-a747-4e27cdcc83c8", "source": "wrangler.jsonc" }
+    ],
+    "vars": {
+      "PUBLIC_BASE_URL": "https://traffic-reporter.mr-happytan.workers.dev"
+    },
+    "secretsDeclaredExternally": [
+      "TDX_CLIENT_ID",
+      "TDX_CLIENT_SECRET",
+      "LINE_CHANNEL_ACCESS_TOKEN",
+      "LINE_CHANNEL_SECRET",
+      "ADMIN_PASSWORD",
+      "TRAFFIC_FEED_SECRET"
+    ],
+    "secretsNote": "Names only -- never values. Presence-only verifiable via GET /admin/deployment-status; correctness of any value is never verifiable from code."
+  },
+  "routes": {
+    "public": [
+      { "path": "/", "method": "GET", "auth": "none" },
+      { "path": "/version", "method": "GET", "auth": "none", "note": "deployedCommit/deployedBranch/buildTime/appVersion" },
+      { "path": "/health", "method": "GET", "auth": "admin-basic" },
+      { "path": "/webhook", "method": "POST", "auth": "line-signature" },
+      { "path": "/internal/shared-feed", "method": "GET", "auth": "bearer:TRAFFIC_FEED_SECRET", "note": "Shared Traffic Feed consumer read path" },
+      { "path": "/cctv/image/:id", "method": "GET", "auth": "none", "note": "opaque 128-bit id, 15-min TTL enforced in code" }
+    ],
+    "admin": [
+      "/debug/tdx", "/debug/status", "/debug/pbs", "/debug/pbs-vpc-probe",
+      "/admin/cctv-probe", "/admin/cctv-hsinchu-probe", "/admin/cctv-hsinchu-collage",
+      "/admin/cctv-hsinchu-publish-test", "/admin/cctv-hsinchu-frame/0..3",
+      "/admin/deployment-status", "/admin/deployment-status-view",
+      "/admin/pipeline-trace", "/admin/pipeline-trace-view",
+      "/admin/broadcast-provenance"
+    ],
+    "adminAuth": "HTTP Basic, fixed username 'admin', Cloudflare Secret ADMIN_PASSWORD, timing-safe SHA-256 comparison (src/security/adminAuth.js)"
+  },
+  "deployment": {
+    "method": "push to main -> Cloudflare Workers Builds auto-deploy",
+    "verificationScripts": ["npm run check:deployment-policy (local, 0 network)", "npm run verify:production (calls GET /version)"],
+    "buildMetadataSource": "scripts/generateBuildMetadata.mjs, run via package.json predeploy hook"
+  },
+  "dashboardOnlyChecksNeverVerifiableFromRepo": [
+    "Cloudflare Workers Builds 'Production branch' setting actually pointed at main",
+    "Real configured Cron Trigger schedule (vs. what wrangler.jsonc declares)",
+    "Real traffic percentage split (gradual/staged rollouts)",
+    "Whether a Cloudflare Secret is set to the CORRECT value (only presence is checkable)",
+    "Build/Deployment history, logs, failure reasons"
+  ]
+}

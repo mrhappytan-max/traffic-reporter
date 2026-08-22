@@ -15,7 +15,10 @@
     "update:road-location-data": "node scripts/updateRoadLocationData.mjs",
     "check:deployment-policy": "node scripts/check-deployment-policy.mjs",
     "verify:production": "node scripts/verify-production-deploy.mjs",
-    "deploy:verify": "node scripts/verify-production-deploy.mjs"
+    "deploy:verify": "node scripts/verify-production-deploy.mjs",
+    "export:meeting-room": "node scripts/export-meeting-room.mjs",
+    "sync:meeting-room": "node scripts/sync-meeting-room.mjs",
+    "finalize:release": "node scripts/finalize-release.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.123.0"
