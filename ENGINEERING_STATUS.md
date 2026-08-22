@@ -71,7 +71,7 @@ assume `main`.
 ## Current Production version / main HEAD
 
 ```
-main HEAD: 462e2178be92fbf9ea964e9bcc2b3ce2e4a1d9a2 (V1.8.6.8 — Driver-Relevant Event Broadcast Time Policy, fast-forwarded onto main)
+main HEAD: a3d660917ee5149acdba620d2304a25db40713e6 (V1.8.7.7 — CCTV Gray Broken Image Fix, fast-forwarded onto main)
 ```
 
 Cloudflare auto-deploys on every push to `main` — no manual `wrangler deploy` needed under normal operation. (This document's own prior round is the reminder to periodically re-verify that's still actually true.)
@@ -90,9 +90,13 @@ Cloudflare auto-deploys on every push to `main` — no manual `wrangler deploy` 
 
 **Producer never builds consumer-specific logic.** The feed stays generic: no "is this what 雙鐵 wants" branching, no consumer-subscription awareness, no per-consumer type whitelist, no consumer-version detection. Every `completedProducts` entry goes out the same way to whoever reads the feed.
 
-## Latest completed work — V1.8.7.7: CCTV Gray Broken Image Fix (Dynamic-Shoulder Frame Truncation)
+## Latest completed work — V1.8.7.7: CCTV Gray Broken Image Fix (Dynamic-Shoulder Frame Truncation) — RELEASE CLOSED
 
-**Status: on branch `fix/v1.8.7.7-cctv-frame-eoi-truncation`, branched from latest `main`. NOT merged, NOT deployed.** See `PROJECT_HANDOFF.md` for the full root-cause writeup and `PRODUCT_DECISIONS.md` for why the fix is scoped to the shared frame-extraction function rather than only the dynamic-shoulder path.
+**Status: MERGED (fast-forward, no merge commit) into `main` and DEPLOYED (push-to-`main` auto-deploy). `main` HEAD: `a3d660917ee5149acdba620d2304a25db40713e6`.** `npm run check:deployment-policy` PASS (local, 0 network). `npm run verify:production` → `PASS_NETWORK_VERIFICATION_BLOCKED` (this sandbox's egress proxy denies all outbound hosts — not a deploy failure, same handling as every prior round).
+
+**⚠️ REAL_WORLD_CONFIRMATION_PENDING** — no real Production LINE image has yet been observed rendering correctly for a dynamic-shoulder event since this fix deployed (this session has no network access to check). This release is CLOSED at the engineering-record level (fix/tests/merge/deploy all complete and verified by every mechanism available to this session), but is NOT yet real-world-confirmed. The next real dynamic-shoulder event whose LINE image is observed to render correctly should be reported back so this status can be flipped to `REAL_WORLD_CONFIRMED` — that update alone, no new fix version, no new branch.
+
+See `PROJECT_HANDOFF.md` §35 for the full root-cause writeup and `PRODUCT_DECISIONS.md` for why the fix is scoped to the shared frame-extraction function rather than only the dynamic-shoulder path.
 
 **Trigger**: real Production incident, 08:00 Asia/Taipei — LINE text broadcast normally for two 國3 南向 dynamic-shoulder events (77K+150～78K+570, 79K+250～89K+830), but the attached CCTV image rendered as a gray broken-image icon on the user's phone.
 
