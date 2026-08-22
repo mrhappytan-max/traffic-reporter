@@ -1,17 +1,59 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "provider": "google-drive-connector",
   "targetFolderId": "1rbPC23-OqO9X9ebhm5398Dx0wM_n_l_o",
   "targetFolderName": "路況播報員_工程記憶",
   "archiveFolderName": "_archive",
   "strategy": "create-verify-archive-promote",
-  "mainHead": "3a2e198062669edb8185ce188543e0b65101dc65",
-  "generatedAt": "2026-08-22T04:01:46.157Z",
+  "hashAlgorithm": "sha256",
+  "syncMode": "delta",
+  "fullVerifyReason": null,
+  "status": "SYNC_REQUIRED",
+  "checkoutHead": "19caed17d60052ccbe69305f1b9496e0130b59e6",
+  "generatedAt": "2026-08-22T06:02:05.886Z",
+  "unchangedSkipped": [
+    "01_FOUR_DEPARTMENT_GOVERNANCE.md",
+    "03_ARCHITECTURE.md",
+    "04_PRODUCT_DECISIONS.md",
+    "05_CROSS_PROJECT_BOUNDARY.md",
+    "06_VERSION_HISTORY.md",
+    "07_KNOWN_ISSUES.md"
+  ],
   "files": [
     {
       "name": "00_CURRENT_STATE.md",
-      "sha256": "5bbf61da8522e9b630b83682b4d44d3c0009f34eafb1d4979391950ee61d8807",
-      "bytes": 2684
+      "oldSha256": "adc5e6f7bdaca574e2165de35b44384de806d8377c324d59e201295a977be19a",
+      "sha256": "88fa108d05ec3dac2d7be8e22ca17b3e064cec416a50850b90f9ea1ace019809",
+      "bytes": 2830,
+      "reason": "content hash changed"
+    },
+    {
+      "name": "02_PROJECT_HANDOFF.md",
+      "oldSha256": "f202ac73e84d7e82c14271c4c5342975d4c07bdaa09af6009ffd7fab0ad8da27",
+      "sha256": "d82cb2b7d21a7096abe896ae30c88adfc6dabd2ed6b1ffc3b321c448ff5d99a6",
+      "bytes": 8371,
+      "reason": "content hash changed"
+    },
+    {
+      "name": "SYSTEM_STATE.json",
+      "oldSha256": "f236aa07cf15197bbeb0c9e5e435ed793957cb06acdc5439487d06c8fbcc4881",
+      "sha256": "a23fe7b14b6348854062da0414df443b6a9090185c5fd0e8db106ab434b93aee",
+      "bytes": 3626,
+      "reason": "content hash changed"
+    },
+    {
+      "name": "PRODUCTION_MANIFEST.json",
+      "oldSha256": "f5c0c3f1229aa660567de01cc8c6c51c84e1c7e11aed0f4fe0105916bf982407",
+      "sha256": "19f3d90997e44685935847852eb2a0be83ac3b6635126948822b2bd944db713a",
+      "bytes": 3950,
+      "reason": "content hash changed"
+    }
+  ],
+  "allCurrentHashes": [
+    {
+      "name": "00_CURRENT_STATE.md",
+      "sha256": "88fa108d05ec3dac2d7be8e22ca17b3e064cec416a50850b90f9ea1ace019809",
+      "bytes": 2830
     },
     {
       "name": "01_FOUR_DEPARTMENT_GOVERNANCE.md",
@@ -20,8 +62,8 @@
     },
     {
       "name": "02_PROJECT_HANDOFF.md",
-      "sha256": "d6a48f5e8e9ce59ba889d8867c0fb56c7737150f8ad2be0e88653401678e18f4",
-      "bytes": 320719
+      "sha256": "d82cb2b7d21a7096abe896ae30c88adfc6dabd2ed6b1ffc3b321c448ff5d99a6",
+      "bytes": 8371
     },
     {
       "name": "03_ARCHITECTURE.md",
@@ -50,13 +92,14 @@
     },
     {
       "name": "SYSTEM_STATE.json",
-      "sha256": "7753ed95526d5ec8aef74c53f88b26f0a9945e785e965aa043bb6fc5018d89ee",
-      "bytes": 2146
+      "sha256": "a23fe7b14b6348854062da0414df443b6a9090185c5fd0e8db106ab434b93aee",
+      "bytes": 3626
     },
     {
       "name": "PRODUCTION_MANIFEST.json",
-      "sha256": "04d4e8dbfbee623bd846c9f57b8d0b7e924549d6091781e50398b94e3af14c45",
+      "sha256": "19f3d90997e44685935847852eb2a0be83ac3b6635126948822b2bd944db713a",
       "bytes": 3950
     }
-  ]
+  ],
+  "note": "files[] lists ONLY what actually changed. Every name in unchangedSkipped must receive ZERO Google Drive connector calls -- no search, no read-back, no download, no create, no archive, no byte diff."
 }

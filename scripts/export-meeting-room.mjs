@@ -43,6 +43,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, readdirSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
 
@@ -116,6 +117,39 @@ const SECRET_PATTERNS = [
   /\bsk-[A-Za-z0-9]{16,}\b/,
   /\bBearer\s+[A-Za-z0-9_\-.]{16,}/,
 ];
+
+// The generation timestamp is the one field that would otherwise change
+// on EVERY run even when nothing about the snapshot changed. Left naive,
+// it makes every release look like a content change and defeats delta
+// sync entirely. So content identity is computed with the timestamp
+// masked, and the previous timestamp is reused verbatim whenever the
+// masked content is unchanged -- making a no-op export byte-identical to
+// the last one.
+const GENERATED_AT_PLACEHOLDER = '__EXPORT_GENERATED_AT__';
+const SYNC_MANIFEST_PATH = join(ROOT, '.engineering', 'MEETING_ROOM_SYNC.json');
+
+function sha256(text) {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+/** Previously synced content identity, or null when unavailable/untrusted. Never throws. */
+function readPriorExportState() {
+  try {
+    const manifest = JSON.parse(readFileSync(SYNC_MANIFEST_PATH, 'utf8'));
+    const last = manifest.lastSync;
+    if (!last || !Array.isArray(last.files) || last.files.length === 0) return null;
+    const byName = new Map();
+    for (const f of last.files) {
+      if (f && typeof f.name === 'string' && typeof f.contentSha256 === 'string') {
+        byName.set(f.name, f.contentSha256);
+      }
+    }
+    if (byName.size === 0) return null;
+    return { contentHashes: byName, exportGeneratedAt: last.exportGeneratedAt || null };
+  } catch {
+    return null;
+  }
+}
 
 function git(args) {
   try {
@@ -410,7 +444,7 @@ function main() {
     PRODUCTION_STATUS: productionStatus,
     PRODUCTION_VERIFICATION: productionVerification,
     REAL_WORLD_CONFIRMATION: realWorldConfirmation,
-    EXPORT_GENERATED_AT: exportGeneratedAt,
+    EXPORT_GENERATED_AT: GENERATED_AT_PLACEHOLDER,
     MODULE_INVENTORY: moduleInventory(),
     SOURCE_MAIN_HEAD: sourceMainHead,
     SOURCE_MAIN_HEAD_ORIGIN: sourceMainHeadOrigin,
@@ -430,37 +464,60 @@ function main() {
   if (existsSync(EXPORT_DIR)) rmSync(EXPORT_DIR, { recursive: true, force: true });
   mkdirSync(EXPORT_DIR, { recursive: true });
 
-  // --- Step 3: write every allowlisted output file ---
-  for (const outName of OUTPUT_FILES) {
-    let content;
+  // --- Step 3: build every allowlisted output file (timestamp still masked) ---
+  //
+  // Two passes on purpose. Pass one renders each file with the
+  // generation timestamp left as a placeholder, so its hash is the
+  // file's CONTENT identity -- independent of when the export ran. Pass
+  // two picks the timestamp (reusing the previous one when every file's
+  // content identity is unchanged) and only then writes bytes to disk.
+  const prior = readPriorExportState();
+  const built = OUTPUT_FILES.map((outName) => {
+    let templated;
     if (VERBATIM_COPIES[outName]) {
-      content = readFileSync(join(ROOT, VERBATIM_COPIES[outName]), 'utf8');
+      templated = readFileSync(join(ROOT, VERBATIM_COPIES[outName]), 'utf8');
     } else {
-      const templatePath = join(TEMPLATE_DIR, outName);
-      content = substitute(readFileSync(templatePath, 'utf8'));
+      templated = substitute(readFileSync(join(TEMPLATE_DIR, outName), 'utf8'));
     }
+    return { name: outName, templated, contentSha256: sha256(templated) };
+  });
 
-    if (outName.endsWith('.json')) {
+  const contentUnchanged =
+    prior !== null &&
+    prior.exportGeneratedAt !== null &&
+    built.every((f) => prior.contentHashes.get(f.name) === f.contentSha256);
+
+  const effectiveGeneratedAt = contentUnchanged ? prior.exportGeneratedAt : exportGeneratedAt;
+  if (contentUnchanged) {
+    console.log(`↻ content identical to last synced export -- reusing generatedAt ${effectiveGeneratedAt} (no false delta)`);
+  }
+
+  const written = [];
+  for (const file of built) {
+    const content = file.templated.split(GENERATED_AT_PLACEHOLDER).join(effectiveGeneratedAt);
+
+    if (file.name.endsWith('.json')) {
       try {
         JSON.parse(content);
       } catch (err) {
-        throw new Error(`JSON validation FAILED for ${outName}: ${err.message}`);
+        throw new Error(`JSON validation FAILED for ${file.name}: ${err.message}`);
       }
     }
 
-    scanForSecrets(content, outName);
+    scanForSecrets(content, file.name);
 
     const byteLength = Buffer.byteLength(content, 'utf8');
-    if (!SIZE_GUARD_EXEMPT.has(outName) && byteLength > MAX_CANONICAL_BYTES) {
+    if (!SIZE_GUARD_EXEMPT.has(file.name) && byteLength > MAX_CANONICAL_BYTES) {
       throw new Error(
-        `size guard FAILED for ${outName}: ${byteLength} bytes exceeds the ${MAX_CANONICAL_BYTES}-byte ` +
+        `size guard FAILED for ${file.name}: ${byteLength} bytes exceeds the ${MAX_CANONICAL_BYTES}-byte ` +
           `canonical ceiling. Canonical files must stay small enough for a single cloud-connector ` +
           `create_file call, otherwise automated sync silently degrades to manual upload.`
       );
     }
 
-    writeFileSync(join(EXPORT_DIR, outName), content, 'utf8');
-    console.log(`✅ wrote ${outName} (${byteLength} bytes)`);
+    writeFileSync(join(EXPORT_DIR, file.name), content, 'utf8');
+    written.push({ name: file.name, contentSha256: file.contentSha256, sha256: sha256(content), bytes: byteLength });
+    console.log(`✅ wrote ${file.name} (${byteLength} bytes)`);
   }
 
   // --- Step 3a: split the untouched full history into _history/ ---
@@ -480,9 +537,17 @@ function main() {
   console.log(`✅ export complete: ${relative(ROOT, EXPORT_DIR)}/`);
   console.log(`   source main head: ${sourceMainHead} (from ${sourceMainHeadOrigin})`);
   console.log(`   generated from checkout: ${gitBranch} @ ${gitHead}`);
-  console.log(`   generated at: ${exportGeneratedAt}`);
+  console.log(`   generated at: ${effectiveGeneratedAt}`);
 
-  return { exportDir: EXPORT_DIR, gitHead, exportGeneratedAt, files: OUTPUT_FILES };
+  return {
+    exportDir: EXPORT_DIR,
+    gitHead,
+    sourceMainHead,
+    exportGeneratedAt: effectiveGeneratedAt,
+    contentUnchanged,
+    files: OUTPUT_FILES,
+    fileHashes: written,
+  };
 }
 
 // Run when invoked directly (node scripts/export-meeting-room.mjs), but

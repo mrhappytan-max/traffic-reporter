@@ -1554,3 +1554,74 @@ An Agent must never claim a Connector sync succeeded without having actually per
 ### Anti-loop design (why recording sync evidence doesn't re-trigger a release)
 
 `finalize:release` → export → connector-sync-request is a ONE-WAY pipeline that terminates once the Agent finishes the real Connector calls and writes the result into `.engineering/MEETING_ROOM_SYNC.json`. That write is a single, standalone commit recording "as of `mainHead` X, the cloud copy was last synced at timestamp Y with result Z" — it is NOT itself treated as new engineering work requiring another `finalize:release` run. A future round's `finalize:release` will naturally pick up whatever `main` HEAD it's run from at that time; there is no mechanism (and none should ever be built) that automatically re-triggers export/sync/commit off of a `MEETING_ROOM_SYNC.json` write itself.
+
+---
+
+## 38. V1.1 — DELTA SYNC is the default; FULL VERIFY is exception-only
+
+**Permanent rule, binding on every future release and every future Agent:**
+
+```
+NORMAL RELEASE = DELTA SYNC
+FULL VERIFY    = EXCEPTION ONLY
+```
+
+### Why this exists
+
+The Create→Verify→Archive→Promote protocol in §37 is correct, but applying it to all ten canonical files on every release is enormously wasteful. In practice a normal release changes only the handful of files that embed volatile state (`00_CURRENT_STATE.md`, `02_PROJECT_HANDOFF.md`, `SYSTEM_STATE.json`, `PRODUCTION_MANIFEST.json`); the governance/architecture/decision documents are usually byte-identical from one release to the next. Re-uploading and re-verifying those unchanged files burns Claude quota and Google Drive connector calls to re-prove something a hash comparison already proved for free.
+
+### The normal release path
+
+```
+finalize:release
+  → export (regenerates meeting-room-export/)
+  → sha256 each of the 10 canonical files
+  → diff against .engineering/MEETING_ROOM_SYNC.json's lastSync.files[]
+  → changed files ONLY:
+        Create new → Verify (read-back + byte diff) → Archive old → Promote
+  → update sync evidence
+  → done
+```
+
+If `changedFiles` is empty, `finalize:release` prints `MEETING_ROOM_CLOUD_SYNC = NOT_REQUIRED` and the Google Drive Connector **must not be opened at all**.
+
+### UNCHANGED = SKIP (hard rule)
+
+If a canonical file's sha256 equals its last successfully synced sha256, it is UNCHANGED, and it must receive **zero** Google Drive connector calls. Specifically forbidden for an unchanged file: `search_files`, `read_file_content`, `download_file_content`, `create_file`, archiving the old copy, and byte-diffing. Not "prefer not to" — forbidden.
+
+### FULL VERIFY exceptions (closed list)
+
+Full verify is permitted **only** for one of these seven reasons:
+
+1. `first-build` — nothing has ever been synced, so there is no baseline.
+2. `sync-architecture-change` — the sync mechanism itself changed.
+3. `connector-failure-recovery` — a failure may have left the cloud partially written.
+4. `canonical-structure-change` — the canonical file set changed.
+5. `archive-protocol-change` — the archive/replacement protocol changed.
+6. `manifest-evidence-untrustworthy` — the hash evidence can't be trusted, so a diff would be meaningless.
+7. `human-explicit-audit-request` — a human explicitly asked for a complete audit.
+
+Reason 6 is the only one that may be raised **automatically** (by `scripts/meeting-room-delta.mjs`, when the manifest is missing, not marked successful, or lacks a valid sha256 for every canonical file). Every other reason requires a deliberate decision.
+
+Any run that performs a full verify **must** state `FULL_VERIFY_REASON = <reason>` in its final report. An Agent may **not** start a full verify for its own reassurance — "just to be safe, let me re-check all ten" is precisely the behaviour this section forbids. `computeSyncPlan` throws on any reason outside the list, so an unlisted justification cannot be quietly accepted.
+
+### Why the export had to become byte-stable first
+
+Delta sync is worthless if the export changes bytes on every run for reasons nobody cares about. Two sources of false delta were removed:
+
+- **Generation timestamp.** Content identity is now hashed with the timestamp masked (`__EXPORT_GENERATED_AT__`); when every file's masked content matches the last synced export, the previous timestamp is reused verbatim, so a no-op export is byte-identical to the last one.
+- **Transient checkout fields.** `SYSTEM_STATE.json` no longer records the branch/HEAD/date the export happened to run from, and `PRODUCTION_MANIFEST.json`'s `verifiedFromCommit` now records `sourceMainHead` rather than the checkout HEAD. Those fields changed on literally every commit and said nothing about the snapshot; the snapshot is identified by `sourceMainHead` alone (see §37's self-reference discussion). The checkout is still recorded in local `.engineering/` sync evidence for auditing.
+
+Net effect: re-running `finalize:release` without changing anything produces zero changed files and therefore zero connector calls.
+
+### Where this is implemented
+
+| Concern | Location |
+|---|---|
+| Delta decision (pure, unit tested) | `scripts/meeting-room-delta.mjs` |
+| Machine-readable policy + per-file synced hashes | `.engineering/MEETING_ROOM_SYNC.json` |
+| Release wiring + `NOT_REQUIRED` output | `scripts/finalize-release.mjs` |
+| Changed-files-only sync request | `scripts/prepare-connector-sync-request.mjs` |
+| Byte-stable export | `scripts/export-meeting-room.mjs` |
+| Tests | `test/meetingRoomDeltaSync.test.js` |
+| Agent-facing rule | `AGENTS.md` |

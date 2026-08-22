@@ -44,6 +44,7 @@ import { dirname, join } from 'node:path';
 import { exportMeetingRoom } from './export-meeting-room.mjs';
 import { syncMeetingRoom } from './sync-meeting-room.mjs';
 import { prepareConnectorSyncRequest, REQUEST_PATH } from './prepare-connector-sync-request.mjs';
+import { formatSyncPlan } from './meeting-room-delta.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -75,16 +76,21 @@ function main() {
     exportOk = false;
   }
 
-  console.log('\n--- Step 3: Google Drive Connector sync request (this script cannot perform the sync itself) ---');
+  console.log('\n--- Step 3: DELTA sync plan (this script cannot perform the sync itself) ---');
   let connectorRequest = null;
   let connectorRequestOk = false;
   if (exportOk) {
     try {
-      connectorRequest = prepareConnectorSyncRequest();
+      // NORMAL RELEASE = DELTA SYNC. FULL_VERIFY_REASON must name one of
+      // the closed exception list, or computeSyncPlan throws -- a normal
+      // release cannot opt into a full verify by accident.
+      const fullVerifyReason = process.env.FULL_VERIFY_REASON || null;
+      connectorRequest = prepareConnectorSyncRequest({ fullVerifyReason });
       connectorRequestOk = true;
-      console.log(`✅ wrote ${REQUEST_PATH.split('/').slice(-2).join('/')} (${connectorRequest.files.length} files, provider=${connectorRequest.provider})`);
+      console.log(formatSyncPlan(connectorRequest.plan));
+      console.log(`✅ wrote ${REQUEST_PATH.split('/').slice(-2).join('/')}`);
     } catch (err) {
-      console.error(`❌ connector sync request FAILED: ${err.message}`);
+      console.error(`❌ delta sync plan FAILED: ${err.message}`);
     }
   } else {
     console.warn('⚠️  skipped (export did not succeed)');
@@ -101,13 +107,28 @@ function main() {
     console.log(`  generated at: ${exportResult.exportGeneratedAt}`);
     console.log(`  files: ${exportResult.files.length}`);
   }
+  const plan = connectorRequest ? connectorRequest.plan : null;
   console.log(`connector-sync-request: ${connectorRequestOk ? 'PREPARED' : 'NOT PREPARED'}`);
+  if (plan) {
+    console.log(`  sync mode: ${plan.mode}${plan.fullVerifyReason ? ` (FULL_VERIFY_REASON = ${plan.fullVerifyReason})` : ''}`);
+    console.log(`  changed: ${plan.changed.length} | unchanged (zero connector calls): ${plan.unchanged.length}`);
+  }
   console.log(`windows-fallback-sync (informational only, NOT the Connector): ${fallbackResult.status}${fallbackResult.reason ? ` (${fallbackResult.reason})` : ''}`);
 
   const releaseSealed = policyOk && exportOk;
   console.log(`\nFINAL: ${releaseSealed ? 'RELEASE_SEALED' : 'RELEASE_SEAL_FAILED'}`);
-  if (releaseSealed && connectorRequestOk) {
+  if (releaseSealed && connectorRequestOk && !plan.syncRequired) {
+    // Nothing changed. The cloud copy is already correct, so the correct
+    // number of Google Drive connector calls for this release is zero.
+    console.log('MEETING_ROOM_CLOUD_SYNC = NOT_REQUIRED');
+    console.log(
+      '(No canonical file changed since the last successful sync. Do NOT open the Google Drive Connector: ' +
+        'no search, no read-back, no download, no create, no archive, no byte diff. Re-verifying "just to be safe" ' +
+        'is the exact waste this rule exists to prevent.)'
+    );
+  } else if (releaseSealed && connectorRequestOk) {
     console.log('GOOGLE_DRIVE_CONNECTOR_SYNC_REQUIRED');
+    console.log(`(DELTA: ${plan.changed.length} changed file(s) only -- ${plan.changed.map((c) => c.name).join(', ')})`);
     console.log(
       '(The Claude Agent session must now perform the real Connector sync itself using create-verify-archive-promote ' +
         `— see ${REQUEST_PATH.split('/').slice(-2).join('/')} for the exact files/hashes to sync, and ` +

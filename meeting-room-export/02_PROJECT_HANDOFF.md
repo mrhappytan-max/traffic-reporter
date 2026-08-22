@@ -18,9 +18,8 @@
 | 欄位 | 值 |
 |---|---|
 | Source main HEAD | 6665ae9e52bda7157b326579ed8845fd884f0b6b |
-| Snapshot generated at | 2026-08-22T05:32:47.686Z |
-| Generated from checkout | claude/google-drive-sync-validation-xzq9tb |
-| Source working tree | clean |
+| Snapshot generated at | 2026-08-22T06:02:05.757Z |
+| Source working tree | dirty (11 changed source file(s)) |
 | Current version | V1.8.7.7 |
 | Current phase | Maintenance — awaiting real-world confirmation of latest release |
 

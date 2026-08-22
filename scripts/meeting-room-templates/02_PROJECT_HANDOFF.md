@@ -19,7 +19,6 @@
 |---|---|
 | Source main HEAD | {{SOURCE_MAIN_HEAD}} |
 | Snapshot generated at | {{EXPORT_GENERATED_AT}} |
-| Generated from checkout | {{GIT_BRANCH}} |
 | Source working tree | {{SOURCE_WORKING_TREE}} |
 | Current version | {{CURRENT_VERSION}} |
 | Current phase | {{CURRENT_PHASE}} |

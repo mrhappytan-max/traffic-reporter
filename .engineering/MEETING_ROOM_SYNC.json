@@ -1,12 +1,33 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "provider": "google-drive-connector",
   "project": "traffic-reporter",
   "targetFolderName": "路況播報員_工程記憶",
   "targetFolderId": "1rbPC23-OqO9X9ebhm5398Dx0wM_n_l_o",
   "archiveFolderName": "_archive",
-  "archiveFolderId": null,
+  "archiveFolderId": "1jYkkkUIv4C3TCfge85bZb4wdfulQeg8I",
   "strategy": "create-verify-archive-promote",
+  "syncModeDefault": "delta",
+  "fullVerifyPolicy": "exception-only",
+  "unchangedFileAction": "skip-with-zero-connector-calls",
+  "hashAlgorithm": "sha256",
+  "policy": {
+    "rule": "NORMAL RELEASE = DELTA SYNC. FULL VERIFY = EXCEPTION ONLY.",
+    "unchangedMeans": "If a canonical file's sha256 equals its last successfully synced sha256, it is UNCHANGED and must receive ZERO Google Drive connector calls: no search, no read-back, no download, no create, no archive, no byte diff. UNCHANGED = SKIP is a hard rule, not a preference.",
+    "emptyDelta": "If no canonical file changed, finalize:release prints MEETING_ROOM_CLOUD_SYNC = NOT_REQUIRED and the Google Drive Connector must not be opened at all.",
+    "fullVerifyExceptions": [
+      "first-build",
+      "sync-architecture-change",
+      "connector-failure-recovery",
+      "canonical-structure-change",
+      "archive-protocol-change",
+      "manifest-evidence-untrustworthy",
+      "human-explicit-audit-request"
+    ],
+    "fullVerifyReporting": "Any run that uses full verify MUST state FULL_VERIFY_REASON = <one of the exceptions above> in its final report. An agent may never start a full verify for its own reassurance.",
+    "autoEscalation": "manifest-evidence-untrustworthy is the ONLY exception that may be raised automatically (by scripts/meeting-room-delta.mjs) -- without a usable baseline a diff is meaningless, so escalating is the honest option.",
+    "implementation": "scripts/meeting-room-delta.mjs (pure, unit tested in test/meetingRoomDeltaSync.test.js)"
+  },
   "note": "update_file on this Connector only supports title/parentId, never content -- an existing canonical file is NEVER updated in place. See scripts/finalize-release.mjs and PROJECT_HANDOFF.md for the full protocol writeup. Folder IDs are not secrets and may be committed; no Google credential of any kind is ever stored here.",
   "allowlist": [
     "00_CURRENT_STATE.md",
@@ -27,13 +48,76 @@
     "note": "Kept, never removed. Used only when the Google Drive Connector is unavailable to the executing Claude session."
   },
   "lastSync": {
-    "status": "MEETING_ROOM_CLOUD_SYNC=PENDING",
-    "reason": "connector-unavailable-this-session",
-    "detail": "Google Drive Connector MCP server disconnected mid-session before this round's real sync could be attempted (confirmed unavailable via ToolSearch, not merely slow to connect). A prior, separate real-machine test earlier this same engineering lineage DID confirm the Connector works (search_files/create_file/read_file_content all succeeded against a live file in this exact folder; only update_file's content-update limitation was found, which is why this protocol never updates in place). This round built and tested the full tooling (manifest, prepare-connector-sync-request.mjs, finalize-release.mjs integration, Create-Verify-Archive-Promote protocol documented in PROJECT_HANDOFF.md §37) but could not perform the actual archive-folder check/create or the 10-file sync itself. No result was fabricated or guessed.",
-    "archiveFolderId": null,
-    "syncedAt": null,
-    "mainHead": null,
-    "files": [],
-    "nextStep": "A future Claude session with the Google Drive Connector connected must perform the real Create→Verify→Archive→Promote sync per PROJECT_HANDOFF.md §37's Permanent Agent Rule, using .engineering/MEETING_ROOM_SYNC_REQUEST.json (regenerate via npm run finalize:release first if main has moved since it was last written)."
+    "status": "success",
+    "syncMode": "full-verify",
+    "fullVerifyReason": "first-build",
+    "syncedAt": "2026-08-22T05:35:12.696Z",
+    "sourceMainHead": "6665ae9e52bda7157b326579ed8845fd884f0b6b",
+    "exportArtifactCommit": "19caed17d60052ccbe69305f1b9496e0130b59e6",
+    "exportGeneratedAt": "2026-08-22T05:32:47.686Z",
+    "archiveFolderId": "1jYkkkUIv4C3TCfge85bZb4wdfulQeg8I",
+    "detail": "Real Google Drive Connector sync verified this round: canonical 10/10 present in the target folder, duplicate 0, and 00_CURRENT_STATE.md / 02_PROJECT_HANDOFF.md / SYSTEM_STATE.json / PRODUCTION_MANIFEST.json each downloaded back and byte-diffed IDENTICAL against meeting-room-export/. Superseded copies were moved (never trashed) into the archive folder recorded above.",
+    "files": [
+      {
+        "name": "00_CURRENT_STATE.md",
+        "sha256": "adc5e6f7bdaca574e2165de35b44384de806d8377c324d59e201295a977be19a",
+        "contentSha256": "79815128ed89c6a55948217dd70a4e7b4404ff0f63c247d5f3fd0d7bcb3c0b67",
+        "bytes": 2802
+      },
+      {
+        "name": "01_FOUR_DEPARTMENT_GOVERNANCE.md",
+        "sha256": "0a68c2713f7be7fb99e7454935e1abb7ef8d5fd491f2adf2de56efcfad91253b",
+        "contentSha256": "0a68c2713f7be7fb99e7454935e1abb7ef8d5fd491f2adf2de56efcfad91253b",
+        "bytes": 4944
+      },
+      {
+        "name": "02_PROJECT_HANDOFF.md",
+        "sha256": "f202ac73e84d7e82c14271c4c5342975d4c07bdaa09af6009ffd7fab0ad8da27",
+        "contentSha256": "8d975a81af22708ebeccc12892bdfa258ec65cbe288ed57af45fb162327a9a3c",
+        "bytes": 8416
+      },
+      {
+        "name": "03_ARCHITECTURE.md",
+        "sha256": "c59448682f5196d8e4c861065b0575d156226ca15bbe5fe68aaa211a8a0fe25f",
+        "contentSha256": "c59448682f5196d8e4c861065b0575d156226ca15bbe5fe68aaa211a8a0fe25f",
+        "bytes": 7676
+      },
+      {
+        "name": "04_PRODUCT_DECISIONS.md",
+        "sha256": "f175165e666a4cd9e5fc7d18b8672958c32216e12e5bfc11e8dab19cfa68ee1e",
+        "contentSha256": "f175165e666a4cd9e5fc7d18b8672958c32216e12e5bfc11e8dab19cfa68ee1e",
+        "bytes": 85102
+      },
+      {
+        "name": "05_CROSS_PROJECT_BOUNDARY.md",
+        "sha256": "fe79a7d855235ba3603bc70cb431fce5422e41cb67ac7b01a3f5b696ed9e4c87",
+        "contentSha256": "fe79a7d855235ba3603bc70cb431fce5422e41cb67ac7b01a3f5b696ed9e4c87",
+        "bytes": 3203
+      },
+      {
+        "name": "06_VERSION_HISTORY.md",
+        "sha256": "018414d60603cf412413b8b68af94203ba0c87877d885c4ce8c8eb6cd529ed78",
+        "contentSha256": "018414d60603cf412413b8b68af94203ba0c87877d885c4ce8c8eb6cd529ed78",
+        "bytes": 2975
+      },
+      {
+        "name": "07_KNOWN_ISSUES.md",
+        "sha256": "491e1a8a9283679f17751a2266fcf68111ced19dd2b6831341b50dde55edb01c",
+        "contentSha256": "491e1a8a9283679f17751a2266fcf68111ced19dd2b6831341b50dde55edb01c",
+        "bytes": 3640
+      },
+      {
+        "name": "SYSTEM_STATE.json",
+        "sha256": "f236aa07cf15197bbeb0c9e5e435ed793957cb06acdc5439487d06c8fbcc4881",
+        "contentSha256": "f202afd41483fdc9956dd9f0e75d447a75d0661745f0be23d87e82cd5c9606e0",
+        "bytes": 3405
+      },
+      {
+        "name": "PRODUCTION_MANIFEST.json",
+        "sha256": "f5c0c3f1229aa660567de01cc8c6c51c84e1c7e11aed0f4fe0105916bf982407",
+        "contentSha256": "cfd9eeeaca078408f53850895027bc45531a7f3bac15065c7584cf0230b565af",
+        "bytes": 3950
+      }
+    ]
   }
 }

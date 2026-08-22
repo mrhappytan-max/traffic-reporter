@@ -29,6 +29,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { EXPORT_DIR, OUTPUT_FILES } from './export-meeting-room.mjs';
+import { computeSyncPlan, formatSyncPlan, HASH_ALGORITHM } from './meeting-room-delta.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -62,13 +63,13 @@ function gitHead() {
  *
  * @returns {{provider, targetFolderId, targetFolderName, archiveFolderName, files: Array<{name, sha256, bytes}>, generatedAt}}
  */
-export function prepareConnectorSyncRequest() {
+export function prepareConnectorSyncRequest({ fullVerifyReason = null } = {}) {
   const manifest = readManifest();
   if (!existsSync(EXPORT_DIR)) {
     throw new Error('meeting-room-export/ does not exist -- run the export step first');
   }
 
-  const files = OUTPUT_FILES.map((name) => {
+  const currentFiles = OUTPUT_FILES.map((name) => {
     if (!manifest.allowlist.includes(name)) {
       throw new Error(`${name} is in OUTPUT_FILES but NOT in .engineering/MEETING_ROOM_SYNC.json's allowlist -- refusing to prepare a sync request outside the declared allowlist`);
     }
@@ -76,26 +77,52 @@ export function prepareConnectorSyncRequest() {
     return { name, sha256: sha256(content), bytes: Buffer.byteLength(content, 'utf8') };
   });
 
+  // NORMAL RELEASE = DELTA SYNC. Only hash-changed files are ever listed
+  // for the agent; unchanged files are omitted entirely so there is
+  // nothing for a connector call to act on.
+  const plan = computeSyncPlan({ manifest, currentFiles, fullVerifyReason });
+  const byName = new Map(currentFiles.map((f) => [f.name, f]));
+
   const request = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     provider: manifest.provider,
     targetFolderId: manifest.targetFolderId,
     targetFolderName: manifest.targetFolderName,
     archiveFolderName: manifest.archiveFolderName,
     strategy: manifest.strategy,
-    mainHead: gitHead(),
+    hashAlgorithm: HASH_ALGORITHM,
+    syncMode: plan.mode,
+    fullVerifyReason: plan.fullVerifyReason,
+    status: plan.status,
+    checkoutHead: gitHead(),
     generatedAt: new Date().toISOString(),
-    files,
+    unchangedSkipped: plan.unchanged,
+    files: plan.changed.map((c) => ({
+      name: c.name,
+      oldSha256: c.oldHash,
+      sha256: c.newHash,
+      bytes: byName.get(c.name).bytes,
+      reason: c.reason,
+    })),
+    allCurrentHashes: currentFiles,
+    note:
+      'files[] lists ONLY what actually changed. Every name in unchangedSkipped must receive ZERO Google Drive ' +
+      'connector calls -- no search, no read-back, no download, no create, no archive, no byte diff.',
   };
 
   writeFileSync(REQUEST_PATH, JSON.stringify(request, null, 2) + '\n', 'utf8');
-  return request;
+  return { ...request, plan };
 }
 
 export { MANIFEST_PATH, REQUEST_PATH };
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const request = prepareConnectorSyncRequest();
-  console.log(JSON.stringify(request, null, 2));
-  console.log('\nGOOGLE_DRIVE_CONNECTOR_SYNC_REQUIRED');
+  const reason = process.env.FULL_VERIFY_REASON || null;
+  const request = prepareConnectorSyncRequest({ fullVerifyReason: reason });
+  console.log(formatSyncPlan(request.plan));
+  console.log(
+    request.plan.syncRequired
+      ? '\nGOOGLE_DRIVE_CONNECTOR_SYNC_REQUIRED'
+      : '\nMEETING_ROOM_CLOUD_SYNC = NOT_REQUIRED'
+  );
 }
