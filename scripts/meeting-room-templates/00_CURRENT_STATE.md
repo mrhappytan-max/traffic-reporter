@@ -10,9 +10,9 @@
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
 | Current Version | {{CURRENT_VERSION}} |
-| main HEAD | {{GIT_HEAD}} |
-| origin/main HEAD | {{ORIGIN_MAIN_HEAD}} |
-| Working tree | {{WORKING_TREE_STATUS}} |
+| Source main HEAD | {{SOURCE_MAIN_HEAD}} |
+| Source main HEAD resolved from | {{SOURCE_MAIN_HEAD_ORIGIN}} |
+| Source working tree | {{SOURCE_WORKING_TREE}} |
 | Production | {{PRODUCTION_STATUS}} |
 | Production Verification | {{PRODUCTION_VERIFICATION}} |
 | Current Phase | {{CURRENT_PHASE}} |
@@ -23,7 +23,7 @@
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
 | Next Action | {{NEXT_ACTION}} |
 | Export Generated At | {{EXPORT_GENERATED_AT}} |
-| Export Source Commit | {{GIT_HEAD}} |
+| Export artifact commit | {{EXPORT_ARTIFACT_COMMIT}} |
 
 ## 我能改什麼／不能改什麼（一句話版）
 

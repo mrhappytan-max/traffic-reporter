@@ -15,10 +15,14 @@
 //   EXPORT_CURRENT_PHASE, EXPORT_PRODUCTION_STATUS,
 //   EXPORT_PRODUCTION_VERIFICATION, EXPORT_REAL_WORLD_CONFIRMATION) so a
 //   future finalize:release run can set them without editing this file.
-// - 02_PROJECT_HANDOFF.md and 04_PRODUCT_DECISIONS.md are COPIED
-//   verbatim from the repo's real files (they ARE the canonical
-//   documents; duplicating their content by hand here would just create
-//   a second, drifting copy).
+// - 04_PRODUCT_DECISIONS.md is COPIED verbatim from the repo's real
+//   file (it IS the canonical document; duplicating its content by hand
+//   here would just create a second, drifting copy).
+// - 02_PROJECT_HANDOFF.md is a GENERATED CONCISE handoff (V1.1). The
+//   repo's full PROJECT_HANDOFF.md is far too large for a single cloud
+//   connector create_file call, which blocked full sync automation. The
+//   full document is never modified -- it stays the Level 2/3 history
+//   Source of Truth and is additionally split by section into _history/.
 // - Every other .md is a hand-authored template
 //   (scripts/meeting-room-templates/*.md) with {{PLACEHOLDER}}
 //   substitution for the volatile fields only.
@@ -65,10 +69,37 @@ const OUTPUT_FILES = [
 // Files copied verbatim from the repo's own canonical docs (never
 // hand-duplicated as separate template content, so they cannot drift
 // from the real source).
+//
+// V1.1 NOTE: 02_PROJECT_HANDOFF.md is deliberately NO LONGER a verbatim
+// copy. The repo's own PROJECT_HANDOFF.md (~320KB) exceeds what a cloud
+// sync connector can create in one call, which made full automation
+// structurally impossible. It is now a generated CONCISE handoff
+// (template + placeholders, size-guarded below), while the untouched
+// full document remains the Level 2/3 history Source of Truth in the
+// repo and is additionally split, by section, into _history/ for cloud
+// readers. PRODUCT_DECISIONS.md is well under the limit and stays
+// verbatim.
 const VERBATIM_COPIES = {
-  '02_PROJECT_HANDOFF.md': 'PROJECT_HANDOFF.md',
   '04_PRODUCT_DECISIONS.md': 'PRODUCT_DECISIONS.md',
 };
+
+// The full engineering history that 02 used to duplicate. Never
+// modified or truncated by this script -- only read, and split into
+// _history/ chunks for cloud consumers.
+const FULL_HISTORY_SOURCE = 'PROJECT_HANDOFF.md';
+const HISTORY_DIR_NAME = '_history';
+
+// Hard ceilings, enforced every run so a future edit cannot silently
+// reintroduce the "too big to sync" problem that made 02 unsyncable.
+// 50KB is comfortably inside what a single connector create_file call
+// handles; the observed-good real-world datapoint is ~85KB, so this
+// leaves a wide margin.
+const MAX_CANONICAL_BYTES = 50 * 1024;
+const MAX_HISTORY_CHUNK_BYTES = 50 * 1024;
+// 04 is a verbatim copy of a canonical repo doc that is already larger
+// than the ceiling and is a known-good size for the connector; it is
+// exempt so the guard targets regressions, not this known case.
+const SIZE_GUARD_EXEMPT = new Set(['04_PRODUCT_DECISIONS.md']);
 
 // Case-insensitive patterns that must NEVER appear in generated output.
 // Deliberately broad (better a false-positive abort than a leaked
@@ -161,6 +192,137 @@ function scanForSecrets(text, fileLabel) {
   }
 }
 
+/**
+ * Split the repo's untouched full PROJECT_HANDOFF.md into section-aligned
+ * chunks under `_history/`, each small enough for a single cloud-connector
+ * create_file call.
+ *
+ * The source file is only ever READ here -- never rewritten, never
+ * truncated. Splitting happens at level-2 ("## ") headings so each chunk
+ * is semantically whole; a single section larger than the ceiling is
+ * hard-split by lines rather than silently dropped, and the index records
+ * that it continues.
+ *
+ * `_history/` is deliberately NOT canonical: a new agent never reads it by
+ * default, and it is excluded from required-file validation. It exists so
+ * root-cause archaeology is still possible from the cloud copy alone.
+ */
+function writeHistoryChunks() {
+  const sourcePath = join(ROOT, FULL_HISTORY_SOURCE);
+  if (!existsSync(sourcePath)) {
+    console.warn(`⚠️  ${FULL_HISTORY_SOURCE} not found -- skipping _history/ generation.`);
+    return [];
+  }
+
+  const full = readFileSync(sourcePath, 'utf8');
+  const lines = full.split('\n');
+
+  // Each written chunk carries a provenance header on top of its body,
+  // so the packing budget must reserve room for it -- otherwise a chunk
+  // packed exactly to the ceiling overflows once the header is added.
+  const HEADER_RESERVE_BYTES = 1024;
+  const bodyBudget = MAX_HISTORY_CHUNK_BYTES - HEADER_RESERVE_BYTES;
+
+  // Group lines into level-2 sections (the preamble before the first
+  // "## " heading becomes its own leading section).
+  const sections = [];
+  let current = { heading: '(preamble)', lines: [] };
+  for (const line of lines) {
+    if (line.startsWith('## ')) {
+      if (current.lines.length > 0) sections.push(current);
+      current = { heading: line.replace(/^##\s+/, '').trim(), lines: [line] };
+    } else {
+      current.lines.push(line);
+    }
+  }
+  if (current.lines.length > 0) sections.push(current);
+
+  // Pack sections into chunks under the ceiling, hard-splitting any
+  // single oversized section.
+  const chunks = [];
+  let buffer = { headings: [], lines: [] };
+  const bufferBytes = () => Buffer.byteLength(buffer.lines.join('\n'), 'utf8');
+
+  function flush() {
+    if (buffer.lines.length > 0) chunks.push(buffer);
+    buffer = { headings: [], lines: [] };
+  }
+
+  for (const section of sections) {
+    const sectionBytes = Buffer.byteLength(section.lines.join('\n'), 'utf8');
+
+    if (sectionBytes > bodyBudget) {
+      flush();
+      let part = [];
+      let partIndex = 1;
+      for (const line of section.lines) {
+        const candidate = Buffer.byteLength([...part, line].join('\n'), 'utf8');
+        if (candidate > bodyBudget && part.length > 0) {
+          chunks.push({ headings: [`${section.heading} (part ${partIndex})`], lines: part });
+          partIndex += 1;
+          part = [];
+        }
+        part.push(line);
+      }
+      if (part.length > 0) {
+        chunks.push({ headings: [`${section.heading} (part ${partIndex})`], lines: part });
+      }
+      continue;
+    }
+
+    if (bufferBytes() + sectionBytes > bodyBudget && buffer.lines.length > 0) {
+      flush();
+    }
+    buffer.headings.push(section.heading);
+    buffer.lines.push(...section.lines);
+  }
+  flush();
+
+  const historyDir = join(EXPORT_DIR, HISTORY_DIR_NAME);
+  mkdirSync(historyDir, { recursive: true });
+
+  const written = [];
+  chunks.forEach((chunk, i) => {
+    const name = `PROJECT_HANDOFF_${String(i + 1).padStart(2, '0')}of${String(chunks.length).padStart(2, '0')}.md`;
+    const header =
+      `<!-- title: 完整工程歷史 ${i + 1}/${chunks.length} -->\n\n` +
+      `# PROJECT_HANDOFF（完整工程歷史）— 第 ${i + 1} 段／共 ${chunks.length} 段\n\n` +
+      `> 非 canonical。這是 Repo 內未經刪減的 \`${FULL_HISTORY_SOURCE}\` 依章節切分後的第 ${i + 1} 段，\n` +
+      `> 僅供追查歷史 Root Cause 時閱讀；日常接班請讀 \`02_PROJECT_HANDOFF.md\`。\n` +
+      `> 完整且權威的版本永遠是 Repo 內的 \`${FULL_HISTORY_SOURCE}\`。\n\n---\n\n`;
+    const content = header + chunk.lines.join('\n').replace(/^\n+/, '') + '\n';
+    scanForSecrets(content, `${HISTORY_DIR_NAME}/${name}`);
+    writeFileSync(join(historyDir, name), content, 'utf8');
+    written.push({ name, headings: chunk.headings, bytes: Buffer.byteLength(content, 'utf8') });
+  });
+
+  const indexLines = [
+    '<!-- title: 完整工程歷史索引 -->',
+    '',
+    '# _history — 完整工程歷史索引（非 canonical）',
+    '',
+    `來源：Repo 內 \`${FULL_HISTORY_SOURCE}\`（未刪減、未縮減，仍是唯一權威的完整工程歷史）。`,
+    '',
+    '這裡的分段檔只是為了讓雲端也能保存完整歷史。新 Agent **不預設讀取**這個資料夾——',
+    '日常接班讀 `02_PROJECT_HANDOFF.md` 即可，只有需要追某一輪的 Root Cause 時才進來查。',
+    '',
+    `分段數：${written.length}　每段上限：${MAX_HISTORY_CHUNK_BYTES} bytes`,
+    '',
+    '| 檔案 | 大小 (bytes) | 涵蓋章節 |',
+    '|---|---|---|',
+  ];
+  for (const w of written) {
+    const headings = w.headings.map((h) => h.replace(/\|/g, '\\|')).join('；');
+    indexLines.push(`| \`${w.name}\` | ${w.bytes} | ${headings} |`);
+  }
+  indexLines.push('');
+  const indexContent = indexLines.join('\n');
+  scanForSecrets(indexContent, `${HISTORY_DIR_NAME}/00_INDEX.md`);
+  writeFileSync(join(historyDir, '00_INDEX.md'), indexContent, 'utf8');
+
+  return [{ name: '00_INDEX.md', bytes: Buffer.byteLength(indexContent, 'utf8') }, ...written];
+}
+
 function main() {
   console.log('=== export-meeting-room ===');
 
@@ -171,6 +333,40 @@ function main() {
   const originMainHead = safe(git(['rev-parse', 'origin/main']), 'unavailable (no network / not fetched this session)');
   const dirtyFiles = git(['status', '--porcelain']);
   const workingTreeStatus = dirtyFiles === null ? 'unknown' : dirtyFiles === '' ? 'clean' : `dirty (${dirtyFiles.split('\n').length} changed file(s))`;
+
+  // --- Step 1a: break the Git SHA self-reference loop ---
+  //
+  // A snapshot must describe the official main commit it was generated
+  // FROM (sourceMainHead). It must NOT be required to name the commit
+  // that CONTAINS it (exportArtifactCommit) -- that commit does not
+  // exist yet at generation time, and demanding the two be equal forces
+  // an endless export -> commit -> stale -> re-export cycle.
+  //
+  // sourceMainHead therefore reads origin/main (falling back to the
+  // local main ref), never HEAD -- so committing this export onto any
+  // working branch leaves the recorded baseline unchanged, and a rerun
+  // produces the same value.
+  const localMainHead = git(['rev-parse', 'main']);
+  const sourceMainHead = safe(
+    git(['rev-parse', 'origin/main']),
+    safe(localMainHead, 'unavailable (origin/main and local main both unresolvable)')
+  );
+  const sourceMainHeadOrigin = git(['rev-parse', 'origin/main'])
+    ? 'origin/main'
+    : localMainHead
+      ? 'local main ref (origin/main unresolvable this run)'
+      : 'unavailable';
+  // Never self-referential: the artifact's own commit is unknowable
+  // while the artifact is still being written.
+  const exportArtifactCommit = 'uncommitted-at-generation-time (resolved by git history, never self-referenced)';
+
+  // Working-tree status of the SOURCE tree only -- the export's own
+  // output directory is excluded, because this script dirties it by
+  // definition. Without this exclusion a second consecutive run always
+  // reports "dirty" purely because the first run wrote files.
+  const sourceDirty = git(['status', '--porcelain', '--', ':(exclude)meeting-room-export']);
+  const sourceWorkingTree =
+    sourceDirty === null ? 'unknown' : sourceDirty === '' ? 'clean' : `dirty (${sourceDirty.split('\n').length} changed source file(s))`;
   const packageVersion = safe(readPackageVersion(), 'unknown');
   const latestCommitVersion = safe(latestVersionFromGitLog(), 'unknown');
   const docsVersion = latestVersionFromEngineeringStatus();
@@ -216,6 +412,10 @@ function main() {
     REAL_WORLD_CONFIRMATION: realWorldConfirmation,
     EXPORT_GENERATED_AT: exportGeneratedAt,
     MODULE_INVENTORY: moduleInventory(),
+    SOURCE_MAIN_HEAD: sourceMainHead,
+    SOURCE_MAIN_HEAD_ORIGIN: sourceMainHeadOrigin,
+    EXPORT_ARTIFACT_COMMIT: exportArtifactCommit,
+    SOURCE_WORKING_TREE: sourceWorkingTree,
   };
 
   function substitute(text) {
@@ -249,9 +449,22 @@ function main() {
     }
 
     scanForSecrets(content, outName);
+
+    const byteLength = Buffer.byteLength(content, 'utf8');
+    if (!SIZE_GUARD_EXEMPT.has(outName) && byteLength > MAX_CANONICAL_BYTES) {
+      throw new Error(
+        `size guard FAILED for ${outName}: ${byteLength} bytes exceeds the ${MAX_CANONICAL_BYTES}-byte ` +
+          `canonical ceiling. Canonical files must stay small enough for a single cloud-connector ` +
+          `create_file call, otherwise automated sync silently degrades to manual upload.`
+      );
+    }
+
     writeFileSync(join(EXPORT_DIR, outName), content, 'utf8');
-    console.log(`✅ wrote ${outName} (${content.length} bytes)`);
+    console.log(`✅ wrote ${outName} (${byteLength} bytes)`);
   }
+
+  // --- Step 3a: split the untouched full history into _history/ ---
+  const historyFiles = writeHistoryChunks();
 
   // --- Step 4: required-file validation ---
   const missing = OUTPUT_FILES.filter((f) => !existsSync(join(EXPORT_DIR, f)));
@@ -260,10 +473,13 @@ function main() {
   }
 
   console.log('✅ JSON validation: PASS');
-  console.log('✅ required-file validation: PASS (all 10 files present)');
+  console.log(`✅ required-file validation: PASS (all ${OUTPUT_FILES.length} canonical files present)`);
+  console.log(`✅ size guard: PASS (every non-exempt canonical file <= ${MAX_CANONICAL_BYTES} bytes)`);
+  console.log(`✅ _history: ${historyFiles.length} chunk file(s), each <= ${MAX_HISTORY_CHUNK_BYTES} bytes`);
   console.log('✅ secret scan: PASS (no forbidden patterns found)');
   console.log(`✅ export complete: ${relative(ROOT, EXPORT_DIR)}/`);
-  console.log(`   source commit: ${gitHead}`);
+  console.log(`   source main head: ${sourceMainHead} (from ${sourceMainHeadOrigin})`);
+  console.log(`   generated from checkout: ${gitBranch} @ ${gitHead}`);
   console.log(`   generated at: ${exportGeneratedAt}`);
 
   return { exportDir: EXPORT_DIR, gitHead, exportGeneratedAt, files: OUTPUT_FILES };
