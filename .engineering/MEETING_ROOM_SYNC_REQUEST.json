@@ -8,26 +8,51 @@
   "hashAlgorithm": "sha256",
   "syncMode": "delta",
   "fullVerifyReason": null,
-  "status": "NOT_REQUIRED",
-  "checkoutHead": "3ec02e58197c65b9d09f1c28e11ff5214816d098",
-  "generatedAt": "2026-08-22T06:21:41.353Z",
+  "status": "SYNC_REQUIRED",
+  "checkoutHead": "2084e83eaa9a125f58f93cdaa4fb7ef9f1956013",
+  "generatedAt": "2026-08-22T06:29:20.191Z",
   "unchangedSkipped": [
-    "00_CURRENT_STATE.md",
     "01_FOUR_DEPARTMENT_GOVERNANCE.md",
-    "02_PROJECT_HANDOFF.md",
     "03_ARCHITECTURE.md",
     "04_PRODUCT_DECISIONS.md",
     "05_CROSS_PROJECT_BOUNDARY.md",
     "06_VERSION_HISTORY.md",
-    "07_KNOWN_ISSUES.md",
-    "SYSTEM_STATE.json",
-    "PRODUCTION_MANIFEST.json"
+    "07_KNOWN_ISSUES.md"
   ],
-  "files": [],
+  "files": [
+    {
+      "name": "00_CURRENT_STATE.md",
+      "oldSha256": "bc3a7196d018240a4aafdf827d802f92fd6519de1faf174a73a1d49f4bda015b",
+      "sha256": "8dcb2865d8a74fdc63593cbae33a583198ecae66a7fea86581bb14a3aed904aa",
+      "bytes": 2802,
+      "reason": "content hash changed"
+    },
+    {
+      "name": "02_PROJECT_HANDOFF.md",
+      "oldSha256": "476272b763397d056640ac621ea917b70aeec66ad926a59d3110a33faf989d9c",
+      "sha256": "24e751893e91899e554387c465a853f67d140fc44b38e57780b3faa2d077ce65",
+      "bytes": 8343,
+      "reason": "content hash changed"
+    },
+    {
+      "name": "SYSTEM_STATE.json",
+      "oldSha256": "e93db11cc72f7de6cdb9a24b3c8098842264a05cd01fed47b458e0268d7fde10",
+      "sha256": "95acbab25cf662ba67ba58ad91555d88db49a01794b99a795a220bfa2d9cbcf4",
+      "bytes": 3598,
+      "reason": "content hash changed"
+    },
+    {
+      "name": "PRODUCTION_MANIFEST.json",
+      "oldSha256": "a83ed00517cce5bad31b4fdfb91bdb48557e6e1ac3d11cdfbae6c74e7e63cc14",
+      "sha256": "baac6233c7ac903e037667e76ead8ee8baa67a8d06d52a49dc7e067086e78f07",
+      "bytes": 3950,
+      "reason": "content hash changed"
+    }
+  ],
   "allCurrentHashes": [
     {
       "name": "00_CURRENT_STATE.md",
-      "sha256": "bc3a7196d018240a4aafdf827d802f92fd6519de1faf174a73a1d49f4bda015b",
+      "sha256": "8dcb2865d8a74fdc63593cbae33a583198ecae66a7fea86581bb14a3aed904aa",
       "bytes": 2802
     },
     {
@@ -37,7 +62,7 @@
     },
     {
       "name": "02_PROJECT_HANDOFF.md",
-      "sha256": "476272b763397d056640ac621ea917b70aeec66ad926a59d3110a33faf989d9c",
+      "sha256": "24e751893e91899e554387c465a853f67d140fc44b38e57780b3faa2d077ce65",
       "bytes": 8343
     },
     {
@@ -67,12 +92,12 @@
     },
     {
       "name": "SYSTEM_STATE.json",
-      "sha256": "e93db11cc72f7de6cdb9a24b3c8098842264a05cd01fed47b458e0268d7fde10",
+      "sha256": "95acbab25cf662ba67ba58ad91555d88db49a01794b99a795a220bfa2d9cbcf4",
       "bytes": 3598
     },
     {
       "name": "PRODUCTION_MANIFEST.json",
-      "sha256": "a83ed00517cce5bad31b4fdfb91bdb48557e6e1ac3d11cdfbae6c74e7e63cc14",
+      "sha256": "baac6233c7ac903e037667e76ead8ee8baa67a8d06d52a49dc7e067086e78f07",
       "bytes": 3950
     }
   ],

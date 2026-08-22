@@ -10,7 +10,7 @@
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
 | Current Version | V1.8.7.7 |
-| Source main HEAD | d9341c857336677f41b431e2b70e57ea35b90204 |
+| Source main HEAD | 2084e83eaa9a125f58f93cdaa4fb7ef9f1956013 |
 | Source main HEAD resolved from | origin/main |
 | Source working tree | clean |
 | Production | DEPLOYED |
@@ -22,7 +22,7 @@
 | Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
 | Next Action | Await next task assignment, or real-world confirmation evidence for the latest release |
-| Export Generated At | 2026-08-22T06:04:08.778Z |
+| Export Generated At | 2026-08-22T06:29:20.108Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## 我能改什麼／不能改什麼（一句話版）
