@@ -394,11 +394,23 @@ function main() {
   // while the artifact is still being written.
   const exportArtifactCommit = 'uncommitted-at-generation-time (resolved by git history, never self-referenced)';
 
-  // Working-tree status of the SOURCE tree only -- the export's own
-  // output directory is excluded, because this script dirties it by
-  // definition. Without this exclusion a second consecutive run always
-  // reports "dirty" purely because the first run wrote files.
-  const sourceDirty = git(['status', '--porcelain', '--', ':(exclude)meeting-room-export']);
+  // Working-tree status of the SOURCE tree only. Two paths are excluded
+  // because the release pipeline writes them itself, and counting its own
+  // output as "dirty source" is the same self-reference trap the
+  // sourceMainHead/exportArtifactCommit split exists to avoid:
+  //
+  //   meeting-room-export/  this generator's own output
+  //   .engineering/         cloud sync evidence, written AFTER a sync
+  //                         completes -- recording "the sync happened"
+  //                         must never make the next export look changed,
+  //                         or delta sync never converges.
+  const sourceDirty = git([
+    'status',
+    '--porcelain',
+    '--',
+    ':(exclude)meeting-room-export',
+    ':(exclude).engineering',
+  ]);
   const sourceWorkingTree =
     sourceDirty === null ? 'unknown' : sourceDirty === '' ? 'clean' : `dirty (${sourceDirty.split('\n').length} changed source file(s))`;
   const packageVersion = safe(readPackageVersion(), 'unknown');

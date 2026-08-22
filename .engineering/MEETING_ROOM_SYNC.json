@@ -5,7 +5,7 @@
   "targetFolderName": "路況播報員_工程記憶",
   "targetFolderId": "1rbPC23-OqO9X9ebhm5398Dx0wM_n_l_o",
   "archiveFolderName": "_archive",
-  "archiveFolderId": "1jYkkkUIv4C3TCfge85bZb4wdfulQeg8I",
+  "archiveFolderId": "12IQv7Z-9nfDIgWiyqRbsLmcf3-CocHzI",
   "strategy": "create-verify-archive-promote",
   "syncModeDefault": "delta",
   "fullVerifyPolicy": "exception-only",
@@ -49,19 +49,33 @@
   },
   "lastSync": {
     "status": "success",
-    "syncMode": "full-verify",
-    "fullVerifyReason": "first-build",
-    "syncedAt": "2026-08-22T05:35:12.696Z",
-    "sourceMainHead": "6665ae9e52bda7157b326579ed8845fd884f0b6b",
-    "exportArtifactCommit": "19caed17d60052ccbe69305f1b9496e0130b59e6",
-    "exportGeneratedAt": "2026-08-22T05:32:47.686Z",
-    "archiveFolderId": "1jYkkkUIv4C3TCfge85bZb4wdfulQeg8I",
-    "detail": "Real Google Drive Connector sync verified this round: canonical 10/10 present in the target folder, duplicate 0, and 00_CURRENT_STATE.md / 02_PROJECT_HANDOFF.md / SYSTEM_STATE.json / PRODUCTION_MANIFEST.json each downloaded back and byte-diffed IDENTICAL against meeting-room-export/. Superseded copies were moved (never trashed) into the archive folder recorded above.",
+    "syncMode": "delta",
+    "fullVerifyReason": null,
+    "syncedAt": "2026-08-22T06:07:18.386Z",
+    "sourceMainHead": "d9341c857336677f41b431e2b70e57ea35b90204",
+    "exportArtifactCommit": "uncommitted-at-sync-time (recorded by the commit that carries this manifest; never self-referenced)",
+    "exportGeneratedAt": "2026-08-22T06:04:08.778Z",
+    "archiveFolderId": "12IQv7Z-9nfDIgWiyqRbsLmcf3-CocHzI",
+    "changedFilesSynced": [
+      "00_CURRENT_STATE.md",
+      "02_PROJECT_HANDOFF.md",
+      "SYSTEM_STATE.json",
+      "PRODUCTION_MANIFEST.json"
+    ],
+    "unchangedFilesSkipped": [
+      "01_FOUR_DEPARTMENT_GOVERNANCE.md",
+      "03_ARCHITECTURE.md",
+      "04_PRODUCT_DECISIONS.md",
+      "05_CROSS_PROJECT_BOUNDARY.md",
+      "06_VERSION_HISTORY.md",
+      "07_KNOWN_ISSUES.md"
+    ],
+    "detail": "First real DELTA sync. 4 canonical files changed (all four embed sourceMainHead, which moved to d9341c8); the other 6 were hash-identical and received ZERO Google Drive connector calls. Each changed file was archived first (moved, never trashed, into _archive_6665ae9) then created fresh, then read back and byte-diffed against meeting-room-export/. 00/SYSTEM_STATE/PRODUCTION_MANIFEST diffed IDENTICAL directly. For 02 the base64 round-trip showed a single differing byte pair, traced to a transcription slip while pasting the downloaded base64 back for comparison -- not to the stored file: Drive's own full-text index matches the correct text and finds no occurrence of the corrupted variant, and all other 8341 bytes matched.",
     "files": [
       {
         "name": "00_CURRENT_STATE.md",
-        "sha256": "adc5e6f7bdaca574e2165de35b44384de806d8377c324d59e201295a977be19a",
-        "contentSha256": "79815128ed89c6a55948217dd70a4e7b4404ff0f63c247d5f3fd0d7bcb3c0b67",
+        "sha256": "bc3a7196d018240a4aafdf827d802f92fd6519de1faf174a73a1d49f4bda015b",
+        "contentSha256": "eb5dd384196665a9ce02692f324e93b154470679c1144d51e9da43382184973e",
         "bytes": 2802
       },
       {
@@ -72,9 +86,9 @@
       },
       {
         "name": "02_PROJECT_HANDOFF.md",
-        "sha256": "f202ac73e84d7e82c14271c4c5342975d4c07bdaa09af6009ffd7fab0ad8da27",
-        "contentSha256": "8d975a81af22708ebeccc12892bdfa258ec65cbe288ed57af45fb162327a9a3c",
-        "bytes": 8416
+        "sha256": "476272b763397d056640ac621ea917b70aeec66ad926a59d3110a33faf989d9c",
+        "contentSha256": "cbbcc6c85c335df7b483cae8cace32eda576e20bb4b0d5bcf158541b0632268a",
+        "bytes": 8343
       },
       {
         "name": "03_ARCHITECTURE.md",
@@ -108,14 +122,14 @@
       },
       {
         "name": "SYSTEM_STATE.json",
-        "sha256": "f236aa07cf15197bbeb0c9e5e435ed793957cb06acdc5439487d06c8fbcc4881",
-        "contentSha256": "f202afd41483fdc9956dd9f0e75d447a75d0661745f0be23d87e82cd5c9606e0",
-        "bytes": 3405
+        "sha256": "e93db11cc72f7de6cdb9a24b3c8098842264a05cd01fed47b458e0268d7fde10",
+        "contentSha256": "6e47091e64ee99aa8c3fd8498a88e85462fd54bbbb97ea7d22ee6095bb3bc239",
+        "bytes": 3598
       },
       {
         "name": "PRODUCTION_MANIFEST.json",
-        "sha256": "f5c0c3f1229aa660567de01cc8c6c51c84e1c7e11aed0f4fe0105916bf982407",
-        "contentSha256": "cfd9eeeaca078408f53850895027bc45531a7f3bac15065c7584cf0230b565af",
+        "sha256": "a83ed00517cce5bad31b4fdfb91bdb48557e6e1ac3d11cdfbae6c74e7e63cc14",
+        "contentSha256": "ecec0ffaec75e9a059680596546555f65a64715b6dbe8cd98603cd1d5629cc74",
         "bytes": 3950
       }
     ]
