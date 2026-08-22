@@ -5,13 +5,13 @@
   "targetFolderName": "路況播報員_工程記憶",
   "archiveFolderName": "_archive",
   "strategy": "create-verify-archive-promote",
-  "mainHead": "96552e2220eb4e01c917b21befdf8335906824be",
-  "generatedAt": "2026-08-22T04:00:25.408Z",
+  "mainHead": "3a2e198062669edb8185ce188543e0b65101dc65",
+  "generatedAt": "2026-08-22T04:01:46.157Z",
   "files": [
     {
       "name": "00_CURRENT_STATE.md",
-      "sha256": "50507edfa5f6c4328fbff78b9951993648ec586554d73c2ffb0159e6a0558eb8",
-      "bytes": 2704
+      "sha256": "5bbf61da8522e9b630b83682b4d44d3c0009f34eafb1d4979391950ee61d8807",
+      "bytes": 2684
     },
     {
       "name": "01_FOUR_DEPARTMENT_GOVERNANCE.md",
@@ -50,12 +50,12 @@
     },
     {
       "name": "SYSTEM_STATE.json",
-      "sha256": "7b8c48132f2e1312cfa0275c87638dfc748c926346c03dd794455b5573520f7c",
-      "bytes": 2206
+      "sha256": "7753ed95526d5ec8aef74c53f88b26f0a9945e785e965aa043bb6fc5018d89ee",
+      "bytes": 2146
     },
     {
       "name": "PRODUCTION_MANIFEST.json",
-      "sha256": "c171beba84faeaeb34575fde2247dca8e204f1a1f9a0f6b88b40e498e657d63f",
+      "sha256": "04d4e8dbfbee623bd846c9f57b8d0b7e924549d6091781e50398b94e3af14c45",
       "bytes": 3950
     }
   ]

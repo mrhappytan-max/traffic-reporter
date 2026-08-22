@@ -10,11 +10,11 @@
     "rule": "traffic-reporter is sole Shared Traffic Feed content authority; consumers must never re-judge completedProducts"
   },
   "git": {
-    "branch": "feature/meeting-room-drive-connector-sync-v1",
-    "headSha": "96552e2220eb4e01c917b21befdf8335906824be",
-    "headDate": "2026-08-22T03:04:34+00:00",
-    "originMainSha": "96552e2220eb4e01c917b21befdf8335906824be",
-    "workingTree": "dirty (8 changed file(s))"
+    "branch": "main",
+    "headSha": "3a2e198062669edb8185ce188543e0b65101dc65",
+    "headDate": "2026-08-22T04:01:21+00:00",
+    "originMainSha": "3a2e198062669edb8185ce188543e0b65101dc65",
+    "workingTree": "clean"
   },
   "version": {
     "packageJsonVersion": "0.1.0",
@@ -40,8 +40,8 @@
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-08-22T04:00:25.375Z",
-    "generatedFromCommit": "96552e2220eb4e01c917b21befdf8335906824be",
+    "generatedAt": "2026-08-22T04:01:46.124Z",
+    "generatedFromCommit": "3a2e198062669edb8185ce188543e0b65101dc65",
     "generatorScript": "scripts/export-meeting-room.mjs"
   }
 }
