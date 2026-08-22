@@ -15,8 +15,8 @@
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
     "sourceWorkingTree": "clean",
     "generatedFromCheckoutBranch": "claude/google-drive-sync-validation-xzq9tb",
-    "generatedFromCheckoutHead": "c4c72a96f3451a49ea03e76930d6d4446e1eee5d",
-    "generatedFromCheckoutHeadDate": "2026-08-22T05:30:36+00:00",
+    "generatedFromCheckoutHead": "402b2af0b2dbc4ff942308ea64dd0d4815f736c7",
+    "generatedFromCheckoutHeadDate": "2026-08-22T05:32:47+00:00",
     "selfReferenceNote": "sourceMainHead is the official main commit this snapshot DESCRIBES; exportArtifactCommit is the commit that CONTAINS this artifact and is intentionally never equal to it. Requiring the two to match would create a Git self-reference loop (every export changes the file, which changes the commit, which invalidates the recorded head). sourceMainHead is read from origin/main and is therefore stable across re-runs and across whichever branch the export was generated on.",
     "workingTreeNote": "sourceWorkingTree excludes meeting-room-export/, which this generator dirties by definition; it answers 'is the source tree clean', not 'did the export just write files'."
   },
@@ -44,7 +44,7 @@
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-08-22T05:30:44.492Z",
+    "generatedAt": "2026-08-22T05:32:47.686Z",
     "sourceMainHead": "6665ae9e52bda7157b326579ed8845fd884f0b6b",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
