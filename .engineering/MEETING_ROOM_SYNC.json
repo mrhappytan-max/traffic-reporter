@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "provider": "google-drive-connector",
+  "project": "traffic-reporter",
+  "targetFolderName": "路況播報員_工程記憶",
+  "targetFolderId": "1rbPC23-OqO9X9ebhm5398Dx0wM_n_l_o",
+  "archiveFolderName": "_archive",
+  "archiveFolderId": null,
+  "strategy": "create-verify-archive-promote",
+  "note": "update_file on this Connector only supports title/parentId, never content -- an existing canonical file is NEVER updated in place. See scripts/finalize-release.mjs and PROJECT_HANDOFF.md for the full protocol writeup. Folder IDs are not secrets and may be committed; no Google credential of any kind is ever stored here.",
+  "allowlist": [
+    "00_CURRENT_STATE.md",
+    "01_FOUR_DEPARTMENT_GOVERNANCE.md",
+    "02_PROJECT_HANDOFF.md",
+    "03_ARCHITECTURE.md",
+    "04_PRODUCT_DECISIONS.md",
+    "05_CROSS_PROJECT_BOUNDARY.md",
+    "06_VERSION_HISTORY.md",
+    "07_KNOWN_ISSUES.md",
+    "SYSTEM_STATE.json",
+    "PRODUCTION_MANIFEST.json"
+  ],
+  "fallback": {
+    "provider": "windows-drive-desktop-local-fs",
+    "scriptPath": "scripts/sync-meeting-room.mjs",
+    "envVar": "TRAFFIC_MEETING_ROOM_SYNC_DIR",
+    "note": "Kept, never removed. Used only when the Google Drive Connector is unavailable to the executing Claude session."
+  },
+  "lastSync": {
+    "status": "MEETING_ROOM_CLOUD_SYNC=PENDING",
+    "reason": "connector-unavailable-this-session",
+    "detail": "Google Drive Connector MCP server disconnected mid-session before this round's real sync could be attempted (confirmed unavailable via ToolSearch, not merely slow to connect). A prior, separate real-machine test earlier this same engineering lineage DID confirm the Connector works (search_files/create_file/read_file_content all succeeded against a live file in this exact folder; only update_file's content-update limitation was found, which is why this protocol never updates in place). This round built and tested the full tooling (manifest, prepare-connector-sync-request.mjs, finalize-release.mjs integration, Create-Verify-Archive-Promote protocol documented in PROJECT_HANDOFF.md §37) but could not perform the actual archive-folder check/create or the 10-file sync itself. No result was fabricated or guessed.",
+    "archiveFolderId": null,
+    "syncedAt": null,
+    "mainHead": null,
+    "files": [],
+    "nextStep": "A future Claude session with the Google Drive Connector connected must perform the real Create→Verify→Archive→Promote sync per PROJECT_HANDOFF.md §37's Permanent Agent Rule, using .engineering/MEETING_ROOM_SYNC_REQUEST.json (regenerate via npm run finalize:release first if main has moved since it was last written)."
+  }
+}

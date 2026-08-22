@@ -90,6 +90,15 @@ Cloudflare auto-deploys on every push to `main` — no manual `wrangler deploy` 
 
 **Producer never builds consumer-specific logic.** The feed stays generic: no "is this what 雙鐵 wants" branching, no consumer-subscription awareness, no per-consumer type whitelist, no consumer-version detection. Every `completedProducts` entry goes out the same way to whoever reads the feed.
 
+## Latest completed work — Meeting Room Engineering Memory: Google Drive Connector Direct Sync V1
+
+**Status: see this section's own commit for branch/HEAD.** A real, connected Claude Google Drive Connector (`mcp__Google_Drive__*`) was confirmed available and pointed at a real, pre-existing Drive folder `路況播報員_工程記憶` (id `1rbPC23-OqO9X9ebhm5398Dx0wM_n_l_o`). `update_file` was confirmed (empirically, not just from its schema) to support ONLY `title`/`parentId` — never content. Consequence: the permanent sync protocol is **Create → Verify → Archive Old → Promote New**, never an in-place content update. Full protocol, division of responsibility between `scripts/finalize-release.mjs` (prepares the sync request; cannot call the Connector itself) and the Claude Agent (must perform the real Connector calls), and the permanent Agent Rule are documented in `PROJECT_HANDOFF.md` §37.
+
+- New: `.engineering/MEETING_ROOM_SYNC.json` — the sync manifest (provider, target folder ID, archive folder name, strategy, allowlist, `lastSync` state). No credentials — folder IDs are not secrets.
+- New: `scripts/prepare-connector-sync-request.mjs` — computes per-file SHA-256 + byte length for the 10 allowlisted `meeting-room-export/` files, writes `.engineering/MEETING_ROOM_SYNC_REQUEST.json`.
+- `scripts/finalize-release.mjs` updated: now prints `GOOGLE_DRIVE_CONNECTOR_SYNC_REQUIRED` and stops there for the Connector path — never claims cloud sync is complete on the Connector's behalf. The pre-existing Windows Drive-Desktop local-fs fallback (`scripts/sync-meeting-room.mjs`, `TRAFFIC_MEETING_ROOM_SYNC_DIR`) is kept, unchanged, clearly labeled as a separate informational-only result.
+- First real full Connector sync performed this round — see this section's own sync-evidence entry below for the actual result (10/10 or partial, with read-back verification detail).
+
 ## Latest completed work — Meeting Room Engineering Memory v1 — MERGED
 
 **Status: MERGED (fast-forward, no merge commit) into `main`. `main` HEAD: `56753bff98e975341d7c67cce6d750d188050767`. No functional code touched — this was a governance/tooling merge, not a Production feature deploy** (confirmed: 0 files under `src/`/`test/`/`wrangler.jsonc` in the diff, see `PROJECT_HANDOFF.md` §36's own diff-scope verification record). If Cloudflare's existing push-to-`main` auto-deploy fired as a result of this push, that is the platform's own standing behavior for any push to `main`, not a deliberate Production change made this round — no Cron/Binding/Secret/KV/R2/Worker setting was touched. Permanent engineering-memory export system so a future ChatGPT/Claude/other Agent session can bootstrap this project without re-reading the whole repo history. See `PROJECT_HANDOFF.md` §36 for the full writeup.

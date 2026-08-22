@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "provider": "google-drive-connector",
+  "targetFolderId": "1rbPC23-OqO9X9ebhm5398Dx0wM_n_l_o",
+  "targetFolderName": "路況播報員_工程記憶",
+  "archiveFolderName": "_archive",
+  "strategy": "create-verify-archive-promote",
+  "mainHead": "96552e2220eb4e01c917b21befdf8335906824be",
+  "generatedAt": "2026-08-22T04:00:25.408Z",
+  "files": [
+    {
+      "name": "00_CURRENT_STATE.md",
+      "sha256": "50507edfa5f6c4328fbff78b9951993648ec586554d73c2ffb0159e6a0558eb8",
+      "bytes": 2704
+    },
+    {
+      "name": "01_FOUR_DEPARTMENT_GOVERNANCE.md",
+      "sha256": "0a68c2713f7be7fb99e7454935e1abb7ef8d5fd491f2adf2de56efcfad91253b",
+      "bytes": 4944
+    },
+    {
+      "name": "02_PROJECT_HANDOFF.md",
+      "sha256": "d6a48f5e8e9ce59ba889d8867c0fb56c7737150f8ad2be0e88653401678e18f4",
+      "bytes": 320719
+    },
+    {
+      "name": "03_ARCHITECTURE.md",
+      "sha256": "c59448682f5196d8e4c861065b0575d156226ca15bbe5fe68aaa211a8a0fe25f",
+      "bytes": 7676
+    },
+    {
+      "name": "04_PRODUCT_DECISIONS.md",
+      "sha256": "f175165e666a4cd9e5fc7d18b8672958c32216e12e5bfc11e8dab19cfa68ee1e",
+      "bytes": 85102
+    },
+    {
+      "name": "05_CROSS_PROJECT_BOUNDARY.md",
+      "sha256": "fe79a7d855235ba3603bc70cb431fce5422e41cb67ac7b01a3f5b696ed9e4c87",
+      "bytes": 3203
+    },
+    {
+      "name": "06_VERSION_HISTORY.md",
+      "sha256": "018414d60603cf412413b8b68af94203ba0c87877d885c4ce8c8eb6cd529ed78",
+      "bytes": 2975
+    },
+    {
+      "name": "07_KNOWN_ISSUES.md",
+      "sha256": "491e1a8a9283679f17751a2266fcf68111ced19dd2b6831341b50dde55edb01c",
+      "bytes": 3640
+    },
+    {
+      "name": "SYSTEM_STATE.json",
+      "sha256": "7b8c48132f2e1312cfa0275c87638dfc748c926346c03dd794455b5573520f7c",
+      "bytes": 2206
+    },
+    {
+      "name": "PRODUCTION_MANIFEST.json",
+      "sha256": "c171beba84faeaeb34575fde2247dca8e204f1a1f9a0f6b88b40e498e657d63f",
+      "bytes": 3950
+    }
+  ]
+}

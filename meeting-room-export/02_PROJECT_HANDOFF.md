@@ -1499,3 +1499,58 @@ Did not touch any functional pipeline code (classification/eligibility/CCTV/LINE
 Fast-forward merge (`feature/meeting-room-engineering-memory-v1` → `main`, no merge commit, no rebase, no force push) landed at `main` HEAD `56753bff98e975341d7c67cce6d750d188050767`, pushed to `origin/main`. `npm run check:deployment-policy` re-run post-merge: PASS. `meeting-room-export/` regenerated post-merge (`npm run finalize:release`) so it reflects "this governance tooling now exists on `main`" as its own source commit, rather than the pre-merge feature-branch snapshot — only the self-referential volatile fields (git HEAD, generated-at timestamp) changed; every curated/copied content file came out byte-identical, which is the expected, correct behavior for re-exporting with no underlying content change. Google Drive sync result: unchanged `GOOGLE_DRIVE_SYNC=PENDING` (`TRAFFIC_MEETING_ROOM_SYNC_DIR` still unset in this sandbox — explicitly NOT treated as a release failure, per this round's own instruction to mark it `WINDOWS_GOOGLE_DRIVE_SYNC = PENDING` and defer to a future Windows Sync Bridge stage).
 
 If Cloudflare's push-to-`main` auto-deploy fired as a platform-level consequence of this push, that is standing, pre-existing platform behavior for any push to `main` (documented since V1.8.6.9 — see this file's "正式發布流程" reference in `ENGINEERING_STATUS.md`) — this round made no deliberate Production change (no Cron/Binding/Secret/KV/R2/Worker setting edit), and the merged diff contains no code capable of altering runtime behavior.
+
+## 37. Google Drive Connector Direct Sync V1 — permanent Agent Rule
+
+### Background — why this exists
+
+A real-machine test (see §36's own "real bug caught while building this" entry for the earlier Windows-local-fs fallback) confirmed a live, connected Claude Google Drive Connector (`mcp__Google_Drive__*` tools) is available to this project's Claude Code Remote sessions, pointed at a real, pre-existing Drive folder `路況播報員_工程記憶` (id `1rbPC23-OqO9X9ebhm5398Dx0wM_n_l_o`, owner `mr.happytan@gmail.com`). That test also established a hard capability limit: the Connector's `update_file` tool supports ONLY `title`/`parentId` — it has NO content-update parameter at all. Confirmed empirically, not just from the tool's schema description: an `update_file` call against a real test file changed `modifiedTime` but left `fileSize` byte-identical to the original, proving content genuinely did not change.
+
+**Consequence**: an existing canonical file in the Drive folder can never be safely "updated in place." Any sync design that tries risks either silently failing to update content (looking like success while actually being a no-op) or requires a delete-then-recreate sequence that has a real window where the canonical file simply doesn't exist if anything fails mid-sequence. Neither is acceptable for a file other tools (a future ChatGPT Project) may be reading at any time.
+
+### The permanent protocol: Create → Verify → Archive Old → Promote New
+
+For each of the 10 allowlisted canonical files (see `.engineering/MEETING_ROOM_SYNC.json`'s own `allowlist`), a sync NEVER touches the existing canonical file until a verified-good replacement already exists:
+
+1. Create the new file's content as a NEW Drive file (temporary name) in the target folder.
+2. Read the new file back via the Connector and verify its content matches what was uploaded (byte-for-byte, or at minimum the SHA-256 recorded in `.engineering/MEETING_ROOM_SYNC_REQUEST.json` — see `scripts/prepare-connector-sync-request.mjs`).
+3. Only once verified: if an old canonical file with that name already exists, rename it with a `<timestamp>__<original filename>` prefix (e.g. `20260822T115500+0800__00_CURRENT_STATE.md`) and move it into the `_archive` subfolder — never overwritten, never deleted; archive is historical evidence, not something to prune automatically.
+4. Rename the new (now-verified) temporary file to the real canonical filename — it is now promoted to the live `CURRENT` copy.
+5. Re-search the target folder to confirm exactly ONE file per canonical name exists (no duplicates left behind by a partial run) and that it is the newly-promoted version.
+
+This ordering is deliberate and non-negotiable: CREATE NEW must always happen and be VERIFIED before anything touches the OLD file — so a failure at any point during the sync leaves the PREVIOUS canonical file still fully intact and readable, never a gap where "CURRENT" briefly doesn't exist.
+
+### Division of responsibility (script vs. Agent) — and why
+
+`scripts/finalize-release.mjs` (a plain Node process) structurally CANNOT call Claude's Google Drive Connector — that's an MCP tool reachable only from inside a Claude Agent session's own tool-call loop, never from a spawned `node` child process. So the script's job stops at PREPARING the sync: it runs `scripts/prepare-connector-sync-request.mjs` to write `.engineering/MEETING_ROOM_SYNC_REQUEST.json` (per-file SHA-256 + byte length, target folder ID, `mainHead`) and prints the literal string `GOOGLE_DRIVE_CONNECTOR_SYNC_REQUIRED` — that string is the hand-off signal. The Claude Agent session itself must then perform the real Connector calls following the Create→Verify→Archive→Promote protocol above, using the hashes in that request file to verify each round-trip, and ONLY the Agent (never the script) may subsequently record a successful cloud sync into `.engineering/MEETING_ROOM_SYNC.json`'s `lastSync` field. The script's own summary output explicitly labels the pre-existing Windows Drive-Desktop local-fs fallback (`scripts/sync-meeting-room.mjs`, kept, never removed) as a SEPARATE, informational-only result — never conflated with, and never substituting for, a real Connector sync.
+
+### Permanent Agent Rule (binding on any future Claude session working this repo)
+
+```
+npm run finalize:release completes
+  ↓
+if .engineering/MEETING_ROOM_SYNC.json's provider == "google-drive-connector"
+  ↓
+Claude MUST perform the Connector sync itself:
+  - read .engineering/MEETING_ROOM_SYNC_REQUEST.json
+  - for each of the 10 allowlisted files: Create → Verify (read-back,
+    compare to the recorded SHA-256) → Archive old (if present) →
+    Promote new
+  - confirm exactly 10/10 canonical files exist, no duplicates
+  - record the result (success or partial/failure detail) back into
+    .engineering/MEETING_ROOM_SYNC.json's lastSync field, as its OWN
+    terminal commit -- never re-triggering export/sync/commit in a loop
+  ↓
+if the Connector is unavailable to this session at the time
+  ↓
+the release still seals (RELEASE_SEALED from finalize:release is
+unaffected), but cloud-sync status must be explicitly recorded as
+MEETING_ROOM_CLOUD_SYNC=PENDING -- never silently skipped, never
+reported as if it succeeded
+```
+
+An Agent must never claim a Connector sync succeeded without having actually performed real `search_files`/`create_file`/`read_file_content` calls and verified the content round-trip — the whole point of building this hash-verified, archive-before-promote protocol is to make "did the cloud copy actually update correctly" a checkable fact, not an assumption.
+
+### Anti-loop design (why recording sync evidence doesn't re-trigger a release)
+
+`finalize:release` → export → connector-sync-request is a ONE-WAY pipeline that terminates once the Agent finishes the real Connector calls and writes the result into `.engineering/MEETING_ROOM_SYNC.json`. That write is a single, standalone commit recording "as of `mainHead` X, the cloud copy was last synced at timestamp Y with result Z" — it is NOT itself treated as new engineering work requiring another `finalize:release` run. A future round's `finalize:release` will naturally pick up whatever `main` HEAD it's run from at that time; there is no mechanism (and none should ever be built) that automatically re-triggers export/sync/commit off of a `MEETING_ROOM_SYNC.json` write itself.
