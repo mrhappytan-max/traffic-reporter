@@ -10,19 +10,19 @@
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
 | Current Version | V1.8.7.7 |
-| Source main HEAD | dff9ea746a31f7a585f14d55ad045b6106ff58e5 |
+| Source main HEAD | e351a4b61f12da0df04886b5d1434d2ca7638744 |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | clean |
+| Source working tree | dirty (2 changed source file(s)) |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
-| Current Phase | Maintenance — awaiting real-world confirmation of latest release |
-| Current Task | None in progress — awaiting next assignment |
+| Current Phase | TDX QUOTA PROTECTION — 暫時 PBS-ONLY MODE（TDX 額度用盡，非故障；TDX 程式碼完整保留） |
+| Current Task | PBS-only mode 已部署生效；等待 TDX 額度恢復 |
 | Latest Completed Version | V1.8.7.7 |
-| Known Blocker | V1.8.7.7 real-world confirmation pending — see 07_KNOWN_ISSUES.md |
+| Known Blocker | TDX API 額度用盡 → TRAFFIC_SOURCE_MODE=PBS_ONLY，Cron 路徑 TDX 呼叫為 0，PBS 正常。還原程序見 07_KNOWN_ISSUES.md |
 | Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | Await next task assignment, or real-world confirmation evidence for the latest release |
-| Export Generated At | 2026-08-23T06:08:26.834Z |
+| Next Action | 等待真人確認 TDX 額度恢復後下令 RESTORE TDX（TRAFFIC_SOURCE_MODE 改回 ALL 並 push 到 main） |
+| Export Generated At | 2026-08-23T06:10:40.361Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## 我能改什麼／不能改什麼（一句話版）

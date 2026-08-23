@@ -357,6 +357,23 @@ function writeHistoryChunks() {
   return [{ name: '00_INDEX.md', bytes: Buffer.byteLength(indexContent, 'utf8') }, ...written];
 }
 
+
+// TDX QUOTA PROTECTION (2026-08-23): the Engineering Memory's headline
+// fields must state the quota pause without anyone remembering to pass an
+// env var. Reading the deployed flag straight out of wrangler.jsonc keeps
+// the memory honest by construction: when the flag flips back to ALL the
+// wording reverts on its own, so it can never be left claiming a pause
+// that has already ended.
+function readTrafficSourceMode() {
+  try {
+    const raw = readFileSync(join(ROOT, 'wrangler.jsonc'), 'utf8');
+    const m = raw.match(/"TRAFFIC_SOURCE_MODE"\s*:\s*"([^"]*)"/);
+    return m ? m[1].trim().toUpperCase() : 'ALL';
+  } catch {
+    return 'ALL';
+  }
+}
+
 function main() {
   console.log('=== export-meeting-room ===');
 
@@ -431,10 +448,31 @@ function main() {
   // editing this script.
   const currentVersion = latestCommitVersion;
   const latestCompletedVersion = latestCommitVersion;
-  const currentPhase = safe(process.env.EXPORT_CURRENT_PHASE, 'Maintenance — awaiting real-world confirmation of latest release');
-  const currentTask = safe(process.env.EXPORT_CURRENT_TASK, 'None in progress — awaiting next assignment');
-  const knownBlocker = safe(process.env.EXPORT_KNOWN_BLOCKER, `${latestCompletedVersion} real-world confirmation pending — see 07_KNOWN_ISSUES.md`);
-  const nextAction = safe(process.env.EXPORT_NEXT_ACTION, 'Await next task assignment, or real-world confirmation evidence for the latest release');
+  const trafficSourceMode = readTrafficSourceMode();
+  const pbsOnly = trafficSourceMode === 'PBS_ONLY';
+
+  const currentPhase = safe(
+    process.env.EXPORT_CURRENT_PHASE,
+    pbsOnly
+      ? 'TDX QUOTA PROTECTION — 暫時 PBS-ONLY MODE（TDX 額度用盡，非故障；TDX 程式碼完整保留）'
+      : 'Maintenance — awaiting real-world confirmation of latest release'
+  );
+  const currentTask = safe(
+    process.env.EXPORT_CURRENT_TASK,
+    pbsOnly ? 'PBS-only mode 已部署生效；等待 TDX 額度恢復' : 'None in progress — awaiting next assignment'
+  );
+  const knownBlocker = safe(
+    process.env.EXPORT_KNOWN_BLOCKER,
+    pbsOnly
+      ? 'TDX API 額度用盡 → TRAFFIC_SOURCE_MODE=PBS_ONLY，Cron 路徑 TDX 呼叫為 0，PBS 正常。還原程序見 07_KNOWN_ISSUES.md'
+      : `${latestCompletedVersion} real-world confirmation pending — see 07_KNOWN_ISSUES.md`
+  );
+  const nextAction = safe(
+    process.env.EXPORT_NEXT_ACTION,
+    pbsOnly
+      ? '等待真人確認 TDX 額度恢復後下令 RESTORE TDX（TRAFFIC_SOURCE_MODE 改回 ALL 並 push 到 main）'
+      : 'Await next task assignment, or real-world confirmation evidence for the latest release'
+  );
   const productionStatus = safe(process.env.EXPORT_PRODUCTION_STATUS, 'DEPLOYED');
   const productionVerification = safe(process.env.EXPORT_PRODUCTION_VERIFICATION, 'Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why)');
   const realWorldConfirmation = safe(process.env.EXPORT_REAL_WORLD_CONFIRMATION, 'REAL_WORLD_CONFIRMATION_PENDING');
@@ -462,6 +500,7 @@ function main() {
     SOURCE_MAIN_HEAD_ORIGIN: sourceMainHeadOrigin,
     EXPORT_ARTIFACT_COMMIT: exportArtifactCommit,
     SOURCE_WORKING_TREE: sourceWorkingTree,
+    TRAFFIC_SOURCE_MODE: trafficSourceMode,
   };
 
   function substitute(text) {

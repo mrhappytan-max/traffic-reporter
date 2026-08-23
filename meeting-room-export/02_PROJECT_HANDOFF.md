@@ -17,11 +17,11 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | dff9ea746a31f7a585f14d55ad045b6106ff58e5 |
-| Snapshot generated at | 2026-08-23T06:08:26.834Z |
-| Source working tree | clean |
+| Source main HEAD | e351a4b61f12da0df04886b5d1434d2ca7638744 |
+| Snapshot generated at | 2026-08-23T06:10:40.361Z |
+| Source working tree | dirty (2 changed source file(s)) |
 | Current version | V1.8.7.7 |
-| Current phase | Maintenance — awaiting real-world confirmation of latest release |
+| Current phase | TDX QUOTA PROTECTION — 暫時 PBS-ONLY MODE（TDX 額度用盡，非故障；TDX 程式碼完整保留） |
 
 `Source main HEAD` 是這份快照所描述的正式 main commit（取自 `origin/main`），**不是**包含本檔案自己的那個 commit——兩者刻意分開，避免 Git 自我參照循環。詳見 `SYSTEM_STATE.json` 的 `sourceMainHead` / `exportArtifactCommit`。
 
@@ -80,7 +80,7 @@ TDX（國道/省道 RoadEvent）+ PBS（公路總局，經 Windows Relay + VPC S
 
 ## Current known issues
 
-- **Known blocker**：V1.8.7.7 real-world confirmation pending — see 07_KNOWN_ISSUES.md
+- **Known blocker**：TDX API 額度用盡 → TRAFFIC_SOURCE_MODE=PBS_ONLY，Cron 路徑 TDX 呼叫為 0，PBS 正常。還原程序見 07_KNOWN_ISSUES.md
 - **Real-world confirmation**：REAL_WORLD_CONFIRMATION_PENDING
 - **既有測試失敗基準線**：`npm test` 有 3 項已知、與功能無關的失敗（2 項 `pbs-relay/tests/*`，1 項 wall-clock 相依的 `healthQuotaDashboard`）。出現這 3 項以外的新失敗才算真正回歸。
 - **Dashboard-only 事實永遠無法從程式驗證**：Production branch 指向、真實 Cron 排程、Secret 值是否正確、Build 歷史——只能由真人開 Dashboard 確認。
@@ -114,7 +114,7 @@ TDX（國道/省道 RoadEvent）+ PBS（公路總局，經 Windows Relay + VPC S
 
 ## Next action
 
-Await next task assignment, or real-world confirmation evidence for the latest release
+等待真人確認 TDX 額度恢復後下令 RESTORE TDX（TRAFFIC_SOURCE_MODE 改回 ALL 並 push 到 main）
 
 ## Full history location
 
