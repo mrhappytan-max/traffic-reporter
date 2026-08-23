@@ -33,10 +33,10 @@
 - **實際被關掉的三個點**：
   1. `scheduled.js` — 新狀態 `tdxScheduleState='disabled-quota'`，走既有的 skipped-tick 路徑（`buildSkippedTdxSummary`）。刻意用獨立狀態值，避免被誤讀成 TDX 故障或一般跳過的奇數分鐘 tick。
   2. `tdx/auth.js` — 關閉時**拒發 TDX token**。所有 TDX 呼叫都需要 token，所以「零 TDX 呼叫」是程式層保證，不是靠每個呼叫端記得檢查旗標。丟 `TdxAuthError`，呼叫端本來就當成「這輪沒有 token」處理。
-  3. `cctv/dynamicCollage.js` 的 `prepareCctvImageForEvent` — 第一行就回 `{ ok:false, reason:'tdx-cctv-disabled' }`。兩條 CCTV 路徑（LINE 推播與 Shared Feed top-up）都經過這裡，所以一個閘門就夠，且在任何 KV 讀取／影格抓取／R2 寫入之前。
-- **重要事實（未來判讀用）**：CCTV **影格**來自 `*.freeway.gov.tw`，**不是 TDX**；播報路徑的攝影機 metadata 讀的是 KV 快取，也不呼叫 TDX。**所以 CCTV 補圖原本就已經是 0 次 TDX 呼叫**。之所以仍然關掉，是因為施工令要求降級為 text-only，且該快取是 TDX 衍生資料。
+  3. ~~`cctv/dynamicCollage.js`~~ — **2026-08-23 已解除**，見下方「CCTV 重新開啟」。CCTV 從來就不消耗 TDX 額度，關掉它一點額度都沒省下。
+- **重要事實（未來判讀用）**：CCTV **影格**來自 `*.freeway.gov.tw`，**不是 TDX**；播報路徑的攝影機 metadata 讀的是 KV 快取，也不呼叫 TDX。**所以 CCTV 補圖原本就已經是 0 次 TDX 呼叫**。
 - **降級行為**：PBS 事件沒有 CCTV 時，仍正常產出完整文字產品；Cron 不會失敗，Shared Feed 不會失敗。沒有任何 CCTV 問題可以擋住 PBS 播報。
-- **可觀測性**：`/health` 有 `sourceMode` 區塊；每輪 log 一行 `[cron][source-mode] trafficSourceMode=… tdxRuntimeEnabled=… tdxCctvEnabled=… pbsEnabled=… reason="…"`。reason 直接寫明是額度暫停並指向還原入口。
+- **可觀測性**：`/health` 有 `sourceMode` 區塊；每輪 log 一行 `[cron][source-mode] trafficSourceMode=… tdxRuntimeEnabled=… cctvImageEnabled=… tdxCctvMetadataRefreshEnabled=… pbsEnabled=… linePushPolicy=… dynamicShoulderPush=…`。
 - **旗標語意**：只有精確值 `PBS_ONLY` 會關閉 TDX；缺漏或無法辨識的值一律解析為 `ALL`（正常全來源），所以少設一個 var 永遠不會把 production 餓死。無法辨識的非空值會大聲 log 警告——因為相反的失敗（打錯字導致繼續燒額度）才是會花錢的那個。
 - **已知限制**：`/debug/tdx`、`/admin/cctv-*` 這些**人工** admin 端點仍然存在。它們現在會因為拿不到 token 而失敗（不會燒額度），但這是副作用而非設計目標；本輪只保證「Cron／scheduled pipeline 的 TDX 呼叫為 0」。
 - **還原條件與方式**：見下方「TDX 還原程序」。
@@ -47,7 +47,7 @@
 
 **已完成**
 
-- 工程修改完成：`TRAFFIC_SOURCE_MODE=PBS_ONLY` 三點閘門（`scheduled.js` / `tdx/auth.js` / `cctv/dynamicCollage.js`），10 項專用回歸測試全數通過。
+- 工程修改完成：`TRAFFIC_SOURCE_MODE=PBS_ONLY` 閘門，10 項專用回歸測試全數通過。
 - 已 push `main` 並觸發 Cloudflare Workers Builds 正式部署。
 - 全套測試 998 項 / 18 項已知失敗，與乾淨 checkout 相同，非回歸。
 - Google Drive 工程記憶已完成 Delta Sync（canonical 10/10，missing 0，duplicate 0）。
