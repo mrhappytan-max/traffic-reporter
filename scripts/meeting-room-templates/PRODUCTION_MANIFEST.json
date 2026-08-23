@@ -25,8 +25,11 @@
       { "binding": "PBS_RELAY_WINDOWS", "serviceId": "01a008ab-4cc4-7c22-a747-4e27cdcc83c8", "source": "wrangler.jsonc" }
     ],
     "vars": {
-      "PUBLIC_BASE_URL": "https://traffic-reporter.mr-happytan.workers.dev"
+      "PUBLIC_BASE_URL": "https://traffic-reporter.mr-happytan.workers.dev",
+      "TRAFFIC_SOURCE_MODE": "{{TRAFFIC_SOURCE_MODE}}",
+      "LINE_PUSH_POLICY": "{{LINE_PUSH_POLICY}}"
     },
+    "varsNote": "These are the runtime flags that decide what Production actually does, so they belong in the manifest rather than only in wrangler.jsonc. TRAFFIC_SOURCE_MODE=PBS_ONLY stops every TDX API call; LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY narrows proactive LINE push to accidents. Both are substituted from wrangler.jsonc by the export script, never hardcoded here.",
     "secretsDeclaredExternally": [
       "TDX_CLIENT_ID",
       "TDX_CLIENT_SECRET",
