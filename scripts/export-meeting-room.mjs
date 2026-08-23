@@ -454,23 +454,25 @@ function main() {
   const currentPhase = safe(
     process.env.EXPORT_CURRENT_PHASE,
     pbsOnly
-      ? 'TDX QUOTA PROTECTION — 暫時 PBS-ONLY MODE（TDX 額度用盡，非故障；TDX 程式碼完整保留）'
+      ? 'TDX QUOTA PROTECTION — PBS-ONLY MODE｜已封版 SEALED（TDX 額度用盡，非故障；TDX 程式碼完整保留）'
       : 'Maintenance — awaiting real-world confirmation of latest release'
   );
   const currentTask = safe(
     process.env.EXPORT_CURRENT_TASK,
-    pbsOnly ? 'PBS-only mode 已部署生效；等待 TDX 額度恢復' : 'None in progress — awaiting next assignment'
+    pbsOnly
+      ? '無進行中工作。TDX_QUOTA_PROTECTION_PBS_ONLY = SEALED（程式、測試、部署、雲端工程記憶皆已完成收尾）'
+      : 'None in progress — awaiting next assignment'
   );
   const knownBlocker = safe(
     process.env.EXPORT_KNOWN_BLOCKER,
     pbsOnly
-      ? 'TDX API 額度用盡 → TRAFFIC_SOURCE_MODE=PBS_ONLY，Cron 路徑 TDX 呼叫為 0，PBS 正常。還原程序見 07_KNOWN_ISSUES.md'
+      ? '無 blocker。TDX API 額度用盡屬外部條件（非本專案缺陷）：TRAFFIC_SOURCE_MODE=PBS_ONLY，Cron 路徑 TDX 呼叫為 0，PBS 正常。還原程序見 07_KNOWN_ISSUES.md'
       : `${latestCompletedVersion} real-world confirmation pending — see 07_KNOWN_ISSUES.md`
   );
   const nextAction = safe(
     process.env.EXPORT_NEXT_ACTION,
     pbsOnly
-      ? '等待真人確認 TDX 額度恢復後下令 RESTORE TDX（TRAFFIC_SOURCE_MODE 改回 ALL 並 push 到 main）'
+      ? '無待辦。日後真人確認 TDX 額度恢復時，直接套用 07_KNOWN_ISSUES.md 既有的 RESTORE TDX 程序即可（不需重新設計，不需新版本）'
       : 'Await next task assignment, or real-world confirmation evidence for the latest release'
   );
   const productionStatus = safe(process.env.EXPORT_PRODUCTION_STATUS, 'DEPLOYED');

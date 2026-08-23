@@ -41,6 +41,28 @@
 - **已知限制**：`/debug/tdx`、`/admin/cctv-*` 這些**人工** admin 端點仍然存在。它們現在會因為拿不到 token 而失敗（不會燒額度），但這是副作用而非設計目標；本輪只保證「Cron／scheduled pipeline 的 TDX 呼叫為 0」。
 - **還原條件與方式**：見下方「TDX 還原程序」。
 
+## 封版紀錄｜TDX_QUOTA_PROTECTION_PBS_ONLY = SEALED（2026-08-23）
+
+本任務已由真人正式封版。**下一個 Agent 不需要接手、不需要補做、不需要重新部署。**
+
+**已完成**
+
+- 工程修改完成：`TRAFFIC_SOURCE_MODE=PBS_ONLY` 三點閘門（`scheduled.js` / `tdx/auth.js` / `cctv/dynamicCollage.js`），10 項專用回歸測試全數通過。
+- 已 push `main` 並觸發 Cloudflare Workers Builds 正式部署。
+- 全套測試 998 項 / 18 項已知失敗，與乾淨 checkout 相同，非回歸。
+- Google Drive 工程記憶已完成 Delta Sync（canonical 10/10，missing 0，duplicate 0）。
+
+**驗證邊界（重要，不要誤讀成待辦）**
+
+- 執行本輪的沙盒 session 對 Production 網域的 outbound HTTPS 被環境 egress proxy 回 403，因此 `npm run verify:production` 結果為 `PASS_NETWORK_VERIFICATION_BLOCKED`。
+- **未執行**真人 `/health` 實機確認（亦即「線上 `trafficSourceMode` 確實為 `PBS_ONLY`」這件事，在本 repo 內沒有一手證據）。
+- 真人已明確裁示：**此項不構成 blocker，也不影響封版**。
+- 未來若有需要，可另行查證（開 `/health` 看 `sourceMode` 區塊即可），但那是選擇性的補充證據，不是未完成的工作。
+
+**這一段之所以寫得這麼細**：是為了讓未來的 Agent 能分辨「沒有證據」與「有反面證據」。目前狀態是前者。若日後真的取得反面證據（`/health` 顯示 `trafficSourceMode` 不是 `PBS_ONLY`），那是**新事故**，要重新走 root cause 流程，不要當成本輪沒做完。
+
+**額度恢復時**：不需要新版本、不需要重新設計，直接套用下方既有的 RESTORE TDX 程序。
+
 ## TDX 還原程序（RESTORE TDX）
 
 **前提**：真人確認 TDX 額度確實已恢復。

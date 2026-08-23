@@ -19,6 +19,18 @@
     "workingTreeNote": "sourceWorkingTree excludes meeting-room-export/, which this generator dirties by definition; it answers 'is the source tree clean', not 'did the export just write files'."
   },
   "trafficSourceMode": "{{TRAFFIC_SOURCE_MODE}}",
+  "taskSeal": {
+    "task": "TDX_QUOTA_PROTECTION_PBS_ONLY",
+    "status": "SEALED",
+    "sealedAt": "2026-08-23",
+    "sealedBy": "human directive (路況工程部 最終封存令)",
+    "workComplete": "code, tests, push to main, Cloudflare Workers Builds deploy, and Google Drive engineering-memory delta sync are all done",
+    "productionHealthCheckPerformed": false,
+    "productionHealthCheckIsBlocker": false,
+    "productionVerificationNote": "The sandbox session that shipped this had no outbound HTTPS to the Production domain (environment egress proxy returns 403), so verify:production reported PASS_NETWORK_VERIFICATION_BLOCKED and no human /health check was run. The human explicitly ruled this is NOT a blocker and does NOT affect the seal. Absence of evidence, not contrary evidence: if a future /health ever shows trafficSourceMode is not PBS_ONLY, treat that as a NEW incident, not as unfinished work from this task.",
+    "restoreProcedure": "07_KNOWN_ISSUES.md -> RESTORE TDX (existing procedure; no new version or redesign needed when TDX quota returns)",
+    "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
+  },
   "version": {
     "packageJsonVersion": "{{PACKAGE_VERSION}}",
     "latestCompleted": "{{LATEST_COMPLETED_VERSION}}"
