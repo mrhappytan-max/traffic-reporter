@@ -48,7 +48,7 @@
     "note": "Kept, never removed. Used only when the Google Drive Connector is unavailable to the executing Claude session."
   },
   "lastSync": {
-    "status": "PASS",
+    "status": "success",
     "syncMode": "delta",
     "fullVerifyReason": null,
     "syncedAt": "2026-08-23T06:26:00Z",
@@ -131,6 +131,7 @@
         "driveFileId": "1lWWK53PCLBz1BvfAaqOLF3Y_hVKbChI3",
         "action": "created-and-verified"
       }
-    ]
+    ],
+    "statusNote": "The delta planner requires exactly \"success\" (scripts/meeting-room-delta.mjs, assessManifestEvidence). A previous run recorded \"PASS\" here, which the planner correctly treated as untrustworthy evidence and escalated to a full verify. The sync itself had genuinely succeeded and was byte-verified; only the label was wrong. Keep this value as \"success\" — never widen the planner to accept other spellings, because that guard is what stops an unverified manifest from being trusted."
   }
 }

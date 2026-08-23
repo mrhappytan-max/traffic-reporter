@@ -18,7 +18,7 @@
 | 欄位 | 值 |
 |---|---|
 | Source main HEAD | b26b32335e4ef5934584b41c07fb6d2b4ecccee9 |
-| Snapshot generated at | 2026-08-23T07:01:44.215Z |
+| Snapshot generated at | 2026-08-23T07:02:09.503Z |
 | Source working tree | clean |
 | Current version | V1.8.7.7 |
 | Current phase | TDX QUOTA PROTECTION — PBS-ONLY MODE｜已封版 SEALED（TDX 額度用盡，非故障；TDX 程式碼完整保留） |
