@@ -17,8 +17,6 @@
 若出現這 18 項以外的新失敗，才視為真正回歸。舊版本文件曾記載「1153 項中 3 項失敗」，
 該數字已過期，以本節實測數字為準。
 
-若未來 `npm test` 出現這 3 項以外的新失敗，視為真正的回歸，需要查修，不可歸類到本清單。
-
 ## V1.8.7.7 — Real-world Confirmation Pending（目前最重要的未結案項目）
 
 **狀態：`AWAITING_REAL_WORLD_CONFIRMATION`。** CCTV 灰色破圖修復（`extractFirstJpegFrame` marker-aware 解析）已完成、已測試（12 項新測試 pass，含修復前失敗/修復後通過的雙向驗證）、已 merge main（`a3d6609`）、已 deploy（push 觸發 Cloudflare auto-deploy）、已封版（`8e10a7a`）。**尚未**取得下一筆真實動態路肩事件的 LINE 圖片正常顯示的現場證據——執行本輪修復的 session 本身無 Production 網路存取權限，無法自行驗證。
