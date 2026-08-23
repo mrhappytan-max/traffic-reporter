@@ -268,3 +268,56 @@ Net effect: re-running `finalize:release` without changing anything produces zer
 | Tests | `test/meetingRoomDeltaSync.test.js` |
 | Agent-facing rule | `AGENTS.md` |
 
+---
+
+## 39. TDX 額度用盡 — 暫時 PBS-ONLY MODE（2026-08-23）
+
+### 情況
+
+TDX API 額度用盡。繼續呼叫只會產生失敗請求，拿不到資料。本輪把 traffic-reporter 暫時切成單一來源：警廣 PBS。
+
+**這是暫停，不是移除。** 沒有刪除任何 TDX module、CCTV module、formatter、credential、KV、R2。
+
+### 做法：一個 runtime gate，三個閘門點
+
+開關是 `wrangler.jsonc` 的 `TRAFFIC_SOURCE_MODE`（目前 `PBS_ONLY`），解析邏輯在 `src/traffic/sourceMode.js`。
+
+| 閘門點 | 做什麼 | 為什麼選在這裡 |
+|---|---|---|
+| `traffic/scheduled.js` | 新狀態 `tdxScheduleState='disabled-quota'`，走既有 skipped-tick 路徑 | 不必發明第二條「不要抓」的分支；那條路徑每個 PBS-only tick 都在跑，下游（health／usage ledger／PBS cross-source dedup）全都已經會處理 |
+| `tdx/auth.js` | 關閉時拒發 TDX token | 所有 TDX 呼叫都要 token，所以「零呼叫」變成程式性質，而不是靠每個呼叫端記得檢查旗標。未來有人新增忘了加閘門的路徑，會 fail closed |
+| `cctv/dynamicCollage.js` `prepareCctvImageForEvent` | 第一行回 `{ok:false, reason:'tdx-cctv-disabled'}` | 兩條 CCTV 路徑都經過這個函式，一個閘門覆蓋兩者，且在任何 I/O 之前。沿用既有 `{ok:false,reason}` 形狀，呼叫端本來就當成 text-only 處理 |
+
+### 一個容易誤判的事實
+
+**CCTV 影格來自 `*.freeway.gov.tw`，不是 TDX**；播報路徑的攝影機 metadata 讀 KV 快取，也不呼叫 TDX。所以 **CCTV 補圖原本就已經是 0 次 TDX 呼叫**。仍然關掉，是因為施工令要求 text-only 降級，且該快取是 TDX 衍生資料——不是因為它在燒額度。未來評估額度時不要把 CCTV 算進去。
+
+### 旗標語意（刻意不對稱）
+
+只有精確值 `PBS_ONLY` 關閉 TDX；缺漏／無法辨識一律 `ALL`。理由：少設一個 var 不該把 production 餓死。但無法辨識的非空值會大聲 log 警告，因為相反的失敗（打錯字 → 繼續燒額度）才是有代價的那個。
+
+### 降級保證
+
+PBS 事件沒有 CCTV 時仍產出完整文字產品；Cron 不失敗；Shared Feed 不失敗。任何 CCTV 問題都不得擋住 PBS 播報——已由測試釘住。
+
+### 可觀測性
+
+`/health` 有 `sourceMode` 區塊；每輪 log `[cron][source-mode] trafficSourceMode=… tdxRuntimeEnabled=… tdxCctvEnabled=… pbsEnabled=… reason="…"`，reason 明講是額度暫停並指向還原入口。目的是讓下一個人一眼看出「刻意暫停」而不是「壞了」。
+
+### 測試
+
+`test/tdxQuotaPbsOnlyMode.test.js`，10 項。用真的 fetch recorder 斷言 PBS-only 模式對 `tdx.transportdata.tw` 的呼叫數為 0（含 OAuth token）；PBS 仍跑且該輪不 throw；CCTV 降級時完全沒有網路 I/O；Shared Feed contract 形狀不變且不會產生新的 `freeway:`／`highway:` 產品；以及 **模式 ALL 仍然會抓 TDX**——還原路徑被證明過，不是只用嘴巴保證。
+
+### 已知限制
+
+`/debug/tdx`、`/admin/cctv-*` 這些**人工** admin 端點仍在，現在會因拿不到 token 而失敗（不燒額度）。本輪只保證 Cron／scheduled pipeline 的 TDX 呼叫為 0。
+
+### 還原（RESTORE TDX）
+
+1. 真人確認額度已恢復。
+2. `TRAFFIC_SOURCE_MODE` 改回 `"ALL"`（或刪掉該 var）。
+3. push 到 main，Workers Builds 自動部署。
+4. 下一個分鐘 00/20/40 tick 自動恢復；`tdxSchedule.js` 從未被本次修改碰過。
+
+不需要重寫任何 TDX 功能，沒有第二個開關。權威說明在 `src/traffic/sourceMode.js` module comment。
+
