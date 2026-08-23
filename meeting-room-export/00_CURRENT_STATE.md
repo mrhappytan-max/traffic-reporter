@@ -10,9 +10,9 @@
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
 | Current Version | V1.8.7.7 |
-| Source main HEAD | e351a4b61f12da0df04886b5d1434d2ca7638744 |
+| Source main HEAD | d457e552fd3d43c1afbc1e210f5139a5ea3665a6 |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty (2 changed source file(s)) |
+| Source working tree | clean |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
 | Current Phase | TDX QUOTA PROTECTION — 暫時 PBS-ONLY MODE（TDX 額度用盡，非故障；TDX 程式碼完整保留） |
@@ -22,7 +22,7 @@
 | Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
 | Next Action | 等待真人確認 TDX 額度恢復後下令 RESTORE TDX（TRAFFIC_SOURCE_MODE 改回 ALL 並 push 到 main） |
-| Export Generated At | 2026-08-23T06:10:40.361Z |
+| Export Generated At | 2026-08-23T06:15:26.532Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## 我能改什麼／不能改什麼（一句話版）

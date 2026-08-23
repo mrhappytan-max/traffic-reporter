@@ -10,10 +10,10 @@
     "rule": "traffic-reporter is sole Shared Traffic Feed content authority; consumers must never re-judge completedProducts"
   },
   "git": {
-    "sourceMainHead": "e351a4b61f12da0df04886b5d1434d2ca7638744",
+    "sourceMainHead": "d457e552fd3d43c1afbc1e210f5139a5ea3665a6",
     "sourceMainHeadResolvedFrom": "origin/main",
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
-    "sourceWorkingTree": "dirty (2 changed source file(s))",
+    "sourceWorkingTree": "clean",
     "selfReferenceNote": "sourceMainHead is the official main commit this snapshot DESCRIBES; exportArtifactCommit is the commit that CONTAINS this artifact and is intentionally never equal to it. Requiring the two to match would create a Git self-reference loop (every export changes the file, which changes the commit, which invalidates the recorded head). sourceMainHead is read from origin/main and is therefore stable across re-runs and across whichever branch the export was generated on.",
     "checkoutNote": "The transient checkout (branch/HEAD/date) this export happened to run from is deliberately NOT recorded here. It changes on every commit and would make every release look like a content change, defeating delta sync; it also says nothing about the snapshot itself. The snapshot is identified by sourceMainHead alone. Local sync evidence in .engineering/ still records the checkout for auditing.",
     "workingTreeNote": "sourceWorkingTree excludes meeting-room-export/, which this generator dirties by definition; it answers 'is the source tree clean', not 'did the export just write files'."
@@ -43,8 +43,8 @@
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-08-23T06:10:40.361Z",
-    "sourceMainHead": "e351a4b61f12da0df04886b5d1434d2ca7638744",
+    "generatedAt": "2026-08-23T06:15:26.532Z",
+    "sourceMainHead": "d457e552fd3d43c1afbc1e210f5139a5ea3665a6",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
     "historyDir": "_history"
