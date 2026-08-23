@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "project": "traffic-reporter",
-  "verifiedFromRepoAt": "2026-08-23T07:59:09.778Z",
+  "verifiedFromRepoAt": "2026-08-23T08:01:16.663Z",
   "verifiedFromCommit": "21c1a42df9ddf239cc7510842057010b683a1302",
   "note": "Everything in this file is derived from wrangler.jsonc/src/index.js in THIS repo checkout, verifiable by any future reader by re-running the export script. Fields the repo cannot itself verify (real Cloudflare Dashboard state) are explicitly marked unverified, never guessed.",
   "worker": {
@@ -25,8 +25,11 @@
       { "binding": "PBS_RELAY_WINDOWS", "serviceId": "01a008ab-4cc4-7c22-a747-4e27cdcc83c8", "source": "wrangler.jsonc" }
     ],
     "vars": {
-      "PUBLIC_BASE_URL": "https://traffic-reporter.mr-happytan.workers.dev"
+      "PUBLIC_BASE_URL": "https://traffic-reporter.mr-happytan.workers.dev",
+      "TRAFFIC_SOURCE_MODE": "PBS_ONLY",
+      "LINE_PUSH_POLICY": "MAJOR_ACCIDENT_ONLY"
     },
+    "varsNote": "These are the runtime flags that decide what Production actually does, so they belong in the manifest rather than only in wrangler.jsonc. TRAFFIC_SOURCE_MODE=PBS_ONLY stops every TDX API call; LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY narrows proactive LINE push to accidents. Both are substituted from wrangler.jsonc by the export script, never hardcoded here.",
     "secretsDeclaredExternally": [
       "TDX_CLIENT_ID",
       "TDX_CLIENT_SECRET",
