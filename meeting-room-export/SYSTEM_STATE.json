@@ -43,7 +43,7 @@
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-08-23T06:15:26.532Z",
+    "generatedAt": "2026-08-23T06:15:44.596Z",
     "sourceMainHead": "d457e552fd3d43c1afbc1e210f5139a5ea3665a6",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
