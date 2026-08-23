@@ -18,7 +18,7 @@
 | 欄位 | 值 |
 |---|---|
 | Source main HEAD | d457e552fd3d43c1afbc1e210f5139a5ea3665a6 |
-| Snapshot generated at | 2026-08-23T06:19:57.634Z |
+| Snapshot generated at | 2026-08-23T06:23:23.431Z |
 | Source working tree | clean |
 | Current version | V1.8.7.7 |
 | Current phase | TDX QUOTA PROTECTION — 暫時 PBS-ONLY MODE（TDX 額度用盡，非故障；TDX 程式碼完整保留） |
@@ -82,7 +82,7 @@ TDX（國道/省道 RoadEvent）+ PBS（公路總局，經 Windows Relay + VPC S
 
 - **Known blocker**：TDX API 額度用盡 → TRAFFIC_SOURCE_MODE=PBS_ONLY，Cron 路徑 TDX 呼叫為 0，PBS 正常。還原程序見 07_KNOWN_ISSUES.md
 - **Real-world confirmation**：REAL_WORLD_CONFIRMATION_PENDING
-- **既有測試失敗基準線**：`npm test` 有 3 項已知、與功能無關的失敗（2 項 `pbs-relay/tests/*`，1 項 wall-clock 相依的 `healthQuotaDashboard`）。出現這 3 項以外的新失敗才算真正回歸。
+- **既有測試失敗基準線**：`npm test` 共 998 項，其中 18 項為已知、與功能無關的失敗（2 項 `pbs-relay/tests/*`，14 項 Workers-only `.wasm` codec 相依的 CCTV/JPEG，2 項 wall-clock 相依的 `healthQuotaDashboard`）。出現這 18 項以外的新失敗才算真正回歸；逐項清單見 `07_KNOWN_ISSUES.md`。
 - **Dashboard-only 事實永遠無法從程式驗證**：Production branch 指向、真實 Cron 排程、Secret 值是否正確、Build 歷史——只能由真人開 Dashboard 確認。
 - **沙盒無 Production 網路**：這類 session 對 Production 網域的 outbound HTTPS 一律被 egress proxy 擋（403）。需要即時 Production 證據的任務只能誠實標記「無法證明」，不得用推測補齊。
 
