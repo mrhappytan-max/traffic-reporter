@@ -10,19 +10,19 @@
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
 | Current Version | V1.8.7.7 |
-| Source main HEAD | b26b32335e4ef5934584b41c07fb6d2b4ecccee9 |
+| Source main HEAD | 21c1a42df9ddf239cc7510842057010b683a1302 |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | clean |
+| Source working tree | dirty (3 changed source file(s)) |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
-| Current Phase | TDX QUOTA PROTECTION — PBS-ONLY MODE｜已封版 SEALED（TDX 額度用盡，非故障；TDX 程式碼完整保留） |
-| Current Task | 無進行中工作。TDX_QUOTA_PROTECTION_PBS_ONLY = SEALED（程式、測試、部署、雲端工程記憶皆已完成收尾） |
+| Current Phase | PBS-ONLY + 重大事故限定 LINE Push｜已封版 SEALED（TDX 額度用盡；LINE Push 額度觀察中。TDX／機動路肩程式碼完整保留） |
+| Current Task | 無進行中工作。PBS_CCTV_MAJOR_ACCIDENT_ONLY = SEALED。觀察中（非工作項）：一個月後檢視實際 LINE 主動 Push 量，再決定是否收緊為 impact-only |
 | Latest Completed Version | V1.8.7.7 |
-| Known Blocker | 無 blocker。TDX API 額度用盡屬外部條件（非本專案缺陷）：TRAFFIC_SOURCE_MODE=PBS_ONLY，Cron 路徑 TDX 呼叫為 0，PBS 正常。還原程序見 07_KNOWN_ISSUES.md |
+| Known Blocker | 無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md |
 | Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 無待辦。日後真人確認 TDX 額度恢復時，直接套用 07_KNOWN_ISSUES.md 既有的 RESTORE TDX 程序即可（不需重新設計，不需新版本） |
-| Export Generated At | 2026-08-23T07:02:09.503Z |
+| Next Action | 無待辦。TDX 額度恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX；一個月後 → 依 ineligibleByReason 實際數據決定是否收緊主動播報政策（皆為既有程序，不需重新設計） |
+| Export Generated At | 2026-08-23T07:58:59.578Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## 我能改什麼／不能改什麼（一句話版）

@@ -364,6 +364,18 @@ function writeHistoryChunks() {
 // the memory honest by construction: when the flag flips back to ALL the
 // wording reverts on its own, so it can never be left claiming a pause
 // that has already ended.
+function readLinePushPolicy() {
+  // Same read-the-deployed-config approach as readTrafficSourceMode: the
+  // memory must describe what is actually deployed, never a hardcoded guess.
+  try {
+    const text = readFileSync(join(ROOT, 'wrangler.jsonc'), 'utf8');
+    const match = text.match(/"LINE_PUSH_POLICY"\s*:\s*"([^"]+)"/);
+    return match ? match[1] : 'MAJOR_ACCIDENT_ONLY';
+  } catch {
+    return 'MAJOR_ACCIDENT_ONLY';
+  }
+}
+
 function readTrafficSourceMode() {
   try {
     const raw = readFileSync(join(ROOT, 'wrangler.jsonc'), 'utf8');
@@ -454,25 +466,25 @@ function main() {
   const currentPhase = safe(
     process.env.EXPORT_CURRENT_PHASE,
     pbsOnly
-      ? 'TDX QUOTA PROTECTION — PBS-ONLY MODE｜已封版 SEALED（TDX 額度用盡，非故障；TDX 程式碼完整保留）'
+      ? 'PBS-ONLY + 重大事故限定 LINE Push｜已封版 SEALED（TDX 額度用盡；LINE Push 額度觀察中。TDX／機動路肩程式碼完整保留）'
       : 'Maintenance — awaiting real-world confirmation of latest release'
   );
   const currentTask = safe(
     process.env.EXPORT_CURRENT_TASK,
     pbsOnly
-      ? '無進行中工作。TDX_QUOTA_PROTECTION_PBS_ONLY = SEALED（程式、測試、部署、雲端工程記憶皆已完成收尾）'
+      ? '無進行中工作。PBS_CCTV_MAJOR_ACCIDENT_ONLY = SEALED。觀察中（非工作項）：一個月後檢視實際 LINE 主動 Push 量，再決定是否收緊為 impact-only'
       : 'None in progress — awaiting next assignment'
   );
   const knownBlocker = safe(
     process.env.EXPORT_KNOWN_BLOCKER,
     pbsOnly
-      ? '無 blocker。TDX API 額度用盡屬外部條件（非本專案缺陷）：TRAFFIC_SOURCE_MODE=PBS_ONLY，Cron 路徑 TDX 呼叫為 0，PBS 正常。還原程序見 07_KNOWN_ISSUES.md'
+      ? '無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md'
       : `${latestCompletedVersion} real-world confirmation pending — see 07_KNOWN_ISSUES.md`
   );
   const nextAction = safe(
     process.env.EXPORT_NEXT_ACTION,
     pbsOnly
-      ? '無待辦。日後真人確認 TDX 額度恢復時，直接套用 07_KNOWN_ISSUES.md 既有的 RESTORE TDX 程序即可（不需重新設計，不需新版本）'
+      ? '無待辦。TDX 額度恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX；一個月後 → 依 ineligibleByReason 實際數據決定是否收緊主動播報政策（皆為既有程序，不需重新設計）'
       : 'Await next task assignment, or real-world confirmation evidence for the latest release'
   );
   const productionStatus = safe(process.env.EXPORT_PRODUCTION_STATUS, 'DEPLOYED');
@@ -503,6 +515,7 @@ function main() {
     EXPORT_ARTIFACT_COMMIT: exportArtifactCommit,
     SOURCE_WORKING_TREE: sourceWorkingTree,
     TRAFFIC_SOURCE_MODE: trafficSourceMode,
+    LINE_PUSH_POLICY: readLinePushPolicy(),
   };
 
   function substitute(text) {

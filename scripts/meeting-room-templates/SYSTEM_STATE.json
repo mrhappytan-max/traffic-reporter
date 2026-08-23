@@ -19,6 +19,23 @@
     "workingTreeNote": "sourceWorkingTree excludes meeting-room-export/, which this generator dirties by definition; it answers 'is the source tree clean', not 'did the export just write files'."
   },
   "trafficSourceMode": "{{TRAFFIC_SOURCE_MODE}}",
+  "broadcastMode": {
+    "TRAFFIC_SOURCE_MODE": "{{TRAFFIC_SOURCE_MODE}}",
+    "TDX_RUNTIME": "OFF",
+    "PBS": "ON",
+    "CCTV_IMAGE": "ON_WITHOUT_TDX_REFRESH",
+    "LINE_PUSH_POLICY": "{{LINE_PUSH_POLICY}}",
+    "DYNAMIC_SHOULDER_PUSH": "OFF",
+    "majorAccidentRule": "pushed <=> passes the V1.5 whitelist AND type === 'accident' AND not a dynamic-shoulder event. type==='accident' is the EXISTING classifier decision, not a new severity judgement.",
+    "whyNoSeverityKeywordGate": "No severity field exists in this codebase and PBS records carry no structured impact field, so requiring impact keywords would be a guess that errs toward withholding serious crashes. Impact evidence is RECORDED instead (policy-major-accident-* vs policy-accident-no-stated-impact) so the one-month review can tighten against real counts. Full reasoning: 07_KNOWN_ISSUES.md and src/traffic/broadcastPolicy.js.",
+    "whyTdxOff": "TDX API quota exhausted (2026-08-23). Deliberate pause, not a fault; no TDX code deleted.",
+    "whyShoulderPushPaused": "LINE OA monthly proactive-Push allowance is limited; 機動路肩 is high-frequency. Detection/parser/formatter/CCTV strategy all preserved — only the proactive product is withheld.",
+    "whyCctvAllowed": "CCTV costs ZERO TDX calls: metadata from the read-only KV cache, frames from *.freeway.gov.tw, and cctv/dynamicCollage.js imports neither tdx/auth.js nor tdx/client.js. Structural guarantee, not a promise.",
+    "cctvMustNotRefreshTdxMetadata": true,
+    "linePushObservationPurpose": "Observe one month of real proactive-Push volume under the accident-only policy, then tune with data.",
+    "tdxRestorePath": "07_KNOWN_ISSUES.md -> RESTORE TDX (set TRAFFIC_SOURCE_MODE=ALL and push)",
+    "pushPolicyRestorePath": "set LINE_PUSH_POLICY=ALL_ELIGIBLE in wrangler.jsonc and push"
+  },
   "taskSeal": {
     "task": "TDX_QUOTA_PROTECTION_PBS_ONLY",
     "status": "SEALED",
