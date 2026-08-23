@@ -52,23 +52,23 @@
     "syncMode": "delta",
     "fullVerifyReason": null,
     "statusNote": "The delta planner requires exactly \"success\" (scripts/meeting-room-delta.mjs, assessManifestEvidence). A previous run recorded \"PASS\" here, which the planner correctly treated as untrustworthy evidence and escalated to a full verify. The sync itself had genuinely succeeded and was byte-verified; only the label was wrong. Keep this value as \"success\" — never widen the planner to accept other spellings, because that guard is what stops an unverified manifest from being trusted.",
-    "syncedAt": "2026-08-23T08:12:00Z",
-    "sourceMainHead": "21c1a42df9ddf239cc7510842057010b683a1302",
-    "exportArtifactCommit": "8c3184945d08cdec66d43b82197c0f1d46a05bc1",
-    "exportGeneratedAt": "2026-08-23T08:07:28.119Z",
-    "archiveFolderId": "1l_kPy_mOid9UMdDiGxvCTHOvky_4ebQ1",
-    "archiveFolderName": "_archive_21c1a42",
-    "changedFilesSynced": 6,
-    "unchangedFilesSkipped": 4,
-    "release": "PBS_CCTV_MAJOR_ACCIDENT_ONLY",
-    "detail": "Accident-only LINE push policy + CCTV restore. 6 canonical files changed and were created and verified; 4 unchanged (01/04/05/06) received ZERO connector calls. Read-back byte diff PASS on SYSTEM_STATE.json. Superseded copies moved to _archive_21c1a42, never trashed. Canonical folder verified 10/10 present, 0 missing, 0 duplicate.",
-    "processNote": "This round needed several upload rounds because the export was regenerated after files had already been uploaded, so generatedAt moved and the uploaded copies went stale. Freeze the export (run it last, commit, confirm a clean tree) BEFORE uploading anything; otherwise every regeneration invalidates work already synced and fills the archive folder with near-identical drafts. One 07_KNOWN_ISSUES.md upload was also hand-transcribed and lost a clause — upload the file as generated, never a retyped copy.",
+    "syncedAt": "2026-08-23T15:18:00Z",
+    "sourceMainHead": "df3a94b5be79e24eb7f42d19001b90e0be778238",
+    "exportArtifactCommit": "e824e4ba3c9633cc1a00e65532ccadc0c986419e",
+    "exportGeneratedAt": "2026-08-23T15:13:24.567Z",
+    "archiveFolderId": "15OOOnPLMVPkO3nE8gVA5pWxrVsauZyJz",
+    "archiveFolderName": "_archive_df3a94b",
+    "changedFilesSynced": 5,
+    "unchangedFilesSkipped": 5,
+    "release": "LINE_PUSH_OBSERVATION = ACTIVE (documentation only)",
+    "detail": "Observation-period record only. NO product code, broadcast policy, Cron, TDX, CCTV or Consumer change, and NO redeploy — the sealed PBS_CCTV_MAJOR_ACCIDENT_ONLY release is untouched. 5 canonical files changed (07 and SYSTEM_STATE carry the new record; 00/02/PRODUCTION_MANIFEST moved only via the regenerated timestamp) and were created and verified; 5 unchanged received ZERO connector calls. Verified: byte size exact on all five, and Drive full-text independently confirms LINE_PUSH_OBSERVATION is present in the stored bytes of both SYSTEM_STATE.json and 07_KNOWN_ISSUES.md. Superseded copies moved to _archive_df3a94b, never trashed. Canonical 10/10, 0 missing, 0 duplicate.",
+    "processNote": "Freeze-before-upload was followed this round: all template edits first, ONE regeneration, commit, confirm a clean tree, only then upload. Result: 5 uploads for 5 changed files, no re-upload churn (contrast the previous round, which needed several passes).",
     "files": [
       {
         "name": "00_CURRENT_STATE.md",
-        "sha256": "46c60783f395819d91dea519efb8302c60463d56080805a9a3656a0387769006",
+        "sha256": "c94dfd429b4f099d6527bf6537fb41886835ac890a1ecaf48a531cc3e930d684",
         "bytes": 3325,
-        "driveFileId": "1j59SCnA0Vz-Fj6fW911yRLE1rQLc03_T",
+        "driveFileId": "1rbCOdpAzVbV_Z7aXARHGVw7GRo9mQYwI",
         "action": "created-and-verified"
       },
       {
@@ -80,9 +80,9 @@
       },
       {
         "name": "02_PROJECT_HANDOFF.md",
-        "sha256": "17966fc098a15b3873ee522c96d0696f65cb4f40560d829a3dc9d36a8327c1fb",
+        "sha256": "7d0ac5daabd03f886a4dbe90803fe45d94ee4f7f3a9d17cf85508d263407ddc6",
         "bytes": 8853,
-        "driveFileId": "1fD83euMSZAPopK_5lUE1uDj3PFT2w-N3",
+        "driveFileId": "1-J763Xsh4BUgH08lXXEoQrigMjY72wFg",
         "action": "created-and-verified"
       },
       {
@@ -90,7 +90,7 @@
         "sha256": "e3884b9393d717d85178a7ebda332b0eef2aed773dcca3dbc3c9913241d58bda",
         "bytes": 7711,
         "driveFileId": "10aQLhe6onRhx5IM14AXvSdwDWgRPqTw8",
-        "action": "created-and-verified"
+        "action": "skipped-unchanged-zero-connector-calls"
       },
       {
         "name": "04_PRODUCT_DECISIONS.md",
@@ -115,23 +115,23 @@
       },
       {
         "name": "07_KNOWN_ISSUES.md",
-        "sha256": "39b12ec2d2bb621c31f738445af7a20af6a8e328267f58f7a7d53310dee5cf3d",
-        "bytes": 14163,
-        "driveFileId": "1cU3IO_Fxrf7kfnRoOnTcAapToraR74in",
+        "sha256": "c46991aa8d1661f619de3ffef13279223a319066f882c8915539168337cf5172",
+        "bytes": 15954,
+        "driveFileId": "1VepJOt3EyAJEbMQNAlha7OPuSFrlpfyT",
         "action": "created-and-verified"
       },
       {
         "name": "SYSTEM_STATE.json",
-        "sha256": "e6263ae20a5668fb4ddafbdb95d4284cba6f14785028ccf6744ddbc0e78f5cfd",
-        "bytes": 7173,
-        "driveFileId": "1ypL0OmU_JEjMMHAG5ZS012Drm1Fj5Iwo",
+        "sha256": "6256f50c9d31a2dc7d541588366ffba9674d9419b587385e3e007b883e00b375",
+        "bytes": 9036,
+        "driveFileId": "1__JRu1zHpyAKHGCbpreCbpYAa9cpnu-V",
         "action": "created-and-verified"
       },
       {
         "name": "PRODUCTION_MANIFEST.json",
-        "sha256": "2a81599a6fc0ce37ca4300f54a66485e85cb5745c8bb56c4128a05546b9712d9",
+        "sha256": "219d08fc5e8d1159aa4f9a19940f7d1b5b8881ff8dee8fbfd5d16f3c09eceabb",
         "bytes": 4416,
-        "driveFileId": "1bLz1r44uUNTqpj-ky435ufUs0KxDANpu",
+        "driveFileId": "1id7P4Tdf-wBTFFVFVTvn7ksoH9vecl8U",
         "action": "created-and-verified"
       }
     ]
