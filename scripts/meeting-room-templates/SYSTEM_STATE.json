@@ -18,6 +18,7 @@
     "checkoutNote": "The transient checkout (branch/HEAD/date) this export happened to run from is deliberately NOT recorded here. It changes on every commit and would make every release look like a content change, defeating delta sync; it also says nothing about the snapshot itself. The snapshot is identified by sourceMainHead alone. Local sync evidence in .engineering/ still records the checkout for auditing.",
     "workingTreeNote": "sourceWorkingTree excludes meeting-room-export/, which this generator dirties by definition; it answers 'is the source tree clean', not 'did the export just write files'."
   },
+  "trafficSourceMode": "{{TRAFFIC_SOURCE_MODE}}",
   "version": {
     "packageJsonVersion": "{{PACKAGE_VERSION}}",
     "latestCompleted": "{{LATEST_COMPLETED_VERSION}}"
