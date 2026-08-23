@@ -82,7 +82,7 @@ TDX（國道/省道 RoadEvent）+ PBS（公路總局，經 Windows Relay + VPC S
 
 - **Known blocker**：{{KNOWN_BLOCKER}}
 - **Real-world confirmation**：{{REAL_WORLD_CONFIRMATION}}
-- **既有測試失敗基準線**：`npm test` 有 3 項已知、與功能無關的失敗（2 項 `pbs-relay/tests/*`，1 項 wall-clock 相依的 `healthQuotaDashboard`）。出現這 3 項以外的新失敗才算真正回歸。
+- **既有測試失敗基準線**：`npm test` 共 998 項，其中 18 項為已知、與功能無關的失敗（2 項 `pbs-relay/tests/*`，14 項 Workers-only `.wasm` codec 相依的 CCTV/JPEG，2 項 wall-clock 相依的 `healthQuotaDashboard`）。出現這 18 項以外的新失敗才算真正回歸；逐項清單見 `07_KNOWN_ISSUES.md`。
 - **Dashboard-only 事實永遠無法從程式驗證**：Production branch 指向、真實 Cron 排程、Secret 值是否正確、Build 歷史——只能由真人開 Dashboard 確認。
 - **沙盒無 Production 網路**：這類 session 對 Production 網域的 outbound HTTPS 一律被 egress proxy 擋（403）。需要即時 Production 證據的任務只能誠實標記「無法證明」，不得用推測補齊。
 
