@@ -36,6 +36,19 @@
     "tdxRestorePath": "07_KNOWN_ISSUES.md -> RESTORE TDX (set TRAFFIC_SOURCE_MODE=ALL and push)",
     "pushPolicyRestorePath": "set LINE_PUSH_POLICY=ALL_ELIGIBLE in wrangler.jsonc and push"
   },
+  "linePushObservation": {
+    "LINE_PUSH_OBSERVATION": "ACTIVE",
+    "START_DATE": "2026-08-23",
+    "POLICY": "MAJOR_ACCIDENT_ONLY",
+    "MONTHLY_LINE_LIMIT": 200,
+    "purpose": "Confirm whether the accident-only policy keeps proactive LINE pushes inside the OA plan's 200/month allowance. Observation only — this is NOT an open engineering task.",
+    "billingMonthCaveat": "The LINE allowance resets on a CALENDAR month. The observation started 2026-08-23, so 8/23-9/22 is NOT one billing month and its total must never be read as one. Any judgement has to be made per calendar month (Aug 23-31 is a partial month), against the real LINE console figures.",
+    "evidenceRule": "Only figures a human actually read from the LINE console count as observation evidence. This repo cannot see LINE usage; never estimate, extrapolate, or infer a push count from event counts or logs, and never record an unmeasured number here.",
+    "measurementSource": "LINE Official Account Manager console (human-read). No billing/metering system was built for this — that was explicitly out of scope.",
+    "decisionThreshold": "Well under 200 -> keep the current policy. At or over 200 -> a HUMAN opens a new task to study a stricter ROAD_IMPACT_ACCIDENT / lane-blockage-only rule. Claude must not tighten the policy on its own initiative.",
+    "supportingSignal": "broadcastPolicy.js already records, per pushed accident, whether the record stated real road impact (policy-major-accident-blocked-lanes / -impact-keyword vs policy-accident-no-stated-impact). Those counts are visible in ineligibleByReason and the Pipeline Trace, and are what a future tightening should be argued from — not guesswork.",
+    "readerNote": "OBSERVATION, not construction. Do not modify src/, the broadcast policy, Cron, TDX, CCTV, the Consumer, or redeploy because of this entry."
+  },
   "taskSeal": {
     "task": "TDX_QUOTA_PROTECTION_PBS_ONLY",
     "status": "SEALED",
