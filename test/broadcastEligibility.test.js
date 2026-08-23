@@ -82,7 +82,20 @@ async function withPushCapture(tdxFetch, run) {
 async function baseEnv() {
   const TRAFFIC_KV = kv();
   await setUserEnabled(TRAFFIC_KV, 'U1', true, new Date('2026-08-01T00:00:00+08:00'));
-  return { TDX_CLIENT_ID: 'id', TDX_CLIENT_SECRET: 'secret', LINE_CHANNEL_ACCESS_TOKEN: 'line-token', TRAFFIC_KV };
+    // 2026-08-23: this file pins broadcastRules.js's V1.5 eligibility
+    // whitelist, which the 重大事故限定 push policy did NOT change. The
+    // policy is a separate layer on top (broadcastPolicy.js), so these
+    // cases opt into ALL_ELIGIBLE to keep testing the whitelist itself
+    // rather than silently re-testing the policy. Production runs
+    // MAJOR_ACCIDENT_ONLY — that behaviour is pinned in
+    // test/pbsCctvMajorAccidentOnly.test.js.
+  return {
+    TDX_CLIENT_ID: 'id',
+    TDX_CLIENT_SECRET: 'secret',
+    LINE_CHANNEL_ACCESS_TOKEN: 'line-token',
+    LINE_PUSH_POLICY: 'ALL_ELIGIBLE',
+    TRAFFIC_KV,
+  };
 }
 
 afterEach(() => resetTdxTokenCache());

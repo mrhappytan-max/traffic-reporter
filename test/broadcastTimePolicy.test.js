@@ -36,7 +36,12 @@ function createMockKV(initial) {
 async function envWithSubscriber() {
   const TRAFFIC_KV = createMockKV();
   await setUserEnabled(TRAFFIC_KV, 'U1', true, new Date('2026-08-01T00:00:00+08:00'));
-  return { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV };
+    // This file pins the broadcast TIME/WINDOW policy, using a night
+    // construction event as its vehicle. The 重大事故限定 push policy
+    // (broadcastPolicy.js) withholds construction, which would mask the
+    // window behaviour under test — so opt into ALL_ELIGIBLE. Production
+    // policy behaviour is pinned in test/pbsCctvMajorAccidentOnly.test.js.
+  return { LINE_CHANNEL_ACCESS_TOKEN: 'tok', LINE_PUSH_POLICY: 'ALL_ELIGIBLE', TRAFFIC_KV };
 }
 
 function nightConstructionEvent(overrides = {}) {

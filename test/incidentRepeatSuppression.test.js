@@ -88,7 +88,19 @@ async function withPushCapture(tdxFetch, run) {
 async function envWithSubscriber() {
   const TRAFFIC_KV = kv();
   await setUserEnabled(TRAFFIC_KV, 'U1', true, new Date('2026-08-01T00:00:00+08:00'));
-  return { TDX_CLIENT_ID: 'id', TDX_CLIENT_SECRET: 'secret', LINE_CHANNEL_ACCESS_TOKEN: 'line-token', TRAFFIC_KV };
+    // This file pins incident-repeat SUPPRESSION mechanics, using an
+    // accident->closure escalation as its vehicle. The 重大事故限定 push
+    // policy (broadcastPolicy.js) would withhold the closure half, which
+    // would test the policy instead of the suppression rule — so opt into
+    // ALL_ELIGIBLE. Production policy behaviour is pinned in
+    // test/pbsCctvMajorAccidentOnly.test.js.
+  return {
+    TDX_CLIENT_ID: 'id',
+    TDX_CLIENT_SECRET: 'secret',
+    LINE_CHANNEL_ACCESS_TOKEN: 'line-token',
+    LINE_PUSH_POLICY: 'ALL_ELIGIBLE',
+    TRAFFIC_KV,
+  };
 }
 
 afterEach(() => resetTdxTokenCache());

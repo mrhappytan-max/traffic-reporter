@@ -51,6 +51,7 @@
 import { isWithinBroadcastHours } from './broadcastHours.js';
 import { computeEffectiveWindow, classifyEventTimeStatus } from './effectiveWindow.js';
 import { isBroadcastRelevant, getBroadcastEligibility } from './broadcastRules.js';
+import { getLinePushPolicyDecision } from './broadcastPolicy.js';
 import { readSubscriptions, persistSubscriptions } from './subscriptions.js';
 import {
   readNotifiedState,
@@ -365,7 +366,19 @@ export async function runLineBroadcast(
   // never a clone, all the way from allEvents.
   const eligibilityReasonByEvent = new Map();
   for (const event of allEvents) {
-    const { eligible, reason } = getBroadcastEligibility(event);
+    const base = getBroadcastEligibility(event);
+    // LINE PUSH POLICY (2026-08-23) — 重大事故限定. Layered strictly AFTER
+    // the V1.5 whitelist above and only ever SUBTRACTS from it, so this
+    // can never make something eligible that broadcastRules.js rejected.
+    // Applied at this one existing gate rather than inside
+    // broadcastRules.js so the shipped V1.5 rule (and every test that
+    // pins it) stays byte-for-byte unchanged, and so the policy's own
+    // reasons land in ineligibleByReason/the Pipeline Trace alongside the
+    // existing ones. See broadcastPolicy.js for the rule and its
+    // reversal switch.
+    const policy = base.eligible ? getLinePushPolicyDecision(event, env) : { allowed: true, reason: base.reason };
+    const eligible = base.eligible && policy.allowed;
+    const reason = base.eligible ? policy.reason : base.reason;
     eligibilityReasonByEvent.set(event, reason);
     // V1.8.6.7 (Pipeline Trace) — every event in allEvents gets a trace
     // input record right here, regardless of outcome; an ineligible

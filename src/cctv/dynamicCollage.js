@@ -147,7 +147,7 @@ import {
 import { resolveRoadKey, parseKM } from '../traffic/roadSectionLabel.js';
 import { publishCollageImage } from './publishedImage.js';
 import { readFreewayCctvMetadataCache } from './freewayCctvMetadataCache.js';
-import { isTdxCctvEnabled } from '../traffic/sourceMode.js';
+import { isCctvImageEnabled } from '../traffic/sourceMode.js';
 
 // See module comment: 國道一號 only, using the SAME Production-confirmed
 // roadId/roadNamePattern hsinchuCctvProbe.js has used since V1.7 — no
@@ -746,18 +746,23 @@ export async function prepareCctvImageForEvent(
   budgetMs = CCTV_PREPARE_BUDGET_MS,
   singleBudgetOverrides = {} // TEST-ONLY, single-strategy only — see prepareSingleCctvImageForEvent's own doc comment
 ) {
-  // TDX QUOTA PROTECTION (2026-08-23): one gate here covers BOTH CCTV
-  // entry points — the LINE push path and topUpSharedFeedCctvImages —
-  // because every real CCTV attempt funnels through this function. It is
-  // the first check on purpose: nothing below it reads KV, fetches a
-  // frame, or writes to R2.
+  // One gate here covers BOTH CCTV entry points — the LINE push path and
+  // topUpSharedFeedCctvImages — because every real CCTV attempt funnels
+  // through this function. It is the first check on purpose: nothing
+  // below it reads KV, fetches a frame, or writes to R2.
+  //
+  // 2026-08-23: this is no longer tied to the TDX quota gate. CCTV costs
+  // zero TDX calls (metadata comes from the KV cache, frames from
+  // freeway.gov.tw — see sourceMode.js's isCctvImageEnabled for the full
+  // evidence), so it stays ON in PBS-only mode. What remains here is a
+  // plain kill switch.
   //
   // Returning the established { ok:false, reason } shape rather than
   // throwing is what makes the degrade safe: every caller already treats
   // that as "text-only this tick", so a PBS event still produces its full
   // text product, the Cron run still succeeds, and the Shared Feed is
   // still written. No CCTV must ever be able to block a PBS broadcast.
-  if (!isTdxCctvEnabled(env)) return { ok: false, reason: 'tdx-cctv-disabled' };
+  if (!isCctvImageEnabled(env)) return { ok: false, reason: 'cctv-image-disabled' };
 
   const eligibility = resolveCctvEligibility(event);
   if (!eligibility.eligible) return { ok: false, reason: eligibility.reason };

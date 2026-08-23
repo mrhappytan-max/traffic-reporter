@@ -179,7 +179,13 @@ test('5b. PBS_ONLY: the scheduled run does NOT fail just because TDX is disabled
 
 // --- required check 6: no-CCTV fallback ---
 
-test('6. PBS_ONLY: CCTV prepare degrades to a safe text-only result, never a throw', async () => {
+// 2026-08-23: CCTV is no longer tied to the TDX gate (frames come from
+// freeway.gov.tw, metadata from the KV cache — see sourceMode.js's
+// isCctvImageEnabled), so PBS_ONLY alone no longer disables it. What this
+// check is really about — "a CCTV that cannot run degrades safely to
+// text-only instead of throwing" — is unchanged and still worth pinning,
+// so it now drives the degrade through the explicit kill switch.
+test('6. a disabled CCTV prepare degrades to a safe text-only result, never a throw', async () => {
   const event = {
     source: 'freeway',
     rawId: 'X-1',
@@ -190,13 +196,18 @@ test('6. PBS_ONLY: CCTV prepare degrades to a safe text-only result, never a thr
     endKM: '91K+800',
     text: '國道一號北向92K交通事故',
   };
-  const env = { TRAFFIC_SOURCE_MODE: SOURCE_MODE_PBS_ONLY, CCTV_IMAGES: {}, TRAFFIC_KV: kv() };
+  const env = {
+    TRAFFIC_SOURCE_MODE: SOURCE_MODE_PBS_ONLY,
+    CCTV_IMAGE_ENABLED: 'false',
+    CCTV_IMAGES: {},
+    TRAFFIC_KV: kv(),
+  };
 
   const hits = [];
   const out = await withFetch(hits, {}, () => prepareCctvImageForEvent(env, event, new Map()));
 
   assert.equal(out.ok, false);
-  assert.equal(out.reason, 'tdx-cctv-disabled');
+  assert.equal(out.reason, 'cctv-image-disabled');
   // The gate must short-circuit BEFORE any I/O: no frame fetch, no TDX call.
   assert.deepEqual(hits, [], 'a disabled CCTV prepare must perform no network I/O at all');
 });
@@ -265,9 +276,11 @@ test('resolver: only the exact PBS_ONLY value disables TDX; PBS is never gated',
   assert.equal(resolveTrafficSourceMode({ TRAFFIC_SOURCE_MODE: 'PBS-ONLY' }), SOURCE_MODE_ALL);
 
   assert.equal(isTdxRuntimeEnabled({ TRAFFIC_SOURCE_MODE: 'PBS_ONLY' }), false);
-  assert.equal(isTdxCctvEnabled({ TRAFFIC_SOURCE_MODE: 'PBS_ONLY' }), false);
   assert.equal(isTdxRuntimeEnabled({}), true);
+  // CCTV is deliberately NOT gated by this flag any more — see
+  // sourceMode.js's isCctvImageEnabled for the evidence (zero TDX calls).
   assert.equal(isTdxCctvEnabled({}), true);
+  assert.equal(isTdxCctvEnabled({ TRAFFIC_SOURCE_MODE: 'PBS_ONLY' }), true);
 
   // PBS can never be switched off by this module, under any value.
   for (const v of ['PBS_ONLY', 'ALL', 'nonsense', undefined]) {
@@ -279,7 +292,10 @@ test('observability: describeSourceMode states the pause reason, not just a bool
   const paused = describeSourceMode({ TRAFFIC_SOURCE_MODE: 'PBS_ONLY' });
   assert.equal(paused.trafficSourceMode, SOURCE_MODE_PBS_ONLY);
   assert.equal(paused.tdxRuntimeEnabled, false);
-  assert.equal(paused.tdxCctvEnabled, false);
+  // CCTV images stay ON while paused (they cost no TDX quota); what stays
+  // OFF is refilling the TDX-derived metadata cache from TDX.
+  assert.equal(paused.cctvImageEnabled, true);
+  assert.equal(paused.tdxCctvMetadataRefreshEnabled, false);
   assert.equal(paused.pbsEnabled, true);
   assert.match(paused.tdxPausedReason, /quota/i);
   assert.match(paused.tdxPausedReason, /sourceMode\.js/, 'the reason must point at the restore entry point');

@@ -77,13 +77,40 @@ export function isTdxRuntimeEnabled(env) {
 /**
  * May the broadcast path attempt CCTV enrichment?
  *
- * Tied to the same flag rather than given its own: two independent
- * switches would let a future operator restore one and forget the other,
- * and there is no scenario in this incident where "TDX off but CCTV on"
- * is the intended state.
+ * 2026-08-23 — this is now INDEPENDENT of the TDX gate, and the change is
+ * evidence-driven rather than a relaxation of the quota rule.
+ *
+ * When PBS-only mode was introduced this returned isTdxRuntimeEnabled(),
+ * on the assumption that CCTV cost TDX quota. It does not. The broadcast
+ * CCTV path reads camera metadata from the KV cache
+ * (cctv/freewayCctvMetadataCache.js — "Read-only, cache-only — NEVER
+ * calls TDX") and fetches frames from `*.freeway.gov.tw`, which is the
+ * Freeway Bureau, not TDX. cctv/dynamicCollage.js imports neither
+ * tdx/auth.js nor tdx/client.js, so no CCTV attempt can mint a TDX token
+ * or refresh TDX metadata — the guarantee is structural, not a promise.
+ *
+ * So gating CCTV bought zero quota while costing every accident push its
+ * picture. The product decision of 2026-08-23 (重大事故限定 LINE Push)
+ * wants that picture back for the few events that still push.
+ *
+ * The quota guarantee is unaffected and still enforced in two places
+ * that this function cannot reach: isTdxRuntimeEnabled() below, and
+ * tdx/auth.js's hard refusal to issue a token in PBS_ONLY mode. If some
+ * future edit ever did put a TDX call behind CCTV, it would fail closed
+ * there rather than silently burn quota.
+ */
+export function isCctvImageEnabled(env) {
+  const raw = env && typeof env.CCTV_IMAGE_ENABLED === 'string' ? env.CCTV_IMAGE_ENABLED.trim().toUpperCase() : '';
+  return raw !== 'FALSE' && raw !== '0' && raw !== 'OFF';
+}
+
+/**
+ * @deprecated Kept so nothing that still imports the old name silently
+ * changes meaning. Now an explicit alias of isCctvImageEnabled — CCTV is
+ * no longer tied to the TDX runtime gate; see that function for why.
  */
 export function isTdxCctvEnabled(env) {
-  return isTdxRuntimeEnabled(env);
+  return isCctvImageEnabled(env);
 }
 
 /**
@@ -103,7 +130,14 @@ export function describeSourceMode(env) {
   return {
     trafficSourceMode: mode,
     tdxRuntimeEnabled: tdxEnabled,
-    tdxCctvEnabled: tdxEnabled,
+    // CCTV images are independent of the TDX gate (frames come from
+    // freeway.gov.tw, metadata from the KV cache) — see
+    // isCctvImageEnabled. tdxCctvMetadataRefreshEnabled stays pinned to
+    // the TDX gate: reading the cache is allowed, refilling it from TDX
+    // is not.
+    cctvImageEnabled: isCctvImageEnabled(env),
+    tdxCctvMetadataRefreshEnabled: tdxEnabled,
+    tdxCctvEnabled: isCctvImageEnabled(env),
     pbsEnabled: true,
     // Present only while the restriction is on, so a reader is never left
     // guessing whether TDX is broken or deliberately paused.

@@ -83,7 +83,17 @@
     // It lives here rather than in the dashboard because Workers Builds
     // treats this file as authoritative and would overwrite a
     // dashboard-only var on the next build.
-    "TRAFFIC_SOURCE_MODE": "PBS_ONLY"
+    "TRAFFIC_SOURCE_MODE": "PBS_ONLY",
+    // LINE PUSH POLICY (2026-08-23). The LINE OA's monthly proactive-Push
+    // allowance is limited, so proactive broadcast is temporarily narrowed
+    // to accidents only: closure/control/construction/'other' anomalies and
+    // 機動路肩 announcements all stop pushing. Detection of every one of
+    // them is UNCHANGED — they still appear in /debug/status and the
+    // Pipeline Trace; only the proactive product is withheld.
+    // Set to "ALL_ELIGIBLE" to restore the previous behaviour. A typo
+    // resolves to the restrictive default on purpose (the expensive
+    // mistake here is pushing too much). Rule: src/traffic/broadcastPolicy.js.
+    "LINE_PUSH_POLICY": "MAJOR_ACCIDENT_ONLY"
   },
   "vpc_services": [
     {

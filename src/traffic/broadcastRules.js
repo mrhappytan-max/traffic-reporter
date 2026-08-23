@@ -70,7 +70,11 @@ const NEVER_ELIGIBLE_TYPES = new Set(['congestion', 'alert']);
 
 // construction: only "this actually blocks/changes how you drive
 // through here" text, not routine maintenance announcements.
-const CONSTRUCTION_IMPACT_PATTERNS = [
+// Exported since 2026-08-23 so broadcastPolicy.js's major-accident gate
+// reuses this EXACT "通行影響" vocabulary instead of growing a second,
+// independently-drifting copy of it. Still the same list, still used by
+// the construction branch below exactly as before.
+export const CONSTRUCTION_IMPACT_PATTERNS = [
   /封閉/, /車道封閉/, /占用車道/, /佔用車道/, /禁止通行/, /無法通行/, /改道/, /交通管制/,
 ];
 

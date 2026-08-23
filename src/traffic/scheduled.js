@@ -23,6 +23,7 @@ import { PBS_BROADCAST_ENABLED } from '../pbs/pbsConfig.js';
 import { buildHealthSnapshot, persistHealthSnapshot, readHealthSnapshot } from './healthSnapshot.js';
 import { getTdxScheduleState } from './tdxSchedule.js';
 import { isTdxRuntimeEnabled, describeSourceMode } from './sourceMode.js';
+import { resolveLinePushPolicy } from './broadcastPolicy.js';
 import { readDedupeState } from './dedupe.js';
 import { PRODUCTION_TDX_SOURCE_IDS } from '../tdx/sources.js';
 import { persistProductionTdxEventCache, readProductionTdxEventCache } from './tdxEventCache.js';
@@ -103,10 +104,15 @@ export async function runScheduledTdxSync(env, now = new Date()) {
       : await buildSkippedTdxSummary(env, now);
 
   const sourceMode = describeSourceMode(env);
+  const pushPolicy = resolveLinePushPolicy(env);
   console.log(
     `[cron][source-mode] trafficSourceMode=${sourceMode.trafficSourceMode} ` +
-      `tdxRuntimeEnabled=${sourceMode.tdxRuntimeEnabled} tdxCctvEnabled=${sourceMode.tdxCctvEnabled} ` +
-      `pbsEnabled=${sourceMode.pbsEnabled}${sourceMode.tdxPausedReason ? ` reason="${sourceMode.tdxPausedReason}"` : ''}`
+      `tdxRuntimeEnabled=${sourceMode.tdxRuntimeEnabled} ` +
+      `cctvImageEnabled=${sourceMode.cctvImageEnabled} ` +
+      `tdxCctvMetadataRefreshEnabled=${sourceMode.tdxCctvMetadataRefreshEnabled} ` +
+      `pbsEnabled=${sourceMode.pbsEnabled} ` +
+      `linePushPolicy=${pushPolicy} dynamicShoulderPush=${pushPolicy === 'ALL_ELIGIBLE' ? 'ON' : 'OFF'}` +
+      `${sourceMode.tdxPausedReason ? ` reason="${sourceMode.tdxPausedReason}"` : ''}`
   );
 
   console.log(

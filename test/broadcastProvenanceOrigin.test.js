@@ -318,7 +318,11 @@ test('16. a provenance KV write failure (now carrying origin metadata) still nev
   };
   originalFetch = globalThis.fetch;
   globalThis.fetch = mockLinePushFetch();
-  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+  // Uses a construction/closure/control fixture as its vehicle; the
+  // 重大事故限定 push policy (broadcastPolicy.js) would withhold those,
+  // masking the mechanic under test. Opt into ALL_ELIGIBLE — production
+  // policy behaviour is pinned in test/pbsCctvMajorAccidentOnly.test.js.
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', LINE_PUSH_POLICY: 'ALL_ELIGIBLE', TRAFFIC_KV: kv };
   const now = new Date('2026-08-19T09:00:00+08:00');
 
   const rawTdx = {

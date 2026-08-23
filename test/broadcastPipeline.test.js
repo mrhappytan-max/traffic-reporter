@@ -232,7 +232,11 @@ test('forecast event crossing into the 60-minute window is pushed once, then not
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   originalFetch = globalThis.fetch;
   globalThis.fetch = mockLinePushFetch();
-  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+  // Uses a construction/closure/control fixture as its vehicle; the
+  // 重大事故限定 push policy (broadcastPolicy.js) would withhold those,
+  // masking the mechanic under test. Opt into ALL_ELIGIBLE — production
+  // policy behaviour is pinned in test/pbsCctvMajorAccidentOnly.test.js.
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', LINE_PUSH_POLICY: 'ALL_ELIGIBLE', TRAFFIC_KV: kv };
 
   const forecastEvent = {
     source: 'highway',
@@ -491,7 +495,11 @@ test('20. construction/closure/control events are unaffected by clustering or co
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   originalFetch = globalThis.fetch;
   globalThis.fetch = mockLinePushFetch();
-  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+  // Uses a construction/closure/control fixture as its vehicle; the
+  // 重大事故限定 push policy (broadcastPolicy.js) would withhold those,
+  // masking the mechanic under test. Opt into ALL_ELIGIBLE — production
+  // policy behaviour is pinned in test/pbsCctvMajorAccidentOnly.test.js.
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', LINE_PUSH_POLICY: 'ALL_ELIGIBLE', TRAFFIC_KV: kv };
   const now = new Date('2026-08-15T10:50:00+08:00');
 
   // construction is not a LIVE event type (only accident/congestion are —
