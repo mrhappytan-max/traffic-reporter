@@ -51,21 +51,23 @@
     "status": "success",
     "syncMode": "delta",
     "fullVerifyReason": null,
-    "syncedAt": "2026-08-23T06:26:00Z",
-    "sourceMainHead": "d457e552fd3d43c1afbc1e210f5139a5ea3665a6",
-    "exportArtifactCommit": "773f61c1714be4bae4beab02d65c4387ead2f8e5",
-    "exportGeneratedAt": "2026-08-23T06:23:23.431Z",
-    "archiveFolderId": "1vub6bAlXNUb4aQM7jvRdfl0kXL5JBHU7",
-    "archiveFolderName": "_archive_d9341c8",
-    "changedFilesSynced": 7,
-    "unchangedFilesSkipped": 3,
-    "detail": "TDX quota protection / PBS-only release. 7 canonical files created fresh (create-verify-archive-promote; Drive create_file cannot replace content in place), 3 unchanged files received ZERO connector calls. Read-back byte diff PASS on 00_CURRENT_STATE.md, SYSTEM_STATE.json and PRODUCTION_MANIFEST.json (downloaded, base64-decoded, sha256 equal to local). Superseded copies moved to the archive folder, never trashed. Canonical folder verified 10/10 present, 0 missing, 0 duplicate. Secret scan: names only, zero values.",
+    "statusNote": "The delta planner requires exactly \"success\" (scripts/meeting-room-delta.mjs, assessManifestEvidence). A previous run recorded \"PASS\" here, which the planner correctly treated as untrustworthy evidence and escalated to a full verify. The sync itself had genuinely succeeded and was byte-verified; only the label was wrong. Keep this value as \"success\" — never widen the planner to accept other spellings, because that guard is what stops an unverified manifest from being trusted.",
+    "syncedAt": "2026-08-23T07:06:00Z",
+    "sourceMainHead": "b26b32335e4ef5934584b41c07fb6d2b4ecccee9",
+    "exportArtifactCommit": "eccc77d0b762fdeccf5b08641138997303e09062",
+    "exportGeneratedAt": "2026-08-23T07:02:09.503Z",
+    "archiveFolderId": "1qYGEWm37nhFCIob_2WlobGY0eZpKAxuU",
+    "archiveFolderName": "_archive_b26b323",
+    "changedFilesSynced": 5,
+    "unchangedFilesSkipped": 5,
+    "release": "TDX_QUOTA_PROTECTION_PBS_ONLY = SEALED",
+    "detail": "Seal-only round: no product code, Cron, binding, KV/R2 or Production configuration was touched, and no redeploy was performed. 5 canonical files changed (the headline state fields plus the seal record) and were created and verified; 5 unchanged files received ZERO connector calls. Read-back byte diff PASS on SYSTEM_STATE.json (downloaded, base64-decoded, sha256 equal to local; taskSeal.status=SEALED confirmed in the stored bytes). Superseded copies moved to _archive_b26b323, never trashed. Canonical folder verified 10/10 present, 0 missing, 0 duplicate.",
     "files": [
       {
         "name": "00_CURRENT_STATE.md",
-        "sha256": "07ecfb89dee779eff1db88f7c7c8b7ee45abc3215996930631877449d0b9247a",
-        "bytes": 2943,
-        "driveFileId": "1O3_A968hPyfcxSZcLKiQ5zMD2izFE_xo",
+        "sha256": "b441ac924a45a023429da1440063ac08b005a3b25e989614275e0e4498806823",
+        "bytes": 3130,
+        "driveFileId": "1ZfxKweBmvPmTGPwqmLzH2Ln0-HUSEWpB",
         "action": "created-and-verified"
       },
       {
@@ -77,9 +79,9 @@
       },
       {
         "name": "02_PROJECT_HANDOFF.md",
-        "sha256": "f8f074516386dbcd65f4e9a0be58999bdcbbe379bd4a7bc45428fc11eeb1b28e",
-        "bytes": 8591,
-        "driveFileId": "12MhG93dRlaAxLGk3b4F6EtuY5swIvlLb",
+        "sha256": "bacc8d7ca48e2edb8a5c51d134b9984dd57c6ff8d8248239303645c8ac9f7a58",
+        "bytes": 8705,
+        "driveFileId": "18mHcT2UNrfPiuiFJsLPfNwR1AgGifJsa",
         "action": "created-and-verified"
       },
       {
@@ -87,7 +89,7 @@
         "sha256": "179b4c8a1fde48a04a19b02096c252e1015c56402b716aba283e25cf14e4f24f",
         "bytes": 7691,
         "driveFileId": "1WLiBvFU1Fy5IgdyfPcVJq1nk7AV2PHeq",
-        "action": "created-and-verified"
+        "action": "skipped-unchanged-zero-connector-calls"
       },
       {
         "name": "04_PRODUCT_DECISIONS.md",
@@ -108,30 +110,29 @@
         "sha256": "be599f29dc020d536654cec78ba5c10e732e218e8dc2670c40c70047b3a15fc7",
         "bytes": 3396,
         "driveFileId": "1qPeYbyfcaaaeZfKI2jKcGth5o9pDJ1Vo",
-        "action": "created-and-verified"
+        "action": "skipped-unchanged-zero-connector-calls"
       },
       {
         "name": "07_KNOWN_ISSUES.md",
-        "sha256": "979b1666ed066211fecc45c188e49b73512d254cefee3a8f28ecd60c3cda6d8c",
-        "bytes": 7567,
-        "driveFileId": "1CiXEdOnY1qqy6BoDxnlGuQ_AAQFnfNnQ",
+        "sha256": "4483885931c0d4134e28fdb462e18e821f0b0cfbe372a9661d6ecaca191c2415",
+        "bytes": 9283,
+        "driveFileId": "1tO4ouzFynWhGr2NGTRghDW76Ee46LgUp",
         "action": "created-and-verified"
       },
       {
         "name": "SYSTEM_STATE.json",
-        "sha256": "f9cf26f8a13a9671bb8c2ac7d163d3f355ab2b8dd81aa8365b1236bccd4effe3",
-        "bytes": 3774,
-        "driveFileId": "1GbGQjIg7hgUQYEPEl1N18zX3MkZ30HJf",
+        "sha256": "1543df689be480e45fa16aea1200f4231e422800ff0e3c82c0066e2340ee8e02",
+        "bytes": 5162,
+        "driveFileId": "1gYgx-dVQ4ZTpMp5kh9bDoLb9VUF8BEIr",
         "action": "created-and-verified"
       },
       {
         "name": "PRODUCTION_MANIFEST.json",
-        "sha256": "e738cdc85ae41340a063f187f43377162e52e26c00698fa285c0cbe91fe0761e",
+        "sha256": "2c8594776bccb028b348e9f90ba0b7733d70dc2b15bb264d8b650468f7b5572d",
         "bytes": 3950,
-        "driveFileId": "1lWWK53PCLBz1BvfAaqOLF3Y_hVKbChI3",
+        "driveFileId": "1vZUb1lr2rgsEnLgqiBmOC1HFLuYoNIFk",
         "action": "created-and-verified"
       }
-    ],
-    "statusNote": "The delta planner requires exactly \"success\" (scripts/meeting-room-delta.mjs, assessManifestEvidence). A previous run recorded \"PASS\" here, which the planner correctly treated as untrustworthy evidence and escalated to a full verify. The sync itself had genuinely succeeded and was byte-verified; only the label was wrong. Keep this value as \"success\" — never widen the planner to accept other spellings, because that guard is what stops an unverified manifest from being trusted."
+    ]
   }
 }
