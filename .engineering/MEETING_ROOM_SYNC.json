@@ -52,22 +52,23 @@
     "syncMode": "delta",
     "fullVerifyReason": null,
     "statusNote": "The delta planner requires exactly \"success\" (scripts/meeting-room-delta.mjs, assessManifestEvidence). A previous run recorded \"PASS\" here, which the planner correctly treated as untrustworthy evidence and escalated to a full verify. The sync itself had genuinely succeeded and was byte-verified; only the label was wrong. Keep this value as \"success\" — never widen the planner to accept other spellings, because that guard is what stops an unverified manifest from being trusted.",
-    "syncedAt": "2026-08-23T07:06:00Z",
-    "sourceMainHead": "b26b32335e4ef5934584b41c07fb6d2b4ecccee9",
-    "exportArtifactCommit": "eccc77d0b762fdeccf5b08641138997303e09062",
-    "exportGeneratedAt": "2026-08-23T07:02:09.503Z",
-    "archiveFolderId": "1qYGEWm37nhFCIob_2WlobGY0eZpKAxuU",
-    "archiveFolderName": "_archive_b26b323",
-    "changedFilesSynced": 5,
-    "unchangedFilesSkipped": 5,
-    "release": "TDX_QUOTA_PROTECTION_PBS_ONLY = SEALED",
-    "detail": "Seal-only round: no product code, Cron, binding, KV/R2 or Production configuration was touched, and no redeploy was performed. 5 canonical files changed (the headline state fields plus the seal record) and were created and verified; 5 unchanged files received ZERO connector calls. Read-back byte diff PASS on SYSTEM_STATE.json (downloaded, base64-decoded, sha256 equal to local; taskSeal.status=SEALED confirmed in the stored bytes). Superseded copies moved to _archive_b26b323, never trashed. Canonical folder verified 10/10 present, 0 missing, 0 duplicate.",
+    "syncedAt": "2026-08-23T08:12:00Z",
+    "sourceMainHead": "21c1a42df9ddf239cc7510842057010b683a1302",
+    "exportArtifactCommit": "8c3184945d08cdec66d43b82197c0f1d46a05bc1",
+    "exportGeneratedAt": "2026-08-23T08:07:28.119Z",
+    "archiveFolderId": "1l_kPy_mOid9UMdDiGxvCTHOvky_4ebQ1",
+    "archiveFolderName": "_archive_21c1a42",
+    "changedFilesSynced": 6,
+    "unchangedFilesSkipped": 4,
+    "release": "PBS_CCTV_MAJOR_ACCIDENT_ONLY",
+    "detail": "Accident-only LINE push policy + CCTV restore. 6 canonical files changed and were created and verified; 4 unchanged (01/04/05/06) received ZERO connector calls. Read-back byte diff PASS on SYSTEM_STATE.json. Superseded copies moved to _archive_21c1a42, never trashed. Canonical folder verified 10/10 present, 0 missing, 0 duplicate.",
+    "processNote": "This round needed several upload rounds because the export was regenerated after files had already been uploaded, so generatedAt moved and the uploaded copies went stale. Freeze the export (run it last, commit, confirm a clean tree) BEFORE uploading anything; otherwise every regeneration invalidates work already synced and fills the archive folder with near-identical drafts. One 07_KNOWN_ISSUES.md upload was also hand-transcribed and lost a clause — upload the file as generated, never a retyped copy.",
     "files": [
       {
         "name": "00_CURRENT_STATE.md",
-        "sha256": "b441ac924a45a023429da1440063ac08b005a3b25e989614275e0e4498806823",
-        "bytes": 3130,
-        "driveFileId": "1ZfxKweBmvPmTGPwqmLzH2Ln0-HUSEWpB",
+        "sha256": "46c60783f395819d91dea519efb8302c60463d56080805a9a3656a0387769006",
+        "bytes": 3325,
+        "driveFileId": "1j59SCnA0Vz-Fj6fW911yRLE1rQLc03_T",
         "action": "created-and-verified"
       },
       {
@@ -79,17 +80,17 @@
       },
       {
         "name": "02_PROJECT_HANDOFF.md",
-        "sha256": "bacc8d7ca48e2edb8a5c51d134b9984dd57c6ff8d8248239303645c8ac9f7a58",
-        "bytes": 8705,
-        "driveFileId": "18mHcT2UNrfPiuiFJsLPfNwR1AgGifJsa",
+        "sha256": "17966fc098a15b3873ee522c96d0696f65cb4f40560d829a3dc9d36a8327c1fb",
+        "bytes": 8853,
+        "driveFileId": "1fD83euMSZAPopK_5lUE1uDj3PFT2w-N3",
         "action": "created-and-verified"
       },
       {
         "name": "03_ARCHITECTURE.md",
-        "sha256": "179b4c8a1fde48a04a19b02096c252e1015c56402b716aba283e25cf14e4f24f",
-        "bytes": 7691,
-        "driveFileId": "1WLiBvFU1Fy5IgdyfPcVJq1nk7AV2PHeq",
-        "action": "skipped-unchanged-zero-connector-calls"
+        "sha256": "e3884b9393d717d85178a7ebda332b0eef2aed773dcca3dbc3c9913241d58bda",
+        "bytes": 7711,
+        "driveFileId": "10aQLhe6onRhx5IM14AXvSdwDWgRPqTw8",
+        "action": "created-and-verified"
       },
       {
         "name": "04_PRODUCT_DECISIONS.md",
@@ -114,23 +115,23 @@
       },
       {
         "name": "07_KNOWN_ISSUES.md",
-        "sha256": "4483885931c0d4134e28fdb462e18e821f0b0cfbe372a9661d6ecaca191c2415",
-        "bytes": 9283,
-        "driveFileId": "1tO4ouzFynWhGr2NGTRghDW76Ee46LgUp",
+        "sha256": "39b12ec2d2bb621c31f738445af7a20af6a8e328267f58f7a7d53310dee5cf3d",
+        "bytes": 14163,
+        "driveFileId": "1cU3IO_Fxrf7kfnRoOnTcAapToraR74in",
         "action": "created-and-verified"
       },
       {
         "name": "SYSTEM_STATE.json",
-        "sha256": "1543df689be480e45fa16aea1200f4231e422800ff0e3c82c0066e2340ee8e02",
-        "bytes": 5162,
-        "driveFileId": "1gYgx-dVQ4ZTpMp5kh9bDoLb9VUF8BEIr",
+        "sha256": "e6263ae20a5668fb4ddafbdb95d4284cba6f14785028ccf6744ddbc0e78f5cfd",
+        "bytes": 7173,
+        "driveFileId": "1ypL0OmU_JEjMMHAG5ZS012Drm1Fj5Iwo",
         "action": "created-and-verified"
       },
       {
         "name": "PRODUCTION_MANIFEST.json",
-        "sha256": "2c8594776bccb028b348e9f90ba0b7733d70dc2b15bb264d8b650468f7b5572d",
-        "bytes": 3950,
-        "driveFileId": "1vZUb1lr2rgsEnLgqiBmOC1HFLuYoNIFk",
+        "sha256": "2a81599a6fc0ce37ca4300f54a66485e85cb5745c8bb56c4128a05546b9712d9",
+        "bytes": 4416,
+        "driveFileId": "1bLz1r44uUNTqpj-ky435ufUs0KxDANpu",
         "action": "created-and-verified"
       }
     ]
