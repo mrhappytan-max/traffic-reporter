@@ -9,10 +9,11 @@
   "syncMode": "delta",
   "fullVerifyReason": null,
   "status": "SYNC_REQUIRED",
-  "checkoutHead": "9ae6dd04e82d64d2ea97e053d2a40d553c9afa63",
-  "generatedAt": "2026-08-23T07:59:09.820Z",
+  "checkoutHead": "b4e3798dc18fe993eead9d7b6d8b5823542c47cf",
+  "generatedAt": "2026-08-23T15:13:24.616Z",
   "unchangedSkipped": [
     "01_FOUR_DEPARTMENT_GOVERNANCE.md",
+    "03_ARCHITECTURE.md",
     "04_PRODUCT_DECISIONS.md",
     "05_CROSS_PROJECT_BOUNDARY.md",
     "06_VERSION_HISTORY.md"
@@ -20,51 +21,44 @@
   "files": [
     {
       "name": "00_CURRENT_STATE.md",
-      "oldSha256": "b441ac924a45a023429da1440063ac08b005a3b25e989614275e0e4498806823",
-      "sha256": "75dbd826aefb26ecea8b1f69eb689d8b4b7d45720e0a3fc30be7ef5c87176c86",
+      "oldSha256": "46c60783f395819d91dea519efb8302c60463d56080805a9a3656a0387769006",
+      "sha256": "c94dfd429b4f099d6527bf6537fb41886835ac890a1ecaf48a531cc3e930d684",
       "bytes": 3325,
       "reason": "content hash changed"
     },
     {
       "name": "02_PROJECT_HANDOFF.md",
-      "oldSha256": "bacc8d7ca48e2edb8a5c51d134b9984dd57c6ff8d8248239303645c8ac9f7a58",
-      "sha256": "705c30efd8f0e05392e6e7bb244e4d2f9bf5e5940a9a323f2326163aa6f412aa",
+      "oldSha256": "17966fc098a15b3873ee522c96d0696f65cb4f40560d829a3dc9d36a8327c1fb",
+      "sha256": "7d0ac5daabd03f886a4dbe90803fe45d94ee4f7f3a9d17cf85508d263407ddc6",
       "bytes": 8853,
       "reason": "content hash changed"
     },
     {
-      "name": "03_ARCHITECTURE.md",
-      "oldSha256": "179b4c8a1fde48a04a19b02096c252e1015c56402b716aba283e25cf14e4f24f",
-      "sha256": "e3884b9393d717d85178a7ebda332b0eef2aed773dcca3dbc3c9913241d58bda",
-      "bytes": 7711,
-      "reason": "content hash changed"
-    },
-    {
       "name": "07_KNOWN_ISSUES.md",
-      "oldSha256": "4483885931c0d4134e28fdb462e18e821f0b0cfbe372a9661d6ecaca191c2415",
-      "sha256": "bd69a841ceed2d5609fe58dd80046361236ae95e64a53f9e7a002247ade56cfc",
-      "bytes": 14442,
+      "oldSha256": "39b12ec2d2bb621c31f738445af7a20af6a8e328267f58f7a7d53310dee5cf3d",
+      "sha256": "c46991aa8d1661f619de3ffef13279223a319066f882c8915539168337cf5172",
+      "bytes": 15954,
       "reason": "content hash changed"
     },
     {
       "name": "SYSTEM_STATE.json",
-      "oldSha256": "1543df689be480e45fa16aea1200f4231e422800ff0e3c82c0066e2340ee8e02",
-      "sha256": "321ea9358d7d3f334d9685ecf77a7b6523f82606c543db9dae91646dd3411f22",
-      "bytes": 7173,
+      "oldSha256": "e6263ae20a5668fb4ddafbdb95d4284cba6f14785028ccf6744ddbc0e78f5cfd",
+      "sha256": "6256f50c9d31a2dc7d541588366ffba9674d9419b587385e3e007b883e00b375",
+      "bytes": 9036,
       "reason": "content hash changed"
     },
     {
       "name": "PRODUCTION_MANIFEST.json",
-      "oldSha256": "2c8594776bccb028b348e9f90ba0b7733d70dc2b15bb264d8b650468f7b5572d",
-      "sha256": "8fda344f3a2482ad3eb9a202e946ff14710466837f35aa2d7313873e28989074",
-      "bytes": 3950,
+      "oldSha256": "2a81599a6fc0ce37ca4300f54a66485e85cb5745c8bb56c4128a05546b9712d9",
+      "sha256": "219d08fc5e8d1159aa4f9a19940f7d1b5b8881ff8dee8fbfd5d16f3c09eceabb",
+      "bytes": 4416,
       "reason": "content hash changed"
     }
   ],
   "allCurrentHashes": [
     {
       "name": "00_CURRENT_STATE.md",
-      "sha256": "75dbd826aefb26ecea8b1f69eb689d8b4b7d45720e0a3fc30be7ef5c87176c86",
+      "sha256": "c94dfd429b4f099d6527bf6537fb41886835ac890a1ecaf48a531cc3e930d684",
       "bytes": 3325
     },
     {
@@ -74,7 +68,7 @@
     },
     {
       "name": "02_PROJECT_HANDOFF.md",
-      "sha256": "705c30efd8f0e05392e6e7bb244e4d2f9bf5e5940a9a323f2326163aa6f412aa",
+      "sha256": "7d0ac5daabd03f886a4dbe90803fe45d94ee4f7f3a9d17cf85508d263407ddc6",
       "bytes": 8853
     },
     {
@@ -99,18 +93,18 @@
     },
     {
       "name": "07_KNOWN_ISSUES.md",
-      "sha256": "bd69a841ceed2d5609fe58dd80046361236ae95e64a53f9e7a002247ade56cfc",
-      "bytes": 14442
+      "sha256": "c46991aa8d1661f619de3ffef13279223a319066f882c8915539168337cf5172",
+      "bytes": 15954
     },
     {
       "name": "SYSTEM_STATE.json",
-      "sha256": "321ea9358d7d3f334d9685ecf77a7b6523f82606c543db9dae91646dd3411f22",
-      "bytes": 7173
+      "sha256": "6256f50c9d31a2dc7d541588366ffba9674d9419b587385e3e007b883e00b375",
+      "bytes": 9036
     },
     {
       "name": "PRODUCTION_MANIFEST.json",
-      "sha256": "8fda344f3a2482ad3eb9a202e946ff14710466837f35aa2d7313873e28989074",
-      "bytes": 3950
+      "sha256": "219d08fc5e8d1159aa4f9a19940f7d1b5b8881ff8dee8fbfd5d16f3c09eceabb",
+      "bytes": 4416
     }
   ],
   "note": "files[] lists ONLY what actually changed. Every name in unchangedSkipped must receive ZERO Google Drive connector calls -- no search, no read-back, no download, no create, no archive, no byte diff."
