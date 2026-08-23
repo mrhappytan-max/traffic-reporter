@@ -17,8 +17,8 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | dff9ea746a31f7a585f14d55ad045b6106ff58e5 |
-| Snapshot generated at | 2026-08-23T06:08:26.834Z |
+| Source main HEAD | aa60ba21120165fa066fcc3bd7d99e5c247008b0 |
+| Snapshot generated at | 2026-08-23T06:11:06.585Z |
 | Source working tree | clean |
 | Current version | V1.8.7.7 |
 | Current phase | Maintenance — awaiting real-world confirmation of latest release |
