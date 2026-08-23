@@ -48,79 +48,88 @@
     "note": "Kept, never removed. Used only when the Google Drive Connector is unavailable to the executing Claude session."
   },
   "lastSync": {
-    "status": "success",
+    "status": "PASS",
     "syncMode": "delta",
     "fullVerifyReason": null,
-    "syncedAt": "2026-08-22T06:32:47.000Z",
-    "sourceMainHead": "2084e83eaa9a125f58f93cdaa4fb7ef9f1956013",
-    "exportArtifactCommit": "uncommitted-at-sync-time (recorded by the commit that carries this manifest; never self-referenced)",
-    "exportGeneratedAt": "2026-08-22T06:29:20.108Z",
-    "archiveFolderId": "12IQv7Z-9nfDIgWiyqRbsLmcf3-CocHzI",
-    "changedFilesSynced": [
-      "00_CURRENT_STATE.md",
-      "02_PROJECT_HANDOFF.md",
-      "SYSTEM_STATE.json",
-      "PRODUCTION_MANIFEST.json"
-    ],
-    "unchangedFilesSkipped": [
-      "01_FOUR_DEPARTMENT_GOVERNANCE.md",
-      "03_ARCHITECTURE.md",
-      "04_PRODUCT_DECISIONS.md",
-      "05_CROSS_PROJECT_BOUNDARY.md",
-      "06_VERSION_HISTORY.md",
-      "07_KNOWN_ISSUES.md"
-    ],
-    "detail": "Second real DELTA sync -- Cloud Sync Acceptance Test round. main advanced from d9341c8 to 2084e83 (governance/tooling commits only, no canonical content change); the 4 files that embed sourceMainHead changed hash, the other 6 stayed byte-identical to the prior successful sync and received ZERO Google Drive connector calls (confirmed via scripts/meeting-room-delta.mjs against this manifest's own prior lastSync.files hashes before any Connector call was made). For each of the 4 changed files: created a NEW temp file (title suffix .NEW), read back and visually verified full text content matched meeting-room-export/ exactly (all fields incl. sourceMainHead=2084e83 present and correct) before touching anything else, archived the OLD canonical file (renamed to <timestamp>__<name>, moved into the existing _archive_6665ae9 folder -- never trashed, never overwritten), then promoted the NEW temp file by renaming it to the canonical filename. Final search of the target folder confirmed exactly 10 canonical files, no duplicates, plus the pre-existing archive folders and CONNECTOR_TEST.txt (left untouched, not deleted). Verification method this round was direct full-text comparison against the known source content (not an automated sha256 recomputation on the read-back side) -- sufficient to catch any real corruption but methodologically distinct from a future automated hash-diff; contentSha256 is therefore omitted from this round's per-file records rather than fabricated.",
+    "syncedAt": "2026-08-23T06:26:00Z",
+    "sourceMainHead": "d457e552fd3d43c1afbc1e210f5139a5ea3665a6",
+    "exportArtifactCommit": "773f61c1714be4bae4beab02d65c4387ead2f8e5",
+    "exportGeneratedAt": "2026-08-23T06:23:23.431Z",
+    "archiveFolderId": "1vub6bAlXNUb4aQM7jvRdfl0kXL5JBHU7",
+    "archiveFolderName": "_archive_d9341c8",
+    "changedFilesSynced": 7,
+    "unchangedFilesSkipped": 3,
+    "detail": "TDX quota protection / PBS-only release. 7 canonical files created fresh (create-verify-archive-promote; Drive create_file cannot replace content in place), 3 unchanged files received ZERO connector calls. Read-back byte diff PASS on 00_CURRENT_STATE.md, SYSTEM_STATE.json and PRODUCTION_MANIFEST.json (downloaded, base64-decoded, sha256 equal to local). Superseded copies moved to the archive folder, never trashed. Canonical folder verified 10/10 present, 0 missing, 0 duplicate. Secret scan: names only, zero values.",
     "files": [
       {
         "name": "00_CURRENT_STATE.md",
-        "sha256": "8dcb2865d8a74fdc63593cbae33a583198ecae66a7fea86581bb14a3aed904aa",
-        "bytes": 2802
+        "sha256": "07ecfb89dee779eff1db88f7c7c8b7ee45abc3215996930631877449d0b9247a",
+        "bytes": 2943,
+        "driveFileId": "1O3_A968hPyfcxSZcLKiQ5zMD2izFE_xo",
+        "action": "created-and-verified"
       },
       {
         "name": "01_FOUR_DEPARTMENT_GOVERNANCE.md",
         "sha256": "0a68c2713f7be7fb99e7454935e1abb7ef8d5fd491f2adf2de56efcfad91253b",
-        "bytes": 4944
+        "bytes": 4944,
+        "driveFileId": "1biGQ81Gwy1YyYa2A8-RoDaaREqmlxdXE",
+        "action": "skipped-unchanged-zero-connector-calls"
       },
       {
         "name": "02_PROJECT_HANDOFF.md",
-        "sha256": "24e751893e91899e554387c465a853f67d140fc44b38e57780b3faa2d077ce65",
-        "bytes": 8343
+        "sha256": "f8f074516386dbcd65f4e9a0be58999bdcbbe379bd4a7bc45428fc11eeb1b28e",
+        "bytes": 8591,
+        "driveFileId": "12MhG93dRlaAxLGk3b4F6EtuY5swIvlLb",
+        "action": "created-and-verified"
       },
       {
         "name": "03_ARCHITECTURE.md",
-        "sha256": "c59448682f5196d8e4c861065b0575d156226ca15bbe5fe68aaa211a8a0fe25f",
-        "bytes": 7676
+        "sha256": "179b4c8a1fde48a04a19b02096c252e1015c56402b716aba283e25cf14e4f24f",
+        "bytes": 7691,
+        "driveFileId": "1WLiBvFU1Fy5IgdyfPcVJq1nk7AV2PHeq",
+        "action": "created-and-verified"
       },
       {
         "name": "04_PRODUCT_DECISIONS.md",
         "sha256": "f175165e666a4cd9e5fc7d18b8672958c32216e12e5bfc11e8dab19cfa68ee1e",
-        "bytes": 85102
+        "bytes": 85102,
+        "driveFileId": "1vBIC91BvEaIz9HWNXpJiA-urohkDmCSD",
+        "action": "skipped-unchanged-zero-connector-calls"
       },
       {
         "name": "05_CROSS_PROJECT_BOUNDARY.md",
         "sha256": "fe79a7d855235ba3603bc70cb431fce5422e41cb67ac7b01a3f5b696ed9e4c87",
-        "bytes": 3203
+        "bytes": 3203,
+        "driveFileId": "13MKpHd1fA1y4ycI5GknBTeaj_xbREqad",
+        "action": "skipped-unchanged-zero-connector-calls"
       },
       {
         "name": "06_VERSION_HISTORY.md",
-        "sha256": "018414d60603cf412413b8b68af94203ba0c87877d885c4ce8c8eb6cd529ed78",
-        "bytes": 2975
+        "sha256": "be599f29dc020d536654cec78ba5c10e732e218e8dc2670c40c70047b3a15fc7",
+        "bytes": 3396,
+        "driveFileId": "1qPeYbyfcaaaeZfKI2jKcGth5o9pDJ1Vo",
+        "action": "created-and-verified"
       },
       {
         "name": "07_KNOWN_ISSUES.md",
-        "sha256": "491e1a8a9283679f17751a2266fcf68111ced19dd2b6831341b50dde55edb01c",
-        "bytes": 3640
+        "sha256": "979b1666ed066211fecc45c188e49b73512d254cefee3a8f28ecd60c3cda6d8c",
+        "bytes": 7567,
+        "driveFileId": "1CiXEdOnY1qqy6BoDxnlGuQ_AAQFnfNnQ",
+        "action": "created-and-verified"
       },
       {
         "name": "SYSTEM_STATE.json",
-        "sha256": "95acbab25cf662ba67ba58ad91555d88db49a01794b99a795a220bfa2d9cbcf4",
-        "bytes": 3598
+        "sha256": "f9cf26f8a13a9671bb8c2ac7d163d3f355ab2b8dd81aa8365b1236bccd4effe3",
+        "bytes": 3774,
+        "driveFileId": "1GbGQjIg7hgUQYEPEl1N18zX3MkZ30HJf",
+        "action": "created-and-verified"
       },
       {
         "name": "PRODUCTION_MANIFEST.json",
-        "sha256": "baac6233c7ac903e037667e76ead8ee8baa67a8d06d52a49dc7e067086e78f07",
-        "bytes": 3950
+        "sha256": "e738cdc85ae41340a063f187f43377162e52e26c00698fa285c0cbe91fe0761e",
+        "bytes": 3950,
+        "driveFileId": "1lWWK53PCLBz1BvfAaqOLF3Y_hVKbChI3",
+        "action": "created-and-verified"
       }
     ]
   }
