@@ -96,6 +96,7 @@ export function buildHealthSnapshot({
   now = new Date(),
   tdxScheduleState = 'scheduled',
   previousTdx = null,
+  sourceMode = null,
 }) {
   const scheduledThisRun = tdxScheduleState === 'scheduled';
   const sleeping = tdxScheduleState === 'night-sleep';
@@ -162,6 +163,12 @@ export function buildHealthSnapshot({
     schemaVersion: 2, // V1.6.1: tdx.lastFetchedAt/scheduledThisRun/sleeping, pbs.lastFetchedAt added
     generatedAt: now.toISOString(),
     status,
+    // TDX QUOTA PROTECTION (2026-08-23) — surfaced so an engineer (or the
+    // next agent) can tell "TDX is deliberately paused for quota" apart
+    // from "TDX is broken" without reading code. Carried verbatim from
+    // sourceMode.describeSourceMode(env); null when the caller did not
+    // supply it (e.g. older tests), never guessed.
+    sourceMode: sourceMode ?? null,
 
     tdx,
 

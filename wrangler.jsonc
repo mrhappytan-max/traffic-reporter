@@ -73,7 +73,17 @@
   // to this exact value if the var is ever absent/misconfigured, so a
   // missing var degrades safely rather than producing a broken URL.
   "vars": {
-    "PUBLIC_BASE_URL": "https://traffic-reporter.mr-happytan.workers.dev"
+    "PUBLIC_BASE_URL": "https://traffic-reporter.mr-happytan.workers.dev",
+    // TDX QUOTA PROTECTION (2026-08-23). "PBS_ONLY" stops every TDX API
+    // call from the Cron path (RoadEvent freeway/highway, the OAuth token,
+    // and CCTV enrichment) while 警廣 PBS keeps running unchanged.
+    // TDX code is NOT removed — this is a runtime gate.
+    // RESTORE: set this to "ALL" (or delete the var) and push to main.
+    // Full procedure: src/traffic/sourceMode.js module comment.
+    // It lives here rather than in the dashboard because Workers Builds
+    // treats this file as authoritative and would overwrite a
+    // dashboard-only var on the next build.
+    "TRAFFIC_SOURCE_MODE": "PBS_ONLY"
   },
   "vpc_services": [
     {

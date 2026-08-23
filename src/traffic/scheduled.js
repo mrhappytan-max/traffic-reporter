@@ -22,6 +22,7 @@ import { mergeForBroadcast } from '../pbs/crossSourceDedup.js';
 import { PBS_BROADCAST_ENABLED } from '../pbs/pbsConfig.js';
 import { buildHealthSnapshot, persistHealthSnapshot, readHealthSnapshot } from './healthSnapshot.js';
 import { getTdxScheduleState } from './tdxSchedule.js';
+import { isTdxRuntimeEnabled, describeSourceMode } from './sourceMode.js';
 import { readDedupeState } from './dedupe.js';
 import { PRODUCTION_TDX_SOURCE_IDS } from '../tdx/sources.js';
 import { persistProductionTdxEventCache, readProductionTdxEventCache } from './tdxEventCache.js';
@@ -73,7 +74,19 @@ async function buildSkippedTdxSummary(env, now) {
 }
 
 export async function runScheduledTdxSync(env, now = new Date()) {
-  const tdxScheduleState = getTdxScheduleState(now); // 'scheduled' | 'skipped-by-schedule' | 'night-sleep'
+  // TDX QUOTA PROTECTION (2026-08-23): when TRAFFIC_SOURCE_MODE=PBS_ONLY
+  // this tick must make ZERO TDX API calls. Rather than invent a second
+  // "don't fetch" path, we reuse the one this Worker has always had for a
+  // skipped tick — buildSkippedTdxSummary() below — and simply never
+  // reach the 'scheduled' branch. That path is already proven in
+  // production every PBS-only tick, and every downstream consumer
+  // (health, usage ledger, PBS cross-source dedup) already handles it.
+  //
+  // The state is reported as its own value, not reused as
+  // 'skipped-by-schedule', so nobody reads a deliberate quota pause as
+  // either a TDX failure or a routine odd-minute tick.
+  const tdxEnabled = isTdxRuntimeEnabled(env);
+  const tdxScheduleState = tdxEnabled ? getTdxScheduleState(now) : 'disabled-quota';
 
   // V1.8.6 — TDX usage ledger: a fresh, request-scoped array only this
   // tick writes into (see usageLedger.js's module comment for why a
@@ -88,6 +101,13 @@ export async function runScheduledTdxSync(env, now = new Date()) {
     tdxScheduleState === 'scheduled'
       ? await runTdxPipelineAndCommit(env, now, { sourceIds: PRODUCTION_TDX_SOURCE_IDS, usageSink: tdxUsageSink })
       : await buildSkippedTdxSummary(env, now);
+
+  const sourceMode = describeSourceMode(env);
+  console.log(
+    `[cron][source-mode] trafficSourceMode=${sourceMode.trafficSourceMode} ` +
+      `tdxRuntimeEnabled=${sourceMode.tdxRuntimeEnabled} tdxCctvEnabled=${sourceMode.tdxCctvEnabled} ` +
+      `pbsEnabled=${sourceMode.pbsEnabled}${sourceMode.tdxPausedReason ? ` reason="${sourceMode.tdxPausedReason}"` : ''}`
+  );
 
   console.log(
     `[cron] tdxScheduleState=${tdxScheduleState} tokenOk=${summary.tokenOk} baselineInitialized=${summary.baselineInitialized} ` +
@@ -249,6 +269,7 @@ export async function runScheduledTdxSync(env, now = new Date()) {
       lineSummary,
       now,
       tdxScheduleState,
+      sourceMode,
       previousTdx: previous.snapshot ? previous.snapshot.tdx : null,
     });
     const commit = await persistHealthSnapshot(env.TRAFFIC_KV, healthSnapshot);

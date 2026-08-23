@@ -33,6 +33,7 @@
 // caller/test) is a no-op, unchanged behavior.
 
 import { recordTdxOAuthCall } from './usageLedger.js';
+import { isTdxRuntimeEnabled } from '../traffic/sourceMode.js';
 
 const TDX_AUTH_URL =
   'https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token';
@@ -203,6 +204,25 @@ async function acquireToken(env, usageSink) {
 }
 
 export async function getAccessToken(env, usageSink) {
+  // TDX QUOTA PROTECTION (2026-08-23) — the mechanical backstop.
+  //
+  // Every TDX API call in this Worker needs a token, so refusing here
+  // makes "zero TDX calls in PBS-only mode" a property of the code rather
+  // than a property of every caller remembering to check a flag. A future
+  // code path that forgets the gate fails closed instead of quietly
+  // spending quota that no longer exists.
+  //
+  // Deliberately a TdxAuthError: callers already treat that as
+  // "no token this run" (pipeline.js sets tokenOk=false and carries on),
+  // so this degrades along an existing, tested path rather than throwing
+  // something nobody handles. It must never reach PBS — PBS never asks
+  // for a TDX token.
+  if (!isTdxRuntimeEnabled(env)) {
+    throw new TdxAuthError(
+      'TDX runtime disabled (TRAFFIC_SOURCE_MODE=PBS_ONLY, quota protection) — no token requested. See src/traffic/sourceMode.js to restore.'
+    );
+  }
+
   // Fast path: fresh memory, no promise machinery, no await at all.
   const now = Date.now();
   if (isFresh(tokenCache, now)) {
