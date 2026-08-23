@@ -20,6 +20,7 @@
 | V1.8.7.5 | `be57f88` | Enable Freeway 3 CCTV Support — 用外部唯讀查證取得的真實 Production RoadID `'000030'`/RoadName `'國道3號'` 正式啟用國3 CCTV |
 | V1.8.7.6 | `40b1409` | Pipeline Trace Filter Production Investigation — 三層реproduction 皆確認 server 端無缺陷，結論為 client-side 議題 |
 | V1.8.7.7 | `a3d6609`（修復）／`8e10a7a`（封版紀錄） | CCTV Gray Broken Image Fix — `extractFirstJpegFrame` JPEG marker-aware 解析修復，見 `07_KNOWN_ISSUES.md`／`02_PROJECT_HANDOFF.md` §35 完整寫法 |
+| TDX Quota Protection | `f5a339a`（實作）／`dff9ea7`（收編 main、觸發部署） | **PBS-ONLY MODE（2026-08-23，生效中）** — TDX 額度用盡，以 `TRAFFIC_SOURCE_MODE=PBS_ONLY` 單一旗標關閉 Cron 路徑上所有 TDX 呼叫（RoadEvent／OAuth token／CCTV），PBS 完全不受影響。**未刪除任何 TDX 程式碼**，還原＝改回 `ALL` 並 push。見 `07_KNOWN_ISSUES.md` 的還原程序 |
 
 ## 版本線之外的重要里程碑
 
