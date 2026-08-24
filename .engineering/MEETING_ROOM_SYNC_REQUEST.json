@@ -9,11 +9,10 @@
   "syncMode": "delta",
   "fullVerifyReason": null,
   "status": "SYNC_REQUIRED",
-  "checkoutHead": "41675c85bfb3f35211e6b9938e26095e4787028a",
-  "generatedAt": "2026-08-24T02:07:46.130Z",
+  "checkoutHead": "52841cbb7203bf5403f4dcefba4396cd9fb28daa",
+  "generatedAt": "2026-08-24T02:29:42.858Z",
   "unchangedSkipped": [
     "01_FOUR_DEPARTMENT_GOVERNANCE.md",
-    "03_ARCHITECTURE.md",
     "04_PRODUCT_DECISIONS.md",
     "05_CROSS_PROJECT_BOUNDARY.md",
     "06_VERSION_HISTORY.md"
@@ -21,36 +20,43 @@
   "files": [
     {
       "name": "00_CURRENT_STATE.md",
-      "oldSha256": "c94dfd429b4f099d6527bf6537fb41886835ac890a1ecaf48a531cc3e930d684",
-      "sha256": "5d4e6b73d1b133fb516ee9b94f5942e5a4740a0c029065a2567bfd5a9d8324b0",
+      "oldSha256": "5d4e6b73d1b133fb516ee9b94f5942e5a4740a0c029065a2567bfd5a9d8324b0",
+      "sha256": "0df90165ea8503ab849548d0c83774e0ed71fcdfcaa948541b2b2259cf5f526d",
       "bytes": 3325,
       "reason": "content hash changed"
     },
     {
       "name": "02_PROJECT_HANDOFF.md",
-      "oldSha256": "7d0ac5daabd03f886a4dbe90803fe45d94ee4f7f3a9d17cf85508d263407ddc6",
-      "sha256": "33eb09c830ab2a8c3d9554637260fdfe1f64c9aa7e1e7e928d48a8c5227ad032",
+      "oldSha256": "33eb09c830ab2a8c3d9554637260fdfe1f64c9aa7e1e7e928d48a8c5227ad032",
+      "sha256": "235a2eb93520c3c0f58a4ab5f1243650f0205c4d1c145ce7b73deb60b0763249",
       "bytes": 8853,
       "reason": "content hash changed"
     },
     {
+      "name": "03_ARCHITECTURE.md",
+      "oldSha256": "e3884b9393d717d85178a7ebda332b0eef2aed773dcca3dbc3c9913241d58bda",
+      "sha256": "b6719a7bb4a5b98ff67b89cb4ae0dff7996c5de4889f61e6597e1721d9878ba0",
+      "bytes": 7727,
+      "reason": "content hash changed"
+    },
+    {
       "name": "07_KNOWN_ISSUES.md",
-      "oldSha256": "c46991aa8d1661f619de3ffef13279223a319066f882c8915539168337cf5172",
-      "sha256": "12a0059845aaa77491291b615e36b2d14a710b63e55ee8964e4ab50d99b8f6fe",
-      "bytes": 19294,
+      "oldSha256": "12a0059845aaa77491291b615e36b2d14a710b63e55ee8964e4ab50d99b8f6fe",
+      "sha256": "73c18ee08095ae7e6f0466106e2c2a38133e50d0c43df5f57f530cf6c616b360",
+      "bytes": 23889,
       "reason": "content hash changed"
     },
     {
       "name": "SYSTEM_STATE.json",
-      "oldSha256": "6256f50c9d31a2dc7d541588366ffba9674d9419b587385e3e007b883e00b375",
-      "sha256": "d66e6d63c10b4f3e90daee47f621260644cdece1af0ac4a503dfc409401eadd3",
-      "bytes": 10188,
+      "oldSha256": "d66e6d63c10b4f3e90daee47f621260644cdece1af0ac4a503dfc409401eadd3",
+      "sha256": "1ce578b921dea9d839c772b4ab473bcea1acd069713bc6775f3fb30b99406ffd",
+      "bytes": 12121,
       "reason": "content hash changed"
     },
     {
       "name": "PRODUCTION_MANIFEST.json",
-      "oldSha256": "219d08fc5e8d1159aa4f9a19940f7d1b5b8881ff8dee8fbfd5d16f3c09eceabb",
-      "sha256": "36f154344c32735fae15fce9663738ddd05c61d7703ad2328cec785329ed183d",
+      "oldSha256": "36f154344c32735fae15fce9663738ddd05c61d7703ad2328cec785329ed183d",
+      "sha256": "4bf35e5b7296dfe1f080aa8ea846ee567c1aa524d969cec4069244d870f3364f",
       "bytes": 4416,
       "reason": "content hash changed"
     }
@@ -58,7 +64,7 @@
   "allCurrentHashes": [
     {
       "name": "00_CURRENT_STATE.md",
-      "sha256": "5d4e6b73d1b133fb516ee9b94f5942e5a4740a0c029065a2567bfd5a9d8324b0",
+      "sha256": "0df90165ea8503ab849548d0c83774e0ed71fcdfcaa948541b2b2259cf5f526d",
       "bytes": 3325
     },
     {
@@ -68,13 +74,13 @@
     },
     {
       "name": "02_PROJECT_HANDOFF.md",
-      "sha256": "33eb09c830ab2a8c3d9554637260fdfe1f64c9aa7e1e7e928d48a8c5227ad032",
+      "sha256": "235a2eb93520c3c0f58a4ab5f1243650f0205c4d1c145ce7b73deb60b0763249",
       "bytes": 8853
     },
     {
       "name": "03_ARCHITECTURE.md",
-      "sha256": "e3884b9393d717d85178a7ebda332b0eef2aed773dcca3dbc3c9913241d58bda",
-      "bytes": 7711
+      "sha256": "b6719a7bb4a5b98ff67b89cb4ae0dff7996c5de4889f61e6597e1721d9878ba0",
+      "bytes": 7727
     },
     {
       "name": "04_PRODUCT_DECISIONS.md",
@@ -93,17 +99,17 @@
     },
     {
       "name": "07_KNOWN_ISSUES.md",
-      "sha256": "12a0059845aaa77491291b615e36b2d14a710b63e55ee8964e4ab50d99b8f6fe",
-      "bytes": 19294
+      "sha256": "73c18ee08095ae7e6f0466106e2c2a38133e50d0c43df5f57f530cf6c616b360",
+      "bytes": 23889
     },
     {
       "name": "SYSTEM_STATE.json",
-      "sha256": "d66e6d63c10b4f3e90daee47f621260644cdece1af0ac4a503dfc409401eadd3",
-      "bytes": 10188
+      "sha256": "1ce578b921dea9d839c772b4ab473bcea1acd069713bc6775f3fb30b99406ffd",
+      "bytes": 12121
     },
     {
       "name": "PRODUCTION_MANIFEST.json",
-      "sha256": "36f154344c32735fae15fce9663738ddd05c61d7703ad2328cec785329ed183d",
+      "sha256": "4bf35e5b7296dfe1f080aa8ea846ee567c1aa524d969cec4069244d870f3364f",
       "bytes": 4416
     }
   ],
