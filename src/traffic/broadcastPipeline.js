@@ -53,6 +53,7 @@ import { computeEffectiveWindow, classifyEventTimeStatus } from './effectiveWind
 import { isBroadcastRelevant, getBroadcastEligibility } from './broadcastRules.js';
 import { getLinePushPolicyDecision } from './broadcastPolicy.js';
 import { resolveServiceAreaEligibility } from './serviceArea.js';
+import { resolveLocationQuality } from './locationQuality.js';
 import { readSubscriptions, persistSubscriptions } from './subscriptions.js';
 import {
   readNotifiedState,
@@ -388,8 +389,23 @@ export async function runLineBroadcast(
     // existing ones. See broadcastPolicy.js for the rule and its
     // reversal switch.
     const policy = base.eligible ? getLinePushPolicyDecision(event, env) : { allowed: true, reason: base.reason };
-    const eligible = base.eligible && policy.allowed;
-    const reason = base.eligible ? policy.reason : base.reason;
+    const policyEligible = base.eligible && policy.allowed;
+    // LOCATION QUALITY GATE (2026-08-24) — the LAST of the three
+    // independent gates, checked only once the event is otherwise fully
+    // eligible so its reason never masks a service-area or policy
+    // rejection. Production pushed "台68 西向 /（南寮竹東）-台68線", which
+    // names the entire 22.9 KM route rather than the accident, and spent
+    // one of a 200/month proactive-push allowance on something no driver
+    // could act on. Independent of the other two on purpose:
+    //   TDX_CORROBORATION_REQUIRED  -> false in PBS_ONLY
+    //   SERVICE_AREA_REQUIRED       -> always true
+    //   LOCATION_QUALITY_REQUIRED   -> always true
+    // See locationQuality.js. Producer-side by design — the order is
+    // explicit that this is broadcast eligibility and must never be
+    // pushed down to the Consumer.
+    const locationQuality = policyEligible ? resolveLocationQuality(event) : null;
+    const eligible = policyEligible && locationQuality.sufficient;
+    const reason = policyEligible ? locationQuality.reason : base.eligible ? policy.reason : base.reason;
     eligibilityReasonByEvent.set(event, reason);
     // V1.8.6.7 (Pipeline Trace) — every event in allEvents gets a trace
     // input record right here, regardless of outcome; an ineligible
@@ -399,6 +415,10 @@ export async function runLineBroadcast(
     const trace = traceFor(event);
     trace.eligibility = eligible;
     trace.eligibilityReason = reason;
+    // Recorded for EVERY event that reached this gate, pass or block, so
+    // the Pipeline Trace can show which tier placed it (or why nothing
+    // could) instead of one undifferentiated "不符合播報資格".
+    trace.locationQuality = locationQuality;
     if (eligible) {
       broadcastEligibleEvents.push(event);
     } else {

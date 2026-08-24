@@ -55,6 +55,7 @@
 import { taipeiDateString } from '../tdx/usageLedger.js';
 import { describeClassificationEvidence } from './broadcastProvenance.js';
 import { normalizePbsDirection } from './directionEquivalence.js';
+import { canonicalFreewayRoad, canonicalProvincialRoad } from './roadIdentity.js';
 
 export const TRACE_KEY_PREFIX = 'debug:pipeline-trace:v1';
 export const TRACE_TTL_SECONDS = 24 * 60 * 60; // 24h, per instruction
@@ -224,6 +225,14 @@ export function buildTraceEntry({
   // hours policy, not the event's own announced timing.
   broadcastWindowActive = null,
   suppressionResult = null, // 'new-incident' | 'material-escalation' | 'same-incident-no-escalation' | null
+  // 2026-08-24 (Location Quality Gate) — traffic/locationQuality.js's own
+  // verdict for this event, verbatim: {sufficient, tier, reason, detail?,
+  // evidence}. Recorded for every event that reached that gate, pass or
+  // block, so the trace can say WHICH tier placed the event (or exactly
+  // what was missing) instead of one undifferentiated "不符合播報資格".
+  // Never re-computed here — same "copy what the pipeline already
+  // decided" discipline as every other field in this module.
+  locationQuality = null,
   kmLocationResolution = null,
   cctvEligible = null, // boolean | null
   cctvSkippedByReason = null, // string | null
@@ -289,6 +298,7 @@ export function buildTraceEntry({
     dedupeResult,
     gatingResult,
     eligibility,
+    eligibilityReason,
     relevant,
     eventTimeStatus,
     broadcastWindowActive,
@@ -341,6 +351,11 @@ export function buildTraceEntry({
           : eligibilityReason !== 'outside-service-area' &&
             eligibilityReason !== 'service-area-unknown-source' &&
             eligibilityReason !== 'service-area-unresolvable',
+      // 2026-08-24 — the third, permanently independent gate (see
+      // locationQuality.js). serviceAreaEligible above answers "is it
+      // ours", this answers "can a driver act on it". null when the event
+      // never reached the gate (an earlier gate already stopped it).
+      locationQuality: sanitizeLocationQuality(locationQuality),
       dedupeResult,
       suppressionResult,
       gatingResult,
@@ -388,10 +403,29 @@ export function buildTraceEntry({
   };
 }
 
+// Kept deliberately small and whitelist-only, same discipline as
+// sanitizeKmLocationResolution below: a trace record must never grow to
+// carry a whole resolver payload. `evidence` is the only free-form part
+// and is already just a handful of short scalars produced by
+// locationQuality.js itself.
+const INSUFFICIENT_LOCATION_REASON = 'insufficient-location-precision';
+
+function sanitizeLocationQuality(quality) {
+  if (!quality || typeof quality !== 'object') return null;
+  return {
+    sufficient: Boolean(quality.sufficient),
+    tier: quality.tier || null,
+    reason: quality.reason || null,
+    detail: quality.detail || null,
+    evidence: quality.evidence && typeof quality.evidence === 'object' ? quality.evidence : null,
+  };
+}
+
 function computeStatus({
   dedupeResult,
   gatingResult,
   eligibility,
+  eligibilityReason,
   relevant,
   eventTimeStatus,
   broadcastWindowActive,
@@ -404,6 +438,13 @@ function computeStatus({
   if (dedupeResult === 'duplicate') return 'duplicate';
   if (gatingResult === 'gated-freeway-no-tdx-match') return 'gated';
   if (gatingResult === 'merged-into-canonical') return 'merged';
+  // 2026-08-24 — "不要全部只顯示「不符合播報資格」": the two gates a human
+  // most often needs to tell apart get their own status, derived from the
+  // SAME eligibilityReason the pipeline already produced (never a second,
+  // drifting check). Everything else still falls through to the generic
+  // 'ineligible', whose reason is now shown verbatim on the row.
+  if (eligibility === false && eligibilityReason === 'outside-service-area') return 'outside-service-area';
+  if (eligibility === false && eligibilityReason === INSUFFICIENT_LOCATION_REASON) return 'insufficient-location';
   if (eligibility === false) return 'ineligible';
   if (suppressionResult === 'same-incident-no-escalation') return 'suppressed';
   if (eventTimeStatus === 'ended') return 'event-ended';
@@ -422,11 +463,21 @@ function computeStatus({
  * step of a Cron run, after LINE push, notified-state, and Shared Feed
  * persistence).
  */
-export async function recordPipelineTrace(kv, entry, now = new Date()) {
+export async function recordPipelineTrace(kv, entry, now = new Date(), sequence = 0) {
   if (!kv) return { committed: false, reason: 'no-kv' };
   try {
     const date = taipeiDateString(now);
-    const key = `${TRACE_KEY_PREFIX}:${date}:${now.getTime()}:${opaqueId()}`;
+    // 2026-08-24 — `sequence` exists because EVERY entry a Cron run
+    // writes shares that run's single `now` (scheduled.js passes one
+    // Date), so `now.getTime()` is identical across the whole batch and
+    // the only thing separating those keys used to be the RANDOM
+    // opaqueId. Listing is lexicographic, so a run's own entries came
+    // back in random order — and with the newest-first page bounded by
+    // DEFAULT_LIST_LIMIT, a specific event could be pushed off page 1
+    // non-deterministically, which reads to a human as "the event was
+    // never traced". Zero-padded so it sorts as a number, and placed
+    // before the opaqueId so the id keeps doing its only job (uniqueness).
+    const key = `${TRACE_KEY_PREFIX}:${date}:${now.getTime()}:${String(sequence).padStart(6, '0')}:${opaqueId()}`;
     await kv.put(key, JSON.stringify(entry), { expirationTtl: TRACE_TTL_SECONDS });
     return { committed: true, key };
   } catch (err) {
@@ -443,8 +494,11 @@ export async function recordPipelineTrace(kv, entry, now = new Date()) {
 export async function persistPipelineTraceEntries(kv, entries, now = new Date()) {
   let committed = 0;
   let failed = 0;
-  for (const entry of Array.isArray(entries) ? entries : []) {
-    const result = await recordPipelineTrace(kv, entry, now);
+  const list = Array.isArray(entries) ? entries : [];
+  for (let index = 0; index < list.length; index += 1) {
+    // Batch position is the stable tiebreaker within this run — see
+    // recordPipelineTrace's own `sequence` comment.
+    const result = await recordPipelineTrace(kv, list[index], now, index);
     if (result.committed) committed += 1;
     else failed += 1;
   }
@@ -458,7 +512,62 @@ export async function persistPipelineTraceEntries(kv, entries, now = new Date())
  * list with `kvAvailable:false`, same fail-safe shape as
  * broadcastProvenance.js's listBroadcastProvenance.
  */
-export async function listPipelineTrace(kv, { limit = DEFAULT_LIST_LIMIT, source, road, rawId, status } = {}) {
+// 2026-08-24 — ROAD FILTER, and why it used to find nothing.
+//
+// Real case: a PBS 台68 accident WAS traced and WAS pushed, but a human
+// looking for it found nothing. The trace stores `identity.road` as the
+// NORMALIZED road (`台68` — pbs/roadName.js), while every surface a human
+// can actually see says something else: the LINE message shows
+// "（南寮竹東）-台68線", PBS's own field says "台68線". The filter compared
+// with `!==`, so searching for exactly what you were looking at returned
+// zero rows — indistinguishable from "it was never recorded".
+//
+// Fixed by comparing through the SAME canonicalisers the pipeline itself
+// uses (roadIdentity.js), so 台68 / 台68線 / 國1 / 國道1號 / 國道一號 all
+// find their own records. Still a filter, never a fuzzy search: two
+// genuinely different roads can never collide, because both sides are
+// reduced by the identical function the normalizer used.
+function roadFilterMatches(recordRoad, filter) {
+  if (!filter) return true;
+  const stored = String(recordRoad || '').trim();
+  const wanted = String(filter).trim();
+  if (!stored) return false;
+  if (stored === wanted) return true;
+  const canonical = (value) => canonicalFreewayRoad(value) || canonicalProvincialRoad(value) || null;
+  const a = canonical(stored);
+  const b = canonical(wanted);
+  return Boolean(a && b && a === b);
+}
+
+// 2026-08-24 — free-text search over the fields a human ACTUALLY has in
+// hand after receiving a LINE message: the road, the location text that
+// was printed, the message body itself, and the ids. Without it the only
+// way in was `rawId` (a PBS UID no human ever sees) or the road filter
+// above. Substring, case-insensitive, applied to the same already-fetched
+// record — no extra KV reads, no index, no new storage.
+function matchesFreeText(record, query) {
+  if (!query) return true;
+  const needle = String(query).trim().toLowerCase();
+  if (!needle) return true;
+  const haystack = [
+    record.eventKey,
+    record.identity?.rawId,
+    record.identity?.road,
+    record.identity?.source,
+    record.normalized?.location,
+    record.normalized?.type,
+    record.upstream?.descriptionSummary,
+    record.delivery?.formattedOutput,
+    record.decision?.eligibilityReason,
+    record.status,
+  ]
+    .filter((v) => typeof v === 'string' && v)
+    .join('\n')
+    .toLowerCase();
+  return haystack.includes(needle);
+}
+
+export async function listPipelineTrace(kv, { limit = DEFAULT_LIST_LIMIT, source, road, rawId, status, q } = {}) {
   const boundedLimit = Math.max(1, Math.min(MAX_LIST_LIMIT, Number(limit) || DEFAULT_LIST_LIMIT));
   if (!kv) return { records: [], kvAvailable: false };
 
@@ -504,13 +613,26 @@ export async function listPipelineTrace(kv, { limit = DEFAULT_LIST_LIMIT, source
       }
       if (!record || typeof record !== 'object') continue;
       if (source && record.identity?.source !== source) continue;
-      if (road && record.identity?.road !== road) continue;
+      if (!roadFilterMatches(record.identity?.road, road)) continue;
       if (rawId && record.identity?.rawId !== rawId) continue;
       if (status && record.status !== status) continue;
+      if (!matchesFreeText(record, q)) continue;
       records.push(record);
     }
 
-    return { records, kvAvailable: true };
+    // 2026-08-24 — a query only ever READS the newest MAX_ENTRIES_SCANNED
+    // keys, so "no rows" can mean either "no such event" or "it is older
+    // than the window I looked at". Those are completely different
+    // answers to a human debugging a missed broadcast, and no surface may
+    // present the second as the first.
+    //
+    // Deliberately a statement of FACT about coverage — "there are keys
+    // this scan never examined" — and nothing about whether the caller
+    // liked the result. Presentation (when to actually warn a reader) is
+    // the view's decision, not this function's. See this project's "no
+    // silent caps" discipline.
+    const scanTruncated = keys.length > newestFirstKeys.length;
+    return { records, kvAvailable: true, scannedKeyCount: newestFirstKeys.length, totalKeyCount: keys.length, scanTruncated };
   } catch (err) {
     return { records: [], kvAvailable: false, error: safeErrorMessage(err) };
   }

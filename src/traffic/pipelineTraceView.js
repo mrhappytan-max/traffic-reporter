@@ -71,6 +71,13 @@ const STATUS_META = {
   'outside-broadcast-window': { emoji: '⚠️', label: '非播報時段（08:00～22:00）', cls: 'warn' },
   'not-relevant': { emoji: '⚠️', label: '尚未到播報時間', cls: 'warn' },
   ineligible: { emoji: '⚠️', label: '不符合播報資格', cls: 'warn' },
+  // 2026-08-24 — "不要全部只顯示「不符合播報資格」". The two gates a human
+  // most often needs to tell apart get their own row label, so which gate
+  // stopped an event is readable at a glance instead of only by expanding
+  // the row. Same closed vocabulary as everything else here — these are
+  // pipelineTrace.js's computeStatus values, never invented locally.
+  'outside-service-area': { emoji: '🚫', label: '不在服務區域', cls: 'warn' },
+  'insufficient-location': { emoji: '📍', label: '位置不夠精確（不推播）', cls: 'warn' },
   gated: { emoji: '⚠️', label: '國道閘門（無 TDX 對應）', cls: 'warn' },
   'line-failed': { emoji: '❌', label: 'LINE 推播失敗', cls: 'bad' },
 };
@@ -203,6 +210,30 @@ function renderLineTimelineField(entry) {
   return renderField('LINE 播報', `未播報（${meta.emoji} ${meta.label}）`);
 }
 
+// 2026-08-24 — turns locationQuality.js's verdict into one line a
+// non-programmer can act on: which tier placed the event, or exactly what
+// was missing. Reads only what the trace already stored; never re-runs
+// the gate (same discipline as every other field on this page).
+const LOCATION_TIER_LABELS = {
+  'structured-km': '來源提供明確 KM',
+  'display-km': '通報文字內的公里標記',
+  coordinate: '座標可解析為明確地點',
+  'text-km-marker': '地點文字含明確 KM',
+  'named-facility': '明確交流道／匝道／路口／隧道',
+  'admin-detail': '行政區＋更細地點',
+};
+
+function describeLocationQuality(quality) {
+  if (!quality) return null;
+  if (quality.sufficient) {
+    return `足夠（${LOCATION_TIER_LABELS[quality.tier] || quality.tier || '已定位'}）`;
+  }
+  const evidence = quality.evidence || {};
+  if (evidence.overLongRangeKm) return `不足：區段過長（${evidence.overLongRangeKm} 公里），無法指出事故點`;
+  if (evidence.location) return `不足：只有路線／區域級描述「${evidence.location}」，無 KM、無可解析座標`;
+  return '不足：無 KM、無可解析座標、無明確地點文字';
+}
+
 function renderDetail(entry) {
   const { identity, upstream, normalized, decision, enrichment, delivery } = entry;
   return `
@@ -234,6 +265,8 @@ function renderDetail(entry) {
     ${renderField('broadcastWindowActive（08:00～22:00）', decision.broadcastWindowActive === null ? null : decision.broadcastWindowActive ? '是' : '否')}
     ${renderField('eligibility', decision.eligibility === null ? null : decision.eligibility ? '符合' : '不符合')}
     ${renderField('eligibilityReason', decision.eligibilityReason)}
+    ${renderField('服務區域', decision.serviceAreaEligible === null ? null : decision.serviceAreaEligible ? '在服務區內' : '不在服務區內')}
+    ${renderField('位置精確度', describeLocationQuality(decision.locationQuality))}
     ${renderField('dedupe', decision.dedupeResult)}
     ${renderField('suppression', decision.suppressionResult)}
     ${renderField('gating', decision.gatingResult)}
@@ -328,7 +361,8 @@ function renderFilterForm(filters) {
   return `
 <form class="filters" method="get">
   ${sourceSelect}
-  <input type="text" name="road" placeholder="道路（例：國道一號）" value="${escapeHtml(filters.road || '')}">
+  <input type="text" name="q" placeholder="關鍵字（道路／地點／訊息內容）" value="${escapeHtml(filters.q || '')}">
+  <input type="text" name="road" placeholder="道路（例：國道一號／台68線）" value="${escapeHtml(filters.road || '')}">
   <input type="text" name="rawId" placeholder="rawId" value="${escapeHtml(filters.rawId || '')}">
   ${statusSelect}
   <input type="number" name="limit" min="1" max="${MAX_LIST_LIMIT}" placeholder="筆數（預設 ${DEFAULT_LIST_LIMIT}）" value="${escapeHtml(filters.limit || '')}">
@@ -460,6 +494,7 @@ const PAGE_STYLE = `
 function renderActiveFiltersBanner(filters) {
   const parts = [];
   if (filters.source) parts.push(`來源=${sourceLabel(filters.source)}（${escapeHtml(filters.source)}）`);
+  if (filters.q) parts.push(`關鍵字=${escapeHtml(filters.q)}`);
   if (filters.road) parts.push(`道路=${escapeHtml(filters.road)}`);
   if (filters.rawId) parts.push(`rawId=${escapeHtml(filters.rawId)}`);
   if (filters.status) parts.push(`狀態=${escapeHtml(statusMeta(filters.status).label)}（${escapeHtml(filters.status)}）`);
@@ -468,7 +503,7 @@ function renderActiveFiltersBanner(filters) {
   return `<p class="filter-banner">✅ 目前套用篩選：${parts.join('　')}</p>`;
 }
 
-function renderPage({ rows, filters, count, kvAvailable }) {
+function renderPage({ rows, filters, count, kvAvailable, scanTruncated }) {
   return `<!doctype html>
 <html lang="zh-Hant">
 <head>
@@ -484,6 +519,11 @@ function renderPage({ rows, filters, count, kvAvailable }) {
 <p class="tz-banner">🕒 以下時間皆為 <strong>Asia/Taipei（台灣時間，UTC+8）</strong>，不是 UTC。</p>
 ${renderFilterForm(filters)}
 ${renderActiveFiltersBanner(filters)}
+${
+    scanTruncated && count === 0
+      ? '<p class="filter-banner">ℹ️ 只掃描了最新的一批紀錄，較舊的事件可能還在但沒被掃到——「查不到」不等於「沒有發生」。請縮小關鍵字，或加上道路／狀態條件再查一次。</p>'
+      : ''
+  }
 ${!kvAvailable ? '<div class="empty">⚠️ 無法讀取 KV，暫無資料</div>' : count === 0 ? '<div class="empty">這個篩選條件下沒有資料</div>' : rows}
 <div class="footer">
   <a href="/admin/pipeline-trace">查看原始 JSON</a>
@@ -510,22 +550,24 @@ export async function handlePipelineTraceView(env, request, now = new Date()) {
   const url = new URL(request.url);
   const filters = {
     source: url.searchParams.get('source') || '',
+    q: url.searchParams.get('q') || '',
     road: url.searchParams.get('road') || '',
     rawId: url.searchParams.get('rawId') || '',
     status: url.searchParams.get('status') || '',
     limit: url.searchParams.get('limit') || '',
   };
 
-  const { records, kvAvailable } = await listPipelineTrace(env.TRAFFIC_KV, {
+  const { records, kvAvailable, scanTruncated } = await listPipelineTrace(env.TRAFFIC_KV, {
     limit: filters.limit || undefined,
     source: filters.source || undefined,
+    q: filters.q || undefined,
     road: filters.road || undefined,
     rawId: filters.rawId || undefined,
     status: filters.status || undefined,
   });
 
   const rows = records.map((entry) => renderRow(entry, now)).join('\n');
-  const html = renderPage({ rows, filters, count: records.length, kvAvailable });
+  const html = renderPage({ rows, filters, count: records.length, kvAvailable, scanTruncated });
 
   // V1.8.7.6 — belt-and-suspenders on top of applyAdminSecurityHeaders'
   // own Cache-Control:no-store (index.js wraps every ADMIN_PATHS response

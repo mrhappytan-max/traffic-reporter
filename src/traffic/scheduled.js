@@ -116,6 +116,10 @@ export async function runScheduledTdxSync(env, now = new Date()) {
       // from so 'why did this 國道 PBS accident broadcast' is answerable
       // straight from one log line.
       `tdxCorrelationRequired=${sourceMode.tdxRuntimeEnabled} ` +
+      // 2026-08-24: the two always-on gates, logged as literal true so a
+      // future reader can see at a glance that neither is mode-dependent
+      // — "TDX 佐證不需要" must never be misread as "什麼都可以播".
+      `serviceAreaRequired=true locationQualityRequired=true ` +
       `linePushPolicy=${pushPolicy} dynamicShoulderPush=${pushPolicy === 'ALL_ELIGIBLE' ? 'ON' : 'OFF'}` +
       `${sourceMode.tdxPausedReason ? ` reason="${sourceMode.tdxPausedReason}"` : ''}`
   );

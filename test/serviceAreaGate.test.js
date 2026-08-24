@@ -71,7 +71,14 @@ function withFetchSpy(fn) {
 
 const tdxCalls = (calls) => calls.filter((c) => c.url.includes('tdx.transportdata.tw'));
 
-/** The real broadcast gate's ordering, mirrored exactly. */
+/**
+ * The real broadcast gate's ordering up to and including the LINE push
+ * policy — deliberately NOT the location-quality gate that follows it
+ * (2026-08-24), because this file's subject is geography. Keeping the
+ * mirror short here is what lets these fixtures stay minimal; the full
+ * three-gate ordering is exercised in
+ * test/pbsAccidentTraceLocationQuality.test.js.
+ */
 function broadcastDecision(event, env) {
   const area = resolveServiceAreaEligibility(event);
   if (!area.eligible) return { allowed: false, reason: area.reason };

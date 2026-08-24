@@ -289,3 +289,164 @@ export function resolveKmRange(input, options = {}) {
     mapUrl: resolution.mapUrl,
   };
 }
+
+// 2026-08-24 — COORDINATE → LOCATION (reverse of resolveKmLocation).
+//
+// WHY THIS EXISTS
+// ---------------
+// A real Production LINE push read, in full:
+//
+//   🚨 交通事故 / 台68 西向 / （南寮竹東）-台68線 / 事故影響通行…
+//
+// "（南寮竹東）-台68線" is not a location at all — it is PBS's official
+// ROUTE NAME for the whole of 台68 (the same string this repo already
+// documents as a real areaNm example in pbs/roadName.js), spanning KM 0
+// 南寮 to KM 22.9 竹東. A driver cannot act on it.
+//
+// The reason the message had nothing better is structural, not
+// accidental. A PBS record carries `x1`/`y1` coordinates, and
+// pbs/normalize.js faithfully keeps them as latitude/longitude — but
+// until now NOTHING on the display side ever read them: resolveKmLocation
+// above starts from a KM value (selectTargetKm), and PBS has no
+// structured KM at all, only the free-text `displayKM` its `comment`
+// sometimes yields. So a PBS event WITH exact coordinates and a PBS event
+// with none produced byte-identical output. That is "we already had the
+// precise data and threw it away", and it is fixed here rather than
+// papered over by blocking the event.
+//
+// WHAT IT DOES
+// ------------
+// The inverse lookup of resolveProvincial/resolveFreeway, over the SAME
+// bundled official datasets, with the SAME fail-closed contract: find the
+// nearest milestone ON THIS ROAD to the given coordinate. The road is
+// always already known from the event, so this never asks the much harder
+// "which road is this point on" question — only "where along this road",
+// which the milestone data answers directly.
+//
+// Zero network, zero TDX: same bundled generated/*.js datasets, same
+// never-throws discipline as resolveKmLocation.
+const EARTH_RADIUS_KM = 6371;
+
+/** Great-circle distance in km. Plain haversine — no dependencies. */
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * EARTH_RADIUS_KM * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+
+// Measured against the real bundled datasets, not guessed: consecutive
+// milestones sit ~100m apart on both the provincial (7040) and freeway
+// (95016 points) sets, so a coordinate genuinely on this road is at most
+// ~50m from the nearest one plus whatever positional error the upstream
+// report carries. 0.5 km leaves generous room for that error while still
+// being far tighter than the length of any road segment a human would
+// call "整條路" — and because the candidate set is already restricted to
+// THIS road, a wider tolerance can only ever mis-place a point ALONG the
+// correct road, never onto a different one.
+export const COORDINATE_MATCH_TOLERANCE_KM = 0.5;
+
+// The coordinate path is the only one that runs for EVERY event on the
+// eligibility gate (see locationQuality.js), and 國道一號 alone has ~10k
+// milestones, so re-filtering the whole dataset per call is wasted CPU on
+// the Cron hot path. Keyed by the dataset OBJECT so a test's
+// datasetOverride never pollutes the Production datasets' entry, and
+// WeakMap so an override is collected with the test that made it.
+const pointsByRoadCache = new WeakMap();
+function pointsForRoad(dataset, road) {
+  let byRoad = pointsByRoadCache.get(dataset);
+  if (!byRoad) {
+    byRoad = new Map();
+    for (const point of dataset.points) {
+      const list = byRoad.get(point.road);
+      if (list) list.push(point);
+      else byRoad.set(point.road, [point]);
+    }
+    pointsByRoadCache.set(dataset, byRoad);
+  }
+  return byRoad.get(road) || [];
+}
+
+function nearestPointToCoordinate(points, latitude, longitude) {
+  let best = null;
+  let bestDist = Infinity;
+  for (const point of points) {
+    if (typeof point.lat !== 'number' || typeof point.lng !== 'number') continue;
+    const dist = haversineKm(latitude, longitude, point.lat, point.lng);
+    if (dist < bestDist) {
+      best = point;
+      bestDist = dist;
+    }
+  }
+  return best ? { point: best, dist: bestDist } : null;
+}
+
+/**
+ * Turn an event's own coordinates into the same kind of driver-readable
+ * location resolveKmLocation produces from a KM value.
+ *
+ * @param {{road:string, direction?:string, latitude?:number, longitude?:number}} input
+ * @param {{datasetOverride?: {provincial?:object, freeway?:object, freewayFacilities?:object}}} [options]
+ *   TEST-ONLY, exactly as on resolveKmLocation.
+ * @returns {{resolved:boolean, reason?:string, dataset?:string, road?:string,
+ *   resolvedKm?:number|null, distanceKm?:number, locationLabel?:string|null,
+ *   segmentFrom?:string|null, segmentTo?:string|null,
+ *   coordinate?:{lat:number,lng:number}|null, mapUrl?:string|null}}
+ *   Never throws.
+ */
+export function resolveCoordinateLocation(input, { datasetOverride } = {}) {
+  try {
+    const { road, direction, latitude, longitude } = input || {};
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return failClosed('no-coordinate');
+
+    const freewayRoad = canonicalFreewayRoad(road);
+    const provincialRoad = freewayRoad ? null : canonicalProvincialRoad(road);
+    if (!freewayRoad && !provincialRoad) return failClosed('unknown-road');
+
+    const dataset = freewayRoad
+      ? (datasetOverride && datasetOverride.freeway) || freewayDatasetDefault
+      : (datasetOverride && datasetOverride.provincial) || provincialDatasetDefault;
+    const canonicalRoad = freewayRoad || provincialRoad;
+    const points = dataset && Array.isArray(dataset.points) ? pointsForRoad(dataset, canonicalRoad) : [];
+    if (points.length === 0) {
+      return failClosed('no-data', { dataset: freewayRoad ? 'freeway' : 'provincial', road: canonicalRoad });
+    }
+
+    const nearest = nearestPointToCoordinate(points, latitude, longitude);
+    if (!nearest || nearest.dist > COORDINATE_MATCH_TOLERANCE_KM) {
+      return failClosed('too-far', {
+        dataset: freewayRoad ? 'freeway' : 'provincial',
+        road: canonicalRoad,
+        distanceKm: nearest ? Number(nearest.dist.toFixed(3)) : null,
+      });
+    }
+
+    // The coordinate has now been placed at a real KM on this road, so
+    // the EXISTING KM-based resolvers own everything downstream — the
+    // 交流道－交流道 segment naming for a freeway, the 縣市/鄉鎮/里 label
+    // for a 省道. No second labelling engine, and no chance of this path
+    // ever naming a place differently from the KM path for the same spot.
+    const viaKm = resolveKmLocation(
+      { road: canonicalRoad, direction, startKM: nearest.point.km },
+      { datasetOverride }
+    );
+
+    const coordinate = { lat: nearest.point.lat, lng: nearest.point.lng };
+    return {
+      resolved: true,
+      dataset: freewayRoad ? 'freeway' : 'provincial',
+      road: canonicalRoad,
+      resolvedKm: nearest.point.km,
+      distanceKm: Number(nearest.dist.toFixed(3)),
+      locationLabel: viaKm.resolved ? viaKm.locationLabel : null,
+      segmentFrom: viaKm.resolved ? viaKm.segmentFrom : null,
+      segmentTo: viaKm.resolved ? viaKm.segmentTo : null,
+      coordinate,
+      mapUrl: buildMapUrl(coordinate.lat, coordinate.lng),
+    };
+  } catch {
+    return failClosed('resolver-error');
+  }
+}

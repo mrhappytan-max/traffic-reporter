@@ -56,6 +56,14 @@ function nightConstructionEvent(overrides = {}) {
     type: 'construction',
     road: '台61線',
     direction: '北向',
+    // 2026-08-24 — structured KM added when the Location Quality Gate
+    // shipped. Every REAL TDX 省道/國道 record carries StartKM/EndKM (see
+    // fixtures.js's realHighwayConstructionEvent, taken from confirmed
+    // production output); this fixture simply never bothered, because the
+    // behaviour it pins is the TIME window, not the location. 48K/49K is
+    // inside the configured 台61線 Hsinchu range (35-70, hsinchuConfig.js).
+    startKM: '48K+000',
+    endKM: '49K+000',
     description: '台61線8月20日21時至翌日6時封閉車道施工',
     updatedAt: '2026-08-20T12:00:00+08:00',
     pipelineTraceUpstream: buildUpstreamSnapshot({
@@ -75,6 +83,11 @@ function dayConstructionEvent(overrides = {}) {
     type: 'construction',
     road: '台1線',
     direction: '南向',
+    // Same reason as nightConstructionEvent above; 90K/91K is inside the
+    // configured 台1線 Hsinchu range (75-100, hsinchuConfig.js) and is the
+    // exact KM pair fixtures.js's highwayEventTai1InRange already uses.
+    startKM: '90K+000',
+    endKM: '91K+000',
     description: '台1線8月15日9時至17時封閉車道施工',
     updatedAt: '2026-08-15T08:00:00+08:00',
     pipelineTraceUpstream: buildUpstreamSnapshot({

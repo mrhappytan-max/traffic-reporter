@@ -144,6 +144,13 @@ function pbsAccident(overrides = {}) {
     description: '國道一號南向88K+000事故影響通行',
     startKM: null,
     endKM: null,
+    // 2026-08-24 — added when the Location Quality Gate shipped. This is
+    // not new information: pbs/normalize.js's extractDisplayKmFromText
+    // already derives exactly 88 from the `description` two lines up, so
+    // a real normalized PBS event of this shape has always carried it.
+    // The fixture just hand-built the normalized object and skipped the
+    // field, because what it pins is CCTV budget behaviour, not location.
+    displayKM: 88,
     startTime: '2026-08-20T08:03:00+08:00',
     endTime: null,
     updatedAt: '2026-08-20T08:03:00+08:00',

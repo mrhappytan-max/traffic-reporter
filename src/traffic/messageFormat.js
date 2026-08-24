@@ -62,7 +62,7 @@
 // file's own test suite).
 
 import { getRoadShortName, getRoadSectionLabel } from './roadSectionLabel.js';
-import { resolveKmLocation } from './kmLocationResolver.js';
+import { resolveKmLocation, resolveCoordinateLocation } from './kmLocationResolver.js';
 import { DEFAULT_CONGESTION_SEVERITY } from './congestionSeverity.js';
 import { detectNonCollisionAnomaly } from './anomalyClassification.js';
 
@@ -303,8 +303,30 @@ function buildRoadLines(event) {
     endKM: event.endKM,
     displayKM: event.displayKM,
   });
-  const resolverLabel = kmResolution.resolved ? kmResolution.locationLabel : null;
-  const mapUrl = kmResolution.resolved ? kmResolution.mapUrl || null : null;
+  // 2026-08-24 — when no KM is available at all, fall back to the event's
+  // OWN coordinates. A PBS record carries x1/y1 and pbs/normalize.js has
+  // always kept them as latitude/longitude, but until now nothing on the
+  // display side ever read them: this function started from a KM value,
+  // and PBS has no structured KM — so a PBS accident WITH exact
+  // coordinates rendered byte-identically to one with none, i.e. the
+  // route name alone ("（南寮竹東）-台68線"). Same bundled official
+  // dataset, same labels, same 0-I/O guarantee — see
+  // kmLocationResolver.js's resolveCoordinateLocation. Only consulted
+  // when the KM path produced nothing, so no existing message changes.
+  const coordinateResolution = kmResolution.resolved
+    ? null
+    : resolveCoordinateLocation({
+        road: event.road,
+        direction: event.direction,
+        latitude: event.latitude,
+        longitude: event.longitude,
+      });
+  const resolution =
+    (kmResolution.resolved && kmResolution) ||
+    (coordinateResolution && coordinateResolution.resolved && coordinateResolution) ||
+    null;
+  const resolverLabel = resolution ? resolution.locationLabel : null;
+  const mapUrl = resolution ? resolution.mapUrl || null : null;
 
   // Tier 1 (source's own human text) beats tier 2 (official KM Location
   // Resolver) beats tier 3 (curated 國1/國3 anchor table) — only fall
