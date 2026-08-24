@@ -282,6 +282,125 @@ SERVICE_AREA_ELIGIBILITY_REQUIRED = true  （永遠，所有模式）
 那就要嘛在本層**真的檢查**，要嘛讓上游**在事件上留下可驗證的標記**——
 寫在註解裡的假設，遲早會被某條新路徑繞過，而且**不會報錯**。
 
+## 修正紀錄｜播報追溯斷點 ＋ 位置精確度閘門（台68 事件）（2026-08-24）
+
+### 現象（兩個真實 Production 症狀）
+
+真人於 2026-08-24 約 14:20 收到主動 Push：
+
+```
+🚨 交通事故
+台68 西向
+（南寮竹東）-台68線
+事故影響通行
+請提前避開
+🕒 13:48 更新
+```
+
+1. **位置不可行動**：第三行不是地點，是 PBS 對「整條台68」的官方路線名稱
+   （本 repo 的 `src/pbs/roadName.js` 早就把這個字串當成真實 `areaNm` 範例寫在註解裡）。
+   官方里程資料顯示南寮在 0.4K、竹東在 22.9K 一端——等於告訴駕駛「這條路上某處有事故」。
+   LINE 主動 Push 每月只有 200 則，這一則等於浪費掉。
+2. **查不到**：幾分鐘後在健康頁 / Pipeline Trace 找不到這筆事件。
+
+### 反查結果（能證明的 / 不能證明的，分開寫）
+
+**沙箱對外 egress 為 403，無法讀取 Production KV 或 admin 端點**，
+所以「這一筆的原始 PBS 記錄」我拿不到。以下全部是從**訊息本身**與**repo 程式碼**推回來的，
+每一項都可由任何人重跑 `test/pbsAccidentTraceLocationQuality.test.js` 第 1 項驗證：
+
+| 項目 | 結論 | 依據 |
+| --- | --- | --- |
+| source | **PBS**（非 TDX、非 Consumer） | 訊息格式逐字命中 `messageFormat.js` 的 `formatEventMessage`；`（南寮竹東）-台68線` 是 PBS `areaNm` 形狀 |
+| 原始 location | `areaNm = （南寮竹東）-台68線` | 第三行是 `event.location` fallback，而 PBS 的 `location` 只可能來自 `areaNm` |
+| 原始 updatedAt | `modDttm = 2026-08-24 13:48:00` | 末行 `🕒 13:48更新` |
+| 原始是否有 KM | **沒有可解析的 KM** | PBS 從來沒有結構化 KM；`comment` 若有「8.1公里 / 8K+300」形狀，`displayKM` 會讓訊息多出 KM 行 |
+| 原始是否有座標 | **無法確定** | 現有程式碼**根本沒有任何顯示路徑會讀 `x1`/`y1`**，有沒有座標產生的訊息完全一樣 |
+| service area | 通過（台68 全線在服務區內） | `hsinchuConfig.js` 的 `wholeRouteInScope` |
+| eligibility / 政策 | 兩者都通過 | 它確實是 `accident`，也符合重大事故限定 |
+
+**rawId 沒有取得**：PBS 的 `rawId` 是 `UID`，訊息裡不會出現，Production 也讀不到。
+測試用的是同形狀 fixture，不是宣稱那一筆的真實 UID。
+
+### Root cause（兩個，都不是猜的）
+
+**A. 位置**：PBS 事件走到播報層時，唯一能產生精確位置的來源是
+`comment` free text 解析出來的 `displayKM`。`x1`/`y1` 在 `pbs/normalize.js`
+一直有被保留成 `latitude`/`longitude`，但**顯示側從來沒有任何一行讀過它**——
+`resolveKmLocation()` 是從 KM 出發的，而 PBS 沒有 KM。
+所以「有精確座標」和「完全沒有位置」產生的訊息**逐位元組相同**。
+這屬於「已有精確資料但被我們丟掉」。
+
+**B. 追溯**：trace **有寫入**（`broadcastPipeline.js` 對 `allEvents` 每一筆都建 entry，
+四個 return 都會 `finalizeTrace()`）。斷點全部在**讀取側**：
+
+1. `/health` 是 counts-only 快照（`healthSnapshot.js` 不存任何 per-event 身分），
+   本來就不是查單一事件的地方——這是設計，不是 bug，但它讓「查不到」看起來像資料遺失。
+2. Pipeline Trace 的 `road` 篩選是**嚴格相等**，而 trace 存的是正規化後的 `台68`，
+   人看得到的每一個字面（LINE 訊息、PBS 欄位）都是 `台68線`。
+   **照著螢幕上的字去搜，必定 0 筆**，和「從來沒被記錄」完全無法區分。
+3. 同一次 Cron 的所有 entry 共用同一個 `now`，key 裡的 epochMs 一模一樣，
+   唯一的區別是**隨機** `opaqueId` → 同一輪內順序隨機，
+   預設只顯示最新 30 筆時，某一筆會**不定時地**被擠出第一頁。
+4. 掃描上限 500 筆時，「沒掃到」與「不存在」回報成同一件事。
+
+### 修正方式
+
+**先修解析，再談封鎖**（施工令的 A/B 判斷）：
+
+- 新增 `kmLocationResolver.js` 的 `resolveCoordinateLocation()`——
+  既有 KM 查詢的**反向**版本，同一份官方 bundled 資料集、同樣 fail-closed、同樣 0 網路。
+  找到本路線上最近的里程點（容差 0.5 公里，依實測 ~100m 點距訂定），再交給既有 KM 解析器產生標籤。
+- `messageFormat.js` 在「完全沒有 KM」時才呼叫它。既有訊息一則都不會改變。
+  該事件若真的有座標，現在會顯示 `台68 西向｜新竹市東區水源里` 並附地圖連結。
+
+**再加閘門**：新增 `traffic/locationQuality.js`，位於服務區域與事故政策**之後**、
+時間/dedupe/suppression **之前**。判定層級（全部沿用既有 resolver，沒有新地理引擎、沒有硬編 KM）：
+
+1. 來源結構化 KM（區段超過 `MAX_ACTIONABLE_SEGMENT_KM = 15` 公里者不算——
+   15 是官方交流道資料集中 國1/國3 相鄰設施最大間距，p50 只有 4 公里）
+2. `displayKM`（PBS comment 內的官方公里標記）
+3. 座標，且**既有 resolver 能可靠轉成可理解地點**
+4. 訊息**真的會印出來**的地點文字內含：明確 KM／交流道匝道路口隧道／行政區＋更細地點
+
+刻意**不**看 `description`：formatter 從不印它，
+用看不到的文字放行，就是這個閘門要擋的假精確。
+
+不足時：`eligible = false`，`reason = insufficient-location-precision`，
+事件**仍然保留在 Pipeline Trace**，不會消失，也永遠不會 throw。
+
+**追溯側**：`road` 篩選改用 pipeline 自己的正規化函式比對（台68／台68線／國1／國道1號 互通，
+但兩條真的不同的路永遠不會互相命中）；新增關鍵字搜尋（道路／地點／訊息內容／rawId）；
+key 加入批次序號讓同一輪順序穩定；掃描未涵蓋全部時**明講**，不再把「沒掃到」講成「不存在」。
+
+### 三道閘門永久獨立
+
+```
+TDX_CORROBORATION_REQUIRED   -> false（PBS_ONLY）
+SERVICE_AREA_REQUIRED        -> 永遠 true
+LOCATION_QUALITY_REQUIRED    -> 永遠 true
+```
+
+它們回答三個不同的問題：「有沒有被佐證」「是不是我們的地盤」「駕駛能不能用」。
+任何一個都不得被另一個取代或推論。八堵那一筆即使位置精確，仍然必須被服務區域擋下——
+這一點有專門測試鎖住。
+
+### 可觀測性
+
+- 新 status：`outside-service-area`（🚫 不在服務區域）、`insufficient-location`（📍 位置不夠精確）。
+  其餘仍走既有 `ineligible`，但 reason 一律逐字顯示，不再只有「不符合播報資格」。
+- `decision.locationQuality` 記錄是哪一層放行、或**具體缺什麼**。
+- Cron log 多印 `serviceAreaRequired=true locationQualityRequired=true`。
+
+### 給未來 Agent 的通則
+
+**閘門的判準，必須和訊息真正會顯示的內容一致。**
+用一個駕駛看不到的欄位去證明「位置夠精確」，等於為假精確背書。
+
+**「查不到」和「沒發生」是兩件事。**
+任何有上限的掃描，都必須把上限講出來；把沉默的截斷呈現成空結果，
+會讓真人把讀取側的 bug 誤判成資料遺失，往完全錯誤的方向查下去。
+
 ## TDX 還原程序（RESTORE TDX）
 
 **前提**：真人確認 TDX 額度確實已恢復。
