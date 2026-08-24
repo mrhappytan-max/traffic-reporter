@@ -14,7 +14,7 @@
     "rule": "traffic-reporter is sole Shared Traffic Feed content authority; consumers must never re-judge completedProducts"
   },
   "git": {
-    "sourceMainHead": "0c56e59a20c5820feb5e0a5ec894b46aa2c2920b",
+    "sourceMainHead": "f1c04aad98bc30b8ac09eaa44aca0485f53b2009",
     "sourceMainHeadResolvedFrom": "origin/main",
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
     "sourceWorkingTree": "clean",
@@ -120,8 +120,8 @@
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-08-24T07:16:18.045Z",
-    "sourceMainHead": "0c56e59a20c5820feb5e0a5ec894b46aa2c2920b",
+    "generatedAt": "2026-08-24T07:19:16.387Z",
+    "sourceMainHead": "f1c04aad98bc30b8ac09eaa44aca0485f53b2009",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
     "historyDir": "_history"
