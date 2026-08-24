@@ -125,6 +125,69 @@ MONTHLY_LINE_LIMIT   = 200
   - 接近或超過 200 → 由**真人**另開新任務，研究更嚴格的 `ROAD_IMPACT_ACCIDENT`／車道受阻・封閉限定策略。
 - **未來要收緊時的依據**：`broadcastPolicy.js` 已經在記錄每一則播出的事故究竟有沒有寫明通行受阻（`policy-major-accident-blocked-lanes` / `policy-major-accident-impact-keyword` / `policy-accident-no-stated-impact`），可從 `ineligibleByReason` 與 Pipeline Trace 讀出。**收緊要用這些真實比例去論證，不是再猜一次。**
 
+## 修正紀錄｜PBS_ONLY 下不得要求 TDX 對應（2026-08-24）
+
+**一句話**：TDX 是**停用**的資料來源，不能反過來拿「沒有 TDX 對應」去擋 PBS。
+
+### 現象（真實 Production 案例，非假設）
+
+Pipeline Trace 出現：來源 PBS、國道一號南向、分類事故
+（`normalizedType=accident`、`pbsCategory=accident`），
+卻被判為不符播報資格，`gatingResult = 'gated-freeway-no-tdx-match'`，
+UI 顯示「國道閘門（無 TDX 對應）」。
+
+### Root cause
+
+`src/pbs/crossSourceDedup.js` 的 **V57.2「TDX 唯一播報閘門」**。
+原始設計：PBS 國道事件若當輪沒有 TDX 對應，就不當作獨立播報候選，
+**等更權威的 TDX 報告來決定**。這個理由**只有在 TDX 有在跑時才成立**。
+
+`TRAFFIC_SOURCE_MODE=PBS_ONLY` 下 TDX 已關閉，**永遠不會有 TDX 事件出現**，
+於是「等 TDX」實質變成「永遠不播」——一個**已停用的資料來源否決了唯一還在運作的來源**。
+閘門問錯了問題：它問「有沒有發生對應」，該問的是「對應**有沒有可能**發生」。
+
+### 修正方式（bypass，不是刪除）
+
+```
+crossSourceDedup(pbsEvents, tdxEvents, { requireTdxCorrelationForFreeway })
+
+requireTdxCorrelationForFreeway = true   （ALL mode）      → V57.2 原封不動
+requireTdxCorrelationForFreeway = false  （PBS_ONLY mode） → 略過閘門
+```
+
+- 旗標由 `src/pbs/pipeline.js` 以 `isTdxRuntimeEnabled(env)` 導出——
+  **與關閉 TDX 的是同一個開關**，兩者不可能各說各話。
+- `crossSourceDedup` 維持純函式（只讀旗標，不讀 env），可獨立單元測試。
+- **預設值為 `true`**：未來若有呼叫端忘記傳，會退回較保守的既有行為，
+  絕不會靜默放寬播報範圍。
+- `TRAFFIC_SOURCE_MODE` 改回 `ALL`，V57.2 立即完整恢復，不需要再改任何一行。
+
+### 沒有放寬播報政策
+
+略過閘門**只是讓 國道 PBS 事件能進入候選清單**。
+之後的 eligibility、事故限定 push policy、時效視窗、去重、抑制**全部照舊生效**。
+因此機動路肩與所有非 accident 類型**仍然不播**（已由測試釘住）。
+
+### CCTV 的地位（再次確認）
+
+CCTV 是**附加資訊，不是播報資格**。
+符合資格的 PBS 事故：有圖 → 文字＋圖片；無圖／metadata 不足／影格失敗 → **TEXT-ONLY 照常播報**。
+**禁止**因為沒有 CCTV 而拒絕事故播報。CCTV 仍為 0 次 TDX 呼叫。
+
+### 可觀測性
+
+- PBS summary 新增 `tdxCorrelationRequired`、`eligibilitySource`（`PBS` / `PBS+TDX`）。
+- Cron log 的 source-mode 行新增 `tdxCorrelationRequired=`。
+- 這樣 `freewayGatedCount = 0` 讀起來是「**依設計略過**」，而不是「剛好沒有東西被擋」。
+- PBS_ONLY 下不會再產生 `gated-freeway-no-tdx-match` 的 trace 項目，
+  「國道閘門（無 TDX 對應）」自然不再出現（該 UI label 本身未刪除，ALL mode 仍會用到）。
+
+### 給未來 Agent 的通則
+
+**任何「等待另一個來源佐證」的閘門，都必須先問那個來源是否還活著。**
+否則資料來源一旦停用，這類閘門就會從「延後」變成「永久否決」，而且**不會報錯**——
+它會安靜地讓事件消失。本專案已知只有 V57.2 這一處，修正時一併搜尋過。
+
 ## TDX 還原程序（RESTORE TDX）
 
 **前提**：真人確認 TDX 額度確實已恢復。

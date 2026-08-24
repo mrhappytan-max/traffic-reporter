@@ -10,7 +10,7 @@
     "rule": "traffic-reporter is sole Shared Traffic Feed content authority; consumers must never re-judge completedProducts"
   },
   "git": {
-    "sourceMainHead": "df3a94b5be79e24eb7f42d19001b90e0be778238",
+    "sourceMainHead": "fecb818c24f161d5a0d0b1d1fe022eecfa4cbced",
     "sourceMainHeadResolvedFrom": "origin/main",
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
     "sourceWorkingTree": "clean",
@@ -32,6 +32,10 @@
     "whyShoulderPushPaused": "LINE OA monthly proactive-Push allowance is limited; 機動路肩 is high-frequency. Detection/parser/formatter/CCTV strategy all preserved — only the proactive product is withheld.",
     "whyCctvAllowed": "CCTV costs ZERO TDX calls: metadata from the read-only KV cache, frames from *.freeway.gov.tw, and cctv/dynamicCollage.js imports neither tdx/auth.js nor tdx/client.js. Structural guarantee, not a promise.",
     "cctvMustNotRefreshTdxMetadata": true,
+    "tdxCorrelationRequiredForFreeway": false,
+    "freewayGateNote": "V57.2's 國道 gate (pbs/crossSourceDedup.js) drops an unmatched PBS 國道 event so a more authoritative TDX report can decide instead. That premise fails in PBS_ONLY: TDX is off, no TDX event can arrive, and the gate becomes a permanent veto by a disabled source (a real Production accident was dropped this way on 2026-08-24). The gate is now mode-aware via requireTdxCorrelationForFreeway, derived from isTdxRuntimeEnabled(env). BYPASSED, never deleted — TRAFFIC_SOURCE_MODE=ALL restores V57.2 unchanged, and the option defaults to true so a forgetful caller stays conservative.",
+    "freewayGateDoesNotWidenPush": "Bypassing the gate only lets 國道 PBS events reach the candidate list. Eligibility, the accident-only push policy, the time window, dedupe and suppression all still apply, so dynamic shoulder and every non-accident type remain withheld.",
+    "cctvIsNotBroadcastEligibility": "CCTV is enrichment, never a precondition. A qualifying PBS accident broadcasts TEXT-ONLY when CCTV yields nothing; refusing to broadcast because there is no image is forbidden.",
     "linePushObservationPurpose": "Observe one month of real proactive-Push volume under the accident-only policy, then tune with data.",
     "tdxRestorePath": "07_KNOWN_ISSUES.md -> RESTORE TDX (set TRAFFIC_SOURCE_MODE=ALL and push)",
     "pushPolicyRestorePath": "set LINE_PUSH_POLICY=ALL_ELIGIBLE in wrangler.jsonc and push"
@@ -85,8 +89,8 @@
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-08-23T15:13:24.567Z",
-    "sourceMainHead": "df3a94b5be79e24eb7f42d19001b90e0be778238",
+    "generatedAt": "2026-08-24T02:07:45.835Z",
+    "sourceMainHead": "fecb818c24f161d5a0d0b1d1fe022eecfa4cbced",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
     "historyDir": "_history"
