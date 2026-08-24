@@ -4,18 +4,27 @@
 
 ## 已知、無關、既有的測試失敗基準線
 
-**實測基準（2026-08-23 量測，非回憶）：`npm test` 共 998 項，18 項失敗。**
-這 18 項在乾淨 checkout 上同樣失敗（每輪以 `git stash` 對照驗證），與功能變更無關：
+**實測基準（2026-08-24 量測，非回憶）：`npm test` 共 1060 項，17 項失敗。**
+這 17 項在乾淨 checkout 上同樣失敗（每輪以 `git stash` 對照驗證），與功能變更無關：
 
 1. `pbs-relay/tests/*`（2 項）— 獨立子系統，非本 Worker 主程式。
-2. CCTV / JPEG codec 相關（`cctvCollage`、`dynamicCollage`、`broadcastCctvIntegration`、
-   `testJpegCodec` 等，共 14 項）— 依賴 Workers-only 的 `.wasm` codec，在此沙盒環境無法載入。
-3. `test/healthQuotaDashboard.test.js`（2 項）— wall-clock 相依。
-   **注意：這裡從 1 項變成 2 項，是日期跨到 08-23 造成的，不是新回歸**
-   ——該檔第 5 項比對「8/16、8/17 是否仍顯示尚無資料」，會隨真實日期自然過期。
+2. CCTV / JPEG codec 相關（13 項）— 依賴 Workers-only 的 `.wasm` codec，在此沙盒環境無法載入：
+   `broadcastCctvIntegration`、`cctvCollage`、`cctvImagePublish`、`cctvPrepareTimeoutStages`、
+   `dynamicCollage`、`dynamicShoulder`、`dynamicShoulderMessageShort`、`freeway3CctvAudit`、
+   `hsinchuCctvCollageEndpoint`、`pipelineTraceIntegration`、`productionIntegrationFixtures`、
+   `singleCctvBudgetFairness`、`testJpegCodec`。
+3. `test/healthQuotaDashboard.test.js`（2 項）— wall-clock 相依，會隨真實日期自然過期。
 
-若出現這 18 項以外的新失敗，才視為真正回歸。舊版本文件曾記載「1153 項中 3 項失敗」，
-該數字已過期，以本節實測數字為準。
+若出現這 17 項以外的新失敗，才視為真正回歸。
+
+**另有一個會自行復原、不要誤判成缺陷的情況**：
+`test/deploymentPolicyAndVerify.test.js` 第 12 項比對 `origin/main`（見
+`scripts/verify-production-deploy.mjs:120`）。本機 main 已 commit 但**尚未 push** 時，
+它必然失敗；push 完成後自動恢復通過。這是「還沒推送」的狀態產物，不是程式缺陷，
+**不要為它修改任何程式**。
+
+舊版本文件曾記載「1153 項中 3 項失敗」與「998 項中 18 項失敗」，
+兩個數字都已過期，以本節實測數字為準。
 
 ## V1.8.7.7 — Real-world Confirmation Pending（目前最重要的未結案項目）
 
@@ -49,7 +58,7 @@
 
 - 工程修改完成：`TRAFFIC_SOURCE_MODE=PBS_ONLY` 閘門，10 項專用回歸測試全數通過。
 - 已 push `main` 並觸發 Cloudflare Workers Builds 正式部署。
-- 全套測試 998 項 / 18 項已知失敗，與乾淨 checkout 相同，非回歸。
+- 全套測試 1060 項 / 17 項已知失敗，與乾淨 checkout 相同，非回歸。
 - Google Drive 工程記憶已完成 Delta Sync（canonical 10/10，missing 0，duplicate 0）。
 
 **驗證邊界（重要，不要誤讀成待辦）**
