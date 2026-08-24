@@ -52,22 +52,22 @@
     "syncMode": "delta",
     "fullVerifyReason": null,
     "statusNote": "The delta planner requires exactly \"success\" (scripts/meeting-room-delta.mjs, assessManifestEvidence). A previous run recorded \"PASS\" here, which the planner correctly treated as untrustworthy evidence and escalated to a full verify. The sync itself had genuinely succeeded and was byte-verified; only the label was wrong. Keep this value as \"success\" — never widen the planner to accept other spellings, because that guard is what stops an unverified manifest from being trusted.",
-    "syncedAt": "2026-08-24T02:37:00Z",
-    "sourceMainHead": "fc43549867018e673204a90147a5bf8f6349dafe",
-    "exportArtifactCommit": "b84c78e12bf3145141e4390e3f5575184e35138c",
-    "exportGeneratedAt": "2026-08-24T02:29:42.828Z",
-    "archiveFolderId": "1H0ohTiq0oMNkAH3R4Gv5EDp4lIy0_wgt",
-    "archiveFolderName": "_archive_fc43549",
+    "syncedAt": "2026-08-24T07:33:00Z",
+    "sourceMainHead": "990237cda07fd652f1cdbfd09ca7636258c94fc5",
+    "exportArtifactCommit": "f1c04aad98bc30b8ac09eaa44aca0485f53b2009",
+    "exportGeneratedAt": "2026-08-24T07:16:18.045Z",
+    "archiveFolderId": "1DAvsnEJXdcRf5kt0CRwdJZcfmHVZVVAl",
+    "archiveFolderName": "_archive_990237c",
     "changedFilesSynced": 6,
     "unchangedFilesSkipped": 4,
-    "release": "PBS_ONLY_SERVICE_AREA_GATE_FIX",
-    "detail": "Splits SERVICE_AREA_ELIGIBILITY_REQUIRED (always true, every mode) from TDX_CORROBORATION_REQUIRED (false in PBS_ONLY), after a Production LINE push for a PBS 國道1號南向 accident at 八堵 (基隆, ~25.10288/121.71801) reached broadcast from outside the service area. 6 canonical files changed (07/SYSTEM_STATE/03 carry the record; 00/02/PRODUCTION_MANIFEST moved only via the regenerated timestamp) and were created and byte-verified; 4 unchanged received ZERO connector calls. Verified: byte size exact on all six against the local export, and Drive full-text independently confirms serviceAreaEligibilityRequired is in the stored bytes of both SYSTEM_STATE.json (12121) and 07_KNOWN_ISSUES.md (23889). Superseded copies moved to _archive_fc43549, never trashed. Canonical folder listing: 10/10 present, 0 missing, 0 duplicate.",
+    "release": "PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX",
+    "detail": "Adds LOCATION_QUALITY_REQUIRED as a third, always-on broadcast gate (a real push named the whole of 台68 rather than the accident) and fixes the retrieval-side reasons a pushed event could not be found in Pipeline Trace. 6 canonical files changed and were created + byte-verified; 4 unchanged received ZERO connector calls. Verified: byte size exact on all ten against the local export, and Drive full-text independently confirms locationQualityRequired and insufficient-location-precision are in the stored bytes. Superseded copies moved to _archive_990237c, never trashed. Canonical folder listing: 10/10 present, 0 missing, 0 duplicate.",
     "files": [
       {
         "name": "00_CURRENT_STATE.md",
-        "sha256": "0df90165ea8503ab849548d0c83774e0ed71fcdfcaa948541b2b2259cf5f526d",
-        "bytes": 3325,
-        "driveFileId": "1Y0VWI8aFu7-r6ZDGvQ7y3qjYO8lKWlt2",
+        "sha256": "d34f1719c99e963ceeb329d04fbe6609f0d5bb94ac7fbfc268b48e3b9336e702",
+        "bytes": 3653,
+        "driveFileId": "1c3lQdy12YRo-rtvjXC7qe-WQ8TYYFLoW",
         "action": "created-and-verified"
       },
       {
@@ -79,16 +79,16 @@
       },
       {
         "name": "02_PROJECT_HANDOFF.md",
-        "sha256": "235a2eb93520c3c0f58a4ab5f1243650f0205c4d1c145ce7b73deb60b0763249",
-        "bytes": 8853,
-        "driveFileId": "1LjO88ucuzuxKlFuU4D7rnGRQiUNH02x8",
+        "sha256": "054c461018b9210f360dca1d85533e05f83f90912db5b00a931f5e14fc0f7ff7",
+        "bytes": 9183,
+        "driveFileId": "1a3e5jof2rq88k7ONSrQQz2USBy5T2PXY",
         "action": "created-and-verified"
       },
       {
         "name": "03_ARCHITECTURE.md",
-        "sha256": "b6719a7bb4a5b98ff67b89cb4ae0dff7996c5de4889f61e6597e1721d9878ba0",
-        "bytes": 7727,
-        "driveFileId": "1aGRGNkemDSaozsNqIhDyCdjQQ718I-g7",
+        "sha256": "9e9c778675d1ff695a0f75e2384d2703aaa9b56080e6b0b73fa823bcdddf2a3b",
+        "bytes": 7747,
+        "driveFileId": "1iFcaEjLJl3bxX4bXifWl6sopbEV1eoyS",
         "action": "created-and-verified"
       },
       {
@@ -114,25 +114,26 @@
       },
       {
         "name": "07_KNOWN_ISSUES.md",
-        "sha256": "73c18ee08095ae7e6f0466106e2c2a38133e50d0c43df5f57f530cf6c616b360",
-        "bytes": 23889,
-        "driveFileId": "1BsAX0U2ZKjBYLW2fVMZoGTaOLSfI1V_3",
+        "sha256": "d89f39d69517b9e118e0b7b75a16ab8f3c0297d99ff7b55bfcaebdb90f4527fa",
+        "bytes": 31626,
+        "driveFileId": "16Hj8vxzddyvnW8hkh5Jk3iGT78YWcpZn",
         "action": "created-and-verified"
       },
       {
         "name": "SYSTEM_STATE.json",
-        "sha256": "1ce578b921dea9d839c772b4ab473bcea1acd069713bc6775f3fb30b99406ffd",
-        "bytes": 12121,
-        "driveFileId": "1zRBnCWBf8Ib8seYDIpESD4Th7k8KDDQ5",
+        "sha256": "56aedb1812589c69b58631425df9fa06c4d702717e6ae1b12aa7287aabdf8552",
+        "bytes": 17316,
+        "driveFileId": "1aql4VZdt6Xoob-llVSwdSmtBGG3qGAjM",
         "action": "created-and-verified"
       },
       {
         "name": "PRODUCTION_MANIFEST.json",
-        "sha256": "4bf35e5b7296dfe1f080aa8ea846ee567c1aa524d969cec4069244d870f3364f",
+        "sha256": "2b9a16742debb188519a90a79913c7d2884418788dd7ff9c6f23ac6e5564b172",
         "bytes": 4416,
-        "driveFileId": "14eaRb-k-iOXIxRAe6MJKWHwzTCLwpHdY",
+        "driveFileId": "1IRnL5JgEqKM-twUBGrK41TfVCtF1wUiq",
         "action": "created-and-verified"
       }
-    ]
+    ],
+    "processNote": "Two process facts worth keeping. (1) The freeze-then-upload rule earned its keep again: uploading before the export was frozen and committed produced three superseded PRODUCTION_MANIFEST/00 copies (all archived, none trashed). Freeze -> commit -> confirm clean tree -> THEN upload. (2) The byte-size check caught a real defect: the first 07_KNOWN_ISSUES.md upload was 31627 vs 31626 local. Cause traced exactly — the file was read in three `sed` ranges and a blank line was introduced at the 150/151 chunk boundary. Re-uploaded byte-exact. Never accept a byte-size mismatch as rounding; find the character."
   }
 }
