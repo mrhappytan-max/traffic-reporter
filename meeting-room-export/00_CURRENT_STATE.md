@@ -10,7 +10,7 @@
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
 | Current Version | V1.8.7.7 |
-| Source main HEAD | 990237cda07fd652f1cdbfd09ca7636258c94fc5 |
+| Source main HEAD | d20f54886463ff127f8d9ae8e50b5339b4d25028 |
 | Source main HEAD resolved from | origin/main |
 | Source working tree | clean |
 | Production | DEPLOYED |
@@ -22,7 +22,7 @@
 | Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
 | Next Action | 無待辦。TDX 額度恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX；一個月後 → 依 ineligibleByReason 實際數據決定是否收緊主動播報政策（皆為既有程序，不需重新設計） |
-| Export Generated At | 2026-08-24T07:13:54.379Z |
+| Export Generated At | 2026-08-24T07:14:21.571Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## 我能改什麼／不能改什麼（一句話版）
