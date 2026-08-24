@@ -52,23 +52,22 @@
     "syncMode": "delta",
     "fullVerifyReason": null,
     "statusNote": "The delta planner requires exactly \"success\" (scripts/meeting-room-delta.mjs, assessManifestEvidence). A previous run recorded \"PASS\" here, which the planner correctly treated as untrustworthy evidence and escalated to a full verify. The sync itself had genuinely succeeded and was byte-verified; only the label was wrong. Keep this value as \"success\" — never widen the planner to accept other spellings, because that guard is what stops an unverified manifest from being trusted.",
-    "syncedAt": "2026-08-23T15:18:00Z",
-    "sourceMainHead": "df3a94b5be79e24eb7f42d19001b90e0be778238",
-    "exportArtifactCommit": "e824e4ba3c9633cc1a00e65532ccadc0c986419e",
-    "exportGeneratedAt": "2026-08-23T15:13:24.567Z",
-    "archiveFolderId": "15OOOnPLMVPkO3nE8gVA5pWxrVsauZyJz",
-    "archiveFolderName": "_archive_df3a94b",
+    "syncedAt": "2026-08-24T02:13:00Z",
+    "sourceMainHead": "fecb818c24f161d5a0d0b1d1fe022eecfa4cbced",
+    "exportArtifactCommit": "a9d5f6e315939552dc4c8e18c3d713379ca2fcde",
+    "exportGeneratedAt": "2026-08-24T02:07:46.102Z",
+    "archiveFolderId": "1VS_6T-maU-NIo4MPIPx0cjMpzaAjP69S",
+    "archiveFolderName": "_archive_fecb818",
     "changedFilesSynced": 5,
     "unchangedFilesSkipped": 5,
-    "release": "LINE_PUSH_OBSERVATION = ACTIVE (documentation only)",
-    "detail": "Observation-period record only. NO product code, broadcast policy, Cron, TDX, CCTV or Consumer change, and NO redeploy — the sealed PBS_CCTV_MAJOR_ACCIDENT_ONLY release is untouched. 5 canonical files changed (07 and SYSTEM_STATE carry the new record; 00/02/PRODUCTION_MANIFEST moved only via the regenerated timestamp) and were created and verified; 5 unchanged received ZERO connector calls. Verified: byte size exact on all five, and Drive full-text independently confirms LINE_PUSH_OBSERVATION is present in the stored bytes of both SYSTEM_STATE.json and 07_KNOWN_ISSUES.md. Superseded copies moved to _archive_df3a94b, never trashed. Canonical 10/10, 0 missing, 0 duplicate.",
-    "processNote": "Freeze-before-upload was followed this round: all template edits first, ONE regeneration, commit, confirm a clean tree, only then upload. Result: 5 uploads for 5 changed files, no re-upload churn (contrast the previous round, which needed several passes).",
+    "release": "PBS_ONLY_TDX_CORRELATION_GATE_FIX",
+    "detail": "Fixes V57.2 vetoing PBS 國道 accidents while TDX is disabled. 5 canonical files changed (07 and SYSTEM_STATE carry the correction; 00/02/PRODUCTION_MANIFEST moved only via the regenerated timestamp) and were created and verified; 5 unchanged received ZERO connector calls. Verified: byte size exact on all five, and Drive full-text independently confirms requireTdxCorrelationForFreeway is in the stored bytes of both SYSTEM_STATE.json and 07_KNOWN_ISSUES.md. Superseded copies moved to _archive_fecb818, never trashed. Canonical 10/10, 0 missing, 0 duplicate.",
     "files": [
       {
         "name": "00_CURRENT_STATE.md",
-        "sha256": "c94dfd429b4f099d6527bf6537fb41886835ac890a1ecaf48a531cc3e930d684",
+        "sha256": "5d4e6b73d1b133fb516ee9b94f5942e5a4740a0c029065a2567bfd5a9d8324b0",
         "bytes": 3325,
-        "driveFileId": "1rbCOdpAzVbV_Z7aXARHGVw7GRo9mQYwI",
+        "driveFileId": "1nzQlIdQ9riJg6RVfgwXbw9CwXm_f0yH4",
         "action": "created-and-verified"
       },
       {
@@ -80,9 +79,9 @@
       },
       {
         "name": "02_PROJECT_HANDOFF.md",
-        "sha256": "7d0ac5daabd03f886a4dbe90803fe45d94ee4f7f3a9d17cf85508d263407ddc6",
+        "sha256": "33eb09c830ab2a8c3d9554637260fdfe1f64c9aa7e1e7e928d48a8c5227ad032",
         "bytes": 8853,
-        "driveFileId": "1-J763Xsh4BUgH08lXXEoQrigMjY72wFg",
+        "driveFileId": "1WnGhcQSFVN-ZByV50UuLfoxkqxUM5Hby",
         "action": "created-and-verified"
       },
       {
@@ -115,23 +114,23 @@
       },
       {
         "name": "07_KNOWN_ISSUES.md",
-        "sha256": "c46991aa8d1661f619de3ffef13279223a319066f882c8915539168337cf5172",
-        "bytes": 15954,
-        "driveFileId": "1VepJOt3EyAJEbMQNAlha7OPuSFrlpfyT",
+        "sha256": "12a0059845aaa77491291b615e36b2d14a710b63e55ee8964e4ab50d99b8f6fe",
+        "bytes": 19294,
+        "driveFileId": "1JCX8Pxv2CndI3Mxh4IbHWKU8E-23vOFK",
         "action": "created-and-verified"
       },
       {
         "name": "SYSTEM_STATE.json",
-        "sha256": "6256f50c9d31a2dc7d541588366ffba9674d9419b587385e3e007b883e00b375",
-        "bytes": 9036,
-        "driveFileId": "1__JRu1zHpyAKHGCbpreCbpYAa9cpnu-V",
+        "sha256": "d66e6d63c10b4f3e90daee47f621260644cdece1af0ac4a503dfc409401eadd3",
+        "bytes": 10188,
+        "driveFileId": "1cw-xwMc4qGPsmNb8VLCsdJVbZh-fDegK",
         "action": "created-and-verified"
       },
       {
         "name": "PRODUCTION_MANIFEST.json",
-        "sha256": "219d08fc5e8d1159aa4f9a19940f7d1b5b8881ff8dee8fbfd5d16f3c09eceabb",
+        "sha256": "36f154344c32735fae15fce9663738ddd05c61d7703ad2328cec785329ed183d",
         "bytes": 4416,
-        "driveFileId": "1id7P4Tdf-wBTFFVFVTvn7ksoH9vecl8U",
+        "driveFileId": "1FPNoDelF5gLqrjrt0BnbIQPitFXaUINF",
         "action": "created-and-verified"
       }
     ]
