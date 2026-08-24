@@ -17,9 +17,9 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | 483693ab653355074d3eb46d67a1d7d99b2b3659 |
-| Snapshot generated at | 2026-08-24T07:15:28.430Z |
-| Source working tree | dirty (1 changed source file(s)) |
+| Source main HEAD | 0c56e59a20c5820feb5e0a5ec894b46aa2c2920b |
+| Snapshot generated at | 2026-08-24T07:16:18.045Z |
+| Source working tree | clean |
 | Current version | V1.8.7.7 |
 | Current phase | PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門｜已封版 SEALED（TDX 額度用盡；LINE Push 額度觀察中。TDX／機動路肩程式碼完整保留） |
 
