@@ -18,7 +18,7 @@
 | 欄位 | 值 |
 |---|---|
 | Source main HEAD | fecb818c24f161d5a0d0b1d1fe022eecfa4cbced |
-| Snapshot generated at | 2026-08-24T02:07:45.835Z |
+| Snapshot generated at | 2026-08-24T02:07:46.102Z |
 | Source working tree | clean |
 | Current version | V1.8.7.7 |
 | Current phase | PBS-ONLY + 重大事故限定 LINE Push｜已封版 SEALED（TDX 額度用盡；LINE Push 額度觀察中。TDX／機動路肩程式碼完整保留） |
