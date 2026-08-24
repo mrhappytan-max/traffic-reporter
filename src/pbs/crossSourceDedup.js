@@ -32,6 +32,36 @@
 // classification (the exact canonical shape normalizePbsRoad() already
 // produces for a freeway road) rather than inventing a second, parallel
 // road-name pattern here.
+//
+// 2026-08-24 — THE GATE IS NOW MODE-AWARE, and this is the important part
+// to understand before touching it again.
+//
+// Every word of V57.2 above rests on one premise: that a MORE authoritative
+// TDX report of the same 國道 incident is coming, so deferring to it costs
+// nothing but a few minutes. Under TRAFFIC_SOURCE_MODE=PBS_ONLY that
+// premise is simply false — TDX is switched off, no TDX event will ever
+// arrive, and "wait for TDX" silently becomes "never broadcast". A real
+// Production case proved it: a PBS 國道一號南向 accident, correctly
+// classified (normalizedType=accident, pbsCategory=accident), was dropped
+// here with gatingResult 'gated-freeway-no-tdx-match'. A disabled data
+// source was vetoing the only source still running.
+//
+// So the gate now asks whether TDX correlation is actually AVAILABLE, not
+// whether it merely happened:
+//
+//   requireTdxCorrelationForFreeway = true   (ALL mode)      -> V57.2 intact
+//   requireTdxCorrelationForFreeway = false  (PBS_ONLY mode) -> bypassed
+//
+// This is a BYPASS, not a deletion. Nothing about V57.2 is removed, and
+// the flag is derived from the deployed source mode by the caller
+// (pbs/pipeline.js) rather than read from env here, so this module stays
+// pure and independently testable. Restoring TRAFFIC_SOURCE_MODE=ALL
+// restores the original behaviour with no further change — see
+// src/traffic/sourceMode.js.
+//
+// The flag DEFAULTS to true on purpose: an omitted argument keeps the
+// historical, more conservative behaviour, so a future caller that forgets
+// to pass it can never silently widen what broadcasts.
 
 import {
   CROSS_SOURCE_MAX_DISTANCE_METERS,
@@ -226,15 +256,25 @@ export function mergeForBroadcast(tdxEvents, canonicalEvents, uniquePbsEvents) {
  * @param {object[]} pbsEvents - active (non-cleared, non-stale), Hsinchu-
  *   filtered PBS events
  * @param {object[]} tdxEvents - this run's Hsinchu-filtered TDX events
+ * @param {{requireTdxCorrelationForFreeway?: boolean}} [options]
+ *   `requireTdxCorrelationForFreeway` (default TRUE — see the header) is
+ *   V57.2's 國道 gate. The caller sets it false in PBS-only mode, where no
+ *   TDX event can exist and the gate would otherwise drop every 國道 PBS
+ *   accident permanently.
  * @returns {{ canonicalEvents: object[], duplicatePbsEvents: object[],
  *   uniquePbsEvents: object[], filteredFreewayEvents: object[] }}
  *   `uniquePbsEvents` are real broadcast candidates (mergeForBroadcast
- *   appends them as-is) — never includes an unmatched 國道 event as of
- *   V57.2, see this module's own header comment. `filteredFreewayEvents`
- *   is observability-only (PBS's own internal tracking/log/stats — see
- *   pipeline.js's buildSummary) — never fed into mergeForBroadcast.
+ *   appends them as-is). With the gate ON it never includes an unmatched
+ *   國道 event (V57.2); with the gate bypassed an unmatched 國道 PBS event
+ *   is a normal candidate and still has to pass every other rule
+ *   downstream — eligibility, the accident-only push policy, the time
+ *   window, dedupe and suppression are all untouched by this flag.
+ *   `filteredFreewayEvents` is observability-only (PBS's own internal
+ *   tracking/log/stats — see pipeline.js's buildSummary) — never fed into
+ *   mergeForBroadcast; it is empty when the gate is bypassed, which is
+ *   what makes the bypass visible in the Pipeline Trace.
  */
-export function crossSourceDedup(pbsEvents, tdxEvents) {
+export function crossSourceDedup(pbsEvents, tdxEvents, { requireTdxCorrelationForFreeway = true } = {}) {
   const canonicalEvents = [];
   const duplicatePbsEvents = [];
   const uniquePbsEvents = [];
@@ -245,10 +285,11 @@ export function crossSourceDedup(pbsEvents, tdxEvents) {
     if (match) {
       canonicalEvents.push(buildCanonicalEvent(match, pbsEvent));
       duplicatePbsEvents.push(pbsEvent);
-    } else if (isFreewayRoadName(pbsEvent.road)) {
+    } else if (requireTdxCorrelationForFreeway && isFreewayRoadName(pbsEvent.road)) {
       // V57.2: a 國道 PBS event with no TDX match this run — never a
       // broadcast candidate. See module header comment for the full
-      // rationale; this is the one and only gate for this rule.
+      // rationale; this is the one and only gate for this rule, and it
+      // only applies while TDX correlation is actually available.
       filteredFreewayEvents.push(pbsEvent);
     } else {
       uniquePbsEvents.push(pbsEvent);

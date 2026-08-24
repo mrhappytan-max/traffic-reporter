@@ -111,6 +111,11 @@ export async function runScheduledTdxSync(env, now = new Date()) {
       `cctvImageEnabled=${sourceMode.cctvImageEnabled} ` +
       `tdxCctvMetadataRefreshEnabled=${sourceMode.tdxCctvMetadataRefreshEnabled} ` +
       `pbsEnabled=${sourceMode.pbsEnabled} ` +
+      // 2026-08-24: V57.2's 國道 gate defers PBS to TDX, which is only
+      // meaningful while TDX runs. Logged next to the mode it derives
+      // from so 'why did this 國道 PBS accident broadcast' is answerable
+      // straight from one log line.
+      `tdxCorrelationRequired=${sourceMode.tdxRuntimeEnabled} ` +
       `linePushPolicy=${pushPolicy} dynamicShoulderPush=${pushPolicy === 'ALL_ELIGIBLE' ? 'ON' : 'OFF'}` +
       `${sourceMode.tdxPausedReason ? ` reason="${sourceMode.tdxPausedReason}"` : ''}`
   );

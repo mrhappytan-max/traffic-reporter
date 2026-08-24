@@ -6,6 +6,7 @@ import { normalizePbsEvent } from './normalize.js';
 import { isPbsEventHsinchuRelevant } from './hsinchuFilter.js';
 import { readPbsLifecycleState, classifyPbsLifecycle, commitPbsLifecycleState } from './lifecycle.js';
 import { crossSourceDedup } from './crossSourceDedup.js';
+import { isTdxRuntimeEnabled } from '../traffic/sourceMode.js';
 
 function safeErrorMessage(err) {
   if (err && typeof err.message === 'string') return err.message;
@@ -81,9 +82,21 @@ async function runPbsCore(env, now) {
   };
 }
 
-function buildSummary(core, tdxEvents, commitResult) {
+function buildSummary(core, tdxEvents, commitResult, env) {
   const { rawItems, hsinchuFiltered, clearedEvents, staleEvents, activeEvents, pbsOk, pbsError, attempts, durationMs, relayConfigured, relayOk, relayStatus, relayCache, relayUpstreamDurationMs, lifecycleState } = core;
-  const { canonicalEvents, duplicatePbsEvents, uniquePbsEvents, filteredFreewayEvents } = crossSourceDedup(activeEvents, tdxEvents);
+  // 2026-08-24 — V57.2's 國道 gate defers a PBS 國道 event to a more
+  // authoritative TDX report of the same incident. That only makes sense
+  // while TDX is actually running: in PBS-only mode no TDX event can ever
+  // arrive, so the gate would drop every 國道 PBS accident forever (a real
+  // Production case did exactly that). Derived from the SAME source-mode
+  // switch that turns TDX off, so the two can never disagree, and restoring
+  // TRAFFIC_SOURCE_MODE=ALL restores V57.2 with no further change.
+  const requireTdxCorrelationForFreeway = isTdxRuntimeEnabled(env);
+  const { canonicalEvents, duplicatePbsEvents, uniquePbsEvents, filteredFreewayEvents } = crossSourceDedup(
+    activeEvents,
+    tdxEvents,
+    { requireTdxCorrelationForFreeway }
+  );
 
   return {
     pbsOk,
@@ -118,6 +131,13 @@ function buildSummary(core, tdxEvents, commitResult) {
     // 來源").
     freewayGatedCount: filteredFreewayEvents.length,
     freewayGatedEvents: filteredFreewayEvents,
+    // 2026-08-24 — makes the mode-aware bypass readable instead of leaving
+    // a future reader to wonder why freewayGatedCount is always 0. When
+    // false, an unmatched 國道 PBS event is a normal broadcast candidate
+    // and freewayGatedEvents is empty BY DESIGN, not because nothing
+    // matched the gate.
+    tdxCorrelationRequired: requireTdxCorrelationForFreeway,
+    eligibilitySource: requireTdxCorrelationForFreeway ? 'PBS+TDX' : 'PBS',
     activeEvents,
     rawSample: rawItems.slice(0, 2),
     normalizedSample: hsinchuFiltered.slice(0, 3),
@@ -130,7 +150,7 @@ function buildSummary(core, tdxEvents, commitResult) {
 
 export async function runPbsPipelinePreview(env, { tdxEvents = [], now = new Date() } = {}) {
   const core = await runPbsCore(env, now);
-  return buildSummary(core, tdxEvents, null);
+  return buildSummary(core, tdxEvents, null, env);
 }
 
 export async function runPbsPipelineAndCommit(env, { tdxEvents = [], now = new Date() } = {}) {
@@ -145,5 +165,5 @@ export async function runPbsPipelineAndCommit(env, { tdxEvents = [], now = new D
       now
     );
   }
-  return buildSummary(core, tdxEvents, commitResult);
+  return buildSummary(core, tdxEvents, commitResult, env);
 }
