@@ -52,22 +52,22 @@
     "syncMode": "delta",
     "fullVerifyReason": null,
     "statusNote": "The delta planner requires exactly \"success\" (scripts/meeting-room-delta.mjs, assessManifestEvidence). A previous run recorded \"PASS\" here, which the planner correctly treated as untrustworthy evidence and escalated to a full verify. The sync itself had genuinely succeeded and was byte-verified; only the label was wrong. Keep this value as \"success\" — never widen the planner to accept other spellings, because that guard is what stops an unverified manifest from being trusted.",
-    "syncedAt": "2026-08-24T07:33:00Z",
-    "sourceMainHead": "990237cda07fd652f1cdbfd09ca7636258c94fc5",
-    "exportArtifactCommit": "f1c04aad98bc30b8ac09eaa44aca0485f53b2009",
-    "exportGeneratedAt": "2026-08-24T07:16:18.045Z",
-    "archiveFolderId": "1DAvsnEJXdcRf5kt0CRwdJZcfmHVZVVAl",
-    "archiveFolderName": "_archive_990237c",
-    "changedFilesSynced": 6,
-    "unchangedFilesSkipped": 4,
-    "release": "PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX",
-    "detail": "Adds LOCATION_QUALITY_REQUIRED as a third, always-on broadcast gate (a real push named the whole of 台68 rather than the accident) and fixes the retrieval-side reasons a pushed event could not be found in Pipeline Trace. 6 canonical files changed and were created + byte-verified; 4 unchanged received ZERO connector calls. Verified: byte size exact on all ten against the local export, and Drive full-text independently confirms locationQualityRequired and insufficient-location-precision are in the stored bytes. Superseded copies moved to _archive_990237c, never trashed. Canonical folder listing: 10/10 present, 0 missing, 0 duplicate.",
+    "syncedAt": "2026-08-24T08:17:00Z",
+    "sourceMainHead": "979182b2a83a5237d71fc0c6076dfde7036a284b",
+    "exportArtifactCommit": "c260cbe",
+    "exportGeneratedAt": "2026-08-24T08:08:05.086Z",
+    "archiveFolderId": "1e2DlbxqyfuP-ifw31rmPSjbRoDe_03jY",
+    "archiveFolderName": "_archive_979182b",
+    "changedFilesSynced": 5,
+    "unchangedFilesSkipped": 5,
+    "release": "PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX (final seal)",
+    "detail": "Final seal round. No product code touched. Confirming the seal surfaced two real Engineering Memory gaps and both were closed: (1) the 台68 section never recorded its OWN delivery result — the nearby \"新增失敗為 0\" belongs to the earlier accident-only round — so 1060/1043/17 with NEW FAILURES = 0 is now stated there; (2) taskSeal still named TDX_QUOTA_PROTECTION_PBS_ONLY, the oldest seal, so it now names the current one and carries an explicit doNotMisread list, with the TDX seal preserved verbatim in taskSealHistory. 5 canonical files changed and were created + byte-verified; 5 unchanged received ZERO connector calls. Canonical listing: 10/10 present, 0 missing, 0 duplicate. Superseded copies moved to _archive_979182b, never trashed.",
     "files": [
       {
         "name": "00_CURRENT_STATE.md",
-        "sha256": "d34f1719c99e963ceeb329d04fbe6609f0d5bb94ac7fbfc268b48e3b9336e702",
-        "bytes": 3653,
-        "driveFileId": "1c3lQdy12YRo-rtvjXC7qe-WQ8TYYFLoW",
+        "sha256": "f24a6059ed8338e7bd723b264f64603b61c6268e5653ad3c503e45bf8ec897ce",
+        "bytes": 3870,
+        "driveFileId": "1NW_Ye6Nen7AT9ePT7nboEiSX7Nlke7bx",
         "action": "created-and-verified"
       },
       {
@@ -79,9 +79,9 @@
       },
       {
         "name": "02_PROJECT_HANDOFF.md",
-        "sha256": "054c461018b9210f360dca1d85533e05f83f90912db5b00a931f5e14fc0f7ff7",
-        "bytes": 9183,
-        "driveFileId": "1a3e5jof2rq88k7ONSrQQz2USBy5T2PXY",
+        "sha256": "c23da331cbf3c2f0231815b4792840b8c43b7e5a9d054b016d07f317d50d2a40",
+        "bytes": 9231,
+        "driveFileId": "1y2GBfjQZnTBGghoGalEodcT67GNEzf1i",
         "action": "created-and-verified"
       },
       {
@@ -89,7 +89,7 @@
         "sha256": "9e9c778675d1ff695a0f75e2384d2703aaa9b56080e6b0b73fa823bcdddf2a3b",
         "bytes": 7747,
         "driveFileId": "1iFcaEjLJl3bxX4bXifWl6sopbEV1eoyS",
-        "action": "created-and-verified"
+        "action": "skipped-unchanged-zero-connector-calls"
       },
       {
         "name": "04_PRODUCT_DECISIONS.md",
@@ -114,26 +114,27 @@
       },
       {
         "name": "07_KNOWN_ISSUES.md",
-        "sha256": "d89f39d69517b9e118e0b7b75a16ab8f3c0297d99ff7b55bfcaebdb90f4527fa",
-        "bytes": 31626,
-        "driveFileId": "16Hj8vxzddyvnW8hkh5Jk3iGT78YWcpZn",
+        "sha256": "3c3e2dc40ce822fe52bae04b11776d3a77c24fea1f8dd427771f2aed3a6fe89b",
+        "bytes": 32316,
+        "driveFileId": "1Q_-X4f6TfrVDy64B69qlEgT1Oyphg2dA",
         "action": "created-and-verified"
       },
       {
         "name": "SYSTEM_STATE.json",
-        "sha256": "56aedb1812589c69b58631425df9fa06c4d702717e6ae1b12aa7287aabdf8552",
-        "bytes": 17316,
-        "driveFileId": "1aql4VZdt6Xoob-llVSwdSmtBGG3qGAjM",
+        "sha256": "5570a5078da495e1234afc086a191ee444e5e694089820d28fc66657c54f7d4f",
+        "bytes": 19493,
+        "driveFileId": "1GgJk-RGMiJItthVmCb5WyKOzO2EdA-ZO",
         "action": "created-and-verified"
       },
       {
         "name": "PRODUCTION_MANIFEST.json",
-        "sha256": "2b9a16742debb188519a90a79913c7d2884418788dd7ff9c6f23ac6e5564b172",
+        "sha256": "dddc834f0aba2acbb3ada5b4f57b452c8516bdcbdba1a8c387ba025c31eb7754",
         "bytes": 4416,
-        "driveFileId": "1IRnL5JgEqKM-twUBGrK41TfVCtF1wUiq",
+        "driveFileId": "10jwJbM2V4I0j2cIqb7YSEaVrVfJsBLj_",
         "action": "created-and-verified"
       }
     ],
-    "processNote": "Two process facts worth keeping. (1) The freeze-then-upload rule earned its keep again: uploading before the export was frozen and committed produced three superseded PRODUCTION_MANIFEST/00 copies (all archived, none trashed). Freeze -> commit -> confirm clean tree -> THEN upload. (2) The byte-size check caught a real defect: the first 07_KNOWN_ISSUES.md upload was 31627 vs 31626 local. Cause traced exactly — the file was read in three `sed` ranges and a blank line was introduced at the 150/151 chunk boundary. Re-uploaded byte-exact. Never accept a byte-size mismatch as rounding; find the character."
+    "processNote": "Two process facts worth keeping. (1) The freeze-then-upload rule earned its keep again: uploading before the export was frozen and committed produced three superseded PRODUCTION_MANIFEST/00 copies (all archived, none trashed). Freeze -> commit -> confirm clean tree -> THEN upload. (2) The byte-size check caught a real defect: the first 07_KNOWN_ISSUES.md upload was 31627 vs 31626 local. Cause traced exactly — the file was read in three `sed` ranges and a blank line was introduced at the 150/151 chunk boundary. Re-uploaded byte-exact. Never accept a byte-size mismatch as rounding; find the character.",
+    "loopAvoidanceNote": "This round deliberately did NOT let the export churn. Running finalize:release re-generates the export, which moves generatedAt and manufactures a 4-file \"delta\" out of nothing — the export/commit/SHA/export loop the order forbids. That regeneration was reverted with git checkout, the real hashes were compared against this file, and the export was regenerated exactly ONCE after the two memory edits. sourceMainHead (979182b, the release described) stays separate from exportArtifactCommit (the commit carrying the artifact), which is what stops the self-reference loop."
   }
 }
