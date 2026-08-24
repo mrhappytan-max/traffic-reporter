@@ -401,6 +401,19 @@ LOCATION_QUALITY_REQUIRED    -> 永遠 true
 - `decision.locationQuality` 記錄是哪一層放行、或**具體缺什麼**。
 - Cron log 多印 `serviceAreaRequired=true locationQualityRequired=true`。
 
+### 本輪交付結果（封版時實測，非回憶）
+
+- 全套測試 **1060 項 / pass 1043 / fail 17**。
+  與乾淨 checkout（`git stash -u` 對照）相比：
+  **NEW FAILURES = 0，SILENTLY FIXED = 0**。
+  那 17 項全部是本節開頭列出的既有失敗，**不屬於本輪 regression**。
+- 新增 `test/pbsAccidentTraceLocationQuality.test.js`：**25 項，全數通過**。
+- `npm run check:deployment-policy`：PASS。
+- push `main` 已觸發 Cloudflare Workers Builds 正式部署；
+  `npm run verify:production` 因沙箱 egress 403 回報
+  `PASS_NETWORK_VERIFICATION_BLOCKED`——**不構成封版 blocker**
+  （與 TDX_QUOTA 那一輪相同的既有裁示）。
+
 ### 給未來 Agent 的通則
 
 **閘門的判準，必須和訊息真正會顯示的內容一致。**
