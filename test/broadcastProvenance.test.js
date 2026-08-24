@@ -350,11 +350,20 @@ test('9. a PBS-sourced event is fully identifiable from its record: source/pbsCa
   const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
   const now = new Date('2026-08-15T09:00:00+08:00');
 
+  // Coordinates added 2026-08-24: this pins the PROVENANCE record's
+  // fields, not geography, but the broadcast layer now enforces the
+  // service area (see traffic/serviceArea.js — the 八堵 regression), and
+  // a PBS event with no coordinates, no KM in its text and no Hsinchu
+  // place name is unplaceable, so it is correctly blocked before any
+  // record is written. 竹東 (on 台3線, inside the service area) keeps this
+  // test exercising what it was written for.
   const event = accidentEvent({
     source: 'pbs',
     rawId: 'PBS-1',
     road: '台3線',
     direction: '南向',
+    latitude: 24.7361,
+    longitude: 121.0886,
     startKM: undefined,
     endKM: undefined,
     displayKM: 40.2,

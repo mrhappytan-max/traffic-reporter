@@ -52,6 +52,7 @@ import { isWithinBroadcastHours } from './broadcastHours.js';
 import { computeEffectiveWindow, classifyEventTimeStatus } from './effectiveWindow.js';
 import { isBroadcastRelevant, getBroadcastEligibility } from './broadcastRules.js';
 import { getLinePushPolicyDecision } from './broadcastPolicy.js';
+import { resolveServiceAreaEligibility } from './serviceArea.js';
 import { readSubscriptions, persistSubscriptions } from './subscriptions.js';
 import {
   readNotifiedState,
@@ -366,7 +367,17 @@ export async function runLineBroadcast(
   // never a clone, all the way from allEvents.
   const eligibilityReasonByEvent = new Map();
   for (const event of allEvents) {
-    const base = getBroadcastEligibility(event);
+    // SERVICE AREA GATE (2026-08-24) — checked FIRST, before anything
+    // else, and in every source mode. Production pushed a 八堵 (基隆)
+    // accident because geography was filtered only at PBS ingestion and
+    // merely ASSUMED here; this makes it an enforced gate at the
+    // Producer's own broadcast boundary. Independent of TDX correlation
+    // on purpose: "we no longer need TDX to confirm it" must never turn
+    // into "anything anywhere can broadcast". See serviceArea.js.
+    const serviceArea = resolveServiceAreaEligibility(event);
+    const base = serviceArea.eligible
+      ? getBroadcastEligibility(event)
+      : { eligible: false, reason: serviceArea.reason };
     // LINE PUSH POLICY (2026-08-23) — 重大事故限定. Layered strictly AFTER
     // the V1.5 whitelist above and only ever SUBTRACTS from it, so this
     // can never make something eligible that broadcastRules.js rejected.

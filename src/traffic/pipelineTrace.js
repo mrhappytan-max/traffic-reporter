@@ -330,6 +330,17 @@ export function buildTraceEntry({
     decision: {
       eligibility,
       eligibilityReason,
+      // 2026-08-24 — derived from the SAME eligibilityReason the service
+      // area gate already produced (never a second, drifting check), so
+      // "blocked by geography" is distinguishable at a glance from
+      // "blocked by the accident-only policy" or "gated for no TDX
+      // match". null when the event never reached the gate.
+      serviceAreaEligible:
+        eligibilityReason === null
+          ? null
+          : eligibilityReason !== 'outside-service-area' &&
+            eligibilityReason !== 'service-area-unknown-source' &&
+            eligibilityReason !== 'service-area-unresolvable',
       dedupeResult,
       suppressionResult,
       gatingResult,
