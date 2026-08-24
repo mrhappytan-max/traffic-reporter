@@ -17,11 +17,11 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | d20f54886463ff127f8d9ae8e50b5339b4d25028 |
-| Snapshot generated at | 2026-08-24T07:14:21.571Z |
-| Source working tree | clean |
+| Source main HEAD | 483693ab653355074d3eb46d67a1d7d99b2b3659 |
+| Snapshot generated at | 2026-08-24T07:15:28.430Z |
+| Source working tree | dirty (1 changed source file(s)) |
 | Current version | V1.8.7.7 |
-| Current phase | PBS-ONLY + 重大事故限定 LINE Push｜已封版 SEALED（TDX 額度用盡；LINE Push 額度觀察中。TDX／機動路肩程式碼完整保留） |
+| Current phase | PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門｜已封版 SEALED（TDX 額度用盡；LINE Push 額度觀察中。TDX／機動路肩程式碼完整保留） |
 
 `Source main HEAD` 是這份快照所描述的正式 main commit（取自 `origin/main`），**不是**包含本檔案自己的那個 commit——兩者刻意分開，避免 Git 自我參照循環。詳見 `SYSTEM_STATE.json` 的 `sourceMainHead` / `exportArtifactCommit`。
 
@@ -114,7 +114,7 @@ TDX（國道/省道 RoadEvent）+ PBS（公路總局，經 Windows Relay + VPC S
 
 ## Next action
 
-無待辦。TDX 額度恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX；一個月後 → 依 ineligibleByReason 實際數據決定是否收緊主動播報政策（皆為既有程序，不需重新設計）
+無待辦。TDX 額度恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計）
 
 ## Full history location
 

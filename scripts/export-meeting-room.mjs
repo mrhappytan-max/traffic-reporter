@@ -466,13 +466,13 @@ function main() {
   const currentPhase = safe(
     process.env.EXPORT_CURRENT_PHASE,
     pbsOnly
-      ? 'PBS-ONLY + 重大事故限定 LINE Push｜已封版 SEALED（TDX 額度用盡；LINE Push 額度觀察中。TDX／機動路肩程式碼完整保留）'
+      ? 'PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門｜已封版 SEALED（TDX 額度用盡；LINE Push 額度觀察中。TDX／機動路肩程式碼完整保留）'
       : 'Maintenance — awaiting real-world confirmation of latest release'
   );
   const currentTask = safe(
     process.env.EXPORT_CURRENT_TASK,
     pbsOnly
-      ? '無進行中工作。PBS_CCTV_MAJOR_ACCIDENT_ONLY = SEALED。觀察中（非工作項）：一個月後檢視實際 LINE 主動 Push 量，再決定是否收緊為 impact-only'
+      ? '無進行中工作。PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX = SEALED（前序：PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。觀察中（非工作項）：一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數，再決定是否收緊為 impact-only'
       : 'None in progress — awaiting next assignment'
   );
   const knownBlocker = safe(
@@ -484,7 +484,7 @@ function main() {
   const nextAction = safe(
     process.env.EXPORT_NEXT_ACTION,
     pbsOnly
-      ? '無待辦。TDX 額度恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX；一個月後 → 依 ineligibleByReason 實際數據決定是否收緊主動播報政策（皆為既有程序，不需重新設計）'
+      ? '無待辦。TDX 額度恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計）'
       : 'Await next task assignment, or real-world confirmation evidence for the latest release'
   );
   const productionStatus = safe(process.env.EXPORT_PRODUCTION_STATUS, 'DEPLOYED');
