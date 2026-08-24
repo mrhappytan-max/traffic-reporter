@@ -10,19 +10,19 @@
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
 | Current Version | V1.8.7.7 |
-| Source main HEAD | f1c04aad98bc30b8ac09eaa44aca0485f53b2009 |
+| Source main HEAD | 979182b2a83a5237d71fc0c6076dfde7036a284b |
 | Source main HEAD resolved from | origin/main |
 | Source working tree | clean |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
-| Current Phase | PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門｜已封版 SEALED（TDX 額度用盡；LINE Push 額度觀察中。TDX／機動路肩程式碼完整保留） |
-| Current Task | 無進行中工作。PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX = SEALED（前序：PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。觀察中（非工作項）：一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數，再決定是否收緊為 impact-only |
+| Current Phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門，全部已封版 SEALED。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
+| Current Task | none（無進行中工作）。Latest completed task = PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX，status = SEALED（前序 PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。不要繼續修 location quality、不要重開 TDX、不要 Full Audit、不要重新 deploy——詳見 SYSTEM_STATE.json 的 taskSeal.doNotMisread。觀察中（非工作項，不是待辦）：一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數 |
 | Latest Completed Version | V1.8.7.7 |
 | Known Blocker | 無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md |
 | Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
 | Next Action | 無待辦。TDX 額度恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計） |
-| Export Generated At | 2026-08-24T07:19:16.387Z |
+| Export Generated At | 2026-08-24T08:08:05.086Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## 我能改什麼／不能改什麼（一句話版）

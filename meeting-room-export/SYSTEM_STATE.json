@@ -14,7 +14,7 @@
     "rule": "traffic-reporter is sole Shared Traffic Feed content authority; consumers must never re-judge completedProducts"
   },
   "git": {
-    "sourceMainHead": "f1c04aad98bc30b8ac09eaa44aca0485f53b2009",
+    "sourceMainHead": "979182b2a83a5237d71fc0c6076dfde7036a284b",
     "sourceMainHeadResolvedFrom": "origin/main",
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
     "sourceWorkingTree": "clean",
@@ -85,17 +85,38 @@
     "readerNote": "OBSERVATION, not construction. Do not modify src/, the broadcast policy, Cron, TDX, CCTV, the Consumer, or redeploy because of this entry."
   },
   "taskSeal": {
-    "task": "TDX_QUOTA_PROTECTION_PBS_ONLY",
+    "task": "PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX",
     "status": "SEALED",
-    "sealedAt": "2026-08-23",
-    "sealedBy": "human directive (路況工程部 最終封存令)",
-    "workComplete": "code, tests, push to main, Cloudflare Workers Builds deploy, and Google Drive engineering-memory delta sync are all done",
-    "productionHealthCheckPerformed": false,
-    "productionHealthCheckIsBlocker": false,
-    "productionVerificationNote": "The sandbox session that shipped this had no outbound HTTPS to the Production domain (environment egress proxy returns 403), so verify:production reported PASS_NETWORK_VERIFICATION_BLOCKED and no human /health check was run. The human explicitly ruled this is NOT a blocker and does NOT affect the seal. Absence of evidence, not contrary evidence: if a future /health ever shows trafficSourceMode is not PBS_ONLY, treat that as a NEW incident, not as unfinished work from this task.",
-    "restoreProcedure": "07_KNOWN_ISSUES.md -> RESTORE TDX (existing procedure; no new version or redesign needed when TDX quota returns)",
+    "sealedAt": "2026-08-24",
+    "sealedBy": "human directive (路況工程部 最終封版＋Google Drive 工程記憶同步令)",
+    "finalMainHead": "979182b2a83a5237d71fc0c6076dfde7036a284b",
+    "workComplete": "code, tests, push to main, Cloudflare Workers Builds deploy, Engineering Memory and the Google Drive delta sync are all done. Nothing about this task is outstanding.",
+    "testResult": "1060 total / 1043 pass / 17 fail; NEW FAILURES = 0 and SILENTLY FIXED = 0 against a clean checkout. The 17 are the pre-existing baseline failures listed in 07_KNOWN_ISSUES.md.",
+    "productionVerificationNote": "push to main triggered the Workers Builds deploy. verify:production reported PASS_NETWORK_VERIFICATION_BLOCKED because this sandbox has no outbound HTTPS to the Production domain (egress proxy 403). Per the standing human ruling this is NOT a blocker and does not affect the seal.",
+    "doNotMisread": [
+      "Do NOT keep working on location quality — the gate shipped and is sealed.",
+      "Do NOT re-enable TDX — it stays OFF until a human confirms the quota returned; then follow RESTORE TDX.",
+      "Do NOT run a Full Audit or a Google Drive Full Verify — delta sync is the normal path.",
+      "Do NOT redeploy Production — it is already deployed at the final main HEAD above.",
+      "Do NOT re-run the export just to be safe — that only moves generatedAt and manufactures a fake delta."
+    ],
+    "openFollowUpsIfAny": "One, and it is conditional, not a task: if the raw PBS record for the 2026-08-24 台68 event ever surfaces, re-check locationQualityHonestLimit (whether that record carried coordinates) and serviceAreaHonestLimit. Nothing to do until then.",
     "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
   },
+  "taskSealHistory": [
+    {
+      "task": "TDX_QUOTA_PROTECTION_PBS_ONLY",
+      "status": "SEALED",
+      "sealedAt": "2026-08-23",
+      "sealedBy": "human directive (路況工程部 最終封存令)",
+      "workComplete": "code, tests, push to main, Cloudflare Workers Builds deploy, and Google Drive engineering-memory delta sync are all done",
+      "productionHealthCheckPerformed": false,
+      "productionHealthCheckIsBlocker": false,
+      "productionVerificationNote": "The sandbox session that shipped this had no outbound HTTPS to the Production domain (environment egress proxy returns 403), so verify:production reported PASS_NETWORK_VERIFICATION_BLOCKED and no human /health check was run. The human explicitly ruled this is NOT a blocker and does NOT affect the seal. Absence of evidence, not contrary evidence: if a future /health ever shows trafficSourceMode is not PBS_ONLY, treat that as a NEW incident, not as unfinished work from this task.",
+      "restoreProcedure": "07_KNOWN_ISSUES.md -> RESTORE TDX (existing procedure; no new version or redesign needed when TDX quota returns)",
+      "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
+    }
+  ],
   "version": {
     "packageJsonVersion": "0.1.0",
     "latestCompleted": "V1.8.7.7"
@@ -106,8 +127,8 @@
     "deployMethod": "push to main -> Cloudflare Workers Builds auto-deploy",
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
-  "currentPhase": "PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門｜已封版 SEALED（TDX 額度用盡；LINE Push 額度觀察中。TDX／機動路肩程式碼完整保留）",
-  "currentTask": "無進行中工作。PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX = SEALED（前序：PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。觀察中（非工作項）：一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數，再決定是否收緊為 impact-only",
+  "currentPhase": "Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門，全部已封版 SEALED。TDX 額度用盡，TDX／機動路肩程式碼完整保留",
+  "currentTask": "none（無進行中工作）。Latest completed task = PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX，status = SEALED（前序 PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。不要繼續修 location quality、不要重開 TDX、不要 Full Audit、不要重新 deploy——詳見 SYSTEM_STATE.json 的 taskSeal.doNotMisread。觀察中（非工作項，不是待辦）：一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數",
   "knownBlocker": "無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md",
   "realWorldConfirmation": {
     "status": "REAL_WORLD_CONFIRMATION_PENDING",
@@ -120,8 +141,8 @@
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-08-24T07:19:16.387Z",
-    "sourceMainHead": "f1c04aad98bc30b8ac09eaa44aca0485f53b2009",
+    "generatedAt": "2026-08-24T08:08:05.086Z",
+    "sourceMainHead": "979182b2a83a5237d71fc0c6076dfde7036a284b",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
     "historyDir": "_history"

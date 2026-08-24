@@ -17,11 +17,11 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | f1c04aad98bc30b8ac09eaa44aca0485f53b2009 |
-| Snapshot generated at | 2026-08-24T07:19:16.387Z |
+| Source main HEAD | 979182b2a83a5237d71fc0c6076dfde7036a284b |
+| Snapshot generated at | 2026-08-24T08:08:05.086Z |
 | Source working tree | clean |
 | Current version | V1.8.7.7 |
-| Current phase | PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門｜已封版 SEALED（TDX 額度用盡；LINE Push 額度觀察中。TDX／機動路肩程式碼完整保留） |
+| Current phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門，全部已封版 SEALED。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
 
 `Source main HEAD` 是這份快照所描述的正式 main commit（取自 `origin/main`），**不是**包含本檔案自己的那個 commit——兩者刻意分開，避免 Git 自我參照循環。詳見 `SYSTEM_STATE.json` 的 `sourceMainHead` / `exportArtifactCommit`。
 
