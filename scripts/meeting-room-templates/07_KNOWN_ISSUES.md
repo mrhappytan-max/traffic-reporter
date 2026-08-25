@@ -4,27 +4,43 @@
 
 ## 已知、無關、既有的測試失敗基準線
 
-**實測基準（2026-08-25 量測，非回憶）：`npm test` 共 1081 項，穩定 18 項失敗。**
-這 18 項在乾淨 checkout 上同樣失敗（每輪以 `git stash` 對照驗證），與功能變更無關：
+**實測基準（2026-08-25 重新量測，非回憶）：`npm test` 共 1272 項，穩定 38 項失敗。**
 
-1. `pbs-relay/tests/*`（2 項）— 獨立子系統，非本 Worker 主程式。
-2. CCTV / JPEG codec 相關（13 項）— 依賴 Workers-only 的 `.wasm` codec，在此沙盒環境無法載入：
-   `broadcastCctvIntegration`、`cctvCollage`、`cctvImagePublish`、`cctvPrepareTimeoutStages`、
-   `dynamicCollage`、`dynamicShoulder`、`dynamicShoulderMessageShort`、`freeway3CctvAudit`、
-   `hsinchuCctvCollageEndpoint`、`pipelineTraceIntegration`、`productionIntegrationFixtures`、
-   `singleCctvBudgetFairness`、`testJpegCodec`。
+> **重要更正（CCTV_METADATA_RECOVERY_V1，2026-08-25）——舊版本節寫錯了 Root Cause。**
+> 舊記載說「13 項 CCTV/JPEG 失敗是因為依賴 Workers-only 的 `.wasm` codec，在此沙盒無法載入」。
+> **這是錯的。** 真正原因是這個沙盒的 `node_modules` 不完整，`@jsquash/jpeg` 根本沒安裝
+>（它是 `package.json` 的正式 `dependencies`，也在 `package-lock.json` 裡，正常 `npm ci` 一定會裝）。
+> 執行 `npm install @jsquash/jpeg` 之後，那 12 個檔案全部可以正常載入並執行。
+>
+> 代價是：這 12 個檔案**整份沒有被執行過**，所以裡面約 36 項早就該更新的測試被長期誤判成
+>「環境問題」而略過。它們不是回歸，是**過期斷言**——斷言的是後來被刻意改掉的行為：
+> - `DYNAMIC_SHOULDER_PUSH=OFF` / `LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY` 之後，
+>   動態路肩不再推播，但測試仍斷言 `imagePrepared=true`、仍期待 1 次 push（實測 `0 !== 1`）。
+> - `PBS_ACCIDENT_CCTV_ENRICHMENT_FIX` 之後 PBS 已是 CCTV 可信來源，但測試仍斷言
+>   `not-freeway-source`、`cctvEligible:false`（實測 `true !== false`）。
+>
+> **教訓（比這些測試本身更重要）**：一個「合理但沒被驗證」的 Root Cause，會讓 36 項真實訊號
+> 被靜音好幾輪。當時該做而沒做的一步只是 `npm install`。
+> 這正是「不要為了交差把合理推測當 Root Cause」的實例，且這次是我們自己犯的。
+
+目前 38 項的正確分類（每輪仍以同一輪 `git stash -u` 對照乾淨 checkout 驗證）：
+
+1. `pbs-relay/tests/*`（2 項）— `pbs-relay/src/server.js` 匯入的 `pbs-relay/src/cache.js` 不存在於 repo。
+   獨立子系統，非本 Worker 主程式。
+2. **過期斷言（33 項）**— 見上方更正框。分布於 `singleCctvBudgetFairness`、`dynamicShoulder`、
+   `dynamicShoulderMessageShort`、`dynamicCollage`、`broadcastCctvIntegration`、
+   `cctvPrepareTimeoutStages`、`freeway3CctvAudit`、`pipelineTraceIntegration`、
+   `productionIntegrationFixtures`、`hsinchuCctvCollageEndpoint`、`cctvImagePublish` 等檔。
+   **這是本專案目前最大的一筆技術債，已列為 openFollowUp。**
 3. `test/healthQuotaDashboard.test.js`（3 項）— wall-clock 相依，會隨真實日期自然過期。
-   **2026-08-25 更新：從 2 項變成 3 項，是日期由 8/24 跨到 8/25 造成的，不是新回歸**
-   ——該檔比對「8/16、8/17、8/18 是否仍顯示尚無資料／是否仍正常呈現」，
-   每過一天就會多一項自然過期。同一輪以 `git stash -u` 對照乾淨 checkout，
-   兩邊完全相同。
 
-若出現這 18 項以外的新失敗，才視為真正回歸。
+若出現這 38 項以外的新失敗，才視為真正回歸。
 
 **還有一項會時有時無的全套執行雜訊**（不是本專案缺陷、也不要為它改程式）：
 `test/deploymentStatus.test.js` 的「missing/placeholder build metadata」在
-**單獨執行時穩定通過 22/0**，只有在跑完整套件時偶爾出現（實測 3 次只中 1 次），
-乾淨 checkout 也一樣。判斷回歸請以**同一輪 stash 對照**為準，不要只看單次總數。
+**單獨執行時穩定通過 22/0**，只有在跑完整套件時偶爾出現，乾淨 checkout 也一樣。
+本輪連續量測 4 次得到 38／38／38／39，多出來的那次就是它。
+判斷回歸請以**同一輪 stash 對照**為準，不要只看單次總數。
 
 **另有一個會自行復原、不要誤判成缺陷的情況**：
 `test/deploymentPolicyAndVerify.test.js` 第 12 項比對 `origin/main`（見
@@ -32,8 +48,8 @@
 它必然失敗；push 完成後自動恢復通過。這是「還沒推送」的狀態產物，不是程式缺陷，
 **不要為它修改任何程式**。
 
-舊版本文件曾記載「1153 項中 3 項失敗」與「998 項中 18 項失敗」，
-兩個數字都已過期，以本節實測數字為準。
+舊版本文件曾記載「1153 項中 3 項失敗」「998 項中 18 項失敗」「1081 項中 18 項失敗」，
+三個數字都已過期，以本節實測數字為準。
 
 ## V1.8.7.7 — Real-world Confirmation Pending（目前最重要的未結案項目）
 
@@ -744,6 +760,168 @@ GOOGLE_DRIVE_CONNECTOR_SYNC_REQUIRED
 
 **通則**：改規則的時候，要把「會叫人違反新規則的舊指示」一起找出來改掉；
 留著一句與規則相反的提示，等於沒改。
+
+## 修正紀錄｜CCTV 名冊 7 天過期死結（國1 93K 事件）（2026-08-25）
+
+### 真實事件
+
+2026-08-25 19:01，國道一號 93K 發生事故。LINE **文字正常推播、完全沒有圖片**。
+Pipeline Trace 記錄的 `cctvSkippedByReason` 是 `metadata-cache-unavailable`。
+
+### Root Cause（以 Repo 真實程式確認，不是推測）
+
+不是選鏡頭錯、不是 frame 抓取失敗、不是 R2 問題。是**攝影機名冊那把 KV key 不存在了**。
+
+死結的三個環節，缺一不可：
+
+1. `src/cctv/freewayCctvMetadataCache.js` 寫入時帶了
+   `expirationTtl = 7 * 24 * 60 * 60`（7 天）。
+2. 這把 key **唯一的寫入者**是 `src/tdx/hsinchuCctvProbe.js` 的 Admin-Auth 管理探針。
+3. 該探針在 `TRAFFIC_SOURCE_MODE=PBS_ONLY` 之下**無法執行**——`src/tdx/auth.js`
+   在此模式會直接拒發 token。
+
+於是：最後一次探針之後滿 7 天，KV 自己把名冊刪掉，而**沒有任何被允許的路徑能把它放回去**。
+從那一刻起每一筆事故都靜默失去圖片，唯一的出路是把 TDX 重新打開——而 TDX 正因額度用盡而停用。
+
+### 這個 TTL 是分類錯誤
+
+- **影格（frame）** 是易變資料：每次都現抓 `*.freeway.gov.tw`，本來就從不快取。
+- **名冊（inventory）** 是準靜態參考資料：公路局以 24 小時為週期發布，鏡頭增建或移設才會變。
+
+對「沒有保證補回路徑」的參考資料設定計時過期，等於把「有點舊」變成「完全沒有」。
+
+### 修正（三件事）
+
+1. **不再設 `expirationTtl`。** 除非有人刻意覆寫，這把 key 永久存在。
+2. **寫入只能是升級，不能是降級。** 空的或格式錯誤的 record set 會被拒絕
+  （`refused-empty-record-set`），所以一次失敗或被截斷的更新，不會把好的名冊換成空的。
+   這個模組**沒有任何路徑可以刪除名冊**。
+3. **內建官方名冊做為地板。** `data/cctv/generated/freewayCctvInventory.js` 打包了
+   交通部高速公路局（NFB）open data 靜態 CCTV 名冊：1943 筆，國1 510 筆、國3 728 筆。
+   即使 KV 完全是空的，也一定拿得到可用的鏡頭清單。
+
+第 3 點才是真正解開死結的地方：名冊不再依賴「TDX 有沒有開」或「KV 有沒有活著」。
+**恢復是在 deploy 當下自動發生的，不需要對 Production KV 做任何寫入。**
+
+### 驗證（真實資料，非 mock）
+
+以**完全空的 KV** 重跑 19:01 那筆事件，四格全中：
+`CCTV-N1-S-91.800-M`、`CCTV-N1-S-94.900-M`、`CCTV-N1-N-92.675-M`、`CCTV-N1-N-94.030-L-新竹公道五路`。
+國3 96.7K 同樣四格全中。
+
+### 成本與邊界
+
+- Worker bundle：gzip 749.54 KiB → 826.49 KiB（**+77 KiB**，上限 3 MB，用掉約 27%）。
+- **TDX 呼叫數：0。** 名冊在 build 時打包進 bundle，執行期只從記憶體讀。
+- **沒有新增任何未驗證道路。** `CCTV_SUPPORTED_ROADS` 仍只有國道一號（`000010`）
+  與國道三號（`000030`）。名冊裡有 1943 筆，但能被選到的仍只有這兩條路。
+
+### 官方檔案裡有一筆不在 freeway.gov.tw 的紀錄（已確認安全）
+
+1943 筆之中，`CCTV-T64-E-23.750-M`（快速公路64號）的 `VideoStreamURL` 指向
+`cctv-ss02.thb.gov.tw`（公路局主機），不是 `freeway.gov.tw`。
+這是官方原始資料本來就長這樣，不是解析錯誤，所以名冊**照原樣保留**，不擅自丟棄官方發布的紀錄。
+
+它有兩道互相獨立的屏障，任一道都足以擋下：
+1. 台64 不在 `CCTV_SUPPORTED_ROADS`，選鏡頭階段根本不會拿到它。
+2. 即使直接餵給 `extractFirstJpegFrame`，`isTrustedImageUrl` 會在**發出任何網路請求之前**
+   回 `untrusted-hostname`（fail-closed）。
+
+`test/cctvMetadataRecovery.test.js` 第 3b 項就是在鎖這件事，並且斷言
+「非 freeway 主機的紀錄數 === 1」——**這個數字一旦變動，必須重新檢查主機白名單**。
+
+### /health 現在會提前說話
+
+`/health` 新增「攝影機基礎資料」卡片，顯示來源（KV／內建名冊）、筆數與資料日期，
+超過 30 天標示為「過舊」，完全取不到時顯示
+**「攝影機基礎資料遺失，事故文字仍可播報，但 CCTV 圖片無法產生」**。
+只記數字與日期，**永遠不含 stream URL 或 record 內容**。
+
+這是這次事件真正的教訓：缺陷本身在 2026-08-18 前後就已經發生，
+但**沒有任何人知道，直到 19:01 一場真實事故用最貴的方式告訴我們**。
+
+### 名冊如何更新（未來）
+
+```
+# 用 repo 內已 commit 的官方原始檔重建（可完整重現，byte-for-byte）
+npm run build:cctv-inventory
+
+# 用新下載的官方檔更新
+node scripts/build-cctv-inventory.mjs <新的 CCTV_v2.0_*.xml>
+```
+
+`scripts/build-cctv-inventory.mjs` 在寫檔前會自我驗證，任一項不過就中止、不寫出降級名冊：
+筆數 > 0、國1 > 0、國3 > 0、國1 93K±3 > 0、每筆都有 `VideoStreamURL`、每筆 `LocationMile` 都能解析。
+原始 XML 已 commit 在 `data/cctv/raw/`，沿用既有的 `data/road-location/{raw,generated}` 慣例。
+
+### 不要誤讀
+
+- **不要把 `expirationTtl` 加回去。** 那正是這次的缺陷本身。
+- **不要因為「快取應該要會過期」就改回來**——影格才是快取，名冊是參考資料。
+- **不要把空的 record set 當成合法寫入**；`refused-empty-record-set` 是刻意的。
+- **不要為了取得名冊而重開 TDX。** 內建名冊的存在就是為了讓這件事永遠不必要。
+- **不要新增未驗證道路的 CCTV RoadID**——名冊有 1943 筆不代表可以播 1943 條路。
+- **不要手動編輯 `data/cctv/generated/freewayCctvInventory.js`**，它是產生物，
+  要改就改來源檔再重新產生。
+
+## 治理變更紀錄｜正式版本線校正（PRODUCTION_VERSION_LINEAGE_RECONCILIATION）（2026-08-25）
+
+### 發現了什麼
+
+表層問題是「V1.8.7.7 之後有 7 次 Production 更新沒配版本號」。
+查下去發現底下還有一層更嚴重的：
+
+**唯一權威來源 `src/version.js` 自 2026-08-21 的 V1.8.6.9 之後從未被更新過。**
+
+也就是說，整個 V1.8.7.0～V1.8.7.14 期間，`GET /version` 一直回報 **V1.8.6.9**。
+它對「部署了哪個 commit」講的是實話，對「部署了哪個版本」講的是兩個月前的舊話。
+
+### Root Cause
+
+不是一次疏忽，是**三個地方各自以為自己知道版本**：
+
+| 來源 | 當時的值 | 餵給誰 |
+|---|---|---|
+| `src/version.js` 的 `APP_VERSION` | `V1.8.6.9` | `GET /version`、`/admin/deployment-status` |
+| export 掃 commit message 找最新 `V\d+\.\d+\.\d+` | `V1.8.7.7` | Engineering Memory（SYSTEM_STATE、00、02…） |
+| `ENGINEERING_STATUS.md` 人工標記 | 各自為政 | 人看的文件 |
+
+**從 commit message 掃出來的版本號，是沒有人負責的版本號**——
+有人剛好在標題打了就會動，沒人打就默默停住。這正是它停在 V1.8.7.7 的原因。
+
+### 修正
+
+1. **`src/version.js` 確立為 ONE CANONICAL VERSION SOURCE**，`APP_VERSION` 校正為 `V1.8.7.14`。
+2. **`scripts/export-meeting-room.mjs` 改讀 `src/version.js`**；commit message 掃描降級為
+   drift 警告；讀不到權威來源時**直接拋錯**，而不是退回猜測——退回猜測正是釀成三週漂移的那一步。
+3. **`06_VERSION_HISTORY.md` 補記 V1.8.7.8～V1.8.7.14**（七列，全部對應既有 commit）。
+4. **新增 `test/versionLineage.test.js`（7 項）**，鎖住規則的**形狀**：
+   單一來源、其他一律衍生、掃描結果不得再被賦值回版本欄位。
+   刻意**不鎖當下的數字**——否則只是多出第四個要同步的地方，等於重造同一個問題。
+
+### 補記，不是重新部署
+
+V1.8.7.8～V1.8.7.14 七次變更**在補記之前就已經 merge 進 main 並自動部署**。
+本次只建立「版本號 ↔ 既有 commit ↔ 既有部署」的對照：
+**沒有 rebase、沒有 amend、沒有 force push、沒有改 commit timestamp、沒有偽造部署，
+也沒有把任何未上線的東西寫成已上線。**
+
+### 永久規則（Release Gate）
+
+- 任何**進 Production 且改變 runtime 行為**的變更，必須在**同一個 commit 內** bump
+  `src/version.js` 的 `APP_VERSION`。
+- **任務名稱 ≠ 版本號。** `CCTV_METADATA_RECOVERY`、`PBS_ACCIDENT_CCTV_ENRICHMENT_FIX`、
+  `TDX_QUOTA_PROTECTION` 都是工程標籤，不能取代版本號。
+- **正式產品永遠只有一條連續版本線 `V1.8.7.x`**，不得出現 V1／V2／V57.x／CCTV V1 等平行版本線。
+- 開工前先寫 `CURRENT_VERSION` 與 `TARGET_VERSION`，並確認 TARGET 是 CURRENT 的合法下一版。
+- 純文件／治理／Drive sync 工具／測試整理**不 bump 版本**，但仍須有 commit。
+
+### 不要誤讀
+
+- **不要在 `src/version.js` 以外的地方宣告產品版本號**——其他地方一律 import 或衍生。
+- **不要讓 export 回頭從 commit message 取版本**；`versionLineage` 第 6 項就是在擋這件事。
+- **不要把 `package.json` 的 `0.1.0` 當成產品版本**——那是 npm 套件版本，與版本線無關。
+- **不要把補記當成新部署**。
 
 ## TDX 還原程序（RESTORE TDX）
 

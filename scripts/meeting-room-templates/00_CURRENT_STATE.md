@@ -9,7 +9,7 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | {{CURRENT_VERSION}} |
+| Current Version | {{CURRENT_VERSION}}（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
 | Source main HEAD | {{SOURCE_MAIN_HEAD}} |
 | Source main HEAD resolved from | {{SOURCE_MAIN_HEAD_ORIGIN}} |
 | Source working tree | {{SOURCE_WORKING_TREE}} |
@@ -24,6 +24,21 @@
 | Next Action | {{NEXT_ACTION}} |
 | Export Generated At | {{EXPORT_GENERATED_AT}} |
 | Export artifact commit | {{EXPORT_ARTIFACT_COMMIT}} |
+
+## 版本規則（開工前必讀，2026-08-25 起永久生效）
+
+**開工前先寫下 `CURRENT_VERSION` 與 `TARGET_VERSION`**，並確認 TARGET 是 CURRENT 的合法下一版。
+
+- 任何**進 Production 且改變 runtime 行為**的變更，必須在**同一個 commit 內** bump
+  `src/version.js` 的 `APP_VERSION`——那是本專案唯一的版本權威，`GET /version` 就是讀它。
+- **任務名稱 ≠ 版本號。** `CCTV_METADATA_RECOVERY`、`TDX_QUOTA_PROTECTION` 這類是工程標籤。
+- **正式產品只有一條連續版本線 `V1.8.7.x`**，不得建立 V1／V2／V57.x 等平行版本線。
+- `package.json` 的 `0.1.0` 是 npm 套件版本，**與產品版本線無關**，不要混用。
+- 純文件／治理／工具／測試整理不 bump 版本，但仍須有 commit。
+
+為什麼要寫成規則：`src/version.js` 曾從 2026-08-21 起停在 V1.8.6.9 整整三週，
+期間 V1.8.7.0～V1.8.7.14 全部上線，`GET /version` 卻一直回報舊版本——
+因為當時有三個地方各自以為自己知道版本。詳見 `07_KNOWN_ISSUES.md` 的版本線校正紀錄。
 
 ## 我能改什麼／不能改什麼（一句話版）
 

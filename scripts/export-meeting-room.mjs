@@ -164,6 +164,25 @@ function safe(value, fallback) {
 }
 
 /** Latest "V<major>.<minor>.<patch>[.<build>]" version label found in a git commit subject, newest first. Never guessed -- null if none found. */
+// THE canonical product version, read from src/version.js — the single
+// source GET /version itself uses. Deliberately a text scrape rather than
+// an import: this script runs in plain Node against the repo, and must not
+// pull a Worker module (and its transitive imports) into its own process.
+function canonicalAppVersion() {
+  try {
+    const text = readFileSync(join(ROOT, 'src', 'version.js'), 'utf8');
+    const m = text.match(/export const APP_VERSION\s*=\s*'([^']+)'/);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+// Kept ONLY as a drift signal, never as the answer. Before
+// PRODUCTION_VERSION_LINEAGE_RECONCILIATION (2026-08-25) this WAS the
+// answer, which is how the memory came to report V1.8.7.7 while the
+// deployed code reported V1.8.6.9 — a version scraped from a commit
+// message is a version nobody owns.
 function latestVersionFromGitLog() {
   const log = git(['log', '--oneline', '-n', '200']);
   if (!log) return null;
@@ -447,6 +466,9 @@ function main() {
   const docsVersion = latestVersionFromEngineeringStatus();
 
   if (docsVersion && latestCommitVersion !== 'unknown' && docsVersion !== latestCommitVersion) {
+    // NOTE: neither side of this comparison is authoritative any more —
+    // src/version.js is. This warning is kept because a disagreement here
+    // still means a document needs review.
     console.warn(
       `⚠️  DOCS DRIFT: ENGINEERING_STATUS.md's "Latest completed work" says ${docsVersion}, ` +
         `but the newest version-labeled commit on this branch is ${latestCommitVersion}. ` +
@@ -458,8 +480,24 @@ function main() {
   // Narrative fields: sensible, evidence-grounded defaults, overridable
   // via env vars so a future finalize:release run doesn't require
   // editing this script.
-  const currentVersion = latestCommitVersion;
-  const latestCompletedVersion = latestCommitVersion;
+  // src/version.js is the authority; the git-log scrape and
+  // ENGINEERING_STATUS.md are cross-checks that may only WARN.
+  const canonicalVersion = canonicalAppVersion();
+  if (!canonicalVersion) {
+    throw new Error(
+      'cannot read APP_VERSION from src/version.js — that file is the one canonical version source; ' +
+        'refusing to fall back to a commit-message scrape, which is exactly the drift this replaced'
+    );
+  }
+  if (latestCommitVersion !== 'unknown' && latestCommitVersion !== canonicalVersion) {
+    console.warn(
+      `⚠️  VERSION DRIFT: src/version.js says ${canonicalVersion}, but the newest version-labeled ` +
+        `commit says ${latestCommitVersion}. src/version.js is authoritative — if a release just ` +
+        `shipped without bumping it, bump it now rather than letting the two diverge again.`
+    );
+  }
+  const currentVersion = canonicalVersion;
+  const latestCompletedVersion = canonicalVersion;
   const trafficSourceMode = readTrafficSourceMode();
   const pbsOnly = trafficSourceMode === 'PBS_ONLY';
 

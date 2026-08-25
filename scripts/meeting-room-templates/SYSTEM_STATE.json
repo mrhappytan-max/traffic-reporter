@@ -52,14 +52,14 @@
     "TRAFFIC_SOURCE_MODE": "{{TRAFFIC_SOURCE_MODE}}",
     "TDX_RUNTIME": "OFF",
     "PBS": "ON",
-    "CCTV_IMAGE": "ON_WITHOUT_TDX_REFRESH",
+    "CCTV_IMAGE": "ON_WITHOUT_TDX_REFRESH（名冊改為 KV 優先、內建官方名冊為地板，不再需要 TDX 探針補貨）",
     "LINE_PUSH_POLICY": "{{LINE_PUSH_POLICY}}",
     "DYNAMIC_SHOULDER_PUSH": "OFF",
     "majorAccidentRule": "pushed <=> passes the V1.5 whitelist AND type === 'accident' AND not a dynamic-shoulder event. type==='accident' is the EXISTING classifier decision, not a new severity judgement.",
     "whyNoSeverityKeywordGate": "No severity field exists in this codebase and PBS records carry no structured impact field, so requiring impact keywords would be a guess that errs toward withholding serious crashes. Impact evidence is RECORDED instead (policy-major-accident-* vs policy-accident-no-stated-impact) so the one-month review can tighten against real counts. Full reasoning: 07_KNOWN_ISSUES.md and src/traffic/broadcastPolicy.js.",
     "whyTdxOff": "TDX API quota exhausted (2026-08-23). Deliberate pause, not a fault; no TDX code deleted.",
     "whyShoulderPushPaused": "LINE OA monthly proactive-Push allowance is limited; 機動路肩 is high-frequency. Detection/parser/formatter/CCTV strategy all preserved — only the proactive product is withheld.",
-    "whyCctvAllowed": "CCTV costs ZERO TDX calls: metadata from the read-only KV cache, frames from *.freeway.gov.tw, and cctv/dynamicCollage.js imports neither tdx/auth.js nor tdx/client.js. Structural guarantee, not a promise.",
+    "whyCctvAllowed": "CCTV costs ZERO TDX calls: 名冊來自唯讀 KV，KV 沒有時退回打包在 bundle 內的官方 NFB 名冊（data/cctv/generated/，1943 筆），影格來自 *.freeway.gov.tw，且 cctv/dynamicCollage.js 既不 import tdx/auth.js 也不 import tdx/client.js。Structural guarantee, not a promise.",
     "cctvMustNotRefreshTdxMetadata": true,
     "cctvEligibilityRule": "CCTV 資格取決於「道路可解析且在 confirmed registry 內」＋「target KM 可靠」，不取決於事件由哪個來源通報。2026-08-25 之前是 source==='freeway' only（TDX 時代的規則），在 PBS_ONLY 下等於「PBS 事故永遠沒有圖」。實作於 cctv/dynamicCollage.js 的 resolveCctvEligibility。",
     "cctvTrustedEventSources": [
@@ -111,7 +111,8 @@
     "cctvIsNotBroadcastEligibility": "CCTV is enrichment, never a precondition. A qualifying PBS accident broadcasts TEXT-ONLY when CCTV yields nothing; refusing to broadcast because there is no image is forbidden.",
     "linePushObservationPurpose": "Observe one month of real proactive-Push volume under the accident-only policy, then tune with data.",
     "tdxRestorePath": "07_KNOWN_ISSUES.md -> RESTORE TDX (set TRAFFIC_SOURCE_MODE=ALL and push)",
-    "pushPolicyRestorePath": "set LINE_PUSH_POLICY=ALL_ELIGIBLE in wrangler.jsonc and push"
+    "pushPolicyRestorePath": "set LINE_PUSH_POLICY=ALL_ELIGIBLE in wrangler.jsonc and push",
+    "cctvInventoryNote": "2026-08-25 CCTV_METADATA_RECOVERY_V1：名冊 KV key 不再設 expirationTtl，且拒絕以空的／格式錯誤的 record set 覆寫。7 天過期＋唯一寫入者在 PBS_ONLY 下無法執行所造成的死結已解除。"
   },
   "linePushObservation": {
     "LINE_PUSH_OBSERVATION": "ACTIVE",
@@ -127,28 +128,96 @@
     "readerNote": "OBSERVATION, not construction. Do not modify src/, the broadcast policy, Cron, TDX, CCTV, the Consumer, or redeploy because of this entry."
   },
   "taskSeal": {
-    "task": "DRIVE_SYNC_GOVERNANCE_V2",
+    "task": "PRODUCTION_VERSION_LINEAGE_RECONCILIATION",
     "status": "SEALED",
     "sealedAt": "2026-08-25",
-    "sealedBy": "human directive (路況工程部 版本治理規則正式更新＋封版令)",
-    "whatChanged": "Governance only. Claude is now READ-ONLY on Google Drive; GitHub becomes the sole formal write source for code and Engineering Memory alike; GitHub → Drive Sync is the only formal path into the cloud mirror. Recorded in cloudSyncGovernance above and in 01_FOUR_DEPARTMENT_GOVERNANCE.md sections 17-23.",
-    "whatDidNotChange": "No product code, no tests, no PBS/TDX/CCTV/LINE policy, no Cron/KV/R2, no Production deploy, no Consumer, no 雙鐵. The GitHub → Drive automation itself was NOT built — that is a separate future task and was explicitly out of scope.",
+    "sealedBy": "human directive (路況工程部 正式版本線校正施工令)",
+    "whatWasWrong": "兩層問題。表層：V1.8.7.7 之後有 7 次真正改變 Production runtime 行為的更新已 merge/deploy，卻只寫任務名稱、沒有配正式版本號。深層（更嚴重）：唯一權威來源 src/version.js 自 2026-08-21 的 V1.8.6.9 之後從未更新過，因此整個 V1.8.7.x 系列期間 GET /version 都在回報 V1.8.6.9。",
+    "rootCause": "有三個地方各自以為自己知道版本：src/version.js（餵 /version，值為 V1.8.6.9）、Engineering Memory export（掃 commit message 取最新 V 字串，值為 V1.8.7.7）、ENGINEERING_STATUS.md（人工標記）。從 commit message 掃出來的版本號是沒有人負責的版本號——有人剛好打了就會動，沒人打就停住。",
+    "whatChanged": "(1) src/version.js 確立為 ONE CANONICAL VERSION SOURCE，APP_VERSION 校正為 V1.8.7.14；(2) scripts/export-meeting-room.mjs 改讀 src/version.js，commit message 掃描降級為 drift 警告，且讀不到權威來源時直接拋錯而非退回猜測；(3) 06_VERSION_HISTORY.md 補記 V1.8.7.8～V1.8.7.14 七列；(4) 新增 test/versionLineage.test.js 七項測試鎖住規則的形狀。",
+    "whatDidNotChange": "沒有 rebase、沒有 amend、沒有 force push、沒有改動任何歷史 commit timestamp、沒有偽造部署、沒有把未上線的東西寫成已上線。本輪未修改任何 CCTV／TDX／PBS／LINE policy 程式（施工令第十條）。",
+    "versionsAssigned": {
+      "V1.8.7.8": "f5a339a — TDX Quota Protection / PBS_ONLY MODE（2026-08-23）",
+      "V1.8.7.9": "21c1a42 — Accident-Only Proactive LINE Push ＋ CCTV 影像恢復（2026-08-23）",
+      "V1.8.7.10": "fecb818 — PBS_ONLY 下不得要求 TDX 對應（2026-08-24）",
+      "V1.8.7.11": "fc43549 — Service Area Gate（八堵事件）（2026-08-24）",
+      "V1.8.7.12": "990237c — Location Quality Gate ＋ 播報追溯斷點修復（台68 事件）（2026-08-24）",
+      "V1.8.7.13": "678f0bb — PBS 國道事故 CCTV Enrichment（國3 96K+700 事件）（2026-08-25）",
+      "V1.8.7.14": "951f547 — CCTV 官方名冊恢復＋永久保存修正（國1 93K 事件）（2026-08-25）"
+    },
+    "governanceOnlyCommits": "其餘 79 個 commit 皆為純文件／Engineering Memory／governance／Drive sync 工具／export 凍結，未觸及 src/、wrangler.jsonc 或 data/，依規則不占產品版本號。唯一的例外檢查：56753bf 雖動到 package.json，但只新增一個 npm script，屬工具而非 runtime。",
+    "canonicalVersionSource": "src/version.js 的 APP_VERSION。GET /version、/admin/deployment-status、Engineering Memory export 全部由它衍生。",
+    "permanentRule": "任何進 Production 且改變 runtime 行為的變更，必須在同一個 commit 內 bump src/version.js 的 APP_VERSION。任務名稱永遠不能取代版本號。正式產品只有一條連續版本線 V1.8.7.x，不得建立 V1／V2／V57.x／CCTV V1 等平行版本線。純文件／治理／工具／測試整理不 bump 版本，但仍須有 commit。",
+    "versionDrift": "已消除於程式與文件層：src/version.js、GET /version、/admin/deployment-status、06_VERSION_HISTORY.md、SYSTEM_STATE.json 現在同為 V1.8.7.14。",
+    "productionVerificationNote": "PRODUCTION_DEPLOYED_COMMIT 與 /version 的實機值無法在本 sandbox 直接觀測——對 Production 網域的 outbound HTTPS 被 egress proxy 以 403 阻擋（既有的長期限制）。本輪回報的 /version 值是由已部署程式碼推導的事實（git 可證），不是實機讀數，且已如此標示。bump APP_VERSION 本身會觸發一次部署，這是 Version Reconciliation deployment，未夾帶任何產品修改。",
     "githubSeal": "PASS",
     "githubEngineeringMemory": "SEALED",
-    "githubToDriveSync": "PASS",
     "claudeDriveUpload": "NO",
-    "honestState": "Verified by read-only observation, not assumed: after the push, all 10 canonical files in the Drive folder were modified at 2026-08-25T07:44 and every byte size matches the local engineering-memory/ copy exactly. The mirror is current with GitHub.",
     "doNotMisread": [
-      "Do NOT upload, update, archive, move or delete anything on Google Drive — read only.",
-      "Do NOT report GITHUB_TO_DRIVE_SYNC as PASS until a real GitHub-side sync has actually run.",
-      "Do NOT rebuild the GitHub → Drive automation — it already exists on main and is working. Read scripts/syncEngineeringMemory.mjs before touching anything in that area.",
-      "Do NOT rewrite past LEGACY_CLAUDE_CONNECTOR_SYNC records as failures; they really did complete.",
-      "Do NOT start a new task before the current one is SEALED and Current Task is none."
+      "不要在 src/version.js 以外的地方宣告產品版本號——其他地方一律 import 或衍生。",
+      "不要讓 Engineering Memory export 回頭從 commit message 取版本；test/versionLineage.test.js 第 6 項就是在擋這件事。",
+      "不要把 V1.8.7.8～V1.8.7.14 當成新部署——那是既有部署的補記，歷史 commit 未被改寫。",
+      "不要建立平行版本線；正式產品永遠只有 V1.8.7.x 一條。",
+      "不要用任務名稱（CCTV_METADATA_RECOVERY 之類）當版本號。",
+      "不要對 Google Drive 做任何寫入——Claude 唯讀，GitHub 是唯一正式寫入來源。"
     ],
-    "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending.",
-    "correctionNote": "This entry first recorded GITHUB_TO_DRIVE_SYNC = PENDING, which was true when written — the automation had not yet been observed. It was corrected to PASS only after the byte-level check above. The rule cuts both ways: never report PENDING as PASS, and never leave a stale PENDING standing once PASS is demonstrable."
+    "openFollowUp": "(1) 約 33 項過期斷言（見 CCTV_METADATA_RECOVERY_V1 的 openFollowUp 與 07_KNOWN_ISSUES.md）仍待獨立施工令處理。(2) 待有 Production 網路存取的 session 出現時，實機讀 /version 確認 appVersion = V1.8.7.14、deployedCommit = 本輪最終 main HEAD。",
+    "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
   },
   "taskSealHistory": [
+    {
+      "task": "CCTV_METADATA_RECOVERY_V1",
+      "status": "SEALED",
+      "sealedAt": "2026-08-25",
+      "sealedBy": "human directive (路況工程部 CCTV 官方名冊恢復＋架構修正施工令)",
+      "realWorldTrigger": "2026-08-25 19:01 國道一號 93K 事故：LINE 文字正常推播、完全沒有圖片，Pipeline Trace 記錄 cctvSkippedByReason = metadata-cache-unavailable。",
+      "rootCause": "以 Repo 真實程式確認，非推測。freewayCctvMetadataCache.js 以 7 天 expirationTtl 寫入攝影機名冊，而這把 KV key 唯一的寫入者是 hsinchuCctvProbe.js 的 Admin-Auth 管理探針；該探針在 TRAFFIC_SOURCE_MODE=PBS_ONLY 下無法執行，因為 tdx/auth.js 會拒發 token。最後一次探針滿 7 天後 KV 自行刪除名冊，且沒有任何被允許的路徑能補回，形成死結。",
+      "whatChanged": "三件事，全在 metadata 層：(1) 移除 expirationTtl，key 不再自行消失；(2) 寫入只能升級不能降級——空的或格式錯誤的 record set 一律拒絕（refused-empty-record-set），此模組沒有任何路徑可以刪除名冊；(3) 打包官方 NFB open data 名冊 1943 筆（國1 510／國3 728）為地板，KV 完全空白時仍取得可用鏡頭清單。另新增 /health 攝影機基礎資料卡片（來源／筆數／資料日期，逾 30 天標示過舊）。",
+      "whyThisEndsTheDeadlock": "名冊不再依賴 TDX 是否開啟、也不再依賴 KV 是否存活。恢復在 deploy 當下自動發生，不需要對 Production KV 做任何寫入——這同時解決了本沙盒 egress 403 無法寫 Production 的限制。",
+      "verification": "以完全空的 KV 重跑 19:01 該筆事件，四格全中（CCTV-N1-S-91.800-M／CCTV-N1-S-94.900-M／CCTV-N1-N-92.675-M／CCTV-N1-N-94.030-L-新竹公道五路）；國3 96.7K 同樣四格全中。真實資料，非 mock。",
+      "cost": "Worker bundle gzip 749.54 KiB → 826.49 KiB（+77 KiB，上限 3 MB）。TDX 呼叫數 0——名冊在 build 時打包，執行期只從記憶體讀。",
+      "testResult": "npm test 共 1272 項；連續 4 次量測為 38／38／38／39 失敗，NEW FAILURES = 0、SILENTLY FIXED = 0，以同一輪 git stash -u 對照乾淨 checkout 驗證。新增 test/cctvMetadataRecovery.test.js 17 項全數通過。多出的那 1 次是 deploymentStatus 已記載的全套執行雜訊。",
+      "testsUpdatedNotWeakened": "5 個既有測試原本斷言「KV 空的或壞掉 = 沒有鏡頭」。那個斷言本身就是缺陷，因此逐一改為驗證新保證，並完整保留各自真正的不變量（絕不回頭呼叫 TDX、失敗時 fail-closed 成純文字）。真的需要「這條路沒有鏡頭」情境的測試，改為餵入另一條路的可用名冊，而不是空陣列——沿用 pbsAccidentCctvEnrichment.test.js 第 9 項既有慣例。",
+      "importantCorrection": "本輪發現並更正了工程記憶裡一筆錯誤的 Root Cause。舊記載說 13 項 CCTV/JPEG 測試失敗是「依賴 Workers-only 的 .wasm codec，沙盒無法載入」。這是錯的：真正原因是沙盒 node_modules 不完整，@jsquash/jpeg 沒安裝（它是正式 dependencies 且在 package-lock.json 內，正常 npm ci 一定會裝）。安裝後 12 個檔案全部正常執行，並揭露約 36 項長期被誤判成環境問題的過期斷言。詳見 07_KNOWN_ISSUES.md。",
+      "githubSeal": "PASS",
+      "githubEngineeringMemory": "SEALED",
+      "claudeDriveUpload": "NO",
+      "doNotMisread": [
+        "不要把 expirationTtl 加回攝影機名冊——那正是這次的缺陷本身。影格才是快取，名冊是參考資料。",
+        "不要把空的 record set 當成合法寫入；refused-empty-record-set 是刻意的保護。",
+        "不要為了取得名冊而重開 TDX——內建名冊的存在就是為了讓這件事永遠不必要。",
+        "不要因為名冊有 1943 筆就新增未驗證道路；CCTV_SUPPORTED_ROADS 仍只有國道一號與國道三號。",
+        "不要手動編輯 data/cctv/generated/freewayCctvInventory.js——它是產生物，改來源檔後跑 npm run build:cctv-inventory。",
+        "不要把 07_KNOWN_ISSUES.md 的 38 項基準線當成新回歸；判斷回歸一律以同一輪 git stash -u 對照為準。",
+        "不要對 Google Drive 做任何寫入——Claude 唯讀，GitHub 是唯一正式寫入來源。"
+      ],
+      "openFollowUp": "約 33 項過期斷言（動態路肩推播已關閉、PBS 已成為 CCTV 可信來源之後未同步更新的測試）現在會真的執行並失敗。本輪未修，因為施工令範圍是 CCTV 名冊恢復，無關重構被明確禁止。這是目前最大的一筆技術債，需要一張獨立施工令。",
+      "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending.",
+      "releaseVersion": "V1.8.7.14",
+      "versionNote": "本輪施工當下尚未配發正式版本號（程式已 merge main 並自動部署後才收到版本治理令）。正式版本號由隨後的 PRODUCTION_VERSION_LINEAGE_RECONCILIATION 補配為 V1.8.7.14，對應 commit 951f547。任務名稱 CCTV_METADATA_RECOVERY_V1 是工程標籤，不是版本號。"
+    },
+    {
+      "task": "DRIVE_SYNC_GOVERNANCE_V2",
+      "status": "SEALED",
+      "sealedAt": "2026-08-25",
+      "sealedBy": "human directive (路況工程部 版本治理規則正式更新＋封版令)",
+      "whatChanged": "Governance only. Claude is now READ-ONLY on Google Drive; GitHub becomes the sole formal write source for code and Engineering Memory alike; GitHub → Drive Sync is the only formal path into the cloud mirror. Recorded in cloudSyncGovernance above and in 01_FOUR_DEPARTMENT_GOVERNANCE.md sections 17-23.",
+      "whatDidNotChange": "No product code, no tests, no PBS/TDX/CCTV/LINE policy, no Cron/KV/R2, no Production deploy, no Consumer, no 雙鐵. The GitHub → Drive automation itself was NOT built — that is a separate future task and was explicitly out of scope.",
+      "githubSeal": "PASS",
+      "githubEngineeringMemory": "SEALED",
+      "githubToDriveSync": "PASS",
+      "claudeDriveUpload": "NO",
+      "honestState": "Verified by read-only observation, not assumed: after the push, all 10 canonical files in the Drive folder were modified at 2026-08-25T07:44 and every byte size matches the local engineering-memory/ copy exactly. The mirror is current with GitHub.",
+      "doNotMisread": [
+        "Do NOT upload, update, archive, move or delete anything on Google Drive — read only.",
+        "Do NOT report GITHUB_TO_DRIVE_SYNC as PASS until a real GitHub-side sync has actually run.",
+        "Do NOT rebuild the GitHub → Drive automation — it already exists on main and is working. Read scripts/syncEngineeringMemory.mjs before touching anything in that area.",
+        "Do NOT rewrite past LEGACY_CLAUDE_CONNECTOR_SYNC records as failures; they really did complete.",
+        "Do NOT start a new task before the current one is SEALED and Current Task is none."
+      ],
+      "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending.",
+      "correctionNote": "This entry first recorded GITHUB_TO_DRIVE_SYNC = PENDING, which was true when written — the automation had not yet been observed. It was corrected to PASS only after the byte-level check above. The rule cuts both ways: never report PENDING as PASS, and never leave a stale PENDING standing once PASS is demonstrable."
+    },
     {
       "task": "PBS_ACCIDENT_CCTV_ENRICHMENT_FIX",
       "status": "SEALED",
@@ -200,7 +269,8 @@
   ],
   "version": {
     "packageJsonVersion": "{{PACKAGE_VERSION}}",
-    "latestCompleted": "{{LATEST_COMPLETED_VERSION}}"
+    "latestCompleted": "{{LATEST_COMPLETED_VERSION}}",
+    "canonicalSource": "src/version.js 的 APP_VERSION — 唯一權威。packageJsonVersion 是 npm 套件版本（0.1.0），與產品版本線無關，不要混用。"
   },
   "production": {
     "status": "{{PRODUCTION_STATUS}}",
@@ -209,7 +279,7 @@
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
   "currentPhase": "{{CURRENT_PHASE}}",
-  "currentTask": "none（無進行中工作）。Latest completed task = DRIVE_SYNC_GOVERNANCE_V2，status = SEALED（前序 PBS_ACCIDENT_CCTV_ENRICHMENT_FIX、PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX、PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。雲端同步治理已改為：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源——封版時只寫 GitHub，不要自己搬檔案到 Drive；GitHub → Drive 自動同步尚未完成，目前 GITHUB_TO_DRIVE_SYNC = PENDING，不得人工補上傳、也不得報成 PASS。詳見 SYSTEM_STATE.json 的 cloudSyncGovernance 與 taskSeal.doNotMisread",
+  "currentTask": "none（無進行中工作）。Latest completed task = PRODUCTION_VERSION_LINEAGE_RECONCILIATION，status = SEALED（前序 CCTV_METADATA_RECOVERY_V1 = V1.8.7.14、DRIVE_SYNC_GOVERNANCE_V2、PBS_ACCIDENT_CCTV_ENRICHMENT_FIX、PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX、PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。CURRENT_OFFICIAL_VERSION = V1.8.7.14，NEXT_RELEASE_VERSION = V1.8.7.15。開工前必須先寫 CURRENT_VERSION 與 TARGET_VERSION，且 TARGET_VERSION 必須是合法下一版；任何改變 Production runtime 行為的變更，必須在同一個 commit 內 bump src/version.js。雲端同步治理維持 V2：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源。**下一件事若要開工，建議處理約 33 項過期斷言**——詳見 taskSeal.openFollowUp 與 07_KNOWN_ISSUES.md。",
   "knownBlocker": "{{KNOWN_BLOCKER}}",
   "realWorldConfirmation": {
     "status": "{{REAL_WORLD_CONFIRMATION}}",
