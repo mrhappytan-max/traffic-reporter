@@ -36,7 +36,7 @@
     "sealLifecycle": "ONE TASK -> ONE CLOSEOUT -> ONE SEALED STATE. fix -> targeted tests -> regression (NEW FAILURES = 0) -> commit -> main -> deploy if needed -> Engineering Memory -> GitHub commit/push -> confirm GitHub→Drive sync status -> SEALED -> Current Task = none -> STOP. Never start task B before task A is sealed."
   },
   "git": {
-    "sourceMainHead": "c8e68e688c755bbadb630d6503f3266b0eb8ea94",
+    "sourceMainHead": "34e948c314b2004f38d7ce575d789da298c82cb8",
     "sourceMainHeadResolvedFrom": "origin/main",
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
     "sourceWorkingTree": "clean",
@@ -218,8 +218,8 @@
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-08-25T07:39:57.495Z",
-    "sourceMainHead": "c8e68e688c755bbadb630d6503f3266b0eb8ea94",
+    "generatedAt": "2026-08-25T07:42:51.740Z",
+    "sourceMainHead": "34e948c314b2004f38d7ce575d789da298c82cb8",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
     "historyDir": "_history"

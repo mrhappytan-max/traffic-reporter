@@ -578,6 +578,129 @@ CCTV 的 freeway-source 閘門（本輪）。修這一輪時已一併搜過其�
 **後台的「空白理由」是一個 bug，不是一個畫面。**
 「做了決定但說不出是哪一個」會讓真人往完全錯誤的方向查。
 
+## 治理變更紀錄｜DRIVE_SYNC_GOVERNANCE_V2（2026-08-25）
+
+**這一輪沒有改任何產品程式。** 它改的是「版本資料怎麼進到雲端」這件事本身。
+
+### 舊流程（已退休）
+
+每次封版時，Claude 直接用 Google Drive Connector 把 changed files
+逐檔上傳、逐檔 byte 驗證、把舊檔移進 `_archive_<sha>`。
+
+### 為什麼退休
+
+**不是因為它不正確**——它確實有效，也確實每次都完成了同步，
+之前每一輪記錄的 `Google Drive Delta Sync = PASS` 都是真的。
+
+退休的理由是**成本**：Agent 後台逐檔上傳佔用大量流量、速度慢、
+佔用執行時間、拉長每一次封版、增加 Agent 成本。
+一份 39KB 的 07_KNOWN_ISSUES.md 要整份重打並上傳一次，
+這件事本身比它承載的資訊量貴得多。
+
+### 新流程（唯一正式路徑）
+
+```
+Claude 修改產品 / Engineering Memory
+   ↓
+Git commit
+   ↓
+GitHub（branch / main）
+   ↓
+GitHub → Google Drive Sync
+   ↓
+Google Drive 工程記憶
+```
+
+```
+CLAUDE_DRIVE_READ  = ALLOWED
+CLAUDE_DRIVE_WRITE = FORBIDDEN
+```
+
+- **GitHub** = CODE SOURCE OF TRUTH ＋ ENGINEERING MEMORY WRITE SOURCE
+- **Google Drive** = READABLE ENGINEERING MEMORY MIRROR
+- 永久順序：**GitHub first, Drive second**
+
+Claude 只負責「把該同步的內容正確寫進 GitHub」，不負責搬檔案到 Drive。
+
+### 三個狀態必須分開講
+
+```
+GITHUB_ENGINEERING_MEMORY   本次記憶是否已 commit 進 GitHub
+GITHUB_TO_DRIVE_SYNC        GitHub 端是否已同步到 Drive
+CLAUDE_DRIVE_UPLOAD         Claude 是否直接寫入（生效後永遠 NO）
+```
+
+舊的 `MEETING_ROOM_CLOUD_SYNC = PASS` 已棄用——它沒說「是誰同步的」。
+
+### 自動同步還沒好時怎麼標
+
+**不得**為了讓 Drive 看起來是最新版而人工補上傳。誠實標：
+
+```
+GITHUB_SEAL               = PASS
+GITHUB_ENGINEERING_MEMORY = SEALED
+GITHUB_TO_DRIVE_SYNC      = PENDING
+CLAUDE_DRIVE_UPLOAD       = NO
+```
+
+然後停止。**把 PENDING 硬補成 PASS 是假報**——
+同步延遲只是慢，假報會讓未來所有人相信一個不存在的狀態。
+
+### 本輪就是這條規則的第一次實踐
+
+GitHub → Drive 自動同步**尚未建置**（本輪明確禁止實作它）。
+所以本輪封版後，**Google Drive 上的工程記憶比 GitHub 落後一個版本**，
+而這是**正確且預期**的狀態：
+
+```
+LOCAL_RELEASE = SEALED
+CLOUD_MIRROR  = PENDING
+```
+
+雲端目前停在 `_archive_678f0bb` 那一輪（PBS_ACCIDENT_CCTV_ENRICHMENT_FIX）。
+**不要**手動去補。等會議部下一道施工令建置自動同步。
+
+### 歷史紀錄怎麼處理
+
+先前所有由 Claude Connector 完成的同步紀錄**全部保留、不改寫成失敗**，
+只補上身分標記：
+
+```
+LEGACY_CLAUDE_CONNECTOR_SYNC = RETIRED
+```
+
+它們當時真的完成了；只是那個機制以後不再使用。
+
+### 同時生效的封版節奏規則
+
+```
+ONE TASK → ONE CLOSEOUT → ONE SEALED STATE
+```
+
+任何 Bug／功能／架構更動完成後不得直接開始下一件，必須先走完
+tests → NEW FAILURES = 0 → commit → main → 必要 deploy →
+Engineering Memory → GitHub push → 確認同步狀態 → SEALED →
+Current Task = none → STOP。
+
+禁止「A 還沒封版就開 B，然後回頭又改 A」——那正是
+main／Drive／Agent 記憶三邊版本漂移的成因。
+
+### 本輪一併修掉的一個「會叫下一個 Agent 違規」的地方
+
+`scripts/finalize-release.mjs` 原本在結尾印：
+
+```
+GOOGLE_DRIVE_CONNECTOR_SYNC_REQUIRED
+(The Claude Agent session must now perform the real Connector sync itself...)
+```
+
+那段文字會**主動指示**下一個 Agent 去做現在已被禁止的事。
+已改成印出新的治理狀態與「只寫 GitHub」的指示。
+（只改輸出文字，沒有實作任何自動同步。）
+
+**通則**：改規則的時候，要把「會叫人違反新規則的舊指示」一起找出來改掉；
+留著一句與規則相反的提示，等於沒改。
+
 ## TDX 還原程序（RESTORE TDX）
 
 **前提**：真人確認 TDX 額度確實已恢復。
@@ -599,4 +722,3 @@ CCTV 的 freeway-source 閘門（本輪）。修這一輪時已一併搜過其�
 
 - `git branch -r --no-merged main` 對以 cherry-pick 方式收編的分支會誤判為未合併（比對 commit SHA 祖先關係，不比對內容）——V1.8.7.3 分支即為實例。
 - `ENGINEERING_STATUS.md` 的「main HEAD」欄位歷史上曾經長時間未同步更新（曾停留在 V1.8.6.8 時代的 SHA，直到 V1.8.7.7 封版時才發現並更正）——此欄位理想上應由 script 自動產生，而不是每輪手動記，這正是本 export 系統 `SYSTEM_STATE.json` 存在的原因之一。
-

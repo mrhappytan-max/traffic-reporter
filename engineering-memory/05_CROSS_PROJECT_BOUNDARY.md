@@ -27,4 +27,3 @@
 ## 這份文件之外
 
 完整 Shared Feed 欄位契約與設計理由 → `src/traffic/sharedFeed.js` module comment（原始碼本身即為 Source of Truth）；歷史事件 → `02_PROJECT_HANDOFF.md` §30。
-

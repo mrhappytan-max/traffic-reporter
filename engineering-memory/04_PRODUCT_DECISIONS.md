@@ -353,4 +353,3 @@ Two independent reasons converge on the same design: (1) this round's own explic
 ### Why the Windows-path-on-non-Windows case is refused outright rather than merely warned
 
 Real testing this round (not speculation) showed that WITHOUT this check, the sync script would report `GOOGLE_DRIVE_SYNC=SUCCESS` after writing 10 files into a meaninglessly-named local folder that is NOT the user's Google Drive — a false positive strictly worse than an honest failure, because a false "SUCCESS" is the one outcome that actively hides the problem from whoever reads the release summary next. A warning-but-continue would still have produced that same misleading SUCCESS status; refusing outright with an explicit reason is the only design that can't be misread as "it worked."
-

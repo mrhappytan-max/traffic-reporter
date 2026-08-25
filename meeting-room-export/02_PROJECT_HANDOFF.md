@@ -17,8 +17,8 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | c8e68e688c755bbadb630d6503f3266b0eb8ea94 |
-| Snapshot generated at | 2026-08-25T07:39:57.495Z |
+| Source main HEAD | 34e948c314b2004f38d7ce575d789da298c82cb8 |
+| Snapshot generated at | 2026-08-25T07:42:51.740Z |
 | Source working tree | clean |
 | Current version | V1.8.7.7 |
 | Current phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源（GITHUB_TO_DRIVE_SYNC = PENDING）。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
