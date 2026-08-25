@@ -1,0 +1,185 @@
+{
+  "schemaVersion": 1,
+  "project": "traffic-reporter",
+  "projectNameZh": "路況播報員",
+  "department": "路況工程部",
+  "repo": "mrhappytan-max/traffic-reporter",
+  "authorityRole": "producer",
+  "consumerBoundary": {
+    "neverModify": [
+      "hsinchu-thsr-line-bot",
+      "rail-traffic-consumer",
+      "rail-line-gateway"
+    ],
+    "rule": "traffic-reporter is sole Shared Traffic Feed content authority; consumers must never re-judge completedProducts"
+  },
+  "git": {
+    "sourceMainHead": "678f0bbfd42716db3b5e1164280880c332a57bad",
+    "sourceMainHeadResolvedFrom": "origin/main",
+    "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
+    "sourceWorkingTree": "clean",
+    "selfReferenceNote": "sourceMainHead is the official main commit this snapshot DESCRIBES; exportArtifactCommit is the commit that CONTAINS this artifact and is intentionally never equal to it. Requiring the two to match would create a Git self-reference loop (every export changes the file, which changes the commit, which invalidates the recorded head). sourceMainHead is read from origin/main and is therefore stable across re-runs and across whichever branch the export was generated on.",
+    "checkoutNote": "The transient checkout (branch/HEAD/date) this export happened to run from is deliberately NOT recorded here. It changes on every commit and would make every release look like a content change, defeating delta sync; it also says nothing about the snapshot itself. The snapshot is identified by sourceMainHead alone. Local sync evidence in .engineering/ still records the checkout for auditing.",
+    "workingTreeNote": "sourceWorkingTree excludes meeting-room-export/, which this generator dirties by definition; it answers 'is the source tree clean', not 'did the export just write files'."
+  },
+  "trafficSourceMode": "PBS_ONLY",
+  "broadcastMode": {
+    "TRAFFIC_SOURCE_MODE": "PBS_ONLY",
+    "TDX_RUNTIME": "OFF",
+    "PBS": "ON",
+    "CCTV_IMAGE": "ON_WITHOUT_TDX_REFRESH",
+    "LINE_PUSH_POLICY": "MAJOR_ACCIDENT_ONLY",
+    "DYNAMIC_SHOULDER_PUSH": "OFF",
+    "majorAccidentRule": "pushed <=> passes the V1.5 whitelist AND type === 'accident' AND not a dynamic-shoulder event. type==='accident' is the EXISTING classifier decision, not a new severity judgement.",
+    "whyNoSeverityKeywordGate": "No severity field exists in this codebase and PBS records carry no structured impact field, so requiring impact keywords would be a guess that errs toward withholding serious crashes. Impact evidence is RECORDED instead (policy-major-accident-* vs policy-accident-no-stated-impact) so the one-month review can tighten against real counts. Full reasoning: 07_KNOWN_ISSUES.md and src/traffic/broadcastPolicy.js.",
+    "whyTdxOff": "TDX API quota exhausted (2026-08-23). Deliberate pause, not a fault; no TDX code deleted.",
+    "whyShoulderPushPaused": "LINE OA monthly proactive-Push allowance is limited; 機動路肩 is high-frequency. Detection/parser/formatter/CCTV strategy all preserved — only the proactive product is withheld.",
+    "whyCctvAllowed": "CCTV costs ZERO TDX calls: metadata from the read-only KV cache, frames from *.freeway.gov.tw, and cctv/dynamicCollage.js imports neither tdx/auth.js nor tdx/client.js. Structural guarantee, not a promise.",
+    "cctvMustNotRefreshTdxMetadata": true,
+    "cctvEligibilityRule": "CCTV 資格取決於「道路可解析且在 confirmed registry 內」＋「target KM 可靠」，不取決於事件由哪個來源通報。2026-08-25 之前是 source==='freeway' only（TDX 時代的規則），在 PBS_ONLY 下等於「PBS 事故永遠沒有圖」。實作於 cctv/dynamicCollage.js 的 resolveCctvEligibility。",
+    "cctvTrustedEventSources": [
+      "freeway",
+      "highway",
+      "pbs"
+    ],
+    "cctvTrustedEventSourcesNote": "仍是正面白名單，不是開門：只有這三個道路事件來源的 normalizer 會產生 canonical 道路名 ＋ 經嚴格 parser 驗證的公里數。公車／CMS 記錄兩者皆無，不得只憑 type=accident 就查攝影機。被擋下時 reason = unsupported-source（過期的 not-freeway-source 已從程式中移除）。highway 列入純屬對稱，省道不在 registry，會正確停在 unsupported-road。",
+    "cctvTargetKmTiers": "1) 結構化 startKM+endKM 取中點 2) 單一結構化 KM 3) displayKM。displayKM 是 2026-08-25 新增的最後一層，唯一寫入者是 pbs/normalize.js 的 extractDisplayKmMatch（嚴格 parser，需明確 96.7公里 / 96K+300 / 96K 形狀），且同一個值已先通過 locationQuality.js。從 description 自由猜 KM、從路名臆測 KM 仍然禁止。無可靠 KM → no-reliable-km → TEXT-ONLY。",
+    "cctvSupportedRoadsConfirmed": [
+      "國道1號 (roadId 000010)",
+      "國道3號 (roadId 000030)"
+    ],
+    "cctvSupportedRoadsNote": "只沿用已由真實 Production TRAFFIC_KV 查證過的 mapping。本輪未新增任何未驗證的省道 RoadID——台68 事故即使有可靠公里數仍是 TEXT-ONLY。",
+    "cctvRegressionCase": "2026-08-25 國3 南向 竹林交流道－寶山交流道 96K+700 PBS 事故：文字成功 Push、Shared Feed 已持久化，但 cctvEligible=否、cctvSkippedByReason 空白、無圖。永久 fixture：test/pbsAccidentCctvEnrichment.test.js。",
+    "cctvObservabilityFix": "eligibility 階段的 reason 過去從未寫進 trace（只有 prepare 階段會寫），所以後台顯示「cctvEligible=否 / cctvSkippedByReason=—」——做了決定卻說不出是哪一個，這正是過期閘門能藏一整天的原因。現在每一次拒絕都會寫下自己的 reason，並新增 cctvTargetKm（攝影機實際對準的公里數）。",
+    "cctvNoTdxStructuralGuarantee": "metadata 只讀既有 TRAFFIC_KV cache（readFreewayCctvMetadataCache），影格只來自 *.freeway.gov.tw，R2 用既有 CCTV_IMAGES。cache miss/過期/損毀 → metadata-cache-unavailable → TEXT-ONLY，禁止 fallback 去 TDX。有結構性測試斷言 dynamicCollage.js 沒有 import tdx/auth.js 或 tdx/client.js，不是只看設定旗標。",
+    "cctvNeverGrantsEligibility": "CCTV 是 optional enrichment，永遠在三道播報閘門之後。八堵事故即使能解析出完美攝影機仍被服務區域擋下；位置不足的事故仍被擋下。CCTV 絕不能讓原本不該播的事件變成可播（有測試鎖住兩個方向）。",
+    "tdxCorrelationRequiredForFreeway": false,
+    "serviceAreaEligibilityRequired": true,
+    "serviceArea": [
+      "新竹 (canonical hsinchuConfig.js definition)",
+      "竹北",
+      "竹南",
+      "頭份"
+    ],
+    "serviceAreaRoads": [
+      "國道1號",
+      "國道3號",
+      "省道 (台1/台3/台15/台61/台68)"
+    ],
+    "serviceAreaNote": "PBS_ONLY does NOT mean 'any PBS event anywhere can broadcast'. TDX_CORROBORATION_REQUIRED=false and SERVICE_AREA_ELIGIBILITY_REQUIRED=true are independent and must stay that way. Enforced by traffic/serviceArea.js, checked FIRST in the broadcast eligibility loop in every source mode. It reuses the canonical resolvers (pbs/hsinchuFilter.js, traffic/hsinchuFilter.js) — no new geographic engine, and the area was neither widened nor narrowed.",
+    "serviceAreaRegressionCase": "2026-08-24: a PBS 國道1號南向 accident at 八堵 (基隆, 25.10288/121.71801) was pushed to LINE. Geography was filtered only at PBS ingestion; broadcastPipeline.js documented the assumption and never enforced it. Permanent fixture: test/serviceAreaGate.test.js.",
+    "serviceAreaHonestLimit": "The ingestion-path leak could NOT be reproduced from the available data — isPbsEventHsinchuRelevant blocks 八堵 in every raw shape tried (with/without coordinates, with/without a parseable KM, swapped lat/lng). The fix is the missing enforcement at the broadcast boundary, not a patch to a reproduced hole. If the raw PBS record ever surfaces, re-check ingestion.",
+    "serviceAreaPbsVsTdx": "PBS is FAIL-CLOSED (it carries its geography to the broadcast layer, so the gate re-runs the exact ingestion function). TDX blocks only on POSITIVE out-of-area evidence, because tdx/normalize.js keeps road/KM but not raw Positions while ingestion admits on coordinates OR road+KM — judging TDX fail-closed here would silently drop valid TDX traffic once KM is missing, and would only surface after TDX is restored. Measured: the fail-closed version broke 35 existing TDX-fixture tests.",
+    "locationQualityRequired": true,
+    "locationQualityNote": "事故通過服務區域與重大事故政策後，還必須具備司機可行動的位置才准主動 LINE Push。判定層級（全部沿用既有 resolver，無新地理引擎、無硬編 KM、不猜位置）：結構化 KM（區段 > MAX_ACTIONABLE_SEGMENT_KM=15 公里者不算） / displayKM / 座標且既有 resolver 能可靠轉成可理解地點 / 訊息真的會印出來的地點文字含明確 KM、交流道匝道路口隧道、或行政區＋更細地點。實作於 traffic/locationQuality.js，位置在服務區域與事故政策之後、時間 dedupe suppression 之前。",
+    "locationQualityThresholdBasis": "MAX_ACTIONABLE_SEGMENT_KM=15 取自 bundled 官方交流道資料集（交通部高速公路局）：國道一號與國道三號相鄰設施間距 p50 4 公里、p95 11 公里、最大 15 公里；新竹服務區間最寬是竹林－寶山 8 公里。比全國最寬的交流道間距還長的區段，不可能被描述成「哪兩個交流道之間」。資料集若更新請重新量測，永遠不得為了讓某一筆事件通過而放寬。",
+    "threeGatesIndependent": "TDX_CORROBORATION_REQUIRED=false（PBS_ONLY） / SERVICE_AREA_REQUIRED=true（永遠） / LOCATION_QUALITY_REQUIRED=true（永遠）。三者回答三個不同問題：有沒有被佐證、是不是我們的地盤、駕駛能不能用。任何一個都不得被另一個取代或推論。八堵即使位置精確仍必須被服務區域擋下（有專門測試鎖住）。",
+    "locationQualityRegressionCase": "2026-08-24 約 14:20 的真實 Push：「🚨 交通事故 / 台68 西向 /（南寮竹東）-台68線 / 事故影響通行 / 🕒 13:48更新」。第三行是 PBS 對整條台68 的官方路線名稱（南寮 0.4K、竹東 22.9K），不是事故地點。永久 fixture：test/pbsAccidentTraceLocationQuality.test.js。",
+    "locationQualityRepairBeforeBlock": "施工令要求先分辨「上游沒給」與「上游有給但我們丟掉」。丟掉的是座標：pbs/normalize.js 一直把 x1/y1 保留成 latitude/longitude，但顯示側從來沒有任何一行讀過它（resolveKmLocation 從 KM 出發，而 PBS 沒有 KM），所以有座標與無座標產生的訊息逐位元組相同。已新增 kmLocationResolver.js 的 resolveCoordinateLocation（既有 KM 查詢的反向版本，同一份 bundled 官方資料、同樣 fail-closed、0 網路），messageFormat.js 只在完全沒有 KM 時才呼叫，既有訊息一則都不改變。",
+    "locationQualityHonestLimit": "沙箱對外 egress 為 403，無法讀取 Production KV 或 admin 端點，因此該筆的原始 PBS 記錄與真實 rawId(UID) 並未取得。source=PBS、areaNm、updatedAt=13:48、無可解析 KM 等結論，是從訊息本身逐行比對 messageFormat.js 反推的，可由 test/pbsAccidentTraceLocationQuality.test.js 第 1 項重現。「原始資料是否帶座標」無法判定——因為修正前有無座標產生的訊息完全相同。若日後取得該筆原始記錄，請回頭核對。",
+    "deliveryTraceGapRootCause": "Trace 有寫入（broadcastPipeline.js 對 allEvents 每一筆都建 entry，四個 return 都會 finalizeTrace）。斷點全在讀取側：(1) /health 是 counts-only 快照，本來就不查單一事件；(2) road 篩選是嚴格相等，trace 存正規化後的「台68」，而人看到的每個字面都是「台68線」，照螢幕上的字搜必定 0 筆；(3) 同一次 Cron 的所有 entry 共用同一個 now，key 只靠隨機 opaqueId 排序，同輪順序隨機，預設 30 筆時會不定時被擠出第一頁；(4) 掃描上限 500 筆時，「沒掃到」與「不存在」回報成同一件事。",
+    "deliveryTraceGapFix": "road 篩選改用 pipeline 自己的正規化函式比對（台68／台68線／國1／國道1號 互通，不同路永不互相命中）；新增關鍵字搜尋（道路／地點／訊息內容／rawId／reason）；trace key 加入批次序號使同輪順序穩定；listPipelineTrace 回報 scanTruncated／scannedKeyCount／totalKeyCount，查詢頁在 0 筆時明講「查不到不等於沒發生」。永久要求：任何實際進入 Shared Feed / LINE Push 的事故，都必須能從管理後台追回 Producer provenance。",
+    "locationQualityDoesNotUseCctv": "CCTV 仍是 optional enrichment。找到 CCTV 不能讓一筆整條道路級的模糊事故送出；位置夠精確但沒有 CCTV 仍可 TEXT-ONLY 播報。兩者互不影響，有測試鎖住。",
+    "locationQualityNeverThrows": "位置不足只會讓該筆不推播，永遠不會 throw pipeline，事件仍完整保留在 Pipeline Trace，標記 broadcast=blocked / reason=insufficient-location-precision，未來才知道它為什麼沒播。",
+    "freewayGateNote": "V57.2's 國道 gate (pbs/crossSourceDedup.js) drops an unmatched PBS 國道 event so a more authoritative TDX report can decide instead. That premise fails in PBS_ONLY: TDX is off, no TDX event can arrive, and the gate becomes a permanent veto by a disabled source (a real Production accident was dropped this way on 2026-08-24). The gate is now mode-aware via requireTdxCorrelationForFreeway, derived from isTdxRuntimeEnabled(env). BYPASSED, never deleted — TRAFFIC_SOURCE_MODE=ALL restores V57.2 unchanged, and the option defaults to true so a forgetful caller stays conservative.",
+    "freewayGateDoesNotWidenPush": "Bypassing the gate only lets 國道 PBS events reach the candidate list. Eligibility, the accident-only push policy, the time window, dedupe and suppression all still apply, so dynamic shoulder and every non-accident type remain withheld.",
+    "cctvIsNotBroadcastEligibility": "CCTV is enrichment, never a precondition. A qualifying PBS accident broadcasts TEXT-ONLY when CCTV yields nothing; refusing to broadcast because there is no image is forbidden.",
+    "linePushObservationPurpose": "Observe one month of real proactive-Push volume under the accident-only policy, then tune with data.",
+    "tdxRestorePath": "07_KNOWN_ISSUES.md -> RESTORE TDX (set TRAFFIC_SOURCE_MODE=ALL and push)",
+    "pushPolicyRestorePath": "set LINE_PUSH_POLICY=ALL_ELIGIBLE in wrangler.jsonc and push"
+  },
+  "linePushObservation": {
+    "LINE_PUSH_OBSERVATION": "ACTIVE",
+    "START_DATE": "2026-08-23",
+    "POLICY": "MAJOR_ACCIDENT_ONLY",
+    "MONTHLY_LINE_LIMIT": 200,
+    "purpose": "Confirm whether the accident-only policy keeps proactive LINE pushes inside the OA plan's 200/month allowance. Observation only — this is NOT an open engineering task.",
+    "billingMonthCaveat": "The LINE allowance resets on a CALENDAR month. The observation started 2026-08-23, so 8/23-9/22 is NOT one billing month and its total must never be read as one. Any judgement has to be made per calendar month (Aug 23-31 is a partial month), against the real LINE console figures.",
+    "evidenceRule": "Only figures a human actually read from the LINE console count as observation evidence. This repo cannot see LINE usage; never estimate, extrapolate, or infer a push count from event counts or logs, and never record an unmeasured number here.",
+    "measurementSource": "LINE Official Account Manager console (human-read). No billing/metering system was built for this — that was explicitly out of scope.",
+    "decisionThreshold": "Well under 200 -> keep the current policy. At or over 200 -> a HUMAN opens a new task to study a stricter ROAD_IMPACT_ACCIDENT / lane-blockage-only rule. Claude must not tighten the policy on its own initiative.",
+    "supportingSignal": "broadcastPolicy.js already records, per pushed accident, whether the record stated real road impact (policy-major-accident-blocked-lanes / -impact-keyword vs policy-accident-no-stated-impact). Those counts are visible in ineligibleByReason and the Pipeline Trace, and are what a future tightening should be argued from — not guesswork.",
+    "readerNote": "OBSERVATION, not construction. Do not modify src/, the broadcast policy, Cron, TDX, CCTV, the Consumer, or redeploy because of this entry."
+  },
+  "taskSeal": {
+    "task": "PBS_ACCIDENT_CCTV_ENRICHMENT_FIX",
+    "status": "SEALED",
+    "sealedAt": "2026-08-25",
+    "sealedBy": "human directive (路況工程部 高優先 Production Bug 修正令)",
+    "workComplete": "code, tests, push to main, Cloudflare Workers Builds deploy, Engineering Memory and the Google Drive delta sync are all done. Nothing about this task is outstanding.",
+    "testResult": "1081 total / 1063 pass / stable 18 fail; NEW FAILURES = 0 and SILENTLY FIXED = 0 against a clean checkout measured in the same session. 20 new tests in test/pbsAccidentCctvEnrichment.test.js, all passing.",
+    "productionVerificationNote": "push to main triggered the Workers Builds deploy. verify:production reported PASS_NETWORK_VERIFICATION_BLOCKED (sandbox egress 403). Per the standing human ruling this is NOT a blocker and does not affect the seal.",
+    "doNotMisread": [
+      "Do NOT re-enable TDX — this round changed CCTV eligibility, not the TDX pause.",
+      "Do NOT add unverified provincial-road CCTV RoadIDs — 國道1號/國道3號 are the only confirmed ones.",
+      "Do NOT loosen the service-area or location-quality gates — CCTV runs after them, never instead of them.",
+      "Do NOT reintroduce a source===freeway check anywhere in the CCTV path.",
+      "Do NOT run a Full Audit or a Google Drive Full Verify — delta sync is the normal path."
+    ],
+    "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
+  },
+  "taskSealHistory": [
+    {
+      "task": "PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX",
+      "status": "SEALED",
+      "sealedAt": "2026-08-24",
+      "sealedBy": "human directive (路況工程部 最終封版＋Google Drive 工程記憶同步令)",
+      "finalMainHead": "979182b2a83a5237d71fc0c6076dfde7036a284b",
+      "workComplete": "code, tests, push to main, Cloudflare Workers Builds deploy, Engineering Memory and the Google Drive delta sync are all done. Nothing about this task is outstanding.",
+      "testResult": "1060 total / 1043 pass / 17 fail; NEW FAILURES = 0 and SILENTLY FIXED = 0 against a clean checkout. The 17 are the pre-existing baseline failures listed in 07_KNOWN_ISSUES.md.",
+      "productionVerificationNote": "push to main triggered the Workers Builds deploy. verify:production reported PASS_NETWORK_VERIFICATION_BLOCKED because this sandbox has no outbound HTTPS to the Production domain (egress proxy 403). Per the standing human ruling this is NOT a blocker and does not affect the seal.",
+      "doNotMisread": [
+        "Do NOT keep working on location quality — the gate shipped and is sealed.",
+        "Do NOT re-enable TDX — it stays OFF until a human confirms the quota returned; then follow RESTORE TDX.",
+        "Do NOT run a Full Audit or a Google Drive Full Verify — delta sync is the normal path.",
+        "Do NOT redeploy Production — it is already deployed at the final main HEAD above.",
+        "Do NOT re-run the export just to be safe — that only moves generatedAt and manufactures a fake delta."
+      ],
+      "openFollowUpsIfAny": "One, and it is conditional, not a task: if the raw PBS record for the 2026-08-24 台68 event ever surfaces, re-check locationQualityHonestLimit (whether that record carried coordinates) and serviceAreaHonestLimit. Nothing to do until then.",
+      "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
+    },
+    {
+      "task": "TDX_QUOTA_PROTECTION_PBS_ONLY",
+      "status": "SEALED",
+      "sealedAt": "2026-08-23",
+      "sealedBy": "human directive (路況工程部 最終封存令)",
+      "workComplete": "code, tests, push to main, Cloudflare Workers Builds deploy, and Google Drive engineering-memory delta sync are all done",
+      "productionHealthCheckPerformed": false,
+      "productionHealthCheckIsBlocker": false,
+      "productionVerificationNote": "The sandbox session that shipped this had no outbound HTTPS to the Production domain (environment egress proxy returns 403), so verify:production reported PASS_NETWORK_VERIFICATION_BLOCKED and no human /health check was run. The human explicitly ruled this is NOT a blocker and does NOT affect the seal. Absence of evidence, not contrary evidence: if a future /health ever shows trafficSourceMode is not PBS_ONLY, treat that as a NEW incident, not as unfinished work from this task.",
+      "restoreProcedure": "07_KNOWN_ISSUES.md -> RESTORE TDX (existing procedure; no new version or redesign needed when TDX quota returns)",
+      "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
+    }
+  ],
+  "version": {
+    "packageJsonVersion": "0.1.0",
+    "latestCompleted": "V1.8.7.7"
+  },
+  "production": {
+    "status": "DEPLOYED",
+    "verification": "Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why)",
+    "deployMethod": "push to main -> Cloudflare Workers Builds auto-deploy",
+    "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
+  },
+  "currentPhase": "Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。TDX 額度用盡，TDX／機動路肩程式碼完整保留",
+  "currentTask": "none（無進行中工作）。Latest completed task = PBS_ACCIDENT_CCTV_ENRICHMENT_FIX，status = SEALED（前序 PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX、PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。不要重開 TDX、不要新增未驗證的省道 CCTV RoadID、不要放寬服務區或位置精確度、不要 Full Audit、不要重新 deploy——詳見 SYSTEM_STATE.json 的 taskSeal.doNotMisread。觀察中（非工作項，不是待辦）：一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數",
+  "knownBlocker": "無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md",
+  "realWorldConfirmation": {
+    "status": "REAL_WORLD_CONFIRMATION_PENDING",
+    "subject": "V1.8.7.7 CCTV gray broken image fix"
+  },
+  "nextAction": "無待辦。TDX 額度恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計）",
+  "authorityLevels": {
+    "levelA_selfServiceReadOnly": "own repo git log, own Worker/KV/test results only",
+    "levelB_requiresHumanApproval": "interactive login/OAuth, private dashboards, real KV content, any other department's resources (read or write)",
+    "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
+  },
+  "exportMeta": {
+    "generatedAt": "2026-08-25T02:16:08.327Z",
+    "sourceMainHead": "678f0bbfd42716db3b5e1164280880c332a57bad",
+    "generatorScript": "scripts/export-meeting-room.mjs",
+    "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
+    "historyDir": "_history"
+  }
+}
+

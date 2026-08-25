@@ -1,0 +1,14 @@
+{
+  "files": [
+    "engineering-memory/00_CURRENT_STATE.md",
+    "engineering-memory/01_FOUR_DEPARTMENT_GOVERNANCE.md",
+    "engineering-memory/02_PROJECT_HANDOFF.md",
+    "engineering-memory/03_ARCHITECTURE.md",
+    "engineering-memory/04_PRODUCT_DECISIONS.md",
+    "engineering-memory/05_CROSS_PROJECT_BOUNDARY.md",
+    "engineering-memory/06_VERSION_HISTORY.md",
+    "engineering-memory/07_KNOWN_ISSUES.md",
+    "engineering-memory/PRODUCTION_MANIFEST.json",
+    "engineering-memory/SYSTEM_STATE.json"
+  ]
+}
