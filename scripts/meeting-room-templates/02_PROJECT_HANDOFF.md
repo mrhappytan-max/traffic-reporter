@@ -67,6 +67,33 @@ TDX（國道/省道 RoadEvent）+ PBS（公路總局，經 Windows Relay + VPC S
 
 治理全文 → `01_FOUR_DEPARTMENT_GOVERNANCE.md`；邊界細節 → `05_CROSS_PROJECT_BOUNDARY.md`。
 
+## 雲端同步：Google Drive 可讀、禁止直接寫（2026-08-25 起）
+
+**這一條會直接影響你怎麼封版，先讀完再動手。**
+
+```
+CLAUDE_DRIVE_READ  = ALLOWED     可讀、可搜尋、可核對版本
+CLAUDE_DRIVE_WRITE = FORBIDDEN   不可上傳／更新／封存／移動／刪除
+```
+
+- **GitHub 是版本資料的唯一正式寫入入口**（程式、Engineering Memory、SYSTEM_STATE、
+  治理規則、版本紀錄，全部先進 GitHub）。
+- **Google Drive 是可讀的工程記憶 mirror**，由 `GitHub → Google Drive Sync` 寫入，
+  不是 Claude 的直接寫入目標。永久順序：**GitHub first, Drive second**。
+- 你要做的只有一件事：**把該同步的內容正確寫進 GitHub**。搬檔案到 Drive 不是你的工作。
+
+封版時請分開回報這三個狀態，不要再用含糊的「雲端同步 = PASS」：
+
+```
+GITHUB_ENGINEERING_MEMORY   本次記憶是否已 commit 進 GitHub
+GITHUB_TO_DRIVE_SYNC        GitHub 端是否已同步到 Drive
+CLAUDE_DRIVE_UPLOAD         永遠是 NO
+```
+
+**若 GitHub → Drive 自動同步尚未完成**：誠實標 `GITHUB_TO_DRIVE_SYNC = PENDING` 並停止。
+**不得**為了讓 Drive 看起來是最新版而自行用 Connector 補上傳，也不得把 PENDING 報成 PASS。
+機器可讀狀態見 `SYSTEM_STATE.json` 的 `cloudSyncGovernance`。
+
 ## Current version
 
 | 欄位 | 值 |

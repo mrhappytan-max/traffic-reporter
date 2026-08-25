@@ -13,6 +13,28 @@
     ],
     "rule": "traffic-reporter is sole Shared Traffic Feed content authority; consumers must never re-judge completedProducts"
   },
+  "cloudSyncGovernance": {
+    "githubIsWriteSource": true,
+    "claudeDriveReadAllowed": true,
+    "claudeDriveWriteAllowed": false,
+    "driveSyncAuthority": "GITHUB_TO_DRIVE",
+    "manualClaudeDriveUploadForbidden": true,
+    "githubToDriveAutomation": "PENDING",
+    "driveSyncRequiredForFullSeal": true,
+    "effectiveFrom": "2026-08-25",
+    "rule": "Claude may READ Google Drive (read, search, compare versions, use it as handoff source) but may NEVER write to it: no upload, no create, no overwrite, no update, no archive, no move, no delete/trash, no Connector-driven release delta sync — not even to repair a failed or lagging sync. GitHub is the only formal write entry point for code AND Engineering Memory; Google Drive is a readable mirror written by GitHub → Drive Sync. Permanent order: GitHub first, Drive second — it must never be true that Drive has a newer version than GitHub.",
+    "whyRetired": "The old flow (Claude uploading changed files through the Drive Connector at each seal) was not incorrect and did genuinely complete — it was retired for COST: per-file agent uploads burn bandwidth, are slow, lengthen every seal, and raise agent cost.",
+    "statusVocabulary": {
+      "GITHUB_ENGINEERING_MEMORY": "whether this round's Engineering Memory is committed to GitHub",
+      "GITHUB_TO_DRIVE_SYNC": "whether the GitHub-side sync has propagated it to Google Drive",
+      "CLAUDE_DRIVE_UPLOAD": "whether Claude wrote to Drive directly — always NO after 2026-08-25"
+    },
+    "deprecatedStatusName": "MEETING_ROOM_CLOUD_SYNC=PASS is deprecated: it never said WHO synced. Use the three names above instead.",
+    "whenAutomationNotReady": "Report GITHUB_TO_DRIVE_SYNC = PENDING and STOP. Never hand-upload to make Drive look current, and never report PENDING as PASS. A lagging mirror is only slow; a false PASS makes everyone downstream trust a state that does not exist.",
+    "legacyClaudeConnectorSync": "RETIRED",
+    "legacyClaudeConnectorSyncNote": "Every prior \"Google Drive Delta Sync = PASS\" in this memory really did complete and must NOT be deleted or rewritten as a failure. They are relabelled LEGACY_CLAUDE_CONNECTOR_SYNC, and that mechanism must not be used again.",
+    "sealLifecycle": "ONE TASK -> ONE CLOSEOUT -> ONE SEALED STATE. fix -> targeted tests -> regression (NEW FAILURES = 0) -> commit -> main -> deploy if needed -> Engineering Memory -> GitHub commit/push -> confirm GitHub→Drive sync status -> SEALED -> Current Task = none -> STOP. Never start task B before task A is sealed."
+  },
   "git": {
     "sourceMainHead": "{{SOURCE_MAIN_HEAD}}",
     "sourceMainHeadResolvedFrom": "{{SOURCE_MAIN_HEAD_ORIGIN}}",
@@ -102,23 +124,44 @@
     "readerNote": "OBSERVATION, not construction. Do not modify src/, the broadcast policy, Cron, TDX, CCTV, the Consumer, or redeploy because of this entry."
   },
   "taskSeal": {
-    "task": "PBS_ACCIDENT_CCTV_ENRICHMENT_FIX",
+    "task": "DRIVE_SYNC_GOVERNANCE_V2",
     "status": "SEALED",
     "sealedAt": "2026-08-25",
-    "sealedBy": "human directive (路況工程部 高優先 Production Bug 修正令)",
-    "workComplete": "code, tests, push to main, Cloudflare Workers Builds deploy, Engineering Memory and the Google Drive delta sync are all done. Nothing about this task is outstanding.",
-    "testResult": "1081 total / 1063 pass / stable 18 fail; NEW FAILURES = 0 and SILENTLY FIXED = 0 against a clean checkout measured in the same session. 20 new tests in test/pbsAccidentCctvEnrichment.test.js, all passing.",
-    "productionVerificationNote": "push to main triggered the Workers Builds deploy. verify:production reported PASS_NETWORK_VERIFICATION_BLOCKED (sandbox egress 403). Per the standing human ruling this is NOT a blocker and does not affect the seal.",
+    "sealedBy": "human directive (路況工程部 版本治理規則正式更新＋封版令)",
+    "whatChanged": "Governance only. Claude is now READ-ONLY on Google Drive; GitHub becomes the sole formal write source for code and Engineering Memory alike; GitHub → Drive Sync is the only formal path into the cloud mirror. Recorded in cloudSyncGovernance above and in 01_FOUR_DEPARTMENT_GOVERNANCE.md sections 17-23.",
+    "whatDidNotChange": "No product code, no tests, no PBS/TDX/CCTV/LINE policy, no Cron/KV/R2, no Production deploy, no Consumer, no 雙鐵. The GitHub → Drive automation itself was NOT built — that is a separate future task and was explicitly out of scope.",
+    "githubSeal": "PASS",
+    "githubEngineeringMemory": "SEALED",
+    "githubToDriveSync": "PENDING",
+    "claudeDriveUpload": "NO",
+    "honestState": "LOCAL_RELEASE = SEALED / CLOUD_MIRROR = PENDING. The Drive copy is therefore one release BEHIND GitHub as of this seal, and that is the correct, intended state — this round is the first real exercise of the new rule. Do not \"fix\" it by hand.",
     "doNotMisread": [
-      "Do NOT re-enable TDX — this round changed CCTV eligibility, not the TDX pause.",
-      "Do NOT add unverified provincial-road CCTV RoadIDs — 國道1號/國道3號 are the only confirmed ones.",
-      "Do NOT loosen the service-area or location-quality gates — CCTV runs after them, never instead of them.",
-      "Do NOT reintroduce a source===freeway check anywhere in the CCTV path.",
-      "Do NOT run a Full Audit or a Google Drive Full Verify — delta sync is the normal path."
+      "Do NOT upload, update, archive, move or delete anything on Google Drive — read only.",
+      "Do NOT report GITHUB_TO_DRIVE_SYNC as PASS until a real GitHub-side sync has actually run.",
+      "Do NOT build the GitHub → Drive automation on your own initiative — wait for a work order.",
+      "Do NOT rewrite past LEGACY_CLAUDE_CONNECTOR_SYNC records as failures; they really did complete.",
+      "Do NOT start a new task before the current one is SEALED and Current Task is none."
     ],
     "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
   },
   "taskSealHistory": [
+    {
+      "task": "PBS_ACCIDENT_CCTV_ENRICHMENT_FIX",
+      "status": "SEALED",
+      "sealedAt": "2026-08-25",
+      "sealedBy": "human directive (路況工程部 高優先 Production Bug 修正令)",
+      "workComplete": "code, tests, push to main, Cloudflare Workers Builds deploy, Engineering Memory and the Google Drive delta sync are all done. Nothing about this task is outstanding.",
+      "testResult": "1081 total / 1063 pass / stable 18 fail; NEW FAILURES = 0 and SILENTLY FIXED = 0 against a clean checkout measured in the same session. 20 new tests in test/pbsAccidentCctvEnrichment.test.js, all passing.",
+      "productionVerificationNote": "push to main triggered the Workers Builds deploy. verify:production reported PASS_NETWORK_VERIFICATION_BLOCKED (sandbox egress 403). Per the standing human ruling this is NOT a blocker and does not affect the seal.",
+      "doNotMisread": [
+        "Do NOT re-enable TDX — this round changed CCTV eligibility, not the TDX pause.",
+        "Do NOT add unverified provincial-road CCTV RoadIDs — 國道1號/國道3號 are the only confirmed ones.",
+        "Do NOT loosen the service-area or location-quality gates — CCTV runs after them, never instead of them.",
+        "Do NOT reintroduce a source===freeway check anywhere in the CCTV path.",
+        "Do NOT run a Full Audit or a Google Drive Full Verify — delta sync is the normal path."
+      ],
+      "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
+    },
     {
       "task": "PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX",
       "status": "SEALED",
@@ -162,7 +205,7 @@
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
   "currentPhase": "{{CURRENT_PHASE}}",
-  "currentTask": "none（無進行中工作）。Latest completed task = PBS_ACCIDENT_CCTV_ENRICHMENT_FIX，status = SEALED（前序 PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX、PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。不要重開 TDX、不要新增未驗證的省道 CCTV RoadID、不要放寬服務區或位置精確度、不要 Full Audit、不要重新 deploy——詳見 SYSTEM_STATE.json 的 taskSeal.doNotMisread。觀察中（非工作項，不是待辦）：一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數",
+  "currentTask": "none（無進行中工作）。Latest completed task = DRIVE_SYNC_GOVERNANCE_V2，status = SEALED（前序 PBS_ACCIDENT_CCTV_ENRICHMENT_FIX、PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX、PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。雲端同步治理已改為：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源——封版時只寫 GitHub，不要自己搬檔案到 Drive；GitHub → Drive 自動同步尚未完成，目前 GITHUB_TO_DRIVE_SYNC = PENDING，不得人工補上傳、也不得報成 PASS。詳見 SYSTEM_STATE.json 的 cloudSyncGovernance 與 taskSeal.doNotMisread",
   "knownBlocker": "{{KNOWN_BLOCKER}}",
   "realWorldConfirmation": {
     "status": "{{REAL_WORLD_CONFIRMATION}}",

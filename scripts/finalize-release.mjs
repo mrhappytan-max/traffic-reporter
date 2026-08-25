@@ -127,13 +127,21 @@ function main() {
         'is the exact waste this rule exists to prevent.)'
     );
   } else if (releaseSealed && connectorRequestOk) {
-    console.log('GOOGLE_DRIVE_CONNECTOR_SYNC_REQUIRED');
-    console.log(`(DELTA: ${plan.changed.length} changed file(s) only -- ${plan.changed.map((c) => c.name).join(', ')})`);
+    // 2026-08-25 (DRIVE_SYNC_GOVERNANCE_V2) — this branch used to print
+    // GOOGLE_DRIVE_CONNECTOR_SYNC_REQUIRED and instruct the Agent to run the
+    // Connector sync by hand. That instruction now tells the reader to break
+    // the governance rule, so it is gone. Only the message changed; this
+    // script still computes and records the same delta, and still never
+    // claims a cloud sync happened.
+    console.log('GITHUB_TO_DRIVE_SYNC = PENDING');
+    console.log(`(DELTA: ${plan.changed.length} changed file(s) -- ${plan.changed.map((c) => c.name).join(', ')})`);
     console.log(
-      '(The Claude Agent session must now perform the real Connector sync itself using create-verify-archive-promote ' +
-        `— see ${REQUEST_PATH.split('/').slice(-2).join('/')} for the exact files/hashes to sync, and ` +
-        '.engineering/MEETING_ROOM_SYNC.json for the target folder/allowlist. This script never claims cloud sync ' +
-        'is complete — only the Agent, after real Connector calls, may record that.)'
+      '(Claude is READ-ONLY on Google Drive. Do NOT upload, update, archive or move anything there. ' +
+        'Commit and push this export to GitHub — GitHub is the only formal write source, and GitHub → Drive ' +
+        `Sync is the only formal path into the mirror. ${REQUEST_PATH.split('/').slice(-2).join('/')} still ` +
+        'records exactly which files changed, for the GitHub-side sync to consume. If that automation is not ' +
+        'live yet, report GITHUB_TO_DRIVE_SYNC = PENDING and stop — never hand-upload, never report PENDING ' +
+        'as PASS. See SYSTEM_STATE.json cloudSyncGovernance.)'
     );
   }
   console.log('(Neither the connector-sync-request nor the Windows fallback result affects this exit code.)');
