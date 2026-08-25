@@ -63,11 +63,18 @@ function toFiniteNumberOrNull(value) {
 // 交通事故"). This extracts that as a DISPLAY-ONLY value.
 //
 // `displayKM` is deliberately NEVER treated as reliable positional data:
-// - cctv/dynamicCollage.js's eventTargetKm() reads ONLY startKM/endKM —
-//   never displayKM — so a PBS accident can never gain CCTV eligibility
-//   just because its comment happened to mention a kilometer. CCTV stays
-//   restricted to source==='freeway' with genuine TDX structured KM, per
-//   V1.8.5's own scope boundary — unchanged by this round.
+// - CHANGED 2026-08-25, by explicit human order (PBS_ACCIDENT_CCTV_
+//   ENRICHMENT_FIX). This used to read: "cctv/dynamicCollage.js's
+//   eventTargetKm() reads ONLY startKM/endKM — never displayKM — so a PBS
+//   accident can never gain CCTV eligibility just because its comment
+//   happened to mention a kilometer." That boundary made sense while TDX
+//   was the 國道 feed; under TRAFFIC_SOURCE_MODE=PBS_ONLY it meant no PBS
+//   accident could EVER get a camera, and a real 國3 96K+700 accident was
+//   pushed image-less because of it. eventTargetKm() now accepts
+//   displayKM as its LAST tier, after structured KM. What has not changed
+//   is why that is safe: this parser is strict (an explicit K/公里 marker
+//   is required), and traffic/locationQuality.js has already accepted the
+//   same value as this event's proof of a broadcastable position.
 // - notified.js's computeNotificationFingerprint() and
 //   incidentSuppression.js's own (separate, pre-existing,
 //   parseKmFromDescription) free-text KM parser are BOTH untouched by
@@ -186,7 +193,11 @@ export function normalizePbsEvent(raw) {
     ...(type === 'congestion'
       ? { congestionSeverity: classifyCongestionSeverity(`${raw.roadtype || ''} ${description}`) }
       : {}),
-    // V1.8.5.1 — display-only, see the module comment above this function.
+    // V1.8.5.1 — see the module comment above this function. Named
+    // `displayKM` because display was its only consumer at birth; since
+    // 2026-08-25 it is also the last-tier CCTV target kilometre (still
+    // never the fingerprint or the suppression parser — those keep their
+    // own independent readers).
     ...(displayKM !== null ? { displayKM } : {}),
     // V1.8.6.4 (provenance gap) — never read by the formatter/fingerprint/
     // eligibility/dedupe/CCTV-eligibility, debug-only (see

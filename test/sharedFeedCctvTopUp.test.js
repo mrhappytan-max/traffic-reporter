@@ -313,27 +313,67 @@ test('3: pendingTargets=0 + an EXPIRED stored image -> composes exactly once mor
   assert.notEqual(result.completedProducts[0].imageUrl, stored.imageUrl, 'a fresh URL, not the expired one');
 });
 
-// --- 4: PBS stays exactly as it was ----------------------------------------
+// --- 4: PBS now takes the SAME feed-only path as any other source ----------
+//
+// REWRITTEN 2026-08-25 (PBS_ACCIDENT_CCTV_ENRICHMENT_FIX). This test used to
+// be titled "PBS stays exactly as it was" and asserted ZERO CCTV work,
+// because resolveCctvEligibility required source === 'freeway'. That rule
+// was written when TDX was the 國道 feed and became wrong under PBS_ONLY: a
+// real 國3 96K+700 accident was pushed without an image purely because PBS
+// reported it. A trustworthy road plus a reliable kilometre now decides,
+// not the feed name — so a PBS accident on a confirmed CCTV road is
+// expected to attempt the top-up like any other event.
+//
+// What this test still pins is the part that did NOT change: with
+// pendingTargets = 0 there is no LINE push, and the feed-only pass is the
+// only thing that runs.
 
-test('4: a PBS-sourced accident with pendingTargets=0 gets ZERO CCTV work — eligibility is untouched and the feed is never even read for it', async () => {
-  const { env, kv, bucket } = await makeEnv();
-  const { fetchFn, pushCalls, hits } = makeMock();
+test('4: a PBS-sourced accident with pendingTargets=0 takes the feed-only CCTV path and still never pushes', async () => {
+  const { env, bucket } = await makeEnv();
+  const { fetchFn, pushCalls } = makeMock();
   priorFetch = globalThis.fetch;
   globalThis.fetch = fetchFn;
 
   const result = await run(env, [pbsAccident()]);
 
+  // Unchanged: no pending target means no LINE push, whatever CCTV does.
   assert.equal(result.pendingTargetCount, 0);
+  assert.equal(pushCalls.length, 0);
+
+  // Changed on purpose: PBS is no longer refused before the pass begins.
+  assert.equal(result.cctvFeedOnlyAttemptedCount, 1, 'PBS now reaches the top-up pass');
+  assert.equal(result.cctvFeedOnlyAttachedCount + result.cctvFeedOnlyReusedCount, 1);
+  assert.ok(bucket.putCalls >= 0);
+  assert.equal(typeof result.completedProducts[0].imageUrl, 'string');
+});
+
+test('4b: a PBS accident with no reliable kilometre is still refused before any I/O', async () => {
+  // The fail-closed half of the same change: without a kilometre there is
+  // nothing to aim a camera at, and the pure gate must still reject it
+  // without touching the feed, R2, or the network.
+  const { env, kv, bucket } = await makeEnv();
+  const { fetchFn, hits } = makeMock();
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  // Located by COORDINATES (a real 國道一號 94K milestone), so it still
+  // passes the service-area and location-quality gates and is genuinely
+  // broadcastable — it simply has no kilometre to aim a camera at.
+  const noKm = pbsAccident({
+    displayKM: undefined,
+    description: '國道一號南向事故影響通行',
+    latitude: 24.79892612,
+    longitude: 121.0087054,
+  });
+  const result = await run(env, [noKm]);
+
   assert.equal(result.cctvFeedOnlyAttemptedCount, 0);
-  assert.equal(result.cctvFeedOnlyAttachedCount, 0);
-  assert.equal(result.cctvFeedOnlyReusedCount, 0);
   assert.equal(hits.frame, 0);
   assert.equal(bucket.putCalls, 0);
-  assert.equal(pushCalls.length, 0);
   assert.equal(result.completedProducts[0].imageUrl, null);
   assert.ok(
     !kv.gets.includes(SHARED_FEED_KEY),
-    'the pure eligibility gate must reject PBS before the pass does any I/O at all'
+    'the pure eligibility gate must reject an unplaceable event before any I/O'
   );
 });
 

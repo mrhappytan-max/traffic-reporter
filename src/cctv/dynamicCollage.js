@@ -152,6 +152,14 @@ import { isCctvImageEnabled } from '../traffic/sourceMode.js';
 // See module comment: 國道一號 only, using the SAME Production-confirmed
 // roadId/roadNamePattern hsinchuCctvProbe.js has used since V1.7 — no
 // second, independently-guessed copy of these values.
+// 2026-08-25 — see resolveCctvEligibility's own comment. Sources whose
+// normalizer produces BOTH a canonical road name (roadSectionLabel.js's
+// resolveRoadKey understands it) and a kilometre that came from a strict,
+// already-shipped parser — never a free-text guess. Deliberately a
+// positive allowlist so a future source is opted IN on purpose rather
+// than inheriting camera access by default.
+const CCTV_TRUSTED_EVENT_SOURCES = new Set(['freeway', 'highway', 'pbs']);
+
 const CCTV_SUPPORTED_ROADS = {
   國道一號: { roadId: TARGET_ROAD_ID, roadNamePattern: TARGET_ROAD_NAME_PATTERN, shortName: '國1' },
   // V1.8.7.5 — roadId/roadNamePattern confirmed from real Production
@@ -254,11 +262,31 @@ function publicImageUrl(env, id) {
  * comment), parsed by the same tested parseKM this whole app already
  * relies on. Returns null (never a guess) when neither is usable.
  */
+// Target kilometre for the accident (quad) path, in strict order of
+// authority. Tiers 1-2 are unchanged: the source's own structured KM,
+// midpointed when it is a range.
+//
+// 2026-08-25 — tier 3 (`displayKM`) is new, and is what lets a PBS 國道
+// accident reach a camera at all: PBS records carry NO structured KM (see
+// pbs/normalize.js's module comment — road/areaNm/direction/roadtype/
+// comment/dates/x1/y1 is the entire raw shape), so tiers 1-2 are always
+// empty for them and every PBS accident used to stop at 'no-reliable-km'.
+//
+// This is NOT a new parser and NOT a guess. `displayKM` is only ever set
+// by pbs/normalize.js's extractDisplayKmMatch, which is deliberately
+// strict — a bare number in unrelated text ("2車事故、3人受傷") can never
+// become one; it requires an explicit "96.7公里" / "96K+700" / "96K" form.
+// The same value has already been through traffic/locationQuality.js as
+// this event's proof that it is placeable enough to broadcast at all, so
+// by the time CCTV asks, a human has effectively already been told where
+// the accident is. Reading anything ELSE out of the description here —
+// a looser regex, a road-name heuristic — remains forbidden.
 function eventTargetKm(event) {
   const start = parseKM(event.startKM);
   const end = parseKM(event.endKM);
   if (start !== null && end !== null) return (start + end) / 2;
-  return start ?? end;
+  if (start !== null || end !== null) return start ?? end;
+  return typeof event.displayKM === 'number' && Number.isFinite(event.displayKM) ? event.displayKM : null;
 }
 
 // V1.8.7.0 — true for an event that carries a real dynamic-shoulder
@@ -303,15 +331,31 @@ export function resolveCctvEligibility(event) {
   const isDynamicShoulder = isDynamicShoulderEvent(event);
   if (!isAccident && !isDynamicShoulder) return { eligible: false, reason: 'not-accident' };
 
-  // V1.8.5 V1: only TDX Freeway-sourced events (see tdx/sources.js —
-  // source:'freeway' is the confirmed 國道 RoadEvent feed). Never PBS,
-  // never 'highway' (省道) — those don't have a confirmed CCTV road
-  // mapping in this round's registry either way, but gating on source
-  // here keeps the reason distinct/observable from "road not supported."
-  // Applies equally to accident and dynamic-shoulder — TDX's own dynamic
-  // shoulder mechanism is itself a Freeway (國道) feature, so this was
-  // never expected to need loosening for the new category.
-  if (event.source !== 'freeway') return { eligible: false, reason: 'not-freeway-source' };
+  // 2026-08-25 — WAS `event.source !== 'freeway'`, i.e. TDX-Freeway-only.
+  //
+  // That was written in V1.8.5 when TDX WAS the 國道 feed, and it silently
+  // became wrong the moment TRAFFIC_SOURCE_MODE=PBS_ONLY turned TDX off:
+  // a real 國3 南向 96K+700 accident on 2026-08-25 passed the service-area
+  // gate, the accident policy and the location-quality gate, was pushed to
+  // LINE with correct text — and lost its CCTV image here, at the very
+  // first CCTV check, for no reason other than "PBS reported it". The
+  // cameras it would have used are the same cameras, on the same road, at
+  // the same kilometre.
+  //
+  // CCTV eligibility is now decided by whether the DATA is trustworthy —
+  // a resolvable road that is in the confirmed registry, plus a reliable
+  // target kilometre — not by which feed happened to report the incident.
+  // Both of those are checked immediately below, and both still fail
+  // closed.
+  //
+  // Still an allowlist, not an open door: only the three road-incident
+  // feeds whose normalizers produce a canonical road name and a
+  // parser-validated kilometre are admitted. A bus/CMS record has neither,
+  // and must never reach a camera lookup on the strength of the word
+  // "accident" alone. 'highway' (省道 TDX) is listed for symmetry — it can
+  // never actually pass, because no 省道 is in CCTV_SUPPORTED_ROADS, and
+  // it will correctly stop at 'unsupported-road' rather than here.
+  if (!CCTV_TRUSTED_EVENT_SOURCES.has(event.source)) return { eligible: false, reason: 'unsupported-source' };
 
   const roadKey = resolveRoadKey(event.road);
   if (!roadKey) return { eligible: false, reason: 'unresolvable-road' };

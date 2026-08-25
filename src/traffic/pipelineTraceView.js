@@ -273,6 +273,7 @@ function renderDetail(entry) {
     ${renderField('kmLocationResolution', enrichment.kmLocationResolution ? (enrichment.kmLocationResolution.resolved ? `${enrichment.kmLocationResolution.locationLabel || ''}（${enrichment.kmLocationResolution.dataset}）` : `未解析（${enrichment.kmLocationResolution.reason || '無資料'}）`) : null)}
     ${renderField('cctvEligible', enrichment.cctvEligible === null ? null : enrichment.cctvEligible ? '是' : '否')}
     ${renderField('cctvSkippedByReason', enrichment.cctvSkippedByReason)}
+    ${renderField('cctvTargetKm（攝影機對準的公里數）', enrichment.cctvTargetKm)}
     ${renderField('imageStrategy', enrichment.imageStrategy)}
     ${renderField('selectedCamera', enrichment.selectedCamera)}
     ${renderField('cctvBudgetClass', enrichment.cctvBudgetClass)}

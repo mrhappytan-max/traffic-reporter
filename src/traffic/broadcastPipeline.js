@@ -757,7 +757,19 @@ export async function runLineBroadcast(
     if (isCctvCandidateEvent(event)) {
       const elig = resolveCctvEligibility(event);
       traceForEvent.cctvEligible = elig.eligible;
+      // 2026-08-25 — the ELIGIBILITY stage's own reason was never recorded:
+      // only the later prepare stage set cctvSkippedByReason. So an event
+      // rejected here showed up in the admin trace as "cctvEligible = 否,
+      // cctvSkippedByReason = —", which says a decision was made but not
+      // which one. That is exactly how the real 國3 96K+700 accident hid a
+      // stale source gate for a full day. Every rejection now names itself.
+      if (!elig.eligible) traceForEvent.cctvSkippedByReason = elig.reason;
       if (elig.eligible) {
+        // Which kilometre the camera lookup actually aimed at — the single
+        // most useful number when an image lands on the wrong stretch, and
+        // now also the visible difference between a structured-KM event and
+        // one resolved from PBS's displayKM (see eventTargetKm).
+        traceForEvent.cctvTargetKm = elig.targetKm ?? null;
         traceForEvent.imageStrategy = elig.imageStrategy;
         // V1.8.7.1 (Pipeline Trace budget diagnostics) — cheapest,
         // highest-signal addition per this round's own instruction ("選

@@ -236,6 +236,11 @@ export function buildTraceEntry({
   kmLocationResolution = null,
   cctvEligible = null, // boolean | null
   cctvSkippedByReason = null, // string | null
+  // 2026-08-25 — the kilometre the camera lookup actually aimed at
+  // (cctv/dynamicCollage.js's eventTargetKm). Pipeline-computed, so it
+  // is threaded in by the caller exactly like imageStrategy; null when
+  // CCTV was never eligible for this event.
+  cctvTargetKm = null, // number | null
   imagePrepared = null, // boolean | null
   imageUrlPresent = null,
   imageExpiresAt = null,
@@ -373,6 +378,7 @@ export function buildTraceEntry({
       kmLocationResolution: sanitizeKmLocationResolution(kmLocationResolution),
       cctvEligible,
       cctvSkippedByReason,
+      cctvTargetKm: typeof cctvTargetKm === 'number' && Number.isFinite(cctvTargetKm) ? cctvTargetKm : null,
       imagePrepared,
       imageUrlPresent,
       imageExpiresAt,
