@@ -52,22 +52,22 @@
     "syncMode": "delta",
     "fullVerifyReason": null,
     "statusNote": "The delta planner requires exactly \"success\" (scripts/meeting-room-delta.mjs, assessManifestEvidence). A previous run recorded \"PASS\" here, which the planner correctly treated as untrustworthy evidence and escalated to a full verify. The sync itself had genuinely succeeded and was byte-verified; only the label was wrong. Keep this value as \"success\" — never widen the planner to accept other spellings, because that guard is what stops an unverified manifest from being trusted.",
-    "syncedAt": "2026-08-24T08:17:00Z",
-    "sourceMainHead": "979182b2a83a5237d71fc0c6076dfde7036a284b",
-    "exportArtifactCommit": "c260cbe",
-    "exportGeneratedAt": "2026-08-24T08:08:05.086Z",
-    "archiveFolderId": "1e2DlbxqyfuP-ifw31rmPSjbRoDe_03jY",
-    "archiveFolderName": "_archive_979182b",
+    "syncedAt": "2026-08-25T02:26:00Z",
+    "sourceMainHead": "678f0bbfd42716db3b5e1164280880c332a57bad",
+    "exportArtifactCommit": "a9e4a5c",
+    "exportGeneratedAt": "2026-08-25T02:16:08.327Z",
+    "archiveFolderId": "1e2U0oz9pwf-8gVaLeni8i1MwDcLfPBIG",
+    "archiveFolderName": "_archive_678f0bb",
     "changedFilesSynced": 5,
     "unchangedFilesSkipped": 5,
-    "release": "PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX (final seal)",
-    "detail": "Final seal round. No product code touched. Confirming the seal surfaced two real Engineering Memory gaps and both were closed: (1) the 台68 section never recorded its OWN delivery result — the nearby \"新增失敗為 0\" belongs to the earlier accident-only round — so 1060/1043/17 with NEW FAILURES = 0 is now stated there; (2) taskSeal still named TDX_QUOTA_PROTECTION_PBS_ONLY, the oldest seal, so it now names the current one and carries an explicit doNotMisread list, with the TDX seal preserved verbatim in taskSealHistory. 5 canonical files changed and were created + byte-verified; 5 unchanged received ZERO connector calls. Canonical listing: 10/10 present, 0 missing, 0 duplicate. Superseded copies moved to _archive_979182b, never trashed.",
+    "release": "PBS_ACCIDENT_CCTV_ENRICHMENT_FIX",
+    "detail": "CCTV eligibility now follows road+KM reliability instead of requiring source===freeway, and displayKM became the last-tier target kilometre, so a PBS 國道 accident can reach a camera (real case: 國3 96K+700). The eligibility stage also now records its own skip reason, which it never did. 5 canonical files changed and were created + byte-verified — all five matched on the first upload; 5 unchanged received ZERO connector calls. Canonical listing: 10/10 present, 0 missing, 0 duplicate. Superseded copies moved to _archive_678f0bb, never trashed.",
     "files": [
       {
         "name": "00_CURRENT_STATE.md",
-        "sha256": "f24a6059ed8338e7bd723b264f64603b61c6268e5653ad3c503e45bf8ec897ce",
-        "bytes": 3870,
-        "driveFileId": "1NW_Ye6Nen7AT9ePT7nboEiSX7Nlke7bx",
+        "sha256": "e4f69121ece09af17a9c2d374d0720fdbead7decc762801a30860d1aa436fdf5",
+        "bytes": 3992,
+        "driveFileId": "1-mVaIZ__tduQ5O9n1EvgptFtQ8wgkDX8",
         "action": "created-and-verified"
       },
       {
@@ -79,9 +79,9 @@
       },
       {
         "name": "02_PROJECT_HANDOFF.md",
-        "sha256": "c23da331cbf3c2f0231815b4792840b8c43b7e5a9d054b016d07f317d50d2a40",
-        "bytes": 9231,
-        "driveFileId": "1y2GBfjQZnTBGghoGalEodcT67GNEzf1i",
+        "sha256": "87dba1eef5d269ad81076442ba13a76f07f3092f95b1e7fc696cb4f3b96a4768",
+        "bytes": 9380,
+        "driveFileId": "1v5xhBvoBZ_F-jJvJZLg1XXDGVmRXRUEm",
         "action": "created-and-verified"
       },
       {
@@ -114,23 +114,23 @@
       },
       {
         "name": "07_KNOWN_ISSUES.md",
-        "sha256": "3c3e2dc40ce822fe52bae04b11776d3a77c24fea1f8dd427771f2aed3a6fe89b",
-        "bytes": 32316,
-        "driveFileId": "1Q_-X4f6TfrVDy64B69qlEgT1Oyphg2dA",
+        "sha256": "ab801f896f31408a30bfc54fe39a600c3813c444627386a8358b183475f0b98b",
+        "bytes": 39784,
+        "driveFileId": "1bk15-KdNKs8URNlPcHmQjCyvkzAdJ4-F",
         "action": "created-and-verified"
       },
       {
         "name": "SYSTEM_STATE.json",
-        "sha256": "5570a5078da495e1234afc086a191ee444e5e694089820d28fc66657c54f7d4f",
-        "bytes": 19493,
-        "driveFileId": "1GgJk-RGMiJItthVmCb5WyKOzO2EdA-ZO",
+        "sha256": "a4dc068978e15c4aa0dbb1c7a5fdde9ac7ddbd237eb40656f62ef007d4803047",
+        "bytes": 24203,
+        "driveFileId": "1wb0_LGiAMEP6wTAh47UO67g6CojGQgxV",
         "action": "created-and-verified"
       },
       {
         "name": "PRODUCTION_MANIFEST.json",
-        "sha256": "dddc834f0aba2acbb3ada5b4f57b452c8516bdcbdba1a8c387ba025c31eb7754",
+        "sha256": "6d865b2a4b1e26b4f3e69efb504a728654dc2deb226c9a2e5cc696312d71c745",
         "bytes": 4416,
-        "driveFileId": "10jwJbM2V4I0j2cIqb7YSEaVrVfJsBLj_",
+        "driveFileId": "1bg_a6leS7bduo5uqiGcNqa2fMesBqSsr",
         "action": "created-and-verified"
       }
     ],
