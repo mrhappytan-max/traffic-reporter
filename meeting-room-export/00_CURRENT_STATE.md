@@ -9,21 +9,36 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V1.8.7.7 |
-| Source main HEAD | 10a57262f7e5787b2e704746fe5548a3ea693b10 |
+| Current Version | V1.8.7.14（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | 951f547aef47ad14f1fa15488ecc04c7797bf554 |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty (3 changed source file(s)) |
+| Source working tree | dirty (1 changed source file(s)) |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
 | Current Phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
 | Current Task | none（無進行中工作）。Latest completed task = DRIVE_SYNC_GOVERNANCE_V2，status = SEALED（前序 PBS_ACCIDENT_CCTV_ENRICHMENT_FIX、PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX、PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。雲端治理：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源，封版時只寫 GitHub、不要自己搬檔案到 Drive；GitHub → Drive 自動同步已由真人建置並實測通過（GitHub Actions，engineering-memory/ 為 canonical mirror source），GITHUB_TO_DRIVE_SYNC = PASS；不得人工補上傳，也不要重建那套自動同步。詳見 SYSTEM_STATE.json 的 cloudSyncGovernance。觀察中（非工作項，不是待辦）：一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數 |
-| Latest Completed Version | V1.8.7.7 |
+| Latest Completed Version | V1.8.7.14 |
 | Known Blocker | 無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md |
 | Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
 | Next Action | 無待辦。TDX 額度恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計） |
-| Export Generated At | 2026-08-25T07:46:22.599Z |
+| Export Generated At | 2026-08-25T13:27:42.951Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
+
+## 版本規則（開工前必讀，2026-08-25 起永久生效）
+
+**開工前先寫下 `CURRENT_VERSION` 與 `TARGET_VERSION`**，並確認 TARGET 是 CURRENT 的合法下一版。
+
+- 任何**進 Production 且改變 runtime 行為**的變更，必須在**同一個 commit 內** bump
+  `src/version.js` 的 `APP_VERSION`——那是本專案唯一的版本權威，`GET /version` 就是讀它。
+- **任務名稱 ≠ 版本號。** `CCTV_METADATA_RECOVERY`、`TDX_QUOTA_PROTECTION` 這類是工程標籤。
+- **正式產品只有一條連續版本線 `V1.8.7.x`**，不得建立 V1／V2／V57.x 等平行版本線。
+- `package.json` 的 `0.1.0` 是 npm 套件版本，**與產品版本線無關**，不要混用。
+- 純文件／治理／工具／測試整理不 bump 版本，但仍須有 commit。
+
+為什麼要寫成規則：`src/version.js` 曾從 2026-08-21 起停在 V1.8.6.9 整整三週，
+期間 V1.8.7.0～V1.8.7.14 全部上線，`GET /version` 卻一直回報舊版本——
+因為當時有三個地方各自以為自己知道版本。詳見 `07_KNOWN_ISSUES.md` 的版本線校正紀錄。
 
 ## 我能改什麼／不能改什麼（一句話版）
 

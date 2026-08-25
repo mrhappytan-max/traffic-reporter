@@ -92,10 +92,20 @@ const HISTORY_DIR_NAME = '_history';
 
 // Hard ceilings, enforced every run so a future edit cannot silently
 // reintroduce the "too big to sync" problem that made 02 unsyncable.
-// 50KB is comfortably inside what a single connector create_file call
-// handles; the observed-good real-world datapoint is ~85KB, so this
-// leaves a wide margin.
-const MAX_CANONICAL_BYTES = 50 * 1024;
+//
+// RAISED 2026-08-25 (PRODUCTION_VERSION_LINEAGE_RECONCILIATION), 50KB -> 80KB.
+// The old 50KB figure was sized for a single Claude connector create_file
+// call. DRIVE_SYNC_GOVERNANCE_V2 retired that flow: the mirror is now
+// written by scripts/syncEngineeringMemory.mjs, which uploads through the
+// Drive REST API (uploadType=multipart / media) and has no comparable
+// per-file ceiling. The observed-good datapoint is 04_PRODUCT_DECISIONS.md
+// at ~85KB, which has synced byte-exact every round for weeks.
+//
+// The guard is kept, not removed: it still catches runaway growth, and 80KB
+// stays under the only size this project has actually proven in production.
+// If a canonical file ever approaches it, the answer is to split the file,
+// not to raise this number again.
+const MAX_CANONICAL_BYTES = 80 * 1024;
 const MAX_HISTORY_CHUNK_BYTES = 50 * 1024;
 // 04 is a verbatim copy of a canonical repo doc that is already larger
 // than the ceiling and is a known-good size for the connector; it is
@@ -176,6 +186,20 @@ function canonicalAppVersion() {
   } catch {
     return null;
   }
+}
+
+// Numeric compare of two V-prefixed version strings. Returns >0 when a is
+// newer, <0 when b is newer, 0 when equal. Missing trailing segments count
+// as 0, so V1.8.7 < V1.8.7.1.
+function compareVersions(a, b) {
+  const parts = (v) => String(v).replace(/^V/i, '').split('.').map((n) => parseInt(n, 10) || 0);
+  const pa = parts(a);
+  const pb = parts(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+    const diff = (pa[i] || 0) - (pb[i] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
 }
 
 // Kept ONLY as a drift signal, never as the answer. Before
@@ -489,11 +513,19 @@ function main() {
         'refusing to fall back to a commit-message scrape, which is exactly the drift this replaced'
     );
   }
-  if (latestCommitVersion !== 'unknown' && latestCommitVersion !== canonicalVersion) {
+  // Only a commit-message version NEWER than the canonical one is a real
+  // signal — that means a release shipped without bumping src/version.js.
+  // A scrape that lags is expected and is not a defect:
+  // PRODUCTION_VERSION_LINEAGE_RECONCILIATION assigned V1.8.7.8-V1.8.7.14
+  // to commits that were already on main, deliberately without rewriting
+  // their messages, so the scrape stays behind until the next release
+  // commit happens to carry a label. Warning on that would be noise, and a
+  // warning that cries wolf every run is a warning nobody reads.
+  if (latestCommitVersion !== 'unknown' && compareVersions(latestCommitVersion, canonicalVersion) > 0) {
     console.warn(
-      `⚠️  VERSION DRIFT: src/version.js says ${canonicalVersion}, but the newest version-labeled ` +
-        `commit says ${latestCommitVersion}. src/version.js is authoritative — if a release just ` +
-        `shipped without bumping it, bump it now rather than letting the two diverge again.`
+      `⚠️  VERSION DRIFT: the newest version-labeled commit says ${latestCommitVersion}, which is ` +
+        `NEWER than src/version.js (${canonicalVersion}). A release appears to have shipped without ` +
+        `bumping the canonical source — bump it now rather than letting the two diverge again.`
     );
   }
   const currentVersion = canonicalVersion;
