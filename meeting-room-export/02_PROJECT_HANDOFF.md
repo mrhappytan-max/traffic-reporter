@@ -17,11 +17,11 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | 678f0bbfd42716db3b5e1164280880c332a57bad |
-| Snapshot generated at | 2026-08-25T02:16:08.327Z |
+| Source main HEAD | c8e68e688c755bbadb630d6503f3266b0eb8ea94 |
+| Snapshot generated at | 2026-08-25T07:39:57.495Z |
 | Source working tree | clean |
 | Current version | V1.8.7.7 |
-| Current phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
+| Current phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源（GITHUB_TO_DRIVE_SYNC = PENDING）。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
 
 `Source main HEAD` 是這份快照所描述的正式 main commit（取自 `origin/main`），**不是**包含本檔案自己的那個 commit——兩者刻意分開，避免 Git 自我參照循環。詳見 `SYSTEM_STATE.json` 的 `sourceMainHead` / `exportArtifactCommit`。
 
@@ -66,6 +66,33 @@ TDX（國道/省道 RoadEvent）+ PBS（公路總局，經 Windows Relay + VPC S
 - **要先問真人**：互動式登入／OAuth、Credential、跨部門資產（唯讀也算）、破壞性 Production 操作、跨部門 Contract Breaking Change。
 
 治理全文 → `01_FOUR_DEPARTMENT_GOVERNANCE.md`；邊界細節 → `05_CROSS_PROJECT_BOUNDARY.md`。
+
+## 雲端同步：Google Drive 可讀、禁止直接寫（2026-08-25 起）
+
+**這一條會直接影響你怎麼封版，先讀完再動手。**
+
+```
+CLAUDE_DRIVE_READ  = ALLOWED     可讀、可搜尋、可核對版本
+CLAUDE_DRIVE_WRITE = FORBIDDEN   不可上傳／更新／封存／移動／刪除
+```
+
+- **GitHub 是版本資料的唯一正式寫入入口**（程式、Engineering Memory、SYSTEM_STATE、
+  治理規則、版本紀錄，全部先進 GitHub）。
+- **Google Drive 是可讀的工程記憶 mirror**，由 `GitHub → Google Drive Sync` 寫入，
+  不是 Claude 的直接寫入目標。永久順序：**GitHub first, Drive second**。
+- 你要做的只有一件事：**把該同步的內容正確寫進 GitHub**。搬檔案到 Drive 不是你的工作。
+
+封版時請分開回報這三個狀態，不要再用含糊的「雲端同步 = PASS」：
+
+```
+GITHUB_ENGINEERING_MEMORY   本次記憶是否已 commit 進 GitHub
+GITHUB_TO_DRIVE_SYNC        GitHub 端是否已同步到 Drive
+CLAUDE_DRIVE_UPLOAD         永遠是 NO
+```
+
+**若 GitHub → Drive 自動同步尚未完成**：誠實標 `GITHUB_TO_DRIVE_SYNC = PENDING` 並停止。
+**不得**為了讓 Drive 看起來是最新版而自行用 Connector 補上傳，也不得把 PENDING 報成 PASS。
+機器可讀狀態見 `SYSTEM_STATE.json` 的 `cloudSyncGovernance`。
 
 ## Current version
 
