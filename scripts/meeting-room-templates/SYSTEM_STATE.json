@@ -19,7 +19,7 @@
     "claudeDriveWriteAllowed": false,
     "driveSyncAuthority": "GITHUB_TO_DRIVE",
     "manualClaudeDriveUploadForbidden": true,
-    "githubToDriveAutomation": "PENDING",
+    "githubToDriveAutomation": "ACTIVE",
     "driveSyncRequiredForFullSeal": true,
     "effectiveFrom": "2026-08-25",
     "rule": "Claude may READ Google Drive (read, search, compare versions, use it as handoff source) but may NEVER write to it: no upload, no create, no overwrite, no update, no archive, no move, no delete/trash, no Connector-driven release delta sync — not even to repair a failed or lagging sync. GitHub is the only formal write entry point for code AND Engineering Memory; Google Drive is a readable mirror written by GitHub → Drive Sync. Permanent order: GitHub first, Drive second — it must never be true that Drive has a newer version than GitHub.",
@@ -33,7 +33,10 @@
     "whenAutomationNotReady": "Report GITHUB_TO_DRIVE_SYNC = PENDING and STOP. Never hand-upload to make Drive look current, and never report PENDING as PASS. A lagging mirror is only slow; a false PASS makes everyone downstream trust a state that does not exist.",
     "legacyClaudeConnectorSync": "RETIRED",
     "legacyClaudeConnectorSyncNote": "Every prior \"Google Drive Delta Sync = PASS\" in this memory really did complete and must NOT be deleted or rewritten as a failure. They are relabelled LEGACY_CLAUDE_CONNECTOR_SYNC, and that mechanism must not be used again.",
-    "sealLifecycle": "ONE TASK -> ONE CLOSEOUT -> ONE SEALED STATE. fix -> targeted tests -> regression (NEW FAILURES = 0) -> commit -> main -> deploy if needed -> Engineering Memory -> GitHub commit/push -> confirm GitHub→Drive sync status -> SEALED -> Current Task = none -> STOP. Never start task B before task A is sealed."
+    "sealLifecycle": "ONE TASK -> ONE CLOSEOUT -> ONE SEALED STATE. fix -> targeted tests -> regression (NEW FAILURES = 0) -> commit -> main -> deploy if needed -> Engineering Memory -> GitHub commit/push -> confirm GitHub→Drive sync status -> SEALED -> Current Task = none -> STOP. Never start task B before task A is sealed.",
+    "githubToDriveAutomationDetail": "Built on main by a human in parallel with this governance round: .github/workflows/sync-engineering-memory.yml (push to main on engineering-memory/**), scripts/syncEngineeringMemory.mjs, scripts/drive-sync-manifest.json, test/syncEngineeringMemory.test.js. Auth is GitHub OIDC + Google Workload Identity Federation short-lived credentials; no long-lived service account JSON key. Sync semantics: missing → create, changed → update, unchanged → skip, and it never auto-deletes other Drive files.",
+    "canonicalMirrorSource": "engineering-memory/ (the 10 files listed in scripts/drive-sync-manifest.json)",
+    "openStructuralQuestion": "TWO trees currently hold the same canonical content: engineering-memory/ (what the mirror syncs) and meeting-room-export/ (what scripts/export-meeting-room.mjs generates). They are kept in step by hand today, which is exactly the drift risk this governance exists to prevent. Needs a human decision: either point the generator at engineering-memory/, or retire one tree. NOT decided unilaterally."
   },
   "git": {
     "sourceMainHead": "{{SOURCE_MAIN_HEAD}}",
@@ -132,17 +135,18 @@
     "whatDidNotChange": "No product code, no tests, no PBS/TDX/CCTV/LINE policy, no Cron/KV/R2, no Production deploy, no Consumer, no 雙鐵. The GitHub → Drive automation itself was NOT built — that is a separate future task and was explicitly out of scope.",
     "githubSeal": "PASS",
     "githubEngineeringMemory": "SEALED",
-    "githubToDriveSync": "PENDING",
+    "githubToDriveSync": "PASS",
     "claudeDriveUpload": "NO",
-    "honestState": "LOCAL_RELEASE = SEALED / CLOUD_MIRROR = PENDING. The Drive copy is therefore one release BEHIND GitHub as of this seal, and that is the correct, intended state — this round is the first real exercise of the new rule. Do not \"fix\" it by hand.",
+    "honestState": "Verified by read-only observation, not assumed: after the push, all 10 canonical files in the Drive folder were modified at 2026-08-25T07:44 and every byte size matches the local engineering-memory/ copy exactly. The mirror is current with GitHub.",
     "doNotMisread": [
       "Do NOT upload, update, archive, move or delete anything on Google Drive — read only.",
       "Do NOT report GITHUB_TO_DRIVE_SYNC as PASS until a real GitHub-side sync has actually run.",
-      "Do NOT build the GitHub → Drive automation on your own initiative — wait for a work order.",
+      "Do NOT rebuild the GitHub → Drive automation — it already exists on main and is working. Read scripts/syncEngineeringMemory.mjs before touching anything in that area.",
       "Do NOT rewrite past LEGACY_CLAUDE_CONNECTOR_SYNC records as failures; they really did complete.",
       "Do NOT start a new task before the current one is SEALED and Current Task is none."
     ],
-    "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
+    "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending.",
+    "correctionNote": "This entry first recorded GITHUB_TO_DRIVE_SYNC = PENDING, which was true when written — the automation had not yet been observed. It was corrected to PASS only after the byte-level check above. The rule cuts both ways: never report PENDING as PASS, and never leave a stale PENDING standing once PASS is demonstrable."
   },
   "taskSealHistory": [
     {

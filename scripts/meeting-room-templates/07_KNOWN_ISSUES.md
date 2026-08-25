@@ -646,19 +646,63 @@ CLAUDE_DRIVE_UPLOAD       = NO
 然後停止。**把 PENDING 硬補成 PASS 是假報**——
 同步延遲只是慢，假報會讓未來所有人相信一個不存在的狀態。
 
-### 本輪就是這條規則的第一次實踐
+### 本輪就是這條規則的第一次實踐（而且結果和預期不同）
 
-GitHub → Drive 自動同步**尚未建置**（本輪明確禁止實作它）。
-所以本輪封版後，**Google Drive 上的工程記憶比 GitHub 落後一個版本**，
-而這是**正確且預期**的狀態：
+下這道治理令時，GitHub → Drive 自動同步被認為尚未建置，
+所以預期的結果是 `GITHUB_TO_DRIVE_SYNC = PENDING`。
+
+**實際情況不是這樣。** 推送時發現 `origin/main` 已經前進了三個 commit——
+真人在同一時間、平行地把自動同步做好了：
 
 ```
-LOCAL_RELEASE = SEALED
-CLOUD_MIRROR  = PENDING
+.github/workflows/sync-engineering-memory.yml   push 到 main 且動到 engineering-memory/** 就觸發
+scripts/syncEngineeringMemory.mjs               同步腳本
+scripts/drive-sync-manifest.json                要同步的 10 個 canonical 檔案
+test/syncEngineeringMemory.test.js              測試
 ```
 
-雲端目前停在 `_archive_678f0bb` 那一輪（PBS_ACCIDENT_CCTV_ENRICHMENT_FIX）。
-**不要**手動去補。等會議部下一道施工令建置自動同步。
+認證用 GitHub OIDC + Google Workload Identity Federation 短效憑證，
+不建立長期 Service Account JSON key。同步語意是
+missing → create、changed → update、unchanged → skip，**不自動刪除** Drive 上其他檔案。
+
+處理方式：**merge，不 rebase、不 force push**。兩邊在實質上完全一致——
+真人做的是機制，本輪寫的是規則。
+
+**推送後以唯讀方式實測確認**（不是假設）：
+Drive 上 10 份 canonical 檔案的 modifiedTime 全部是 2026-08-25T07:44，
+且每一份的 byte size 與本機 `engineering-memory/` 逐一相符。
+所以本輪最終狀態是：
+
+```
+GITHUB_SEAL               = PASS
+GITHUB_ENGINEERING_MEMORY = SEALED
+GITHUB_TO_DRIVE_SYNC      = PASS   ← 實測，非假設
+CLAUDE_DRIVE_UPLOAD       = NO     ← 本輪 0 次 Drive 寫入呼叫
+```
+
+本節初稿曾寫 `PENDING`（當時屬實），在實測到 PASS 之後才更正。
+**這條規則是雙向的**：不得把 PENDING 報成 PASS，
+也不得在 PASS 已可證實之後still 留著一個過期的 PENDING。
+
+### 一個尚未解決的結構問題（本輪刻意不自行決定）
+
+現在有**兩棵樹**放著同一份 canonical 內容：
+
+| 目錄 | 誰在維護 | 誰在讀 |
+|---|---|---|
+| `engineering-memory/` | 目前靠手動同步 | GitHub Actions → Drive mirror（`drive-sync-manifest.json`） |
+| `meeting-room-export/` | `scripts/export-meeting-room.mjs` 產生 | 無自動消費者 |
+
+本輪把新治理內容同時寫進兩邊，讓它們一致。
+但「靠人記得同步兩棵樹」正是這套治理要消滅的漂移風險。
+
+需要真人裁決：**把 export 產生器直接指向 `engineering-memory/`，或退休其中一棵樹。**
+本輪不自行決定，因為那是結構調整，而且真人此刻正在這個區域施工。
+
+另外注意：`engineering-memory/00_CURRENT_STATE.md` 結尾有一段
+**不是 export 產生器產出的**「Engineering Memory 同步治理」段落（真人手寫）。
+本輪更新該檔時是先從 `origin/main` 讀出那一段、原文保留後才覆寫其餘內容。
+**未來任何人要覆寫這個檔案之前，請先確認那一段還在。**
 
 ### 歷史紀錄怎麼處理
 

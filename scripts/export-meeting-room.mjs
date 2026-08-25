@@ -466,13 +466,13 @@ function main() {
   const currentPhase = safe(
     process.env.EXPORT_CURRENT_PHASE,
     pbsOnly
-      ? 'Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源（GITHUB_TO_DRIVE_SYNC = PENDING）。TDX 額度用盡，TDX／機動路肩程式碼完整保留'
+      ? 'Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留'
       : 'Maintenance — awaiting real-world confirmation of latest release'
   );
   const currentTask = safe(
     process.env.EXPORT_CURRENT_TASK,
     pbsOnly
-      ? 'none（無進行中工作）。Latest completed task = DRIVE_SYNC_GOVERNANCE_V2，status = SEALED（前序 PBS_ACCIDENT_CCTV_ENRICHMENT_FIX、PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX、PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。雲端治理：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源，封版時只寫 GitHub、不要自己搬檔案到 Drive；GitHub → Drive 自動同步尚未建置，GITHUB_TO_DRIVE_SYNC = PENDING，不得人工補上傳、不得報成 PASS。詳見 SYSTEM_STATE.json 的 cloudSyncGovernance。觀察中（非工作項，不是待辦）：一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數'
+      ? 'none（無進行中工作）。Latest completed task = DRIVE_SYNC_GOVERNANCE_V2，status = SEALED（前序 PBS_ACCIDENT_CCTV_ENRICHMENT_FIX、PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX、PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。雲端治理：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源，封版時只寫 GitHub、不要自己搬檔案到 Drive；GitHub → Drive 自動同步已由真人建置並實測通過（GitHub Actions，engineering-memory/ 為 canonical mirror source），GITHUB_TO_DRIVE_SYNC = PASS；不得人工補上傳，也不要重建那套自動同步。詳見 SYSTEM_STATE.json 的 cloudSyncGovernance。觀察中（非工作項，不是待辦）：一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數'
       : 'None in progress — awaiting next assignment'
   );
   const knownBlocker = safe(

@@ -17,11 +17,11 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | 34e948c314b2004f38d7ce575d789da298c82cb8 |
-| Snapshot generated at | 2026-08-25T07:42:51.740Z |
-| Source working tree | clean |
+| Source main HEAD | 10a57262f7e5787b2e704746fe5548a3ea693b10 |
+| Snapshot generated at | 2026-08-25T07:46:22.599Z |
+| Source working tree | dirty (3 changed source file(s)) |
 | Current version | V1.8.7.7 |
-| Current phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源（GITHUB_TO_DRIVE_SYNC = PENDING）。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
+| Current phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
 
 `Source main HEAD` 是這份快照所描述的正式 main commit（取自 `origin/main`），**不是**包含本檔案自己的那個 commit——兩者刻意分開，避免 Git 自我參照循環。詳見 `SYSTEM_STATE.json` 的 `sourceMainHead` / `exportArtifactCommit`。
 
