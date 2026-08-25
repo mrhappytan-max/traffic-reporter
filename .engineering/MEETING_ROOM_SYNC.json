@@ -57,89 +57,90 @@
     "syncMode": "delta",
     "fullVerifyReason": null,
     "statusNote": "The delta planner requires exactly \"success\" (scripts/meeting-room-delta.mjs, assessManifestEvidence). A previous run recorded \"PASS\" here, which the planner correctly treated as untrustworthy evidence and escalated to a full verify. The sync itself had genuinely succeeded and was byte-verified; only the label was wrong. Keep this value as \"success\" — never widen the planner to accept other spellings, because that guard is what stops an unverified manifest from being trusted.",
-    "syncedAt": "2026-08-25T02:26:00Z",
-    "sourceMainHead": "678f0bbfd42716db3b5e1164280880c332a57bad",
-    "exportArtifactCommit": "a9e4a5c",
-    "exportGeneratedAt": "2026-08-25T02:16:08.327Z",
-    "archiveFolderId": "1e2U0oz9pwf-8gVaLeni8i1MwDcLfPBIG",
-    "archiveFolderName": "_archive_678f0bb",
-    "changedFilesSynced": 5,
-    "unchangedFilesSkipped": 5,
-    "release": "PBS_ACCIDENT_CCTV_ENRICHMENT_FIX",
-    "detail": "CCTV eligibility now follows road+KM reliability instead of requiring source===freeway, and displayKM became the last-tier target kilometre, so a PBS 國道 accident can reach a camera (real case: 國3 96K+700). The eligibility stage also now records its own skip reason, which it never did. 5 canonical files changed and were created + byte-verified — all five matched on the first upload; 5 unchanged received ZERO connector calls. Canonical listing: 10/10 present, 0 missing, 0 duplicate. Superseded copies moved to _archive_678f0bb, never trashed.",
+    "syncedAt": "2026-08-25T13:29:42Z",
+    "sourceMainHead": "8542be7b2e5b828573601670936ae82e2b12377e",
+    "exportArtifactCommit": "8542be7",
+    "exportGeneratedAt": "2026-08-25T13:27:42.951Z",
+    "release": "PRODUCTION_VERSION_LINEAGE_RECONCILIATION (V1.8.7.14)",
+    "performedBy": "GitHub Actions (.github/workflows/sync-engineering-memory.yml) run #7, conclusion=success. Claude performed ZERO Drive writes — read-only verification only, per DRIVE_SYNC_GOVERNANCE_V2.",
+    "archiveFolderId": null,
+    "archiveFolderName": null,
+    "changedFilesSynced": 6,
+    "unchangedFilesSkipped": 4,
+    "detail": "版本線校正：src/version.js 成為唯一權威來源並校正為 V1.8.7.14，V1.8.7.8～V1.8.7.14 七個正式版本補記完成，並帶入前一輪 CCTV 名冊恢復（= V1.8.7.14）的工程記憶。6 個 canonical 檔案由 GitHub Actions 於 13:29 更新，4 個未變更者保留 07:44 的時間戳、未重新上傳。唯讀查證：10/10 present、0 missing、0 duplicate，且 Drive 端 byte size 與本地 engineering-memory/ 完全一致。",
     "files": [
       {
         "name": "00_CURRENT_STATE.md",
-        "sha256": "e4f69121ece09af17a9c2d374d0720fdbead7decc762801a30860d1aa436fdf5",
-        "bytes": 3992,
+        "sha256": "dcc5aeeb7ff365218605992c6c2b14424d98cc83cc5d262fbec7b4270037db3b",
+        "bytes": 6192,
         "driveFileId": "1-mVaIZ__tduQ5O9n1EvgptFtQ8wgkDX8",
-        "action": "created-and-verified"
+        "action": "synced-by-github-actions-and-byte-verified"
       },
       {
         "name": "01_FOUR_DEPARTMENT_GOVERNANCE.md",
-        "sha256": "0a68c2713f7be7fb99e7454935e1abb7ef8d5fd491f2adf2de56efcfad91253b",
-        "bytes": 4944,
+        "sha256": "69945b14c07da1f4992571fe7d4233fa3a44a3b1845b1b5015ae147d59efc477",
+        "bytes": 8839,
         "driveFileId": "1biGQ81Gwy1YyYa2A8-RoDaaREqmlxdXE",
-        "action": "skipped-unchanged-zero-connector-calls"
+        "action": "unchanged-not-reuploaded"
       },
       {
         "name": "02_PROJECT_HANDOFF.md",
-        "sha256": "87dba1eef5d269ad81076442ba13a76f07f3092f95b1e7fc696cb4f3b96a4768",
-        "bytes": 9380,
+        "sha256": "b11afc6b1a5743b16881b117dada1b0a647ba953aaaf6c5ac4b0fb68bb54379e",
+        "bytes": 11319,
         "driveFileId": "1v5xhBvoBZ_F-jJvJZLg1XXDGVmRXRUEm",
-        "action": "created-and-verified"
+        "action": "synced-by-github-actions-and-byte-verified"
       },
       {
         "name": "03_ARCHITECTURE.md",
         "sha256": "9e9c778675d1ff695a0f75e2384d2703aaa9b56080e6b0b73fa823bcdddf2a3b",
         "bytes": 7747,
         "driveFileId": "1iFcaEjLJl3bxX4bXifWl6sopbEV1eoyS",
-        "action": "skipped-unchanged-zero-connector-calls"
+        "action": "unchanged-not-reuploaded"
       },
       {
         "name": "04_PRODUCT_DECISIONS.md",
         "sha256": "f175165e666a4cd9e5fc7d18b8672958c32216e12e5bfc11e8dab19cfa68ee1e",
         "bytes": 85102,
         "driveFileId": "1vBIC91BvEaIz9HWNXpJiA-urohkDmCSD",
-        "action": "skipped-unchanged-zero-connector-calls"
+        "action": "unchanged-not-reuploaded"
       },
       {
         "name": "05_CROSS_PROJECT_BOUNDARY.md",
         "sha256": "fe79a7d855235ba3603bc70cb431fce5422e41cb67ac7b01a3f5b696ed9e4c87",
         "bytes": 3203,
         "driveFileId": "13MKpHd1fA1y4ycI5GknBTeaj_xbREqad",
-        "action": "skipped-unchanged-zero-connector-calls"
+        "action": "unchanged-not-reuploaded"
       },
       {
         "name": "06_VERSION_HISTORY.md",
-        "sha256": "be599f29dc020d536654cec78ba5c10e732e218e8dc2670c40c70047b3a15fc7",
-        "bytes": 3396,
+        "sha256": "ed6a6e863b26dbfce5f51296e2798c9c049cc72aff2d3f67cc87cb3f65f409a3",
+        "bytes": 6470,
         "driveFileId": "1qPeYbyfcaaaeZfKI2jKcGth5o9pDJ1Vo",
-        "action": "skipped-unchanged-zero-connector-calls"
+        "action": "synced-by-github-actions-and-byte-verified"
       },
       {
         "name": "07_KNOWN_ISSUES.md",
-        "sha256": "ab801f896f31408a30bfc54fe39a600c3813c444627386a8358b183475f0b98b",
-        "bytes": 39784,
+        "sha256": "4defb1941405d961bf3018e71cec7a7082b078cf8d4b5ad08dbffcd876548d5b",
+        "bytes": 56702,
         "driveFileId": "1bk15-KdNKs8URNlPcHmQjCyvkzAdJ4-F",
-        "action": "created-and-verified"
+        "action": "synced-by-github-actions-and-byte-verified"
       },
       {
         "name": "SYSTEM_STATE.json",
-        "sha256": "a4dc068978e15c4aa0dbb1c7a5fdde9ac7ddbd237eb40656f62ef007d4803047",
-        "bytes": 24203,
+        "sha256": "27ad9b0246a438d472cd1e9f1ffa4ce645b6855cab090886b5f0242870afd43b",
+        "bytes": 41605,
         "driveFileId": "1wb0_LGiAMEP6wTAh47UO67g6CojGQgxV",
-        "action": "created-and-verified"
+        "action": "synced-by-github-actions-and-byte-verified"
       },
       {
         "name": "PRODUCTION_MANIFEST.json",
-        "sha256": "6d865b2a4b1e26b4f3e69efb504a728654dc2deb226c9a2e5cc696312d71c745",
+        "sha256": "c13caca2dd48c3e18d47b7e0667403f4b2df0b653fdddd3967f89eb2fe47a28e",
         "bytes": 4416,
         "driveFileId": "1bg_a6leS7bduo5uqiGcNqa2fMesBqSsr",
-        "action": "created-and-verified"
+        "action": "synced-by-github-actions-and-byte-verified"
       }
     ],
-    "processNote": "Two process facts worth keeping. (1) The freeze-then-upload rule earned its keep again: uploading before the export was frozen and committed produced three superseded PRODUCTION_MANIFEST/00 copies (all archived, none trashed). Freeze -> commit -> confirm clean tree -> THEN upload. (2) The byte-size check caught a real defect: the first 07_KNOWN_ISSUES.md upload was 31627 vs 31626 local. Cause traced exactly — the file was read in three `sed` ranges and a blank line was introduced at the 150/151 chunk boundary. Re-uploaded byte-exact. Never accept a byte-size mismatch as rounding; find the character.",
+    "sizeCeilingNote": "07_KNOWN_ISSUES.md 本輪為 56,702 bytes，超過舊的 50KB canonical 上限。查證後將上限提高為 80KB：舊上限是為已 RETIRED 的 Claude connector create_file 單次呼叫而設，現行 GitHub Actions 走 Drive REST API（uploadType=multipart/media）沒有對應限制。本次同步就是直接證據——56,702 bytes 正常上傳並 byte-verified，且 04_PRODUCT_DECISIONS.md 長期以 85,102 bytes 同步無誤。上限保留而非移除，仍可攔截失控成長；若日後有檔案逼近 80KB，正解是拆檔，不是再調高。",
     "loopAvoidanceNote": "This round deliberately did NOT let the export churn. Running finalize:release re-generates the export, which moves generatedAt and manufactures a 4-file \"delta\" out of nothing — the export/commit/SHA/export loop the order forbids. That regeneration was reverted with git checkout, the real hashes were compared against this file, and the export was regenerated exactly ONCE after the two memory edits. sourceMainHead (979182b, the release described) stays separate from exportArtifactCommit (the commit carrying the artifact), which is what stops the self-reference loop."
   }
 }
