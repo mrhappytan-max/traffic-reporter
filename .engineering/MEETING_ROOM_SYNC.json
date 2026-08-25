@@ -57,22 +57,22 @@
     "syncMode": "delta",
     "fullVerifyReason": null,
     "statusNote": "The delta planner requires exactly \"success\" (scripts/meeting-room-delta.mjs, assessManifestEvidence). A previous run recorded \"PASS\" here, which the planner correctly treated as untrustworthy evidence and escalated to a full verify. The sync itself had genuinely succeeded and was byte-verified; only the label was wrong. Keep this value as \"success\" — never widen the planner to accept other spellings, because that guard is what stops an unverified manifest from being trusted.",
-    "syncedAt": "2026-08-25T13:29:42Z",
-    "sourceMainHead": "8542be7b2e5b828573601670936ae82e2b12377e",
-    "exportArtifactCommit": "8542be7",
-    "exportGeneratedAt": "2026-08-25T13:27:42.951Z",
-    "release": "PRODUCTION_VERSION_LINEAGE_RECONCILIATION (V1.8.7.14)",
-    "performedBy": "GitHub Actions (.github/workflows/sync-engineering-memory.yml) run #7, conclusion=success. Claude performed ZERO Drive writes — read-only verification only, per DRIVE_SYNC_GOVERNANCE_V2.",
+    "syncedAt": "2026-08-25T14:14:37Z",
+    "sourceMainHead": "6290163ecf9a70d76b78692f6173202bcc21e183",
+    "exportArtifactCommit": "6290163",
+    "exportGeneratedAt": "2026-08-25T14:13:08.951Z",
+    "release": "THREE_PART_VERSIONING_TRANSITION",
+    "performedBy": "GitHub Actions (.github/workflows/sync-engineering-memory.yml) run #8, conclusion=success. Claude performed ZERO Drive writes — read-only verification only, per DRIVE_SYNC_GOVERNANCE_V2.",
     "archiveFolderId": null,
     "archiveFolderName": null,
     "changedFilesSynced": 6,
     "unchangedFilesSkipped": 4,
-    "detail": "版本線校正：src/version.js 成為唯一權威來源並校正為 V1.8.7.14，V1.8.7.8～V1.8.7.14 七個正式版本補記完成，並帶入前一輪 CCTV 名冊恢復（= V1.8.7.14）的工程記憶。6 個 canonical 檔案由 GitHub Actions 於 13:29 更新，4 個未變更者保留 07:44 的時間戳、未重新上傳。唯讀查證：10/10 present、0 missing、0 duplicate，且 Drive 端 byte size 與本地 engineering-memory/ 完全一致。",
+    "detail": "治理決議：四段式版本線於 V1.8.7.14 停止（LAST_FOUR_PART_VERSION），FOUR_PART_VERSIONING=RETIRED，THREE_PART_VERSIONING=ACTIVE，NEXT_RELEASE_VERSION=V1.9.0（取代先前記錄的 V1.8.7.15）。docs/governance only，src/version.js 的 APP_VERSION 維持 V1.8.7.14 未提前 bump，未修改任何 Production runtime 程式，未 deploy。6 個 canonical 檔案由 GitHub Actions 於 14:14 更新，4 個未變更者保留 07:44 時間戳、未重新上傳。唯讀查證：10/10 present、0 missing、0 duplicate，Drive 端 byte size 與本地 engineering-memory/ 完全一致。",
     "files": [
       {
         "name": "00_CURRENT_STATE.md",
-        "sha256": "dcc5aeeb7ff365218605992c6c2b14424d98cc83cc5d262fbec7b4270037db3b",
-        "bytes": 6192,
+        "sha256": "5e74c3c8922ba4c8c0758d93b559fe1bba3ec62e0002529d539cf1e41f2bb572",
+        "bytes": 6817,
         "driveFileId": "1-mVaIZ__tduQ5O9n1EvgptFtQ8wgkDX8",
         "action": "synced-by-github-actions-and-byte-verified"
       },
@@ -85,8 +85,8 @@
       },
       {
         "name": "02_PROJECT_HANDOFF.md",
-        "sha256": "b11afc6b1a5743b16881b117dada1b0a647ba953aaaf6c5ac4b0fb68bb54379e",
-        "bytes": 11319,
+        "sha256": "98f440dc0e9e6f7650d327a25f800d31f104e4139c7cc07ae333cfe954fc210a",
+        "bytes": 11292,
         "driveFileId": "1v5xhBvoBZ_F-jJvJZLg1XXDGVmRXRUEm",
         "action": "synced-by-github-actions-and-byte-verified"
       },
@@ -113,34 +113,33 @@
       },
       {
         "name": "06_VERSION_HISTORY.md",
-        "sha256": "ed6a6e863b26dbfce5f51296e2798c9c049cc72aff2d3f67cc87cb3f65f409a3",
-        "bytes": 6470,
+        "sha256": "74cb50ef96262b00422177d883a75283cba678b31ad398713a9729fa3763f236",
+        "bytes": 7514,
         "driveFileId": "1qPeYbyfcaaaeZfKI2jKcGth5o9pDJ1Vo",
         "action": "synced-by-github-actions-and-byte-verified"
       },
       {
         "name": "07_KNOWN_ISSUES.md",
-        "sha256": "4defb1941405d961bf3018e71cec7a7082b078cf8d4b5ad08dbffcd876548d5b",
-        "bytes": 56702,
+        "sha256": "f3de7225fe297f2153bdedf7b1cbe309add87c283beb6fe51cfda41fa2bb5564",
+        "bytes": 58542,
         "driveFileId": "1bk15-KdNKs8URNlPcHmQjCyvkzAdJ4-F",
         "action": "synced-by-github-actions-and-byte-verified"
       },
       {
         "name": "SYSTEM_STATE.json",
-        "sha256": "27ad9b0246a438d472cd1e9f1ffa4ce645b6855cab090886b5f0242870afd43b",
-        "bytes": 41605,
+        "sha256": "1fc7618f955e06b4a8dd63d7e13326d63e1af3e053ecd4f7651e37f81ce22f82",
+        "bytes": 44490,
         "driveFileId": "1wb0_LGiAMEP6wTAh47UO67g6CojGQgxV",
         "action": "synced-by-github-actions-and-byte-verified"
       },
       {
         "name": "PRODUCTION_MANIFEST.json",
-        "sha256": "c13caca2dd48c3e18d47b7e0667403f4b2df0b653fdddd3967f89eb2fe47a28e",
+        "sha256": "eafa7e8229ebf7c73fa75a904ccd85f32e70d3a7cabd02c553a8e298b2364e91",
         "bytes": 4416,
         "driveFileId": "1bg_a6leS7bduo5uqiGcNqa2fMesBqSsr",
         "action": "synced-by-github-actions-and-byte-verified"
       }
     ],
-    "sizeCeilingNote": "07_KNOWN_ISSUES.md 本輪為 56,702 bytes，超過舊的 50KB canonical 上限。查證後將上限提高為 80KB：舊上限是為已 RETIRED 的 Claude connector create_file 單次呼叫而設，現行 GitHub Actions 走 Drive REST API（uploadType=multipart/media）沒有對應限制。本次同步就是直接證據——56,702 bytes 正常上傳並 byte-verified，且 04_PRODUCT_DECISIONS.md 長期以 85,102 bytes 同步無誤。上限保留而非移除，仍可攔截失控成長；若日後有檔案逼近 80KB，正解是拆檔，不是再調高。",
     "loopAvoidanceNote": "This round deliberately did NOT let the export churn. Running finalize:release re-generates the export, which moves generatedAt and manufactures a 4-file \"delta\" out of nothing — the export/commit/SHA/export loop the order forbids. That regeneration was reverted with git checkout, the real hashes were compared against this file, and the export was regenerated exactly ONCE after the two memory edits. sourceMainHead (979182b, the release described) stays separate from exportArtifactCommit (the commit carrying the artifact), which is what stops the self-reference loop."
   }
 }
