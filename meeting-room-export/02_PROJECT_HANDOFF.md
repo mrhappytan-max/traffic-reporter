@@ -17,11 +17,11 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | 979182b2a83a5237d71fc0c6076dfde7036a284b |
-| Snapshot generated at | 2026-08-24T08:08:05.086Z |
+| Source main HEAD | 678f0bbfd42716db3b5e1164280880c332a57bad |
+| Snapshot generated at | 2026-08-25T02:16:08.327Z |
 | Source working tree | clean |
 | Current version | V1.8.7.7 |
-| Current phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門，全部已封版 SEALED。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
+| Current phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
 
 `Source main HEAD` 是這份快照所描述的正式 main commit（取自 `origin/main`），**不是**包含本檔案自己的那個 commit——兩者刻意分開，避免 Git 自我參照循環。詳見 `SYSTEM_STATE.json` 的 `sourceMainHead` / `exportArtifactCommit`。
 
@@ -82,7 +82,7 @@ TDX（國道/省道 RoadEvent）+ PBS（公路總局，經 Windows Relay + VPC S
 
 - **Known blocker**：無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md
 - **Real-world confirmation**：REAL_WORLD_CONFIRMATION_PENDING
-- **既有測試失敗基準線**：`npm test` 共 1060 項，其中 17 項為已知、與功能無關的失敗（2 項 `pbs-relay/tests/*`，13 項 Workers-only `.wasm` codec 相依的 CCTV/JPEG，2 項 wall-clock 相依的 `healthQuotaDashboard`）。出現這 17 項以外的新失敗才算真正回歸；逐項清單見 `07_KNOWN_ISSUES.md`（該節也說明為什麼「本機已 commit 但尚未 push」時 `deploymentPolicyAndVerify` 第 12 項必然失敗、push 後自行恢復）。
+- **既有測試失敗基準線**：`npm test` 共 1081 項，其中穩定 18 項為已知、與功能無關的失敗（2 項 `pbs-relay/tests/*`，13 項 Workers-only `.wasm` codec 相依的 CCTV/JPEG，3 項 wall-clock 相依的 `healthQuotaDashboard`——會隨日期自然增加）。出現這 18 項以外的新失敗才算真正回歸，且**判斷回歸一律以同一輪 `git stash -u` 對照為準**；逐項清單、`deploymentPolicyAndVerify` 第 12 項的「尚未 push 必失敗」現象，以及 `deploymentStatus` 那項只在全套執行時偶發的雜訊，都見 `07_KNOWN_ISSUES.md`。
 - **Dashboard-only 事實永遠無法從程式驗證**：Production branch 指向、真實 Cron 排程、Secret 值是否正確、Build 歷史——只能由真人開 Dashboard 確認。
 - **沙盒無 Production 網路**：這類 session 對 Production 網域的 outbound HTTPS 一律被 egress proxy 擋（403）。需要即時 Production 證據的任務只能誠實標記「無法證明」，不得用推測補齊。
 

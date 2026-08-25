@@ -14,7 +14,7 @@
     "rule": "traffic-reporter is sole Shared Traffic Feed content authority; consumers must never re-judge completedProducts"
   },
   "git": {
-    "sourceMainHead": "979182b2a83a5237d71fc0c6076dfde7036a284b",
+    "sourceMainHead": "678f0bbfd42716db3b5e1164280880c332a57bad",
     "sourceMainHeadResolvedFrom": "origin/main",
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
     "sourceWorkingTree": "clean",
@@ -36,6 +36,23 @@
     "whyShoulderPushPaused": "LINE OA monthly proactive-Push allowance is limited; 機動路肩 is high-frequency. Detection/parser/formatter/CCTV strategy all preserved — only the proactive product is withheld.",
     "whyCctvAllowed": "CCTV costs ZERO TDX calls: metadata from the read-only KV cache, frames from *.freeway.gov.tw, and cctv/dynamicCollage.js imports neither tdx/auth.js nor tdx/client.js. Structural guarantee, not a promise.",
     "cctvMustNotRefreshTdxMetadata": true,
+    "cctvEligibilityRule": "CCTV 資格取決於「道路可解析且在 confirmed registry 內」＋「target KM 可靠」，不取決於事件由哪個來源通報。2026-08-25 之前是 source==='freeway' only（TDX 時代的規則），在 PBS_ONLY 下等於「PBS 事故永遠沒有圖」。實作於 cctv/dynamicCollage.js 的 resolveCctvEligibility。",
+    "cctvTrustedEventSources": [
+      "freeway",
+      "highway",
+      "pbs"
+    ],
+    "cctvTrustedEventSourcesNote": "仍是正面白名單，不是開門：只有這三個道路事件來源的 normalizer 會產生 canonical 道路名 ＋ 經嚴格 parser 驗證的公里數。公車／CMS 記錄兩者皆無，不得只憑 type=accident 就查攝影機。被擋下時 reason = unsupported-source（過期的 not-freeway-source 已從程式中移除）。highway 列入純屬對稱，省道不在 registry，會正確停在 unsupported-road。",
+    "cctvTargetKmTiers": "1) 結構化 startKM+endKM 取中點 2) 單一結構化 KM 3) displayKM。displayKM 是 2026-08-25 新增的最後一層，唯一寫入者是 pbs/normalize.js 的 extractDisplayKmMatch（嚴格 parser，需明確 96.7公里 / 96K+300 / 96K 形狀），且同一個值已先通過 locationQuality.js。從 description 自由猜 KM、從路名臆測 KM 仍然禁止。無可靠 KM → no-reliable-km → TEXT-ONLY。",
+    "cctvSupportedRoadsConfirmed": [
+      "國道1號 (roadId 000010)",
+      "國道3號 (roadId 000030)"
+    ],
+    "cctvSupportedRoadsNote": "只沿用已由真實 Production TRAFFIC_KV 查證過的 mapping。本輪未新增任何未驗證的省道 RoadID——台68 事故即使有可靠公里數仍是 TEXT-ONLY。",
+    "cctvRegressionCase": "2026-08-25 國3 南向 竹林交流道－寶山交流道 96K+700 PBS 事故：文字成功 Push、Shared Feed 已持久化，但 cctvEligible=否、cctvSkippedByReason 空白、無圖。永久 fixture：test/pbsAccidentCctvEnrichment.test.js。",
+    "cctvObservabilityFix": "eligibility 階段的 reason 過去從未寫進 trace（只有 prepare 階段會寫），所以後台顯示「cctvEligible=否 / cctvSkippedByReason=—」——做了決定卻說不出是哪一個，這正是過期閘門能藏一整天的原因。現在每一次拒絕都會寫下自己的 reason，並新增 cctvTargetKm（攝影機實際對準的公里數）。",
+    "cctvNoTdxStructuralGuarantee": "metadata 只讀既有 TRAFFIC_KV cache（readFreewayCctvMetadataCache），影格只來自 *.freeway.gov.tw，R2 用既有 CCTV_IMAGES。cache miss/過期/損毀 → metadata-cache-unavailable → TEXT-ONLY，禁止 fallback 去 TDX。有結構性測試斷言 dynamicCollage.js 沒有 import tdx/auth.js 或 tdx/client.js，不是只看設定旗標。",
+    "cctvNeverGrantsEligibility": "CCTV 是 optional enrichment，永遠在三道播報閘門之後。八堵事故即使能解析出完美攝影機仍被服務區域擋下；位置不足的事故仍被擋下。CCTV 絕不能讓原本不該播的事件變成可播（有測試鎖住兩個方向）。",
     "tdxCorrelationRequiredForFreeway": false,
     "serviceAreaEligibilityRequired": true,
     "serviceArea": [
@@ -85,25 +102,42 @@
     "readerNote": "OBSERVATION, not construction. Do not modify src/, the broadcast policy, Cron, TDX, CCTV, the Consumer, or redeploy because of this entry."
   },
   "taskSeal": {
-    "task": "PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX",
+    "task": "PBS_ACCIDENT_CCTV_ENRICHMENT_FIX",
     "status": "SEALED",
-    "sealedAt": "2026-08-24",
-    "sealedBy": "human directive (路況工程部 最終封版＋Google Drive 工程記憶同步令)",
-    "finalMainHead": "979182b2a83a5237d71fc0c6076dfde7036a284b",
+    "sealedAt": "2026-08-25",
+    "sealedBy": "human directive (路況工程部 高優先 Production Bug 修正令)",
     "workComplete": "code, tests, push to main, Cloudflare Workers Builds deploy, Engineering Memory and the Google Drive delta sync are all done. Nothing about this task is outstanding.",
-    "testResult": "1060 total / 1043 pass / 17 fail; NEW FAILURES = 0 and SILENTLY FIXED = 0 against a clean checkout. The 17 are the pre-existing baseline failures listed in 07_KNOWN_ISSUES.md.",
-    "productionVerificationNote": "push to main triggered the Workers Builds deploy. verify:production reported PASS_NETWORK_VERIFICATION_BLOCKED because this sandbox has no outbound HTTPS to the Production domain (egress proxy 403). Per the standing human ruling this is NOT a blocker and does not affect the seal.",
+    "testResult": "1081 total / 1063 pass / stable 18 fail; NEW FAILURES = 0 and SILENTLY FIXED = 0 against a clean checkout measured in the same session. 20 new tests in test/pbsAccidentCctvEnrichment.test.js, all passing.",
+    "productionVerificationNote": "push to main triggered the Workers Builds deploy. verify:production reported PASS_NETWORK_VERIFICATION_BLOCKED (sandbox egress 403). Per the standing human ruling this is NOT a blocker and does not affect the seal.",
     "doNotMisread": [
-      "Do NOT keep working on location quality — the gate shipped and is sealed.",
-      "Do NOT re-enable TDX — it stays OFF until a human confirms the quota returned; then follow RESTORE TDX.",
-      "Do NOT run a Full Audit or a Google Drive Full Verify — delta sync is the normal path.",
-      "Do NOT redeploy Production — it is already deployed at the final main HEAD above.",
-      "Do NOT re-run the export just to be safe — that only moves generatedAt and manufactures a fake delta."
+      "Do NOT re-enable TDX — this round changed CCTV eligibility, not the TDX pause.",
+      "Do NOT add unverified provincial-road CCTV RoadIDs — 國道1號/國道3號 are the only confirmed ones.",
+      "Do NOT loosen the service-area or location-quality gates — CCTV runs after them, never instead of them.",
+      "Do NOT reintroduce a source===freeway check anywhere in the CCTV path.",
+      "Do NOT run a Full Audit or a Google Drive Full Verify — delta sync is the normal path."
     ],
-    "openFollowUpsIfAny": "One, and it is conditional, not a task: if the raw PBS record for the 2026-08-24 台68 event ever surfaces, re-check locationQualityHonestLimit (whether that record carried coordinates) and serviceAreaHonestLimit. Nothing to do until then.",
     "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
   },
   "taskSealHistory": [
+    {
+      "task": "PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX",
+      "status": "SEALED",
+      "sealedAt": "2026-08-24",
+      "sealedBy": "human directive (路況工程部 最終封版＋Google Drive 工程記憶同步令)",
+      "finalMainHead": "979182b2a83a5237d71fc0c6076dfde7036a284b",
+      "workComplete": "code, tests, push to main, Cloudflare Workers Builds deploy, Engineering Memory and the Google Drive delta sync are all done. Nothing about this task is outstanding.",
+      "testResult": "1060 total / 1043 pass / 17 fail; NEW FAILURES = 0 and SILENTLY FIXED = 0 against a clean checkout. The 17 are the pre-existing baseline failures listed in 07_KNOWN_ISSUES.md.",
+      "productionVerificationNote": "push to main triggered the Workers Builds deploy. verify:production reported PASS_NETWORK_VERIFICATION_BLOCKED because this sandbox has no outbound HTTPS to the Production domain (egress proxy 403). Per the standing human ruling this is NOT a blocker and does not affect the seal.",
+      "doNotMisread": [
+        "Do NOT keep working on location quality — the gate shipped and is sealed.",
+        "Do NOT re-enable TDX — it stays OFF until a human confirms the quota returned; then follow RESTORE TDX.",
+        "Do NOT run a Full Audit or a Google Drive Full Verify — delta sync is the normal path.",
+        "Do NOT redeploy Production — it is already deployed at the final main HEAD above.",
+        "Do NOT re-run the export just to be safe — that only moves generatedAt and manufactures a fake delta."
+      ],
+      "openFollowUpsIfAny": "One, and it is conditional, not a task: if the raw PBS record for the 2026-08-24 台68 event ever surfaces, re-check locationQualityHonestLimit (whether that record carried coordinates) and serviceAreaHonestLimit. Nothing to do until then.",
+      "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
+    },
     {
       "task": "TDX_QUOTA_PROTECTION_PBS_ONLY",
       "status": "SEALED",
@@ -127,8 +161,8 @@
     "deployMethod": "push to main -> Cloudflare Workers Builds auto-deploy",
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
-  "currentPhase": "Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門，全部已封版 SEALED。TDX 額度用盡，TDX／機動路肩程式碼完整保留",
-  "currentTask": "none（無進行中工作）。Latest completed task = PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX，status = SEALED（前序 PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。不要繼續修 location quality、不要重開 TDX、不要 Full Audit、不要重新 deploy——詳見 SYSTEM_STATE.json 的 taskSeal.doNotMisread。觀察中（非工作項，不是待辦）：一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數",
+  "currentPhase": "Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。TDX 額度用盡，TDX／機動路肩程式碼完整保留",
+  "currentTask": "none（無進行中工作）。Latest completed task = PBS_ACCIDENT_CCTV_ENRICHMENT_FIX，status = SEALED（前序 PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX、PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。不要重開 TDX、不要新增未驗證的省道 CCTV RoadID、不要放寬服務區或位置精確度、不要 Full Audit、不要重新 deploy——詳見 SYSTEM_STATE.json 的 taskSeal.doNotMisread。觀察中（非工作項，不是待辦）：一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數",
   "knownBlocker": "無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md",
   "realWorldConfirmation": {
     "status": "REAL_WORLD_CONFIRMATION_PENDING",
@@ -141,8 +175,8 @@
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-08-24T08:08:05.086Z",
-    "sourceMainHead": "979182b2a83a5237d71fc0c6076dfde7036a284b",
+    "generatedAt": "2026-08-25T02:16:08.327Z",
+    "sourceMainHead": "678f0bbfd42716db3b5e1164280880c332a57bad",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
     "historyDir": "_history"
