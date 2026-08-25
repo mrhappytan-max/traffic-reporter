@@ -39,3 +39,11 @@
 
 架構細節 → `03_ARCHITECTURE.md`　設計理由 → `04_PRODUCT_DECISIONS.md`　版本線 → `06_VERSION_HISTORY.md`　已知問題 → `07_KNOWN_ISSUES.md`　治理規則全文 → `01_FOUR_DEPARTMENT_GOVERNANCE.md`　接班摘要 → `02_PROJECT_HANDOFF.md`　完整工程歷史 → Repo `PROJECT_HANDOFF.md`（雲端分段見 `_history/`）
 
+## Engineering Memory 同步治理（2026-08-25 起）
+
+- `traffic-reporter` GitHub `main` 是唯一 canonical source。
+- Google Drive `路況播報員_工程記憶` 是 automated mirror。
+- 正常寫入路徑只允許 GitHub main → GitHub Actions → Google Drive API。
+- 同步採 missing → create、changed → update、unchanged → skip，不自動刪除 Drive 其他檔案。
+- Claude / Agent 不得日常從 Drive 反向搬回 GitHub，也不得人工逐檔上傳 Drive。
+- 認證採 GitHub OIDC + Google Workload Identity Federation 短效憑證；禁止建立長期 Service Account JSON key。
