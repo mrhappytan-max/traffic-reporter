@@ -1,0 +1,41 @@
+name: Sync Engineering Memory to Google Drive
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - engineering-memory/**
+      - scripts/drive-sync-manifest.json
+      - scripts/syncEngineeringMemory.mjs
+      - .github/workflows/sync-engineering-memory.yml
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: engineering-memory-drive-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: google-auth
+        name: Exchange GitHub OIDC token for a short-lived Google token
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GOOGLE_SERVICE_ACCOUNT }}
+          token_format: access_token
+          create_credentials_file: false
+
+      - name: Sync changed engineering-memory files
+        env:
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.google-auth.outputs.access_token }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ vars.GOOGLE_DRIVE_FOLDER_ID }}
+        run: node scripts/syncEngineeringMemory.mjs
