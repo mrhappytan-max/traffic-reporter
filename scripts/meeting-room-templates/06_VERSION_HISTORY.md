@@ -54,6 +54,28 @@ V1.8.6.9 之後就沒再更新過**——也就是說整個 V1.8.7.x 系列（�
 `PBS_ACCIDENT_CCTV_ENRICHMENT_FIX` …）是工程標籤，**永遠不能取代版本號**。
 純文件／治理／Drive sync 工具／測試整理不 bump 版本，但仍須有 commit。
 
+## 版本編號格式切換｜三段式版本治理（2026-08-25 起生效）
+
+四段式 `V1.8.7.x` 版本線於 **V1.8.7.14 正式停止（`LAST_FOUR_PART_VERSION`）**，
+`FOUR_PART_VERSIONING = RETIRED`。自此起 `THREE_PART_VERSIONING = ACTIVE`，
+下一個正式版本號是 **`V1.9.0`（`NEXT_RELEASE_VERSION`）**。
+
+**`src/version.js` 目前仍是 `V1.8.7.14`，本次切換沒有提前 bump。**
+只有下一次真正改變 Production runtime 行為的 release，才會在**同一個
+commit 內**把 `APP_VERSION` 換成 `V1.9.0`——治理決議本身不觸發版本號變動、
+不觸發 deploy。
+
+三段式規則：
+
+| 變更類型 | 動哪一段 | 例 |
+|---|---|---|
+| Bug fix | patch | `V1.9.0 → V1.9.1 → V1.9.2` |
+| 明顯新功能／架構階段 | minor | `V1.9.x → V1.10.0` |
+| 大型不相容版本 | major | `→ V2.0.0` |
+| 純文件／治理／Engineering Memory／測試整理 | 不升版本 | 仍須有 commit |
+
+V1.8.7.8～V1.8.7.14 這既有七列**不重寫**，四段式版本線就此封存於歷史。
+
 ## 版本線之外的重要里程碑
 
 - **V57 系列**：Shared Traffic Feed 首次建立（`completedProducts` 持久化機制），V57.1（Shared-Feed-only CCTV top-up）、V57.3（分頁修復）陸續強化。詳見 `02_PROJECT_HANDOFF.md` §30。

@@ -28,11 +28,21 @@
 // runtime behaviour bumps APP_VERSION in the same commit. Task names
 // (CCTV_METADATA_RECOVERY, PBS_ACCIDENT_CCTV_ENRICHMENT_FIX, ...) are
 // engineering labels and NEVER substitute for a version number. There is
-// exactly one product version line, V1.8.7.x — never a parallel V1/V2/
-// V57.x series.
+// exactly one product version line — never a parallel V1/V2/V57.x series.
 //
 // Pure docs, governance, Drive-sync tooling and test tidying do NOT bump
 // this; they still get a commit.
+//
+// SCHEME SWITCH (三段式版本治理, 2026-08-25): the four-part V1.8.7.x
+// pattern above is RETIRED as of this value. V1.8.7.14 is the last
+// four-part version and stays here, untouched, until the next real
+// Production runtime release — that release is the one that bumps
+// APP_VERSION to 'V1.9.0' and switches to three-part semantic versioning:
+//   bug fix                        -> patch   (V1.9.0 -> V1.9.1 -> ...)
+//   clear new feature / arch phase -> minor   (V1.9.x -> V1.10.0)
+//   large incompatible change      -> major   (-> V2.0.0)
+// Do NOT pre-bump this constant for a governance-only round; it moves
+// only in the same commit as the runtime change it describes.
 
 export const APP_VERSION = 'V1.8.7.14';
 

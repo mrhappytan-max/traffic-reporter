@@ -923,6 +923,49 @@ V1.8.7.8～V1.8.7.14 七次變更**在補記之前就已經 merge 進 main 並�
 - **不要把 `package.json` 的 `0.1.0` 當成產品版本**——那是 npm 套件版本，與版本線無關。
 - **不要把補記當成新部署**。
 
+## 治理變更紀錄｜三段式版本治理切換（THREE_PART_VERSIONING_TRANSITION）（2026-08-25）
+
+### 正式決議
+
+```
+CURRENT_OFFICIAL_VERSION = V1.8.7.14
+LAST_FOUR_PART_VERSION   = V1.8.7.14
+
+FOUR_PART_VERSIONING  = RETIRED
+THREE_PART_VERSIONING = ACTIVE
+
+NEXT_RELEASE_VERSION = V1.9.0
+```
+
+`PRODUCTION_VERSION_LINEAGE_RECONCILIATION` 當時記錄的
+`NEXT_RELEASE_VERSION = V1.8.7.15` 由本次決議**取代**為 `V1.9.0`。
+V1.8.7.8～V1.8.7.14 既有七列版本記錄**不重寫**——四段式版本線在
+V1.8.7.14 就此封存，不追加 V1.8.7.15。
+
+### 永久規則（三段式）
+
+- **Bug fix** → patch：`V1.9.0 → V1.9.1 → V1.9.2 …`
+- **明顯新功能／架構階段** → minor：`V1.9.x → V1.10.0`
+- **大型不相容版本** → major：`→ V2.0.0`
+- **純文件／治理／Engineering Memory／測試整理** → 不升 Product Version，但仍須有 commit
+
+### 這是治理紀錄，不是 release
+
+本輪**只做版本治理紀錄修正**，不占 Product Version。`src/version.js` 的
+`APP_VERSION` **維持 `V1.8.7.14`，沒有提前改成 `V1.9.0`**。
+只有下一次真正改變 Production runtime 行為的 release，才會在**同一個
+commit 內**把 `APP_VERSION` bump 到 `V1.9.0`，同時：
+- 更新 `test/versionLineage.test.js` 第 1 項的版本前綴斷言（`'V1.8.7.'` → `'V1.9.'`）
+- 在 `06_VERSION_HISTORY.md` 新增 V1.9.0 那一列
+
+未修改任何 CCTV／PBS／TDX／LINE 或其他 Production runtime 程式，未 deploy 功能變更。
+
+### 不要誤讀
+
+- **不要把 `src/version.js` 提前改成 `V1.9.0`**——那要等下一次真正的 runtime release。
+- **不要重寫 V1.8.7.8～V1.8.7.14 既有版本列**；四段式版本線原樣保留在歷史裡。
+- **不要把這次治理決議當成一次 release**——沒有 commit 觸發功能性部署。
+
 ## TDX 還原程序（RESTORE TDX）
 
 **前提**：真人確認 TDX 額度確實已恢復。

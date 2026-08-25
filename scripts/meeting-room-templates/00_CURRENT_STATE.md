@@ -32,13 +32,27 @@
 - 任何**進 Production 且改變 runtime 行為**的變更，必須在**同一個 commit 內** bump
   `src/version.js` 的 `APP_VERSION`——那是本專案唯一的版本權威，`GET /version` 就是讀它。
 - **任務名稱 ≠ 版本號。** `CCTV_METADATA_RECOVERY`、`TDX_QUOTA_PROTECTION` 這類是工程標籤。
-- **正式產品只有一條連續版本線 `V1.8.7.x`**，不得建立 V1／V2／V57.x 等平行版本線。
+- **正式產品只有一條連續版本線**，不得建立平行版本線。
 - `package.json` 的 `0.1.0` 是 npm 套件版本，**與產品版本線無關**，不要混用。
 - 純文件／治理／工具／測試整理不 bump 版本，但仍須有 commit。
 
 為什麼要寫成規則：`src/version.js` 曾從 2026-08-21 起停在 V1.8.6.9 整整三週，
 期間 V1.8.7.0～V1.8.7.14 全部上線，`GET /version` 卻一直回報舊版本——
 因為當時有三個地方各自以為自己知道版本。詳見 `07_KNOWN_ISSUES.md` 的版本線校正紀錄。
+
+### 版本編號格式（2026-08-25 起：三段式）
+
+`LAST_FOUR_PART_VERSION = V1.8.7.14` 是四段式版本線的**最後一版**——
+`FOUR_PART_VERSIONING = RETIRED`。`src/version.js` 目前仍是 `V1.8.7.14`，
+**不提前改動**；只有下一次真正 Production runtime release 才會把它
+bump 到 `V1.9.0`，同一個 commit 內完成。
+
+`THREE_PART_VERSIONING = ACTIVE`，`NEXT_RELEASE_VERSION = V1.9.0`：
+
+- Bug fix → patch：`V1.9.0 → V1.9.1 → V1.9.2 …`
+- 明顯新功能／架構階段 → minor：`V1.9.x → V1.10.0`
+- 大型不相容版本 → major：`→ V2.0.0`
+- 純文件／治理／Engineering Memory／測試整理 → 不升 Product Version
 
 ## 我能改什麼／不能改什麼（一句話版）
 
