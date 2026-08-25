@@ -466,13 +466,13 @@ function main() {
   const currentPhase = safe(
     process.env.EXPORT_CURRENT_PHASE,
     pbsOnly
-      ? 'Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門，全部已封版 SEALED。TDX 額度用盡，TDX／機動路肩程式碼完整保留'
+      ? 'Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。TDX 額度用盡，TDX／機動路肩程式碼完整保留'
       : 'Maintenance — awaiting real-world confirmation of latest release'
   );
   const currentTask = safe(
     process.env.EXPORT_CURRENT_TASK,
     pbsOnly
-      ? 'none（無進行中工作）。Latest completed task = PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX，status = SEALED（前序 PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。不要繼續修 location quality、不要重開 TDX、不要 Full Audit、不要重新 deploy——詳見 SYSTEM_STATE.json 的 taskSeal.doNotMisread。觀察中（非工作項，不是待辦）：一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數'
+      ? 'none（無進行中工作）。Latest completed task = PBS_ACCIDENT_CCTV_ENRICHMENT_FIX，status = SEALED（前序 PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX、PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。不要重開 TDX、不要新增未驗證的省道 CCTV RoadID、不要放寬服務區或位置精確度、不要 Full Audit、不要重新 deploy——詳見 SYSTEM_STATE.json 的 taskSeal.doNotMisread。觀察中（非工作項，不是待辦）：一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數'
       : 'None in progress — awaiting next assignment'
   );
   const knownBlocker = safe(

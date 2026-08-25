@@ -4,8 +4,8 @@
 
 ## 已知、無關、既有的測試失敗基準線
 
-**實測基準（2026-08-24 量測，非回憶）：`npm test` 共 1060 項，17 項失敗。**
-這 17 項在乾淨 checkout 上同樣失敗（每輪以 `git stash` 對照驗證），與功能變更無關：
+**實測基準（2026-08-25 量測，非回憶）：`npm test` 共 1081 項，穩定 18 項失敗。**
+這 18 項在乾淨 checkout 上同樣失敗（每輪以 `git stash` 對照驗證），與功能變更無關：
 
 1. `pbs-relay/tests/*`（2 項）— 獨立子系統，非本 Worker 主程式。
 2. CCTV / JPEG codec 相關（13 項）— 依賴 Workers-only 的 `.wasm` codec，在此沙盒環境無法載入：
@@ -13,9 +13,18 @@
    `dynamicCollage`、`dynamicShoulder`、`dynamicShoulderMessageShort`、`freeway3CctvAudit`、
    `hsinchuCctvCollageEndpoint`、`pipelineTraceIntegration`、`productionIntegrationFixtures`、
    `singleCctvBudgetFairness`、`testJpegCodec`。
-3. `test/healthQuotaDashboard.test.js`（2 項）— wall-clock 相依，會隨真實日期自然過期。
+3. `test/healthQuotaDashboard.test.js`（3 項）— wall-clock 相依，會隨真實日期自然過期。
+   **2026-08-25 更新：從 2 項變成 3 項，是日期由 8/24 跨到 8/25 造成的，不是新回歸**
+   ——該檔比對「8/16、8/17、8/18 是否仍顯示尚無資料／是否仍正常呈現」，
+   每過一天就會多一項自然過期。同一輪以 `git stash -u` 對照乾淨 checkout，
+   兩邊完全相同。
 
-若出現這 17 項以外的新失敗，才視為真正回歸。
+若出現這 18 項以外的新失敗，才視為真正回歸。
+
+**還有一項會時有時無的全套執行雜訊**（不是本專案缺陷、也不要為它改程式）：
+`test/deploymentStatus.test.js` 的「missing/placeholder build metadata」在
+**單獨執行時穩定通過 22/0**，只有在跑完整套件時偶爾出現（實測 3 次只中 1 次），
+乾淨 checkout 也一樣。判斷回歸請以**同一輪 stash 對照**為準，不要只看單次總數。
 
 **另有一個會自行復原、不要誤判成缺陷的情況**：
 `test/deploymentPolicyAndVerify.test.js` 第 12 項比對 `origin/main`（見
@@ -422,6 +431,152 @@ LOCATION_QUALITY_REQUIRED    -> 永遠 true
 **「查不到」和「沒發生」是兩件事。**
 任何有上限的掃描，都必須把上限講出來；把沉默的截斷呈現成空結果，
 會讓真人把讀取側的 bug 誤判成資料遺失，往完全錯誤的方向查下去。
+
+## 修正紀錄｜PBS 國道事故取不到 CCTV（國3 96K+700 事件）（2026-08-25）
+
+**一句話**：CCTV 的資格判斷還停在「必須是 TDX Freeway 來源」，
+在 TDX 已關閉的世界裡，那等於「PBS 事故永遠沒有圖」。
+
+### 現象（真實 Production 案例）
+
+2026-08-25 早上，國3 南向、竹林交流道－寶山交流道路段、96K+700 發生事故。
+Pipeline Trace 顯示每一關都是綠的：
+
+```
+DisplayKM            = 96.7
+classification       = accident
+服務區域              = 在服務區內
+位置精確度            = 足夠
+eligibility          = 符合
+lineAttempted        = 1
+lineSucceeded        = 1
+sharedFeedPersisted  = 是
+```
+
+但：
+
+```
+cctvEligible         = 否
+cctvSkippedByReason  = —      ← 空白
+imagePrepared        = —
+sharedFeedWithImage  = 否
+```
+
+駕駛收到正確的文字，沒有畫面；而後台**說不出為什麼**。
+
+### Root cause（兩個，都先在 repo 實際程式上重現過才動手）
+
+**A. CCTV eligibility 殘留 TDX Freeway source-only 閘門**
+
+`src/cctv/dynamicCollage.js` 的 `resolveCctvEligibility()` 原本第二關就是：
+
+```js
+if (event.source !== 'freeway') return { eligible: false, reason: 'not-freeway-source' };
+```
+
+這條在 V1.8.5 寫下時是對的——當時 TDX **就是**國道來源。
+但 `TRAFFIC_SOURCE_MODE=PBS_ONLY` 之後 TDX 關閉，這條就從
+「限定最可信來源」默默變成「PBS 事故一律沒有圖」。
+攝影機是同一批、道路是同一條、公里數是同一個，唯一的差別是「誰通報的」。
+
+**B. CCTV target KM 沒有使用 PBS 已解析出來的 `displayKM`**
+
+```js
+function eventTargetKm(event) {   // 修正前
+  const start = parseKM(event.startKM);
+  const end = parseKM(event.endKM);
+  if (start !== null && end !== null) return (start + end) / 2;
+  return start ?? end;
+}
+```
+
+PBS **從來沒有**結構化 KM（raw 只有 road/areaNm/direction/roadtype/comment/
+日期/x1/y1），所以就算解除 A，下一關仍必然是 `no-reliable-km`。
+
+實測（本輪動手前，以真實形狀重現）：
+
+```
+CCTV eligibility 現況                      → not-freeway-source
+同一筆假裝 source='freeway'（隔離第二關）   → no-reliable-km
+```
+
+**C.（第三個，本輪才發現的）eligibility 階段的 reason 從來沒有寫進 trace**
+
+`broadcastPipeline.js` 只在 prepare 階段寫 `cctvSkippedByReason`；
+在 eligibility 階段被擋下時只寫了 `cctvEligible = false`，**reason 丟掉**。
+這正是後台顯示「否 / —」的原因，也正是這條過期閘門能藏一整天的原因。
+
+### 修正方式（最小、fail-closed）
+
+1. **來源改成「可信來源白名單」，不再要求必須是 TDX Freeway**
+   `CCTV_TRUSTED_EVENT_SOURCES = { 'freeway', 'highway', 'pbs' }`，
+   reason 改為 `unsupported-source`。
+   仍是白名單、不是開門：公車／CMS 記錄沒有 canonical 道路名、
+   也沒有經過嚴格 parser 的公里數，不得只憑「type=accident」就去查攝影機。
+   （`highway` 列入純粹是對稱；省道不在 CCTV registry，會正確停在
+   `unsupported-road`，不會停在來源。）
+
+2. **`eventTargetKm()` 新增最後一層：`displayKM`**
+   順序：結構化 KM 區間中點 → 單一結構化 KM → `displayKM`。
+   **這不是新 parser、也不是猜**：`displayKM` 的唯一寫入者是
+   `pbs/normalize.js` 的 `extractDisplayKmMatch`，該 parser 刻意嚴格
+   （必須有明確的 `96.7公里` / `96K+700` / `96K` 形狀，
+   「2車事故、3人受傷」這種裸數字永遠不會被誤讀成公里）。
+   而且同一個值已經先通過 `traffic/locationQuality.js`，
+   等於「這筆事故的位置精確到可以播報」這件事已經被驗證過了。
+   從 description 自由猜 KM、從路名臆測 KM，**仍然禁止**。
+
+3. **eligibility 階段的 reason 一律寫進 trace**，並新增 `cctvTargetKm`
+   （攝影機實際對準的公里數）。
+
+**同步修正了一則會誤導未來 Agent 的註解**：`pbs/normalize.js` 原本白紙黑字寫著
+「eventTargetKm() 只讀 startKM/endKM，永遠不讀 displayKM，所以 PBS 事故不可能
+因為 comment 提到公里數就取得 CCTV 資格」。那句話在本輪之後就不成立了，
+已改寫成「這條邊界在 2026-08-25 由真人指令變更，以及為什麼變更後仍然安全」。
+**不要留下與程式相反的註解。**
+
+### 新的永久原則
+
+> **CCTV 資格取決於「道路可解析 + 公里數可靠」，
+> 不取決於「事件由哪個來源通報」。**
+
+目前 confirmed CCTV-supported roads 仍只有 **國道1號 / 國道3號**
+（roadId 由真實 Production TRAFFIC_KV 查證過）。
+本輪**沒有**新增任何未驗證的省道 RoadID——台68 事故即使有漂亮的公里數，
+仍然是 text-only。
+
+### 邊界（全部有測試鎖住，不是靠設定旗標）
+
+- **TDX 全程 0 呼叫**：metadata 只讀既有 `TRAFFIC_KV` cache
+  （`readFreewayCctvMetadataCache`），影格只來自 `*.freeway.gov.tw`，
+  R2 用既有 `CCTV_IMAGES`。cache miss / 過期 / 損毀 → `metadata-cache-unavailable`
+  → TEXT-ONLY，**禁止 fallback 去 TDX**。另有結構性測試斷言
+  `dynamicCollage.js` 沒有 import `tdx/auth.js` 或 `tdx/client.js`。
+- **CCTV 是 enrichment，不是 eligibility**：三道播報閘門在前，且未被碰過。
+  八堵事故即使能解析出完美的攝影機，仍然被服務區域擋下（有測試）。
+- **任何一步失敗都退回 TEXT-ONLY**：metadata / 無攝影機 / 影格失敗 /
+  逾時 / R2 失敗，都不影響事故文字播報，也不算推播失敗。
+- 機動路肩維持 OFF，且它自己的 KM 路徑**沒有**被 displayKM 影響
+  （仍只吃結構化 KM，有測試）。
+
+### 可觀測性（Pipeline Trace 現在能區分）
+
+`not-accident` / `unsupported-source` / `unresolvable-road` /
+`unsupported-road` / `no-reliable-km` / `metadata-cache-unavailable` /
+`no-camera` / `no-frames` / `prepare-timeout` / `r2-publish-failed`
+＋ `cctvTargetKm`。
+過期的 `not-freeway-source` **已從程式中消失**，不會再拿它去擋合法的
+PBS 國道事故。
+
+### 給未來 Agent 的通則
+
+**當一個資料來源被關掉，去搜尋所有「以來源為條件」的判斷式。**
+它們不會報錯，只會安靜地把整條路徑變成永遠不成立。
+本專案已知有兩個這種形狀：V57.2 的國道 TDX 對應閘門（2026-08-24 修）、
+CCTV 的 freeway-source 閘門（本輪）。修這一輪時已一併搜過其餘來源判斷式。
+
+**後台的「空白理由」是一個 bug，不是一個畫面。**
+「做了決定但說不出是哪一個」會讓真人往完全錯誤的方向查。
 
 ## TDX 還原程序（RESTORE TDX）
 
