@@ -32,6 +32,7 @@ jobs:
           workload_identity_provider: ${{ vars.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GOOGLE_SERVICE_ACCOUNT }}
           token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/drive
           create_credentials_file: false
 
       - name: Sync changed engineering-memory files
