@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { resetTdxTokenCache } from '../src/tdx/auth.js';
 import worker from '../src/index.js';
 import { extractFirstJpegFrame, MAX_FRAME_BYTES, PROBE_USED_KEY, CANDIDATES_KEY } from '../src/tdx/hsinchuCctvProbe.js';
-import { FREEWAY_METADATA_KEY, FREEWAY_METADATA_TTL_SECONDS } from '../src/cctv/freewayCctvMetadataCache.js';
+import { FREEWAY_METADATA_KEY } from '../src/cctv/freewayCctvMetadataCache.js';
 
 const FIXED_USERNAME = 'admin';
 const ADMIN_PASSWORD = 'test-admin-pass-hsinchu';
@@ -291,7 +291,10 @@ test('2i. a successful probe run also writes the SAME records into the shared cc
   );
 
   const putOptions = env.TRAFFIC_KV.lastPutOptionsFor?.(FREEWAY_METADATA_KEY);
-  if (putOptions) assert.equal(putOptions.expirationTtl, FREEWAY_METADATA_TTL_SECONDS);
+  // 2026-08-25 (CCTV_METADATA_RECOVERY_V1) — the inventory must be written
+  // with NO expiry. It used to carry a 7-day TTL, which is what let it
+  // vanish while TDX was off with no legal way to refill it.
+  assert.equal(putOptions, undefined, 'no expirationTtl on the camera inventory');
 });
 
 test('2j. the shared metadata cache write is best-effort — a KV outage for THAT key never breaks the probe response itself', async () => {

@@ -445,7 +445,22 @@ test('17. fallback nearest-camera: nothing inside the range -> nearest same-dire
 
 test('18. no camera at all -> prepareCctvImageForEvent fails closed to no-camera; the notification itself is never withheld', async () => {
   const kv = createMockKV();
-  await seedMetadataCache(kv, []); // empty metadata pool
+  // A USABLE pool that simply has no camera on this event's road (the event
+  // is 國道一號). Seeding [] no longer works for this: an empty record set is
+  // now refused as unusable and falls back to the bundled official
+  // inventory, which is exactly the CCTV_METADATA_RECOVERY_V1 fix — a
+  // truncated refresh must never be mistaken for "there are no cameras".
+  // Same idiom as pbsAccidentCctvEnrichment.test.js test 9.
+  await seedMetadataCache(kv, [
+    {
+      CCTVID: 'CCTV-N3-S-096.700-M',
+      RoadID: '000030',
+      RoadName: '國道3號',
+      RoadDirection: 'S',
+      LocationMile: '96K+700',
+      VideoStreamURL: 'https://cctv3.freeway.gov.tw/n3.jpg',
+    },
+  ]);
   const env = { TRAFFIC_KV: kv, CCTV_IMAGES: r2Bucket() };
   const cctv = await prepareCctvImageForEvent(env, shoulderEvent('OPEN'), {}, TEST_CODEC, CCTV_PREPARE_BUDGET_MS);
   assert.equal(cctv.ok, false);

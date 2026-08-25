@@ -30,6 +30,7 @@ import { persistProductionTdxEventCache, readProductionTdxEventCache } from './t
 import { commitTdxUsageBatch, compactTdxUsageSummaryRecentDays } from '../tdx/usageLedger.js';
 import { runSharedFeedPersist, readSharedFeed } from './sharedFeed.js';
 import { buildTraceEntry, persistPipelineTraceEntries } from './pipelineTrace.js';
+import { describeFreewayCctvMetadata } from '../cctv/freewayCctvMetadataCache.js';
 
 /**
  * Shape-compatible with pipeline.js's buildSummary() output (every field
@@ -278,6 +279,9 @@ export async function runScheduledTdxSync(env, now = new Date()) {
   // critical, no separate "write failed" flag needed here.
   try {
     const previous = await readHealthSnapshot(env.TRAFFIC_KV);
+    // One extra KV read, no network, no TDX — describeFreewayCctvMetadata
+    // falls back to the bundled official inventory and never throws.
+    const cctvMetadata = await describeFreewayCctvMetadata(env.TRAFFIC_KV);
     const healthSnapshot = buildHealthSnapshot({
       summary,
       pbsSummary,
@@ -285,6 +289,13 @@ export async function runScheduledTdxSync(env, now = new Date()) {
       now,
       tdxScheduleState,
       sourceMode,
+      cctvMetadata: {
+        source: cctvMetadata.source,
+        recordCount: cctvMetadata.records.length,
+        fetchedAt: cctvMetadata.fetchedAt,
+        sourceName: cctvMetadata.sourceName,
+        sourceUpdatedAt: cctvMetadata.sourceUpdatedAt,
+      },
       previousTdx: previous.snapshot ? previous.snapshot.tdx : null,
     });
     const commit = await persistHealthSnapshot(env.TRAFFIC_KV, healthSnapshot);

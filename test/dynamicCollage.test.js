@@ -15,7 +15,11 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { resetTdxTokenCache } from '../src/tdx/auth.js';
 import { resolveCctvEligibility, prepareCctvImageForEvent, CCTV_PREPARE_BUDGET_MS } from '../src/cctv/dynamicCollage.js';
-import { FREEWAY_METADATA_KEY, FREEWAY_METADATA_TTL_SECONDS } from '../src/cctv/freewayCctvMetadataCache.js';
+import {
+  FREEWAY_METADATA_KEY,
+  readFreewayCctvMetadataCache,
+  writeFreewayCctvMetadataCache,
+} from '../src/cctv/freewayCctvMetadataCache.js';
 import { decodeJpeg, encodeJpeg } from './testJpegCodec.js';
 
 const TEST_CODEC = { decodeJpeg, encodeJpeg };
@@ -247,24 +251,37 @@ test('2. a different accident KM selects DIFFERENT cameras than a nearby one', a
   assert.notDeepEqual(idsAt82.sort(), idsAt95.sort());
 });
 
-test('6/1-required: broadcast metadata cache MISS -> text-only (metadata-cache-unavailable), 0 TDX CCTV metadata calls, never falls back to calling TDX', async () => {
+// UPDATED 2026-08-25 by CCTV_METADATA_RECOVERY_V1. This test used to require
+// that a KV miss produced 'metadata-cache-unavailable' with 0 fetches. The
+// no-TDX half of that was, and remains, the point of the test. The
+// no-cameras half was the 19:01 defect: KV aged the inventory out on a
+// 7-day TTL and nothing was allowed to refill it. A miss now falls back to
+// the bundled official NFB inventory, so frame fetches SHOULD happen here.
+//
+// The invariant that must never move is the second one: whatever this
+// module does about metadata, it does without calling TDX.
+test('6/1-required: broadcast metadata cache MISS -> bundled inventory, still 0 TDX CCTV metadata calls', async () => {
   const env = baseEnv(); // no cctv:freeway-metadata:v1 key seeded at all
-  const { fetchFn, hits } = makeFrameFetch(); // any fetch at all in this test is unexpected
+  const { fetchFn, hits } = makeFrameFetch();
   priorFetch = globalThis.fetch;
   globalThis.fetch = fetchFn;
 
   const result = await prepareCctvImageForEvent(env, accidentEvent(), {}, TEST_CODEC);
-  assert.equal(result.ok, false);
-  assert.equal(result.reason, 'metadata-cache-unavailable');
-  assert.equal(hits.frame, 0);
-  assert.equal(hits.other, 0, '0 fetch calls of any kind — this module must never call TDX itself');
+  assert.notEqual(
+    result.reason,
+    'metadata-cache-unavailable',
+    'a KV miss must never again mean "no cameras exist"'
+  );
+  assert.ok(hits.frame > 0, 'the bundled inventory gave the selector real cameras to try');
+  assert.equal(hits.other, 0, '0 non-frame fetches — this module must never call TDX itself');
 });
 
-test('6b. an EXPIRED/corrupt cache entry is treated the same as a miss -> metadata-cache-unavailable', async () => {
+test('6b. a corrupt cache entry degrades to the bundled inventory, never to "no cameras"', async () => {
   const env = baseEnv({ TRAFFIC_KV: kv({ [FREEWAY_METADATA_KEY]: 'not valid json' }) });
   const result = await prepareCctvImageForEvent(env, accidentEvent(), {}, TEST_CODEC);
-  assert.equal(result.ok, false);
-  assert.equal(result.reason, 'metadata-cache-unavailable');
+  // Unparseable KV is still a degraded read, but the floor beneath it is the
+  // bundled official inventory rather than nothing at all.
+  assert.notEqual(result.reason, 'metadata-cache-unavailable');
 });
 
 test('2-required: broadcast metadata cache HIT -> CCTV proceeds normally', async () => {
@@ -354,8 +371,30 @@ test('metadata reads are shared across multiple accidents this run via runCache 
 // 4. metadata TTL = 7 days
 // =======================================================================
 
-test('4. FREEWAY_METADATA_TTL_SECONDS is 7 days', async () => {
-  assert.equal(FREEWAY_METADATA_TTL_SECONDS, 7 * 24 * 60 * 60);
+test('4. the camera inventory is stored with NO expiry, and has a bundled official floor', async () => {
+  // REWRITTEN 2026-08-25 (CCTV_METADATA_RECOVERY_V1). This used to assert
+  // FREEWAY_METADATA_TTL_SECONDS === 7 days. That TTL is the bug: the only
+  // writer is a TDX-dependent admin probe, so under PBS_ONLY the key expired
+  // and nothing could refill it — a real 國1 93K accident lost its image to
+  // metadata-cache-unavailable. The constant is gone; what is pinned now is
+  // that a write carries no expiry at all.
+  const puts = [];
+  const kv = {
+    async get() {
+      return null;
+    },
+    async put(key, value, options) {
+      puts.push({ key, value, options });
+    },
+  };
+  const result = await writeFreewayCctvMetadataCache(kv, [{ CCTVID: 'X', VideoStreamURL: 'u', LocationMile: '1K+000', RoadDirection: 'S' }]);
+  assert.equal(result.committed, true);
+  assert.equal(puts.length, 1);
+  assert.equal(puts[0].options, undefined, 'no expirationTtl may ever be set on the camera inventory');
+
+  // And with KV empty, the bundled official inventory still answers.
+  const records = await readFreewayCctvMetadataCache({ async get() { return null; } });
+  assert.ok(Array.isArray(records) && records.length > 0, 'an empty KV must not mean an empty camera list');
 });
 
 // =======================================================================

@@ -266,7 +266,15 @@ test('7: a PBS-sourced accident (never CCTV-eligible) -> cctvEligible:false in t
 // --- 8: CCTV no camera trace ----------------------------------------------
 
 test('8: CCTV-eligible but no camera near this KM -> imagePrepared:false, cctvSkippedByReason "no-camera"', async () => {
-  const { env } = await envWithSubscriber({ [FREEWAY_METADATA_KEY]: metadataEnvelope([]) }); // 0 cameras at all
+  // A usable pool holding only a 國3 camera, while the event is on 國道一號.
+  // Seeding [] no longer produces this condition: CCTV_METADATA_RECOVERY_V1
+  // treats an empty record set as unusable and falls back to the bundled
+  // official inventory, so "no cameras at all" is no longer reachable.
+  const { env } = await envWithSubscriber({
+    [FREEWAY_METADATA_KEY]: metadataEnvelope([
+      { CCTVID: 'CCTV-N3-S-096.700-M', RoadID: '000030', RoadName: '國道3號', RoadDirection: 'S', LocationMile: '96K+700', VideoStreamURL: 'https://cctv3.freeway.gov.tw/n3.jpg' },
+    ]),
+  });
   const event = normalizeRoadEvent(freewayAccidentRaw(), 'freeway');
   priorFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {

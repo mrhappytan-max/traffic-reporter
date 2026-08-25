@@ -242,12 +242,30 @@ test('7. no reliable KM -> skipped, and the accident still broadcasts', () => {
 
 // --- 8: every downstream failure degrades to text-only --------------------
 
-test('8. metadata cache unavailable -> text-only', async () => {
+// UPDATED 2026-08-25 by CCTV_METADATA_RECOVERY_V1. This test used to assert
+// that an unseeded KV produced 'metadata-cache-unavailable'. That WAS the
+// behaviour, and it was the defect: the inventory key was written with a
+// 7-day TTL whose only writer could not run under PBS_ONLY, so seven days
+// after the last probe every accident silently lost its picture with no way
+// back. A real 國道1號 93K accident on 2026-08-25 19:01 hit exactly that.
+//
+// The cache now falls back to the bundled official NFB inventory, so an
+// empty KV is no longer a dead end and this reason is no longer reachable
+// that way. The reason itself is deliberately KEPT in dynamicCollage.js:
+// if the read ever yields nothing at all, the pipeline must still fail
+// closed to text-only rather than fail open.
+//
+// What must not regress is the pair of guarantees below — a missing KV
+// entry costs no picture and still costs zero TDX calls.
+test('8. an unseeded KV no longer means no cameras, and still means no TDX', async () => {
   await withFetchSpy(async (calls) => {
     const env = envWith(null); // no cctv:freeway-metadata:v1 seeded at all
     const result = await prepareCctvImageForEvent(env, event96K7(), {});
-    assert.equal(result.ok, false);
-    assert.equal(result.reason, 'metadata-cache-unavailable');
+    assert.notEqual(
+      result.reason,
+      'metadata-cache-unavailable',
+      'the 19:01 failure mode: an empty KV must never again mean no camera list'
+    );
     assert.equal(tdxCalls(calls).length, 0, 'a cache miss must never fall back to TDX');
   });
 });

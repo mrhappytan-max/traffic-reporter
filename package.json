@@ -11,6 +11,7 @@
     "deploy": "wrangler deploy",
     "start": "wrangler dev",
     "test": "node --test",
+    "build:cctv-inventory": "node scripts/build-cctv-inventory.mjs",
     "smoke:wasm": "node scripts/wranglerSmoke/runWasmSmoke.mjs",
     "update:road-location-data": "node scripts/updateRoadLocationData.mjs",
     "check:deployment-policy": "node scripts/check-deployment-policy.mjs",

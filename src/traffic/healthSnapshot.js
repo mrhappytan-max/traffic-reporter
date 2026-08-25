@@ -97,6 +97,13 @@ export function buildHealthSnapshot({
   tdxScheduleState = 'scheduled',
   previousTdx = null,
   sourceMode = null,
+  // 2026-08-25 (CCTV_METADATA_RECOVERY_V1) — describeFreewayCctvMetadata()'s
+  // result, carried verbatim. A real 國1 93K accident lost its image because
+  // the camera inventory had silently expired out of KV and nothing was
+  // allowed to put it back; nobody found out until the accident happened.
+  // Surfacing it here means a missing or ancient inventory is visible on
+  // /health BEFORE the next one. null when the caller did not supply it.
+  cctvMetadata = null,
 }) {
   const scheduledThisRun = tdxScheduleState === 'scheduled';
   const sleeping = tdxScheduleState === 'night-sleep';
@@ -169,6 +176,7 @@ export function buildHealthSnapshot({
     // sourceMode.describeSourceMode(env); null when the caller did not
     // supply it (e.g. older tests), never guessed.
     sourceMode: sourceMode ?? null,
+    cctvMetadata: cctvMetadata ?? null,
 
     tdx,
 

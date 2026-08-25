@@ -203,6 +203,10 @@ function renderPage({ statusMeta, statusLabel, generatedAtLabel, staleNotice, bo
   }
   .pill-ok { background: #e6f6ea; color: #1a7f37; }
   .pill-bad { background: #fdecec; color: #c31c1c; }
+  /* 2026-08-25 — added with the CCTV inventory card: "too old" is a real
+     third state, distinct from both fine and broken, and needs its own
+     colour rather than borrowing one of the other two. */
+  .pill-warn { background: #fff6dc; color: #8a6100; }
   .pill-unknown { background: #eef0f3; color: #555; }
   .source-list { margin: 0; padding: 0; list-style: none; }
   .source-list li {
@@ -582,8 +586,80 @@ function renderDeploymentCard(deploymentStatus) {
   </div>`;
 }
 
+// 2026-08-25 (CCTV_METADATA_RECOVERY_V1) — the camera inventory's own health.
+// A real 國1 93K accident on 2026-08-25 19:01 was pushed with correct text
+// and no picture, because the inventory had quietly expired out of KV and,
+// with TDX off, nothing was allowed to refill it. Nobody discovered that
+// until an accident happened. This card exists so the next such gap is
+// visible on a normal day.
+//
+// Ages are measured against the inventory's OWN publication time, not
+// against a fetch time, because that is what actually matters: the file is
+// republished daily, and a copy a month old is a copy that may not know
+// about a camera built since.
+const CCTV_METADATA_STALE_DAYS = 30;
+
+// Exported under a deliberately awkward name purely so the three states
+// (normal / missing / too old) can be pinned by a test — the page itself
+// always calls the local function.
+export { renderCctvMetadataCard as __renderCctvMetadataCardForTest };
+
+function renderCctvMetadataCard(cctvMetadata, now) {
+  if (!cctvMetadata) {
+    return `
+  <div class="card">
+    <h2>攝影機基礎資料</h2>
+    <div class="row"><span class="label">狀態</span><span class="pill pill-warn">尚未回報</span></div>
+    <div class="row"><span class="label">說明</span><span class="value">這一輪 Cron 沒有記錄攝影機資料狀態（可能是舊版快照）。事故文字播報不受影響。</span></div>
+  </div>`;
+  }
+
+  const count = cctvMetadata.recordCount || 0;
+  const publishedAt = cctvMetadata.sourceUpdatedAt ? new Date(cctvMetadata.sourceUpdatedAt) : null;
+  const ageDays =
+    publishedAt && Number.isFinite(publishedAt.getTime())
+      ? Math.floor((now.getTime() - publishedAt.getTime()) / (24 * 60 * 60 * 1000))
+      : null;
+
+  let pill = 'pill-ok';
+  let label = '正常';
+  let note = '';
+  if (count === 0) {
+    pill = 'pill-bad';
+    label = '遺失';
+    note = '攝影機基礎資料遺失，事故文字仍可播報，但 CCTV 圖片無法產生。';
+  } else if (ageDays !== null && ageDays > CCTV_METADATA_STALE_DAYS) {
+    pill = 'pill-warn';
+    label = '過舊';
+    note = `名冊已 ${ageDays} 天未更新。仍可產生 CCTV 圖片，但新設立的攝影機可能不在名冊內。`;
+  }
+
+  const sourceLabel =
+    cctvMetadata.source === 'kv'
+      ? `KV 快取${cctvMetadata.sourceName ? `（${cctvMetadata.sourceName}）` : ''}`
+      : cctvMetadata.source === 'bundled'
+        ? '內建官方名冊（交通部高速公路局）'
+        : '無';
+
+  return `
+  <div class="card">
+    <h2>攝影機基礎資料</h2>
+    <div class="row"><span class="label">狀態</span><span class="pill ${pill}">${escapeHtml(label)}</span></div>
+    <div class="row"><span class="label">資料筆數</span><span class="value">${count}</span></div>
+    <div class="row"><span class="label">資料來源</span><span class="value">${escapeHtml(sourceLabel)}</span></div>
+    <div class="row"><span class="label">名冊發布時間</span><span class="value">${
+      publishedAt && Number.isFinite(publishedAt.getTime()) ? escapeHtml(formatTaipeiTime(publishedAt)) : '不明'
+    }</span></div>
+    <div class="row"><span class="label">最後寫入快取</span><span class="value">${
+      cctvMetadata.fetchedAt ? escapeHtml(formatTaipeiTime(new Date(cctvMetadata.fetchedAt))) : '未寫入（使用內建名冊）'
+    }</span></div>
+    ${note ? `<div class="row"><span class="label">說明</span><span class="value">${escapeHtml(note)}</span></div>` : ''}
+  </div>`;
+}
+
 function renderSnapshotBody(snapshot, usageSummary, now, deploymentStatus) {
   const { tdx, pbs, line, kv, broadcast } = snapshot;
+  const cctvMetadataHtml = renderCctvMetadataCard(snapshot.cctvMetadata, now);
 
   const tdxSourcesHtml = tdx.sources
     .map(
@@ -633,6 +709,8 @@ function renderSnapshotBody(snapshot, usageSummary, now, deploymentStatus) {
     <div class="row"><span class="label">推送失敗</span><span class="value">${pushFailedCount}</span></div>
     <div class="row"><span class="label">上次推送</span><span class="value">${escapeHtml(lastPushLabel)}</span></div>
   </div>
+
+  ${cctvMetadataHtml}
 
   <div class="card">
     <h2>KV</h2>
