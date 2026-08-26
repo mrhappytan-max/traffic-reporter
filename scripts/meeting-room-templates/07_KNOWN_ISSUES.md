@@ -1332,13 +1332,14 @@ NEW FAILURES = 0（同一輪 `git stash -u` 對照乾淨 checkout，35 項既有
 
 ## Prototype 記錄｜PBS_LOCAL_EDGE_FILTER_PROTOTYPE（2026-08-26，非 Release，V1.9.2 不變）
 
-真人於 Windows 本機完成 PBS 邊緣篩選 Prototype（服務區＋事故關鍵字篩選 →
-NEW/UPDATED/CLEARED/UNCHANGED → `SHOULD_PUSH`）。詳見 `02_PROJECT_HANDOFF.md`／
-`03_ARCHITECTURE.md`／`SYSTEM_STATE.json.pbsLocalEdgeFilterPrototype`。狀態：
-`LOCAL_PROTOTYPE_CODE_GITHUB_STATUS=NOT_COMMITTED`、
+PBS 邊緣篩選 Prototype（服務區＋事故關鍵字篩選 → NEW/UPDATED/CLEARED/UNCHANGED →
+`SHOULD_PUSH`）已 push 進 GitHub feature branch
+`feature/pbs-local-edge-filter-prototype`（commit `c34b52c...73cb6`），
+**尚未 merge main**。詳見 `SYSTEM_STATE.json.pbsLocalEdgeFilterPrototype`。
+`GITHUB_STATUS=COMMITTED_TO_FEATURE_BRANCH`、
 `WINDOWS_TO_CLOUDFLARE_PUSH=NOT_STARTED`、`CLEAR_ON_SINGLE_ABSENCE=
-PROTOTYPE_ONLY`（PENDING）。Cloud Session 未讀取/commit/push Prototype 碼。
-不要誤讀成已在 GitHub/已有傳輸/是 Release；不自行開始 PHASE C 以後工作
+PROTOTYPE_ONLY`（PENDING）。不要誤讀成已 merge main/已有傳輸/是
+Release；不自行開始 PHASE C 以後工作或自行 merge
 
 ## TDX 還原程序（RESTORE TDX）
 

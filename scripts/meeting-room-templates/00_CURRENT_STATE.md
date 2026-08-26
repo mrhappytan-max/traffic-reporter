@@ -59,14 +59,17 @@ bump 到 `V1.9.0`，同一個 commit 內完成。
 真人已在自己的 Windows 機器（`C:\Users\mrhap\traffic-reporter\pbs-relay`）完成一個
 **本機（Windows）** PBS 邊緣篩選 Prototype（`localMonitor.js`/`localPrototype.js`/
 `localState.js`），對官方 PBS raw feed 做服務區＋事故關鍵字篩選與
-NEW/UPDATED/CLEARED/UNCHANGED 判斷，輸出 `SHOULD_PUSH` 信號。**這段程式碼目前只存在
-Windows 本機，尚未 commit 進 GitHub**（`LOCAL_PROTOTYPE_CODE_GITHUB_STATUS =
-NOT_COMMITTED`），Windows → Cloudflare 的實際傳輸也尚未建立
-（`WINDOWS_TO_CLOUDFLARE_PUSH = NOT_STARTED`）。**不影響本專案任何 Production
-runtime**——`PRODUCT_VERSION_BUMP = NO`，版本仍是 `V1.9.2`。完整架構、真實測試結果
-（68/68）、已知限制與路線圖 → `07_KNOWN_ISSUES.md`；機器可讀狀態 →
-`SYSTEM_STATE.json` 的 `pbsLocalEdgeFilterPrototype`。**下一個 Agent 不要假設這段
-程式碼已經在 GitHub 上，也不要自行開始 Windows → Cloudflare 的正式傳輸。**
+NEW/UPDATED/CLEARED/UNCHANGED 判斷，輸出 `SHOULD_PUSH` 信號。**這段程式碼已由真人
+（經另一個 Windows 本機 agent）commit/push 進 GitHub 的 feature branch**
+（`LOCAL_PROTOTYPE_CODE_GITHUB_STATUS = COMMITTED_TO_FEATURE_BRANCH`，
+`LOCAL_PROTOTYPE_GITHUB_BRANCH = feature/pbs-local-edge-filter-prototype`，
+commit `c34b52c045cd05eb4be01b91debe5ba002c73cb6`，**尚未 merge 進 main**），
+Windows → Cloudflare 的實際傳輸尚未建立（`WINDOWS_TO_CLOUDFLARE_PUSH =
+NOT_STARTED`）。**不影響本專案任何 Production runtime**——`PRODUCT_VERSION_BUMP =
+NO`，版本仍是 `V1.9.2`。完整架構、獨立驗證後的真實測試結果、已知限制與路線圖 →
+`07_KNOWN_ISSUES.md`；機器可讀狀態 → `SYSTEM_STATE.json` 的
+`pbsLocalEdgeFilterPrototype`。**下一個 Agent 不要假設這個 feature branch 已經
+merge 進 main，不要自行 merge，也不要自行開始 Windows → Cloudflare 的正式傳輸。**
 
 ## 我能改什麼／不能改什麼（一句話版）
 

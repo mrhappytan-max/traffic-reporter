@@ -65,11 +65,13 @@ Pipeline Trace  (traffic/pipelineTrace.js, pipelineTraceView.js — 24h 人工�
 - **R2 image lifecycle**：`cctv/publishedImage.js`，opaque 128-bit id、`customMetadata.expiresAt` 於每次讀取時檢查（不依賴 R2 lifecycle rule 本身作為有效性依據），TTL 900 秒（15 分鐘）。
 - **LINE delivery path**：`line/pushMessage.js`（Push API，text-only 或 text+image 兩則訊息同一次呼叫）、`line/webhook.js`（處理使用者訂閱/取消訂閱等互動指令）、`line/verifySignature.js`（Webhook 簽章驗證）。
 
-## PBS Local Edge Filter Prototype（2026-08-26，Windows 本機，LOCAL_ONLY）
+## PBS Local Edge Filter Prototype（2026-08-26，feature branch，LOCAL/NOT_MERGED）
 
-與上面「主要資料流」完全分開的一條**尚未接入 Production** 的實驗路徑，程式碼只存在
-Windows 本機（`C:\Users\mrhap\traffic-reporter\pbs-relay`），**未 commit 進
-GitHub**，`src/` 掃描結果（下方模組清單）不會出現它：
+與上面「主要資料流」完全分開的一條**尚未接入 Production** 的實驗路徑，程式碼原本
+只存在 Windows 本機（`C:\Users\mrhap\traffic-reporter\pbs-relay`），現已由真人（經
+另一個 Windows 本機 agent）commit/push 進 GitHub 的 `feature/pbs-local-edge-filter-prototype`
+分支（commit `c34b52c045cd05eb4be01b91debe5ba002c73cb6`），**尚未 merge 進 main**，
+`src/` 掃描結果（下方模組清單）不會出現它（它在 `pbs-relay/`，不在 `src/` 下）：
 
 ```
 PBS 官方 opendata（roadData）
@@ -96,9 +98,9 @@ SHOULD_PUSH = YES/NO（目前只是記憶體內的判斷信號，Windows → Clo
 **已知限制**：CLEARED 目前有兩種觸發——明確解除文字（已排除/排除/已解除/解除）已可信；
 「一輪內從 feed 完全消失即判定 CLEARED」（`CLEAR_ON_SINGLE_ABSENCE`）僅為
 **PROTOTYPE_ONLY**，正式 Production 前必須重新決策（連續兩輪缺席／grace period／
-PBS lifecycle evidence 三選一）。完整路線圖（PHASE A～F）、真實測試結果（68/68）、
-真實兩次本機執行證據 → `07_KNOWN_ISSUES.md`；機器可讀欄位 →
-`SYSTEM_STATE.json` 的 `pbsLocalEdgeFilterPrototype`。
+PBS lifecycle evidence 三選一）。完整路線圖（PHASE A～F）、測試結果（含本 Cloud
+Session 對該 commit 的獨立唯讀驗證）、真實兩次本機執行證據 → `07_KNOWN_ISSUES.md`；
+機器可讀欄位 → `SYSTEM_STATE.json` 的 `pbsLocalEdgeFilterPrototype`。
 
 ## 模組清單（自動掃描）
 

@@ -128,10 +128,13 @@
     "readerNote": "OBSERVATION, not construction. Do not modify src/, the broadcast policy, Cron, TDX, CCTV, the Consumer, or redeploy because of this entry."
   },
   "pbsLocalEdgeFilterPrototype": {
-    "PBS_LOCAL_EDGE_FILTER_PROTOTYPE": "COMPLETED_LOCAL_ONLY",
+    "PBS_LOCAL_EDGE_FILTER_PROTOTYPE": "COMMITTED_TO_FEATURE_BRANCH",
     "recordedAt": "2026-08-26",
-    "recordedBy": "human directive (路況工程部 PBS 本機邊緣篩選 Prototype 工程記憶封存令) — documentation-only round, no code read or committed from this session",
-    "LOCAL_PROTOTYPE_CODE_GITHUB_STATUS": "NOT_COMMITTED",
+    "recordedBy": "human directive (路況工程部 PBS 本機邊緣篩選 Prototype 工程記憶封存令 + 最新事實補記令) — a separate Windows-local agent has since committed the Prototype to GitHub; this Cloud Session independently verified the commit (git fetch/show/diff/merge-base) and re-ran the Prototype's own two new test files in a read-only worktree checkout",
+    "LOCAL_PROTOTYPE_CODE_GITHUB_STATUS": "COMMITTED_TO_FEATURE_BRANCH",
+    "LOCAL_PROTOTYPE_GITHUB_BRANCH": "feature/pbs-local-edge-filter-prototype",
+    "LOCAL_PROTOTYPE_GITHUB_COMMIT": "c34b52c045cd05eb4be01b91debe5ba002c73cb6",
+    "PROTOTYPE_MERGED_TO_MAIN": "NO",
     "WINDOWS_TO_CLOUDFLARE_PUSH": "NOT_STARTED",
     "PRODUCTION_INTEGRATION": "NOT_STARTED",
     "CURRENT_PRODUCT_VERSION": "V1.9.2",
@@ -153,13 +156,13 @@
       "existingRelayUnaffected": "pbs-relay/src/server.js, cache.js, pbsHandler.js, upstreamClient.js — the pre-existing raw-relay path. This round did not modify or verify these; a Cloud Session earlier in this project noted main's own pbs-relay/src/server.js imports a cache.js that main's tree does not contain (a pre-existing, already-baselined test failure, unrelated to this Prototype) — see 07_KNOWN_ISSUES.md's known-failure baseline."
     },
     "architectureSummary": "既有 Relay：PBS 官方 -> upstreamClient.js -> pbsHandler.js -> 3 分鐘 memory cache -> GET /pbs/<token> -> Cloudflare（只搬運 raw PBS，不解析不篩選）。新 Prototype（Windows 本機，尚未接上 Cloudflare）：PBS 官方 -> localMonitor.js -> localPrototype.js（服務區篩選 -> 事故關鍵字篩選 -> 有效/解除判斷）-> localState.js（上一輪 vs 本輪比對）-> NEW/UPDATED/CLEARED/UNCHANGED -> SHOULD_PUSH（目前只輸出判斷信號，Windows -> Cloudflare 的實際傳輸尚未建立）。詳見 07_KNOWN_ISSUES.md 的完整記錄。",
-    "testResult": "pbs-relay 全套：68 tests / 68 passed / 0 failed（真人在 Windows 本機實跑回報，本 Cloud Session 未曾直接執行）。",
+    "testResult": "真人（經 Windows 本機另一個 GPT-based agent）回報：pbs-relay 全套 68 tests / 68 passed / 0 failed。本 Cloud Session 對同一個 commit（c34b52c045cd05eb4be01b91debe5ba002c73cb6）另外做了一次獨立、唯讀的驗證（`git worktree add --detach` 乾淨簽出，不動主工作樹）：Prototype 自己新增的兩個測試檔在乾淨簽出下全數通過（auth.test.js=6、localPrototype.test.js=5、localState.test.js=1，共 12 項）；但 `tests/pbsHandler.test.js` 與 `tests/server.test.js` 兩個既有檔案在這個乾淨簽出下整檔載入失敗（`Cannot find module '.../pbs-relay/src/cache.js'`）——這與本專案已知、與本 Prototype 無關的既有缺口一致（`main` 的 `pbs-relay/src/server.js` 引用一個從未 commit 進任何分支的 `cache.js`，見 `localPaths.existingRelayUnaffected`）。判斷：真人回報的 68/0 很可能是在 Windows 本機執行、本機磁碟上存在一份未 commit 的 `cache.js`（因此兩個既有檔案在本機可以載入）；GitHub 上的乾淨簽出無法重現 68/0 這個數字，但 Prototype 本身新增的測試（12 項）在兩種環境下皆乾淨通過，沒有找到 Prototype 程式碼本身的缺陷。",
     "realWorldSamples": "2026-08-26 22:42:09 Asia/Taipei：raw=1000, service-area accident records=13, explicit cleared=12, active=1, baseline=true, NEW=0, UPDATED=0, CLEARED=0, UNCHANGED=1, SHOULD_PUSH=NO。19 秒後（22:42:28）：raw=1000, active=1, baseline=false, 同樣 UNCHANGED=1, SHOULD_PUSH=NO —— 證明 local state persistence／same-event dedup／no-change detection 三者皆 PASS。",
     "knownLimitation": "CLEAR_ON_SINGLE_ABSENCE = PROTOTYPE_ONLY — 一輪內事件從 feed 完全消失就判定 CLEARED，正式 Production 前必須重新決策（連續兩輪缺席 / grace period / PBS lifecycle evidence 三選一），避免官方短暫漏資料造成假解除。PRODUCTION_DECISION = PENDING。",
     "roadmap": "PHASE A（Windows 本機觀察期，持續記錄 raw/relevant/active/NEW/UPDATED/CLEARED/UNCHANGED/matchReason/SHOULD_PUSH）-> PHASE B（規則校準：座標誤判、跨區國道、事故關鍵字、UPDATED 欄位、CLEARED grace policy）-> PHASE C（Windows -> Cloudflare Push Contract 設計：generatedAt/source/eventId/lifecycle/fingerprint/event/requestId，僅 local mock）-> PHASE D（安全傳輸設計：authentication/idempotency/retry/timeout/ack/failure queue/secret storage）-> PHASE E（Debug-only Cloudflare 接收：不寫正式 KV、不進 LINE、不影響 TDX）-> PHASE F（Production 評估，需另行真人授權才可正式接收/KV/LINE/Cron 調整/Production deploy/Product Version bump）。",
     "longTermTarget": "PBS 官方 -> Windows 本機守門員 -> 只有與新竹服務區真正相關的事件變化 -> Windows 主動 Push Cloudflare -> Cloudflare 才啟動正式事件 Pipeline（CCTV/LINE/Shared Feed）。目標：NO_RELEVANT_CHANGE -> WINDOWS_TO_CLOUDFLARE_PUSH=0 -> PBS 相關 KV 寫入 ≈ 0，避免 Cloudflare 固定輪詢搬運約 1000 筆 PBS raw data 才判斷。",
-    "driveGovernance": "Claude Drive WRITE = FORBIDDEN（本輪維持）。本輪只同步 Engineering Memory 文字紀錄到 Drive；Prototype 程式碼本身仍只存在 Windows 本機，未同步 GitHub 亦未同步 Drive。",
-    "readerNote": "這是文件記錄，不是完工的 Production 功能。下一個 Agent 讀到這裡：不要假設程式碼已在 GitHub，不要假設 Windows -> Cloudflare 傳輸已存在，不要因為看到這個記錄就開始 Phase C 以後的工作——那需要真人另行授權。"
+    "driveGovernance": "Claude Drive WRITE = FORBIDDEN（本輪維持）。本輪只同步 Engineering Memory 文字紀錄到 Drive；Prototype 程式碼本身已由真人（經另一個 Windows 本機 agent）commit/push 進 `feature/pbs-local-edge-filter-prototype` 分支，但該分支本身不經過 Engineering Memory 的 GitHub→Drive 鏡射流程（鏡射對象是 `engineering-memory/` 這 10 份文件，不是 repo 的每一個分支），Prototype 程式碼本身沒有、也不需要被同步到 Drive。",
+    "readerNote": "這是文件記錄，不是完工的 Production 功能。Prototype 程式碼已在 GitHub 的 feature branch（未 merge 進 main），下一個 Agent 讀到這裡：不要假設它已 merge 進 main，不要假設 Windows -> Cloudflare 傳輸已存在，不要因為看到這個記錄就開始 Phase C 以後的工作——那需要真人另行授權，也不要自行 merge 這個 feature branch。"
   },
   "taskSeal": {
     "task": "KV_WRITE_OPTIMIZATION_V1_9_2",

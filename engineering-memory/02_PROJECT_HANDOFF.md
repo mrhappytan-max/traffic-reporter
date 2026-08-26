@@ -17,8 +17,8 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | cfc31569f3b8d721290509cab69448fc1482c354 |
-| Snapshot generated at | 2026-08-26T15:17:15.591Z |
+| Source main HEAD | 54dc2033c36202dcf911adf70908b58bd37e3375 |
+| Snapshot generated at | 2026-08-26T15:54:59.031Z |
 | Source working tree | dirty (5 changed source file(s)) |
 | Current version | V1.9.2 |
 | Current phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
@@ -139,10 +139,11 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 `GET /cctv/image/:id` 是另一個刻意公開的路由（LINE 伺服器要能抓圖），安全性靠 128-bit 不可猜 id + 程式強制的 15 分鐘到期檢查。
 
-## PBS Local Edge Filter Prototype（2026-08-26，LOCAL_ONLY，非本輪 Product Version 事件）
+## PBS Local Edge Filter Prototype（2026-08-26，feature branch／未 merge，非本輪 Product Version 事件）
 
 真人在 Windows 本機（`C:\Users\mrhap\traffic-reporter\pbs-relay`）完成了一個**與上面
-Production VPC Relay 完全分開**的邊緣篩選 Prototype：
+Production VPC Relay 完全分開**的邊緣篩選 Prototype，程式碼已由真人（經另一個
+Windows 本機 agent）commit/push 進 GitHub：
 
 ```
 既有 Relay（Production，未變動）：
@@ -158,24 +159,31 @@ PBS 官方 -> localMonitor.js -> localPrototype.js
         -> SHOULD_PUSH（目前只是判斷信號，尚未實際傳輸）
 ```
 
-**狀態**：`PBS_LOCAL_EDGE_FILTER_PROTOTYPE = COMPLETED_LOCAL_ONLY`。
-`LOCAL_PROTOTYPE_CODE_GITHUB_STATUS = NOT_COMMITTED`（程式碼只在 Windows 本機，
-GitHub 上沒有）。`WINDOWS_TO_CLOUDFLARE_PUSH = NOT_STARTED`。
-`PRODUCT_VERSION_BUMP = NO`（仍是 V1.9.2，這不是一次 Release）。
+**狀態**：`PBS_LOCAL_EDGE_FILTER_PROTOTYPE = COMMITTED_TO_FEATURE_BRANCH`。
+`LOCAL_PROTOTYPE_CODE_GITHUB_STATUS = COMMITTED_TO_FEATURE_BRANCH`
+（`feature/pbs-local-edge-filter-prototype`，commit
+`c34b52c045cd05eb4be01b91debe5ba002c73cb6`，**尚未 merge 進 main**）。
+`WINDOWS_TO_CLOUDFLARE_PUSH = NOT_STARTED`。`PRODUCTION_INTEGRATION =
+NOT_STARTED`。`PRODUCT_VERSION_BUMP = NO`（仍是 V1.9.2，這不是一次 Release）。
 
-真實測試：pbs-relay 68/68 通過。真實兩次本機執行（22:42:09 / 22:42:28
+真人回報 pbs-relay 68/68 通過；本 Cloud Session 另對同一 commit 做了一次獨立
+唯讀驗證（`git worktree` 乾淨簽出）：Prototype 自己新增的兩個測試檔（共 12 項）
+全數通過，但既有的 `pbsHandler.test.js`／`server.test.js` 在乾淨簽出下整檔載入
+失敗——與本專案已知、與此 Prototype 無關的既有 `cache.js` 缺口一致（詳見
+`07_KNOWN_ISSUES.md`）。真實兩次本機執行（22:42:09 / 22:42:28
 Asia/Taipei）證明 local state persistence／same-event dedup／no-change
 detection 三者皆正常。已知限制（`CLEAR_ON_SINGLE_ABSENCE = PROTOTYPE_ONLY`，
 正式 Production 前需重新決策）、六階段路線圖（PHASE A 觀察期 → … →
 PHASE F 需真人另行授權的 Production 評估）、長期目標架構，完整記錄於
 `07_KNOWN_ISSUES.md`；機器可讀欄位於 `SYSTEM_STATE.json` 的
-`pbsLocalEdgeFilterPrototype`。**下一個 Agent／新工程師讀到這裡就不需要重新拆
-PBS Relay 或重新研究 upstreamClient/cache/handler，也不會誤把這個 Prototype
-當成 Production 已完成的功能。**
+`pbsLocalEdgeFilterPrototype`。**下一個 Agent／新工程師讀到這裡：這個 feature
+branch 已在 GitHub 但尚未 merge 進 main，不要自行 merge、不要重新拆 PBS Relay
+或重新研究 upstreamClient/cache/handler，也不要誤把這個 Prototype 當成
+Production 已完成的功能。**
 
 ## Next action
 
-無待辦。PBS Prototype 若要推進 PHASE C 以後（Windows → Cloudflare 實際傳輸），需真人另行明確授權。下一個真實 Asia/Taipei 帳務日重置後，可蒐集 ≥3 筆 Production [kv-write-budget] log 樣本核實 V1.9.2 實際效果。若要開工，建議處理約 33 項過期斷言（見 07_KNOWN_ISSUES.md，既有技術債，與本輪無關）。
+無待辦。PBS Prototype feature branch 已在 GitHub 但尚未 merge main；merge、Windows → Cloudflare 實際傳輸、PHASE C 以後工作，皆需真人另行明確授權，不自行開始。下一個真實 Asia/Taipei 帳務日重置後，可蒐集 ≥3 筆 Production [kv-write-budget] log 樣本核實 V1.9.2 實際效果。若要開工，建議處理約 33 項過期斷言（見 07_KNOWN_ISSUES.md，既有技術債，與本輪無關）。
 
 ## Full history location
 
