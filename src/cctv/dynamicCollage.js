@@ -429,17 +429,67 @@ function getFreewayCctvMetadata(env, runCache) {
   return runCache.metadataPromise;
 }
 
-/** The actual (potentially slow) work — see prepareCctvImageForEvent, which races this against CCTV_PREPARE_BUDGET_MS. */
-async function prepareCctvImageWork(env, eligibility, runCache, codecOverride, deadlineAt) {
-  const metadata = await getFreewayCctvMetadata(env, runCache);
-  if (!metadata.ok) return { ok: false, reason: metadata.reason };
+// V1.9.0 (root-cause forensics, 國3 96K+700 2026-08-26 — see
+// test/cctvQuadPrepareForensics.test.js for the full writeup) — pulls
+// only the plain-number/string fields off a stageTracker, never
+// anything else that might get attached to it. This is the ONLY place
+// that decides what "the trace" is allowed to contain, so a future
+// field added to stageTracker can never leak something unintended by
+// accident.
+function snapshotStageTiming(stageTracker) {
+  if (!stageTracker) return {};
+  const {
+    metadataElapsedMs,
+    cameraSelectionElapsedMs,
+    frameFetchElapsedMs,
+    collageElapsedMs,
+    successfulFrameCount,
+    failedFrameCount,
+    r2PublishElapsedMs,
+  } = stageTracker;
+  return {
+    metadataElapsedMs,
+    cameraSelectionElapsedMs,
+    frameFetchElapsedMs,
+    collageElapsedMs,
+    successfulFrameCount,
+    failedFrameCount,
+    r2PublishElapsedMs,
+  };
+}
 
+/**
+ * The actual (potentially slow) work — see prepareCctvImageForEvent, which
+ * races this against CCTV_PREPARE_BUDGET_MS.
+ *
+ * V1.9.0 — `stageTracker` (a plain {stage:string} object the CALLER
+ * creates fresh per attempt, same idiom prepareSingleCctvImageWork
+ * already used) is mutated at each stage boundary PURELY so the caller
+ * can report `timeoutStage` — and now stage-level elapsed
+ * times/frame counts — if the OUTER withTimeout race's timer wins while
+ * this function is still mid-flight. Root cause of the 09:20 incident's
+ * missing completion log: this function previously carried no
+ * stageTracker at all, so a quad (accident) prepare-timeout NEVER
+ * carried a stage, unlike the single (dynamic-shoulder) path, which
+ * already had exactly this mechanism. See this module's own forensics
+ * comment block at the top of test/cctvQuadPrepareForensics.test.js.
+ */
+async function prepareCctvImageWork(env, eligibility, runCache, codecOverride, deadlineAt, stageTracker) {
+  if (stageTracker) stageTracker.stage = 'metadata';
+  const metadataStartedAt = Date.now();
+  const metadata = await getFreewayCctvMetadata(env, runCache);
+  if (stageTracker) stageTracker.metadataElapsedMs = Date.now() - metadataStartedAt;
+  if (!metadata.ok) return { ok: false, reason: metadata.reason, ...snapshotStageTiming(stageTracker) };
+
+  if (stageTracker) stageTracker.stage = 'camera-selection';
+  const cameraSelectionStartedAt = Date.now();
   const candidates = selectFourQuadrantCandidates(metadata.records, {
     roadId: eligibility.roadId,
     roadNamePattern: eligibility.roadNamePattern,
     targetKm: eligibility.targetKm,
   });
-  if (candidates.every((c) => c === null)) return { ok: false, reason: 'no-camera' };
+  if (stageTracker) stageTracker.cameraSelectionElapsedMs = Date.now() - cameraSelectionStartedAt;
+  if (candidates.every((c) => c === null)) return { ok: false, reason: 'no-camera', ...snapshotStageTiming(stageTracker) };
 
   const headerLines = buildCollageHeaderLines(new Date(), {
     roadShortName: eligibility.roadShortName,
@@ -448,14 +498,36 @@ async function prepareCctvImageWork(env, eligibility, runCache, codecOverride, d
 
   // Give each (parallel) frame fetch whatever's left of the overall
   // budget, not always the full default — see module comment.
+  //
+  // V1.9.0 — `stage` is set to 'frame-fetch' for the ENTIRE combined
+  // fetch+compose call below: composeCollageFromCandidates does both
+  // steps behind one await with no yield point this function can
+  // observe from outside. If the outer race times out during this
+  // call, `timeoutStage` will read 'frame-fetch' whether the slow part
+  // was actually the network fetch or the JPEG compose — an honestly
+  // disclosed limit of this instrumentation, not a claim of
+  // fetch/compose-level precision. frameFetchElapsedMs/collageElapsedMs
+  // below DO separate the two, but only get attached to stageTracker
+  // (and are only real numbers, not undefined) once this call actually
+  // returns — which, if the outer race wins first, may never happen
+  // before the trace is read. See composeCollageFromCandidates's own
+  // V1.9.0 comment for how those two numbers are measured.
+  if (stageTracker) stageTracker.stage = 'frame-fetch';
   const frameTimeoutMs = Math.max(MIN_FRAME_TIMEOUT_MS, deadlineAt - Date.now());
   const composed = await composeCollageFromCandidates(candidates, headerLines, {
     targetKm: eligibility.targetKm,
     codecOverride,
     frameTimeoutMs,
   });
-  if (!composed.ok) return { ok: false, reason: composed.reason }; // 'no-frames' — all 4 frame fetch/decode attempts failed
+  if (stageTracker) {
+    stageTracker.frameFetchElapsedMs = composed.frameFetchElapsedMs;
+    stageTracker.collageElapsedMs = composed.collageElapsedMs;
+    stageTracker.successfulFrameCount = composed.successfulFrameCount;
+    stageTracker.failedFrameCount = composed.failedFrameCount;
+  }
+  if (!composed.ok) return { ok: false, reason: composed.reason, ...snapshotStageTiming(stageTracker) }; // 'no-frames' — all 4 frame fetch/decode attempts failed
 
+  if (stageTracker) stageTracker.stage = 'r2-publish';
   // Re-check the deadline right before the expensive, side-effecting R2
   // write — per correction: if we're already past the deadline (the
   // race in prepareCctvImageForEvent may not have "noticed" yet, since
@@ -463,16 +535,25 @@ async function prepareCctvImageWork(env, eligibility, runCache, codecOverride, d
   // new R2 object at all. The outer race would discard this result
   // either way, but this avoids the wasted write outright rather than
   // relying solely on the caller's race to make it moot.
-  if (Date.now() >= deadlineAt) return { ok: false, reason: 'prepare-timeout' };
+  if (Date.now() >= deadlineAt) {
+    return { ok: false, reason: 'prepare-timeout', timeoutStage: 'r2-publish', ...snapshotStageTiming(stageTracker) };
+  }
 
+  const r2PublishStartedAt = Date.now();
   const published = await publishCollageImage(env.CCTV_IMAGES, composed.bytes);
-  if (!published.ok) return { ok: false, reason: 'r2-publish-failed' };
+  if (stageTracker) stageTracker.r2PublishElapsedMs = Date.now() - r2PublishStartedAt;
+  if (!published.ok) return { ok: false, reason: 'r2-publish-failed', ...snapshotStageTiming(stageTracker) };
 
   // V57: imageExpiresAt comes straight from the R2 object's own
   // customMetadata (publishedImage.js), never recomputed here — a
   // recomputed value would drift LATER than the real expiry and could
   // hand a consumer a URL that stops resolving mid-delivery.
-  return { ok: true, imageUrl: publicImageUrl(env, published.id), imageExpiresAt: published.expiresAt };
+  return {
+    ok: true,
+    imageUrl: publicImageUrl(env, published.id),
+    imageExpiresAt: published.expiresAt,
+    ...snapshotStageTiming(stageTracker),
+  };
 }
 
 /**
@@ -829,9 +910,18 @@ export async function prepareCctvImageForEvent(
   if (budgetMs <= 0) return { ok: false, reason: 'run-budget-exhausted' };
 
   const deadlineAt = Date.now() + budgetMs;
-  const work = prepareCctvImageWork(env, eligibility, runCache, codecOverride, deadlineAt).catch(() => ({
+  // V1.9.0 — same stageTracker idiom prepareSingleCctvImageForEvent
+  // already used (see that function's own comment): mutated by `work`
+  // as it progresses, read HERE only lazily, at the exact moment the
+  // outer race's timer fires — never at call time, when it would just
+  // always read 'metadata'. This is what fixes the confirmed root cause
+  // of the 09:20 incident's missing completion log: prior to this
+  // round, a quad (accident) prepare-timeout carried no stage at all.
+  const stageTracker = { stage: 'metadata' };
+  const work = prepareCctvImageWork(env, eligibility, runCache, codecOverride, deadlineAt, stageTracker).catch(() => ({
     ok: false,
     reason: 'prepare-error',
+    ...snapshotStageTiming(stageTracker),
   }));
 
   // A timeout is NOT a LINE failure and is NEVER carried into the next
@@ -844,5 +934,16 @@ export async function prepareCctvImageForEvent(
   // race is lost. withTimeout (unlike a bare Promise.race) also cancels
   // the timer if `work` wins first, so a fast success doesn't leave a
   // stray timer running.
-  return withTimeout(work, budgetMs, { ok: false, reason: 'prepare-timeout' });
+  //
+  // V1.9.0 — a distinct sentinel is raced (not a pre-built result
+  // object) so `stageTracker.stage`/timing fields are read ONLY once the
+  // timer has actually fired, capturing whatever `work` had genuinely
+  // reached by then — never re-reading it after this call resolves,
+  // which is exactly the "禁止再出現 prepare-timeout 但 timeoutStage =
+  // null" rule this round enforces on the quad path.
+  const TIMED_OUT = Symbol('quad-cctv-timed-out');
+  const raced = await withTimeout(work, budgetMs, TIMED_OUT);
+  return raced === TIMED_OUT
+    ? { ok: false, reason: 'prepare-timeout', timeoutStage: stageTracker.stage, ...snapshotStageTiming(stageTracker) }
+    : raced;
 }

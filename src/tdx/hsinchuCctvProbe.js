@@ -1095,9 +1095,19 @@ export async function composeCollageFromCache(env, codecOverride) {
  *   always spending up to the full default regardless of how much
  *   budget remains. Fixed-target admin callers never pass this — they
  *   keep the original default.
- * @returns {Promise<{ok:true, bytes:ArrayBuffer, contentType:'image/jpeg'}|{ok:false, reason:'no-frames', message:string}>}
+ * @returns {Promise<{ok:true, bytes:ArrayBuffer, contentType:'image/jpeg', frameFetchElapsedMs:number, collageElapsedMs:number, successfulFrameCount:number, failedFrameCount:number}|{ok:false, reason:'no-frames', message:string, frameFetchElapsedMs:number, collageElapsedMs:number, successfulFrameCount:number, failedFrameCount:number}>}
+ *   V1.9.0 (root-cause forensics, 國3 96K+700 2026-08-26) — the four
+ *   timing/count fields are ADDITIVE instrumentation only, on every
+ *   outcome (never just the success path): plain numbers, never a
+ *   stream URL, candidate record, or frame byte. They exist so a
+ *   caller racing this against a hard time budget (dynamicCollage.js)
+ *   can tell, after the fact, whether a timeout happened during the
+ *   frame-fetch batch or during compose — something no caller of this
+ *   function could previously observe at all when the OUTER race
+ *   discarded this result for arriving too late.
  */
 export async function composeCollageFromCandidates(candidates, headerLines, { targetKm = TARGET_KM, codecOverride, frameTimeoutMs } = {}) {
+  const frameFetchStartedAt = Date.now();
   const frameResults = await Promise.all(
     candidates.map(async (candidate) => {
       if (!candidate) return null;
@@ -1113,6 +1123,14 @@ export async function composeCollageFromCandidates(candidates, headerLines, { ta
       }
     })
   );
+  // V1.9.0 — this covers the WHOLE batch (all 4 parallel fetches — see
+  // dynamicCollage.js's own test D, which proved this is Promise.all,
+  // not a serial loop), not any one candidate. A single slow/hung
+  // candidate is exactly what stretches this number, since Promise.all
+  // does not resolve until every candidate has either succeeded or hit
+  // its own per-candidate AbortSignal.timeout — proved by that same
+  // round's tests B/C.
+  const frameFetchElapsedMs = Date.now() - frameFetchStartedAt;
 
   const cells = QUADRANTS.map((quadrant, i) => {
     const candidate = candidates[i];
@@ -1138,17 +1156,38 @@ export async function composeCollageFromCandidates(candidates, headerLines, { ta
   const anyFetchedOk = cells.some((c) => c.status === 'ok' && c.jpegBytes);
   const codec = anyFetchedOk ? codecOverride || (await loadProductionJpegCodec()) : { decodeJpeg: undefined, encodeJpeg: undefined };
 
+  // V1.9.0 — separately timed from frame-fetch above: covers codec
+  // load (WASM instantiate, on a cold path — see this function's own
+  // lazy-load comment just above) plus SERIAL per-cell JPEG decode/
+  // encode (collage.js's composeQuadrantCollage decodes one candidate
+  // at a time, in a plain for-loop — proved by that round's test E,
+  // which showed a slow decodeJpeg alone is enough to exhaust the same
+  // budget this function's caller races against).
+  const collageStartedAt = Date.now();
   const result = await composeQuadrantCollage(cells, {
     decodeJpeg: codec.decodeJpeg,
     encodeJpeg: codec.encodeJpeg,
     titleLine: headerLines.titleLine,
     subtitleLine: headerLines.subtitleLine,
   });
+  const collageElapsedMs = Date.now() - collageStartedAt;
+
+  // V1.9.0 — out of the candidates that existed at all (a `null` slot
+  // was never a candidate and never a "failure"): how many produced a
+  // genuinely DECODED frame (composeQuadrantCollage's own
+  // successfulDecodedFrames, returned here as filledCount — the single
+  // source of truth already established; a 200 response that isn't a
+  // valid JPEG does NOT count) versus how many did not.
+  const attemptedCandidateCount = candidates.filter((c) => c !== null).length;
+  const successfulFrameCount = result.filledCount ?? 0;
+  const failedFrameCount = attemptedCandidateCount - successfulFrameCount;
+  const timing = { frameFetchElapsedMs, collageElapsedMs, successfulFrameCount, failedFrameCount };
+
   if (!result.ok) {
-    return { ok: false, reason: 'no-frames', message: 'No CCTV footage available for any quadrant.' };
+    return { ok: false, reason: 'no-frames', message: 'No CCTV footage available for any quadrant.', ...timing };
   }
 
-  return { ok: true, bytes: result.bytes, contentType: result.contentType };
+  return { ok: true, bytes: result.bytes, contentType: result.contentType, ...timing };
 }
 
 const COMPOSE_FAILURE_STATUS = { 'no-kv': 503, 'no-cache': 404, 'no-frames': 502 };

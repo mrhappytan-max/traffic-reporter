@@ -34,17 +34,36 @@
 // this; they still get a commit.
 //
 // SCHEME SWITCH (三段式版本治理, 2026-08-25): the four-part V1.8.7.x
-// pattern above is RETIRED as of this value. V1.8.7.14 is the last
-// four-part version and stays here, untouched, until the next real
-// Production runtime release — that release is the one that bumps
-// APP_VERSION to 'V1.9.0' and switches to three-part semantic versioning:
+// pattern above is RETIRED. V1.8.7.14 was the last four-part version.
+// Three-part semantic versioning is now ACTIVE:
 //   bug fix                        -> patch   (V1.9.0 -> V1.9.1 -> ...)
 //   clear new feature / arch phase -> minor   (V1.9.x -> V1.10.0)
 //   large incompatible change      -> major   (-> V2.0.0)
 // Do NOT pre-bump this constant for a governance-only round; it moves
 // only in the same commit as the runtime change it describes.
+//
+// V1.9.0 (2026-08-26) — root-cause fix, quad (accident) CCTV prepare-
+// timeout observability. A real 國3 96K+700 accident at 09:20 pushed
+// LINE text with no image and NO completion log of any kind; the same
+// event succeeded fully 10 minutes later with no code change in
+// between. Confirmed root cause: cctv/dynamicCollage.js's quad path
+// carried no stage tracking at all — unlike the single (dynamic-
+// shoulder) path, a quad 'prepare-timeout' never recorded which stage
+// was in flight, so a genuine one-time slow external dependency
+// (frame fetch, JPEG compose, or R2 publish — all three are proven to
+// share the same time budget) was structurally invisible. Fixed by
+// giving the quad path the same stageTracker mechanism the single path
+// already had, plus per-stage elapsed timing and frame counts on every
+// outcome — see test/cctvQuadPrepareForensics.test.js for the full
+// forensic writeup and the deterministic reproductions (A-G) that
+// prove FRAME_FETCH_MODE=PARALLEL, that a slow candidate can hold up
+// compose for the whole quad, and that compose/R2-publish time is
+// charged against the same budget as frame-fetch. No retry, no second
+// fetch attempt, no budget-number change, no fallback — RETRY_REQUIRED
+// = NO for this round; this is pure observability plus the outer
+// budget's pre-existing behavior, unchanged.
 
-export const APP_VERSION = 'V1.8.7.14';
+export const APP_VERSION = 'V1.9.0';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

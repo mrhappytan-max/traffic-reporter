@@ -832,6 +832,23 @@ export async function runLineBroadcast(
         if (cctv.frameFetchDurationMs !== undefined) traceForEvent.frameFetchDurationMs = cctv.frameFetchDurationMs;
         if (cctv.r2PublishDurationMs !== undefined) traceForEvent.r2PublishDurationMs = cctv.r2PublishDurationMs;
         if (cctv.timeoutStage !== undefined) traceForEvent.timeoutStage = cctv.timeoutStage;
+        // V1.9.0 (root-cause forensics, 國3 96K+700 2026-08-26) — same
+        // only-present-when-that-stage-was-reached pattern as the
+        // single-camera fields above, but only ever set by the QUAD
+        // (accident) path (cctv/dynamicCollage.js's prepareCctvImageWork,
+        // via its stageTracker) — the single path's result never carries
+        // these, so a dynamic-shoulder trace entry keeps them all null.
+        // Deliberately distinct field names from frameFetchDurationMs/
+        // r2PublishDurationMs above (single-camera, ONE fetch) so a quad
+        // event's BATCH timing (up to 4 concurrent fetches) is never
+        // conflated with a single-camera event's own single-fetch timing.
+        if (cctv.metadataElapsedMs !== undefined) traceForEvent.metadataElapsedMs = cctv.metadataElapsedMs;
+        if (cctv.cameraSelectionElapsedMs !== undefined) traceForEvent.cameraSelectionElapsedMs = cctv.cameraSelectionElapsedMs;
+        if (cctv.frameFetchElapsedMs !== undefined) traceForEvent.frameFetchElapsedMs = cctv.frameFetchElapsedMs;
+        if (cctv.collageElapsedMs !== undefined) traceForEvent.collageElapsedMs = cctv.collageElapsedMs;
+        if (cctv.successfulFrameCount !== undefined) traceForEvent.successfulFrameCount = cctv.successfulFrameCount;
+        if (cctv.failedFrameCount !== undefined) traceForEvent.failedFrameCount = cctv.failedFrameCount;
+        if (cctv.r2PublishElapsedMs !== undefined) traceForEvent.r2PublishElapsedMs = cctv.r2PublishElapsedMs;
 
         if (cctv.ok) {
           result.cctvImagesAttachedCount += 1;
@@ -1002,6 +1019,15 @@ export async function runLineBroadcast(
     if (product.frameFetchDurationMs !== undefined) trace.frameFetchDurationMs = product.frameFetchDurationMs;
     if (product.r2PublishDurationMs !== undefined) trace.r2PublishDurationMs = product.r2PublishDurationMs;
     if (product.timeoutStage !== undefined) trace.timeoutStage = product.timeoutStage;
+    // V1.9.0 — same quad-only stage-diagnostic fields as the real push
+    // path above (see traceForEvent.metadataElapsedMs etc. there).
+    if (product.metadataElapsedMs !== undefined) trace.metadataElapsedMs = product.metadataElapsedMs;
+    if (product.cameraSelectionElapsedMs !== undefined) trace.cameraSelectionElapsedMs = product.cameraSelectionElapsedMs;
+    if (product.frameFetchElapsedMs !== undefined) trace.frameFetchElapsedMs = product.frameFetchElapsedMs;
+    if (product.collageElapsedMs !== undefined) trace.collageElapsedMs = product.collageElapsedMs;
+    if (product.successfulFrameCount !== undefined) trace.successfulFrameCount = product.successfulFrameCount;
+    if (product.failedFrameCount !== undefined) trace.failedFrameCount = product.failedFrameCount;
+    if (product.r2PublishElapsedMs !== undefined) trace.r2PublishElapsedMs = product.r2PublishElapsedMs;
   }
 
   if (!anyWriteHappened && prunedKeys.length > 0) {
@@ -1157,6 +1183,15 @@ async function topUpSharedFeedCctvImages(
       if (cctv.singleSlotLimit !== undefined) product.singleSlotLimit = cctv.singleSlotLimit; // V1.8.7.1
       if (cctv.frameFetchDurationMs !== undefined) product.frameFetchDurationMs = cctv.frameFetchDurationMs; // V1.8.7.3
       if (cctv.r2PublishDurationMs !== undefined) product.r2PublishDurationMs = cctv.r2PublishDurationMs; // V1.8.7.3
+      // V1.9.0 — quad-only stage-diagnostic fields (see prior block's
+      // own comment for the full explanation).
+      if (cctv.metadataElapsedMs !== undefined) product.metadataElapsedMs = cctv.metadataElapsedMs;
+      if (cctv.cameraSelectionElapsedMs !== undefined) product.cameraSelectionElapsedMs = cctv.cameraSelectionElapsedMs;
+      if (cctv.frameFetchElapsedMs !== undefined) product.frameFetchElapsedMs = cctv.frameFetchElapsedMs;
+      if (cctv.collageElapsedMs !== undefined) product.collageElapsedMs = cctv.collageElapsedMs;
+      if (cctv.successfulFrameCount !== undefined) product.successfulFrameCount = cctv.successfulFrameCount;
+      if (cctv.failedFrameCount !== undefined) product.failedFrameCount = cctv.failedFrameCount;
+      if (cctv.r2PublishElapsedMs !== undefined) product.r2PublishElapsedMs = cctv.r2PublishElapsedMs;
       result.cctvFeedOnlyAttachedCount += 1;
     } else {
       result.cctvFeedOnlySkippedByReason[cctv.reason] = (result.cctvFeedOnlySkippedByReason[cctv.reason] || 0) + 1;
@@ -1165,6 +1200,13 @@ async function topUpSharedFeedCctvImages(
       if (cctv.singleSlotLimit !== undefined) product.singleSlotLimit = cctv.singleSlotLimit; // V1.8.7.1
       if (cctv.frameFetchDurationMs !== undefined) product.frameFetchDurationMs = cctv.frameFetchDurationMs; // V1.8.7.3
       if (cctv.timeoutStage !== undefined) product.timeoutStage = cctv.timeoutStage; // V1.8.7.3
+      if (cctv.metadataElapsedMs !== undefined) product.metadataElapsedMs = cctv.metadataElapsedMs; // V1.9.0
+      if (cctv.cameraSelectionElapsedMs !== undefined) product.cameraSelectionElapsedMs = cctv.cameraSelectionElapsedMs; // V1.9.0
+      if (cctv.frameFetchElapsedMs !== undefined) product.frameFetchElapsedMs = cctv.frameFetchElapsedMs; // V1.9.0
+      if (cctv.collageElapsedMs !== undefined) product.collageElapsedMs = cctv.collageElapsedMs; // V1.9.0
+      if (cctv.successfulFrameCount !== undefined) product.successfulFrameCount = cctv.successfulFrameCount; // V1.9.0
+      if (cctv.failedFrameCount !== undefined) product.failedFrameCount = cctv.failedFrameCount; // V1.9.0
+      if (cctv.r2PublishElapsedMs !== undefined) product.r2PublishElapsedMs = cctv.r2PublishElapsedMs; // V1.9.0
     }
   }
 

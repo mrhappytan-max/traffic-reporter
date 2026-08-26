@@ -285,6 +285,26 @@ export function buildTraceEntry({
   frameFetchDurationMs = null, // number | null — ms extractFirstJpegFrame's fetch+body-read took, when it was reached
   r2PublishDurationMs = null, // number | null — ms publishCollageImage's R2 PUT took, when it was reached
   timeoutStage = null, // 'metadata' | 'candidate-selection' | 'frame-fetch' | 'r2-publish' | null — which stage was in flight when this attempt's budget ran out (only set on a 'prepare-timeout' outcome)
+  // V1.9.0 (root-cause forensics, 國3 96K+700 2026-08-26) — the QUAD
+  // (accident) path's own stage-level breakdown, only ever set by
+  // cctv/dynamicCollage.js's prepareCctvImageWork (via its stageTracker
+  // — see that function's own comment). Deliberately distinct field
+  // names from frameFetchDurationMs/r2PublishDurationMs above: those are
+  // single-camera (ONE fetch); these cover the quad path's BATCH of up
+  // to 4 concurrent frame fetches plus the multi-frame collage compose
+  // step, which the single-camera path has no equivalent of at all.
+  // Plain numbers only, on EVERY outcome (success, failure, or timeout)
+  // — never a stream URL, candidate record, or frame byte. Added
+  // specifically because the quad path's 'prepare-timeout' used to
+  // carry NO stage/timing information whatsoever (the exact
+  // "09:20 沒有 completion log" symptom this round investigates).
+  metadataElapsedMs = null, // number | null — ms the (memoized) metadata read took
+  cameraSelectionElapsedMs = null, // number | null — ms selectFourQuadrantCandidates took (pure/local, expected near-0)
+  frameFetchElapsedMs = null, // number | null — ms the whole 4-candidate PARALLEL fetch batch took (bounded by the SLOWEST candidate — see composeCollageFromCandidates's own comment)
+  collageElapsedMs = null, // number | null — ms composeQuadrantCollage took (WASM codec load + SERIAL per-cell JPEG decode/encode)
+  successfulFrameCount = null, // number | null — how many of the existing (non-null) candidates produced a genuinely DECODED frame
+  failedFrameCount = null, // number | null — how many existing candidates did not (fetch failure OR decode failure) — a `null` (empty) quadrant slot is never counted as a failure
+  r2PublishElapsedMs = null, // number | null — ms the quad path's own R2 PUT took, when it was reached
 } = {}) {
   const anomalyDetail = event && event.nonCollisionAnomalyDetail ? event.nonCollisionAnomalyDetail : null;
   const upstream = (event && event.pipelineTraceUpstream) || buildUpstreamSnapshot({});
@@ -398,6 +418,14 @@ export function buildTraceEntry({
       frameFetchDurationMs,
       r2PublishDurationMs,
       timeoutStage,
+      // V1.9.0 — see the param comments above; quad path only.
+      metadataElapsedMs,
+      cameraSelectionElapsedMs,
+      frameFetchElapsedMs,
+      collageElapsedMs,
+      successfulFrameCount,
+      failedFrameCount,
+      r2PublishElapsedMs,
     },
     delivery: {
       lineAttempted,

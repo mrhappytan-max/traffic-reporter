@@ -25,14 +25,14 @@ const VERSION_PATTERN = /^V\d+\.\d+\.\d+(?:\.\d+)?$/;
 
 test('1. the canonical version is a single well-formed value', () => {
   assert.match(APP_VERSION, VERSION_PATTERN);
-  // One product line only — never a parallel V1/V2/V57.x series. Scoped to
-  // the current line's prefix, not to VERSION_PATTERN's four-part shape:
-  // three-part versioning (三段式版本治理, 2026-08-25) retires the
-  // four-part V1.8.7.x pattern starting at V1.9.0, the next real
-  // Production runtime release. THIS assertion's prefix must move to
-  // 'V1.9.' in that same commit — VERSION_PATTERN itself already accepts
-  // both shapes and needs no change.
-  assert.ok(APP_VERSION.startsWith('V1.8.7.'), 'the sole official series is currently V1.8.7.x');
+  // One product line only — never a parallel V1/V2/V57.x series.
+  // V1.9.0 (2026-08-26) is the first three-part release — the prefix
+  // check below moved from 'V1.8.7.' to 'V1.9.' in the SAME commit that
+  // bumped APP_VERSION, per this file's own standing rule (see test 6's
+  // comment and src/version.js's own scheme-switch note). VERSION_PATTERN
+  // itself already accepted both four-part and three-part shapes and
+  // needed no change.
+  assert.ok(APP_VERSION.startsWith('V1.9.'), 'the current official series is V1.9.x');
   assert.equal(typeof SCHEMA_VERSION, 'number');
 });
 
