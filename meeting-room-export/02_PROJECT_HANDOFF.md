@@ -17,10 +17,10 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | 54dc2033c36202dcf911adf70908b58bd37e3375 |
-| Snapshot generated at | 2026-08-26T15:54:59.031Z |
+| Source main HEAD | 2f820216b57e3acd7c257d040034301027fc5a90 |
+| Snapshot generated at | 2026-08-26T16:49:51.577Z |
 | Source working tree | dirty (5 changed source file(s)) |
-| Current version | V1.9.2 |
+| Current version | V1.9.3 |
 | Current phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
 
 `Source main HEAD` 是這份快照所描述的正式 main commit（取自 `origin/main`），**不是**包含本檔案自己的那個 commit——兩者刻意分開，避免 Git 自我參照循環。詳見 `SYSTEM_STATE.json` 的 `sourceMainHead` / `exportArtifactCommit`。
@@ -98,7 +98,7 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 | 欄位 | 值 |
 |---|---|
-| Latest completed | V1.9.2 |
+| Latest completed | V1.9.3 |
 | package.json version | 0.1.0 |
 | Production status | DEPLOYED |
 | Production verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
@@ -164,7 +164,8 @@ PBS 官方 -> localMonitor.js -> localPrototype.js
 （`feature/pbs-local-edge-filter-prototype`，commit
 `c34b52c045cd05eb4be01b91debe5ba002c73cb6`，**尚未 merge 進 main**）。
 `WINDOWS_TO_CLOUDFLARE_PUSH = NOT_STARTED`。`PRODUCTION_INTEGRATION =
-NOT_STARTED`。`PRODUCT_VERSION_BUMP = NO`（仍是 V1.9.2，這不是一次 Release）。
+NOT_STARTED`。`PRODUCT_VERSION_BUMP = NO`（此 Prototype 本身不是 Release；Production
+版本照自己節奏推進，與此無關，目前為 V1.9.3）。
 
 真人回報 pbs-relay 68/68 通過；本 Cloud Session 另對同一 commit 做了一次獨立
 唯讀驗證（`git worktree` 乾淨簽出）：Prototype 自己新增的兩個測試檔（共 12 項）
@@ -183,7 +184,7 @@ Production 已完成的功能。**
 
 ## Next action
 
-無待辦。PBS Prototype feature branch 已在 GitHub 但尚未 merge main；merge、Windows → Cloudflare 實際傳輸、PHASE C 以後工作，皆需真人另行明確授權，不自行開始。下一個真實 Asia/Taipei 帳務日重置後，可蒐集 ≥3 筆 Production [kv-write-budget] log 樣本核實 V1.9.2 實際效果。若要開工，建議處理約 33 項過期斷言（見 07_KNOWN_ISSUES.md，既有技術債，與本輪無關）。
+無待辦。下一個真實 Asia/Taipei 帳務日重置後，可蒐集 ≥3 筆 Production [kv-write-budget] log 樣本核實 V1.9.3 實際效果（比對 healthSnapshot/pbsFetch/pipelineTraceBatch 分類數字）。PBS Prototype feature branch 仍在 GitHub 但尚未 merge main；merge、Windows → Cloudflare 實際傳輸，皆需真人另行明確授權，不自行開始。若要開工，建議處理約 33 項過期斷言（見 07_KNOWN_ISSUES.md，既有技術債，與本輪無關）。
 
 ## Full history location
 

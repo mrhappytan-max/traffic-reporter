@@ -9,20 +9,20 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V1.9.2（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | 54dc2033c36202dcf911adf70908b58bd37e3375 |
+| Current Version | V1.9.3（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | 2f820216b57e3acd7c257d040034301027fc5a90 |
 | Source main HEAD resolved from | origin/main |
 | Source working tree | dirty (5 changed source file(s)) |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
 | Current Phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
-| Current Task | none（無進行中工作）。Latest completed PRODUCT release = KV_WRITE_OPTIMIZATION_V1_9_2，status = SEALED。CURRENT_PRODUCT_VERSION = V1.9.2（未變動）。本輪為既有文件記錄的最新事實補記（非 Release）：PBS_LOCAL_EDGE_FILTER_PROTOTYPE 狀態由 NOT_COMMITTED 更正為 COMMITTED_TO_FEATURE_BRANCH——Prototype 程式碼已由真人（經另一 Windows 本機 agent）commit/push 進 GitHub feature branch feature/pbs-local-edge-filter-prototype（commit c34b52c045cd05eb4be01b91debe5ba002c73cb6），尚未 merge 進 main，WINDOWS_TO_CLOUDFLARE_PUSH = NOT_STARTED。本 Cloud Session 已獨立唯讀驗證該 commit（git fetch/show/diff/merge-base + worktree 測試）。詳見 SYSTEM_STATE.json 的 pbsLocalEdgeFilterPrototype 與 07_KNOWN_ISSUES.md。雲端治理維持 V2：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源。 |
-| Latest Completed Version | V1.9.2 |
+| Current Task | none（無進行中工作）。Latest completed PRODUCT release = KV_WRITE_OPTIMIZATION_V1_9_3_PHASE_2，status = SEALED。CURRENT_PRODUCT_VERSION = V1.9.3。本輪：health:snapshot:v1 改 WRITE_ON_CHANGE（含排除 scheduledThisRun/sleeping/broadcast 區塊，本輪自己的決定性 fixture 找到的必要排除）、PBS 固定抓取改每 30 分鐘僅 07:00-22:00 Asia/Taipei（Cron 本身不變）、Pipeline Trace 新增 NO_RELEVANT_CHANGE 跳過整批寫入。決定性 fixture（跑滿一天 144 次真實 Cron tick）實測 QUIET/NORMAL/HIGH EVENT DAY writes/day = 5/21/27，遠低於施工令目標。NEW FAILURES = 0（1339 項，35 項既有失敗不變）。詳見 SYSTEM_STATE.json 的 taskSeal 與 07_KNOWN_ISSUES.md。雲端治理維持 V2：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源。 |
+| Latest Completed Version | V1.9.3 |
 | Known Blocker | 無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md |
 | Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 無待辦。PBS Prototype feature branch 已在 GitHub 但尚未 merge main；merge、Windows → Cloudflare 實際傳輸、PHASE C 以後工作，皆需真人另行明確授權，不自行開始。下一個真實 Asia/Taipei 帳務日重置後，可蒐集 ≥3 筆 Production [kv-write-budget] log 樣本核實 V1.9.2 實際效果。若要開工，建議處理約 33 項過期斷言（見 07_KNOWN_ISSUES.md，既有技術債，與本輪無關）。 |
-| Export Generated At | 2026-08-26T15:54:59.031Z |
+| Next Action | 無待辦。下一個真實 Asia/Taipei 帳務日重置後，可蒐集 ≥3 筆 Production [kv-write-budget] log 樣本核實 V1.9.3 實際效果（比對 healthSnapshot/pbsFetch/pipelineTraceBatch 分類數字）。PBS Prototype feature branch 仍在 GitHub 但尚未 merge main；merge、Windows → Cloudflare 實際傳輸，皆需真人另行明確授權，不自行開始。若要開工，建議處理約 33 項過期斷言（見 07_KNOWN_ISSUES.md，既有技術債，與本輪無關）。 |
+| Export Generated At | 2026-08-26T16:49:51.577Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
@@ -66,7 +66,8 @@ NEW/UPDATED/CLEARED/UNCHANGED 判斷，輸出 `SHOULD_PUSH` 信號。**這段程
 commit `c34b52c045cd05eb4be01b91debe5ba002c73cb6`，**尚未 merge 進 main**），
 Windows → Cloudflare 的實際傳輸尚未建立（`WINDOWS_TO_CLOUDFLARE_PUSH =
 NOT_STARTED`）。**不影響本專案任何 Production runtime**——`PRODUCT_VERSION_BUMP =
-NO`，版本仍是 `V1.9.2`。完整架構、獨立驗證後的真實測試結果、已知限制與路線圖 →
+NO`，版本仍照 Production 自己的節奏推進（與此 Prototype 無關），目前為 `V1.9.3`。
+完整架構、獨立驗證後的真實測試結果、已知限制與路線圖 →
 `07_KNOWN_ISSUES.md`；機器可讀狀態 → `SYSTEM_STATE.json` 的
 `pbsLocalEdgeFilterPrototype`。**下一個 Agent 不要假設這個 feature branch 已經
 merge 進 main，不要自行 merge，也不要自行開始 Windows → Cloudflare 的正式傳輸。**

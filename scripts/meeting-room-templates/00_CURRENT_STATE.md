@@ -66,7 +66,8 @@ NEW/UPDATED/CLEARED/UNCHANGED 判斷，輸出 `SHOULD_PUSH` 信號。**這段程
 commit `c34b52c045cd05eb4be01b91debe5ba002c73cb6`，**尚未 merge 進 main**），
 Windows → Cloudflare 的實際傳輸尚未建立（`WINDOWS_TO_CLOUDFLARE_PUSH =
 NOT_STARTED`）。**不影響本專案任何 Production runtime**——`PRODUCT_VERSION_BUMP =
-NO`，版本仍是 `V1.9.2`。完整架構、獨立驗證後的真實測試結果、已知限制與路線圖 →
+NO`，版本仍照 Production 自己的節奏推進（與此 Prototype 無關），目前為 `V1.9.3`。
+完整架構、獨立驗證後的真實測試結果、已知限制與路線圖 →
 `07_KNOWN_ISSUES.md`；機器可讀狀態 → `SYSTEM_STATE.json` 的
 `pbsLocalEdgeFilterPrototype`。**下一個 Agent 不要假設這個 feature branch 已經
 merge 進 main，不要自行 merge，也不要自行開始 Windows → Cloudflare 的正式傳輸。**

@@ -4,32 +4,20 @@
 
 ## 已知、無關、既有的測試失敗基準線
 
-**實測基準（2026-08-26 重新量測，V1.9.2 施工後，非回憶）：`npm test` 共 1300 項，穩定 35 項失敗。**
+**實測基準（2026-08-26，V1.9.3 施工後重新量測，非回憶）：`npm test` 共 1339 項，穩定 35 項失敗。**
 
-> **V1.9.2 更新**：舊基準的第 3 類（`test/healthQuotaDashboard.test.js`，3 項）
-> 已隨 TDX Usage Summary 正式退休整個刪除——那 3 項測的正是被移除的
-> UI 本身，不是回歸，是測試檔案跟著功能一起除役。38 → 35 的差額正好是
-> 這 3 項。同輪另新增 `test/kvWriteOptimization.test.js`（38 項，全數
-> 通過），故總測試數 1272 → 1300（扣除刪除的 3 項、加上新增的 38
-> 項，另有既有檔案內的斷言更新，見 `06_VERSION_HISTORY.md` 的 V1.9.2
-> 列）。
+> **V1.9.2 更新**：舊基準第 3 類（`test/healthQuotaDashboard.test.js`，3 項，測的正是
+> 隨 TDX Usage Summary 退休而移除的 UI）已整份刪除，非回歸；同輪新增
+> `test/kvWriteOptimization.test.js`（38 項），故 1272 → 1300。**V1.9.3**：新增 17 項
+> （`pbsSchedule.test.js`／`pipelineTraceNoRelevantChange.test.js`／
+> `kvWriteQuantificationV193.test.js`／既有檔案內個別新增），1300 → 1339，35 項失敗數不變。
 
-> **重要更正（CCTV_METADATA_RECOVERY_V1，2026-08-25）——舊版本節寫錯了 Root Cause。**
-> 舊記載說「13 項 CCTV/JPEG 失敗是因為依賴 Workers-only 的 `.wasm` codec，在此沙盒無法載入」。
-> **這是錯的。** 真正原因是這個沙盒的 `node_modules` 不完整，`@jsquash/jpeg` 根本沒安裝
->（它是 `package.json` 的正式 `dependencies`，也在 `package-lock.json` 裡，正常 `npm ci` 一定會裝）。
-> 執行 `npm install @jsquash/jpeg` 之後，那 12 個檔案全部可以正常載入並執行。
->
-> 代價是：這 12 個檔案**整份沒有被執行過**，所以裡面約 36 項早就該更新的測試被長期誤判成
->「環境問題」而略過。它們不是回歸，是**過期斷言**——斷言的是後來被刻意改掉的行為：
-> - `DYNAMIC_SHOULDER_PUSH=OFF` / `LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY` 之後，
->   動態路肩不再推播，但測試仍斷言 `imagePrepared=true`、仍期待 1 次 push（實測 `0 !== 1`）。
-> - `PBS_ACCIDENT_CCTV_ENRICHMENT_FIX` 之後 PBS 已是 CCTV 可信來源，但測試仍斷言
->   `not-freeway-source`、`cctvEligible:false`（實測 `true !== false`）。
->
-> **教訓（比這些測試本身更重要）**：一個「合理但沒被驗證」的 Root Cause，會讓 36 項真實訊號
-> 被靜音好幾輪。當時該做而沒做的一步只是 `npm install`。
-> 這正是「不要為了交差把合理推測當 Root Cause」的實例，且這次是我們自己犯的。
+> **CCTV_METADATA_RECOVERY_V1（2026-08-25）根因更正摘要**：先前誤記為「Workers-only
+> `.wasm` codec 沙盒無法載入」，**實為** `@jsquash/jpeg`（`package.json` 正式依賴）未
+> 安裝於此沙盒 `node_modules`；`npm install` 後 12 個 CCTV/JPEG 測試檔案全部可執行，
+> 揭露約 36 項因此長期被跳過、實為**過期斷言**（斷言後來已刻意改掉的行為，如
+> `DYNAMIC_SHOULDER_PUSH=OFF` 後仍期待推播）的既有技術債，非本輪回歸。教訓：合理但未
+> 經驗證的 Root Cause 會靜音真實訊號——當時該做而沒做的一步只是 `npm install`。
 
 目前 35 項的正確分類（每輪仍以同一輪 `git stash -u` 對照乾淨 checkout 驗證）：
 
@@ -54,9 +42,6 @@
 `scripts/verify-production-deploy.mjs:120`）。本機 main 已 commit 但**尚未 push** 時，
 它必然失敗；push 完成後自動恢復通過。這是「還沒推送」的狀態產物，不是程式缺陷，
 **不要為它修改任何程式**。
-
-舊版本文件曾記載「1153 項中 3 項失敗」「998 項中 18 項失敗」「1081 項中 18 項失敗」，
-三個數字都已過期，以本節實測數字為準。
 
 ## V1.8.7.7 — Real-world Confirmation Pending（目前最重要的未結案項目）
 
@@ -1330,7 +1315,18 @@ NEW FAILURES = 0（同一輪 `git stash -u` 對照乾淨 checkout，35 項既有
 - **不要對 Google Drive 做任何寫入**——Claude 唯讀，GitHub 是唯一正式
   寫入來源。
 
-## Prototype 記錄｜PBS_LOCAL_EDGE_FILTER_PROTOTYPE（2026-08-26，非 Release，V1.9.2 不變）
+## 修正紀錄｜KV Write Optimization Phase 2（V1.9.3）（2026-08-26）
+
+延續 V1.9.2，關三個剩餘來源：(1) `health:snapshot:v1` 改 WRITE_ON_CHANGE，除既有
+`*.lastFetchedAt` 外新排除 `scheduledThisRun`/`sleeping`/整個 `broadcast` 區塊（決定性
+fixture 跑滿一天才抓到：漏排除會讓安靜日仍寫 63 次）；(2) PBS 固定抓取改每 30 分鐘、僅
+07:00–22:00（`pbsSchedule.js`），施工前已核對既有生命週期規則皆為 wall-clock，無 STOP
+理由；(3) Pipeline Trace 新增 `NO_RELEVANT_CHANGE`，無關事件時整批跳過寫入，TDX 重複／
+PBS 閘門排除仍視為有意義。fixture 實測 QUIET/NORMAL/HIGH writes/day = 5／21／27，遠低於
+目標。NEW FAILURES=0（1339 項）。完整記錄 → `SYSTEM_STATE.json.taskSeal`；版本列 →
+`06_VERSION_HISTORY.md` V1.9.3。
+
+## Prototype 記錄｜PBS_LOCAL_EDGE_FILTER_PROTOTYPE（2026-08-26，非 Release，V1.9.3 不變）
 
 PBS 邊緣篩選 Prototype（服務區＋事故關鍵字篩選 → NEW/UPDATED/CLEARED/UNCHANGED →
 `SHOULD_PUSH`）已 push 進 GitHub feature branch

@@ -137,9 +137,9 @@
     "PROTOTYPE_MERGED_TO_MAIN": "NO",
     "WINDOWS_TO_CLOUDFLARE_PUSH": "NOT_STARTED",
     "PRODUCTION_INTEGRATION": "NOT_STARTED",
-    "CURRENT_PRODUCT_VERSION": "V1.9.2",
+    "CURRENT_PRODUCT_VERSION": "V1.9.3",
     "PRODUCT_VERSION_BUMP": "NO",
-    "NEXT_PRODUCT_RELEASE": "尚未決定 — 這個 Prototype 本身不是 Product Version 事件；下一個 V1.9.x/V1.10.0 只會在真正改變 Production runtime 的下一輪施工令裡決定",
+    "NEXT_PRODUCT_RELEASE": "尚未決定 — 這個 Prototype 本身不是 Product Version 事件；下一個 V1.9.x/V1.10.0 只會在真正改變 Production runtime 的下一輪施工令裡決定（V1.9.3 KV Write Optimization Phase 2 與此 Prototype 無關，未曾修改 Prototype 任何程式碼）",
     "localPaths": {
       "windowsProjectRoot": "C:\\Users\\mrhap\\traffic-reporter",
       "prototypeRoot": "C:\\Users\\mrhap\\traffic-reporter\\pbs-relay",
@@ -165,6 +165,59 @@
     "readerNote": "這是文件記錄，不是完工的 Production 功能。Prototype 程式碼已在 GitHub 的 feature branch（未 merge 進 main），下一個 Agent 讀到這裡：不要假設它已 merge 進 main，不要假設 Windows -> Cloudflare 傳輸已存在，不要因為看到這個記錄就開始 Phase C 以後的工作——那需要真人另行授權，也不要自行 merge 這個 feature branch。"
   },
   "taskSeal": {
+    "task": "KV_WRITE_OPTIMIZATION_V1_9_3_PHASE_2",
+    "status": "SEALED",
+    "sealedAt": "2026-08-26",
+    "sealedBy": "human directive (路況工程部 V1.9.3 正式施工令｜KV Write 第二階段止血)",
+    "releaseVersion": "V1.9.3",
+    "fixCommit": "93efec3",
+    "realWorldTrigger": "延續 V1.9.2 的真實 Cloudflare 帳號寫入壓力：V1.9.2 已處理最大的三個來源（Shared Feed／Incident Suppression WRITE_ON_CHANGE、Pipeline Trace 批次化、TDX Usage Summary 退休），本輪針對施工令指定的第二階段三個剩餘來源正式止血——不是新的告警事件，是同一輪治理的延續。",
+    "scope": {
+      "healthSnapshotWriteOnChange": {
+        "change": "health:snapshot:v1 改為 WRITE_ON_CHANGE。比較時排除：generatedAt、tdx/pbs.lastFetchedAt、line.lastLinePushAt（V1.9.2 同批已知的純時間欄位），另新排除：tdx/pbs.scheduledThisRun/sleeping、整個 broadcast 區塊（皆為即時計數/排程旗標，不影響 computeStatus）。",
+        "whyTheExtraExclusions": "本輪自己的決定性 fixture（kvWriteQuantificationV193.test.js）跑滿一天 144 tick 後，量測到安靜 PBS_ONLY 日仍寫 63 次（非預期 1～2 次）。逐輪比對找到：scheduledThisRun/sleeping 是布林版的『這輪又跑一次』；broadcast 五個欄位隨 PBS 是否恰好本輪抓取而規律翻轉，非真內容變化。施工中、部署前即發現並修正。",
+        "pbsCarryForward": "buildHealthSnapshot 新增 pbsScheduleState/previousPbs，pbs 區塊比照既有 tdx 做 schedule-skip 沿用不變——PBS 略過的一輪絕不誤讀為故障。",
+        "persistHealthSnapshotChange": "persistHealthSnapshot 新增第三參數 previousSnapshot，內容相同回傳 {committed:true, written:false} 跳過寫入；沿用 scheduled.js 本就已讀取的上一份快照，無額外 KV get。"
+      },
+      "pbsFetchScheduleGate": {
+        "change": "新檔 pbsSchedule.js：PBS 抓取由每 10 分鐘改每 30 分鐘、僅 07:00–22:00 Asia/Taipei。Cron 本身不變（每 10 分鐘）。",
+        "safetyAnalysisBeforeWriting": "施工前核對 PBS_STALE_THRESHOLD_MS(2h)／PBS_ABSENCE_GRACE_PERIOD_MS(24h)（pbsConfig.js）皆為 wall-clock 判斷，非 tick 計數，遠大於本輪日間 30 分鐘／夜間約 9 小時空窗；LINE Push 已限定 08:00–21:59:59，07:00 PBS 恢復到 08:00 有一小時緩衝。未發現需 STOP 的既有安全依賴。",
+        "skippedTickShape": "scheduled.js 新增 buildSkippedPbsSummary()：略過時不呼叫 runPbsPipelineAndCommit，回傳最小占位摘要（pbsOk:null，計數皆 0），下游沿用既有『PBS 這輪沒東西』的安全路徑，不誤判為 0 起活躍事件。",
+        "lifecycleTransitionCounts": "lifecycle.js 的 commitPbsLifecycleState 額外回傳 transitions:{newCount,updatedCount,newlyClearedCount}（就地從既有比對算出，非第二套邏輯），pipeline.js 透傳為 pbsNewCount/pbsUpdatedCount/pbsNewlyClearedCount，供 NO_RELEVANT_CHANGE 使用。",
+        "observabilityLog": "新增 [cron][pbs-schedule] log：state/pbsFetchPerformed/pbsFetchSkippedSchedule，僅 Workers Logs，無新 KV key。",
+        "healthPageAddition": "GET /health PBS 卡片新增『本輪執行狀態』／『最近一次擷取時間』，比照既有 TDX 顯示（pbs.ok=null 時顯示『尚無資料』非異常）。"
+      },
+      "pipelineTraceNoRelevantChange": {
+        "change": "pipelineTrace.js 新增 hasPipelineTraceRelevantChange：無新增/更新 TDX 或 PBS 事件、無 TDX 重複/PBS 閘門排除、無 LINE 推播嘗試時，scheduled.js 完全跳過呼叫 persistPipelineTraceBatch（非傳空陣列），本輪 0 KV 寫入。",
+        "whyDuplicateAndGatedStillCount": "TDX 重複／PBS 閘門排除仍計入『有意義』——保留既有 V1.8.6.7『為何未播報』查修保證（pipelineTraceIntegration.test.js 既有測試未改行為即通過）。PBS_ONLY 部署下兩者恆為 0，不影響本輪省下的量；僅 TRAFFIC_SOURCE_MODE=ALL 才實際生效，且屆時仍正確。",
+        "whyLinePushSuccessAlsoCounts": "用 lineSummary.pushAttempted（非僅 partialPushFailures），正確涵蓋『冷啟動』：dedupe.js 把全新 KV 首筆事件分類為 baseline-seed 而非 new，但仍真的推播——只看 newEventsCount 會漏掉這筆真實 LINE 推播。"
+      }
+    },
+    "quantifiedKvWriteEstimate": {
+      "methodology": "改用 kvWriteQuantificationV193.test.js 的決定性 fixture：PBS_ONLY，真跑滿一天 144 次 runScheduledTdxSync，依 KV key 前綴分類計數真實 kv.put() 呼叫——非估算，是測試檔實際輸出。",
+      "quietDay": "PBS 全天無回報、0 推播 → TOTAL=5 writes/day。遠低於 ≤150 目標。",
+      "normalDay": "一起事故新增→不變→解除 → TOTAL=21 writes/day。在 100–300 目標低端——fixture 僅單一事故，真實數字待下一帳務日 [kv-write-budget] 樣本核實。",
+      "highEventDay": "五起事故各自新增/更新/解除 → TOTAL=27 writes/day。遠低於 <500 目標。",
+      "comparisonToV192": "V1.9.2 是文字估算的每輪 writes 範圍（quiet 1～4、medium/high 4～8），本輪是實測 writes/day 總數，單位不同不能直接相減；但健康快照這項由『每輪固定 1』降到 PBS_ONLY 安靜日全天僅 2 次，是本輪相對 V1.9.2 的具體邊際改善。",
+      "remainingLargestSource": "healthSnapshot／incidentSuppression 是 NORMAL/HIGH 情境最大類別——狀態確實真的在變化（PBS ok 首次轉換、抑制邏輯每次真抓取都重新評估），如實列出，未移除任何安全功能換取好看數字。"
+    },
+    "productionVerificationNote": "本輪三個數字皆為 fixture 沙盒真實執行測得，非帳號今日累計量；建議下一 Asia/Taipei 帳務日重置後蒐集真實 Production [kv-write-budget] 樣本核實。",
+    "testResult": "npm test 共 1339 項（1322 + 本輪新增 17 項：pbsSchedule.test.js 12 項、healthSnapshot.test.js 新增 9 項精簡後淨增與既有合併、pipelineTraceNoRelevantChange.test.js 13 項、kvWriteQuantificationV193.test.js 3 項、tdxQuotaPbsOnlyMode.test.js 新增 1 項）；NEW FAILURES = 0（同一輪 git stash -u 對照乾淨 checkout，35 項既有失敗完全相同、無新增、無被本輪意外掩蓋）。既有測試僅在其前提被本輪『PBS 不再每輪固定抓取』這個行為改變本身弄過期時才更新（tdxUsageReduction.test.js／pbsOnlyCrossSourceDedup.test.js／v572TdxGatedFreewayBroadcast.test.js／tdxQuotaPbsOnlyMode.test.js，皆改成落在真正的 PBS 排程時刻，或誠實更新斷言反映新行為，例如深夜與 07:50 現在正確地是『兩者皆略過』而非『PBS 仍照跑』），從未為了讓測試通過而動任何一行程式邏輯。",
+    "canonicalVersionSource": "src/version.js 的 APP_VERSION 已 bump 為 V1.9.3（patch release，三段式版本治理，同一個 commit）。",
+    "githubSeal": "PASS",
+    "githubEngineeringMemory": "SEALED",
+    "claudeDriveUpload": "NO",
+    "doNotMisread": [
+      "不要把 PBS 30 分鐘排程誤讀為『PBS 功能被削弱』——PBS 抓取邏輯、生命週期、跨來源比對、廣播資格判斷全部未動，只有『多久抓一次』改變。",
+      "不要把 Pipeline Trace 的 NO_RELEVANT_CHANGE 誤讀為『降低查修證據涵蓋範圍』——NEW/UPDATED/CLEARED、TDX 重複、PBS 閘門排除、LINE 推播成功/失敗全部仍會被追蹤，只有『同一筆持續不變的事件每輪重寫』被去除。",
+      "不要以為 health:snapshot:v1 的 scheduledThisRun/sleeping 永遠即時——WRITE_ON_CHANGE 之下，這兩個純粹描述『這輪排程位置』的欄位可能落後到下一次真正的內容變化才更新；Workers Logs 的 [cron] 系列 log 才是『這一輪到底做了什麼』的即時真相來源。",
+      "不要把本輪 QUIET/NORMAL/HIGH 三個數字當成 Production 真實流量預測——它們是決定性 fixture 在單一模擬事故情境下的真實測得值，用來證明優化邏輯本身正確運作、且遠低於目標上限，不是對真實服務區交通流量的預測。",
+      "不要對 Google Drive 做任何寫入——Claude 唯讀，GitHub 是唯一正式寫入來源。"
+    ],
+    "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
+  },
+  "taskSealHistory": [
+    {
     "task": "KV_WRITE_OPTIMIZATION_V1_9_2",
     "status": "SEALED",
     "sealedAt": "2026-08-26",
@@ -229,8 +282,7 @@
       "不要對 Google Drive 做任何寫入——Claude 唯讀，GitHub 是唯一正式寫入來源。"
     ],
     "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
-  },
-  "taskSealHistory": [
+    },
     {
       "task": "PIPELINE_TRACE_FILTER_ROOT_CAUSE_V1_9_1",
       "status": "SEALED",

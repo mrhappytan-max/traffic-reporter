@@ -164,7 +164,8 @@ PBS 官方 -> localMonitor.js -> localPrototype.js
 （`feature/pbs-local-edge-filter-prototype`，commit
 `c34b52c045cd05eb4be01b91debe5ba002c73cb6`，**尚未 merge 進 main**）。
 `WINDOWS_TO_CLOUDFLARE_PUSH = NOT_STARTED`。`PRODUCTION_INTEGRATION =
-NOT_STARTED`。`PRODUCT_VERSION_BUMP = NO`（仍是 V1.9.2，這不是一次 Release）。
+NOT_STARTED`。`PRODUCT_VERSION_BUMP = NO`（此 Prototype 本身不是 Release；Production
+版本照自己節奏推進，與此無關，目前為 V1.9.3）。
 
 真人回報 pbs-relay 68/68 通過；本 Cloud Session 另對同一 commit 做了一次獨立
 唯讀驗證（`git worktree` 乾淨簽出）：Prototype 自己新增的兩個測試檔（共 12 項）
