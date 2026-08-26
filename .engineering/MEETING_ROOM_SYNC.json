@@ -57,21 +57,21 @@
     "syncMode": "delta",
     "fullVerifyReason": null,
     "statusNote": "The delta planner requires exactly \"success\" (scripts/meeting-room-delta.mjs, assessManifestEvidence). A previous run recorded \"PASS\" here, which the planner correctly treated as untrustworthy evidence and escalated to a full verify. The sync itself had genuinely succeeded and was byte-verified; only the label was wrong. Keep this value as \"success\" — never widen the planner to accept other spellings, because that guard is what stops an unverified manifest from being trusted.",
-    "syncedAt": "2026-08-26T02:42:40Z",
-    "sourceMainHead": "d849036fc8b45cd8668516dc744848f36709240f",
-    "exportArtifactCommit": "d849036",
-    "exportGeneratedAt": "2026-08-26T02:41:04.094Z",
-    "release": "CCTV_QUAD_PREPARE_TIMEOUT_OBSERVABILITY_V1_9_0",
-    "performedBy": "GitHub Actions (.github/workflows/sync-engineering-memory.yml) run #9, conclusion=success. Claude performed ZERO Drive writes — read-only verification only, per DRIVE_SYNC_GOVERNANCE_V2.",
+    "syncedAt": "2026-08-26T03:24:15Z",
+    "sourceMainHead": "a8f6514dc77ee8039bd1b3e9da73dee8acc4582f",
+    "exportArtifactCommit": "a8f6514",
+    "exportGeneratedAt": "2026-08-26T03:23:11.204Z",
+    "release": "PIPELINE_TRACE_FILTER_ROOT_CAUSE_V1_9_1",
+    "performedBy": "GitHub Actions (.github/workflows/sync-engineering-memory.yml) run #10, conclusion=success. Claude performed ZERO Drive writes — read-only verification only, per DRIVE_SYNC_GOVERNANCE_V2.",
     "archiveFolderId": null,
     "archiveFolderName": null,
     "changedFilesSynced": 6,
     "unchangedFilesSkipped": 4,
-    "detail": "V1.9.0 root-cause release：quad（事故）CCTV prepare-timeout 可觀測性修復。真人事故 2026-08-26 09:20 國3南向96K+700，09:30 同一事件重跑即成功。確認 Root Cause：quad 路徑完全沒有 stage 追蹤，因此任何一次真實延遲都無法留下紀錄。修復比照單鏡頭路徑加上 stageTracker，7 個新欄位（metadataElapsedMs/cameraSelectionElapsedMs/frameFetchElapsedMs/collageElapsedMs/successfulFrameCount/failedFrameCount/r2PublishElapsedMs）＋既有 timeoutStage 接進 Pipeline Trace。RETRY_REQUIRED=NO，未新增任何 retry 或調整 4000ms。APP_VERSION 同 commit bump 為 V1.9.0（三段式版本治理生效後第一個正式版本）。6 個 canonical 檔案由 GitHub Actions 於 02:42 更新，4 個未變更者保留 07:44 時間戳。唯讀查證：10/10 present、0 missing、0 duplicate，Drive 端 byte size 與本地 engineering-memory/ 完全一致。",
+    "detail": "V1.9.1 root-cause release：/admin/pipeline-trace-view 篩選功能修復。真人回報篩選按了畫面不動；以真實 Chromium 對著真實回應（含真實 response headers）重現，確認 Root Cause 是 applyAdminSecurityHeaders 的 CSP 帶 form-action 'none'，擋住所有 admin <form> 送出。修復為 form-action 'self'，未改動其他 CSP 指令，伺服器端篩選邏輯本來就是對的（V1.8.7.6 已證實）未再改動。DEFAULT_LIST_LIMIT 30→60。APP_VERSION 同 commit bump 為 V1.9.1。6 個 canonical 檔案由 GitHub Actions 於 03:24 更新，4 個未變更者保留 07:44 時間戳。唯讀查證：10/10 present、0 missing、0 duplicate，Drive 端 byte size 與本地 engineering-memory/ 完全一致。",
     "files": [
       {
         "name": "00_CURRENT_STATE.md",
-        "sha256": "91e2f5541848a1546254cb623e17f68ce9a3e62ca8758f868d85bd9880803a67",
+        "sha256": "f04aaefe42957ca76ff467fe6bf75722e878ef40fe409895a46ff10e80b1118f",
         "bytes": 6838,
         "driveFileId": "1-mVaIZ__tduQ5O9n1EvgptFtQ8wgkDX8",
         "action": "synced-by-github-actions-and-byte-verified"
@@ -85,7 +85,7 @@
       },
       {
         "name": "02_PROJECT_HANDOFF.md",
-        "sha256": "e910bbf2e5101be4b05fb0544456b308d316a26e2eb0f0d03673fd5541c2f3eb",
+        "sha256": "c4b6f54a028766c2546a51c509e69ed1470be9fc1e354d8b2b8c209644707cbd",
         "bytes": 11313,
         "driveFileId": "1v5xhBvoBZ_F-jJvJZLg1XXDGVmRXRUEm",
         "action": "synced-by-github-actions-and-byte-verified"
@@ -113,28 +113,28 @@
       },
       {
         "name": "06_VERSION_HISTORY.md",
-        "sha256": "adba5a19c9c26c001df1d96a1894ff8413c685937461d56a0a3b5368c3c0154b",
-        "bytes": 9083,
+        "sha256": "a9ae3a2445651bc63987dcabb6d48ae2234d760a347db0db20f96bd3911caffc",
+        "bytes": 10566,
         "driveFileId": "1qPeYbyfcaaaeZfKI2jKcGth5o9pDJ1Vo",
         "action": "synced-by-github-actions-and-byte-verified"
       },
       {
         "name": "07_KNOWN_ISSUES.md",
-        "sha256": "c3fe659a410c56030eb5a1a453446d0a17527e4fdc95021afcf39e8125c81647",
-        "bytes": 65191,
+        "sha256": "30fb8592b89bfc482294c904a7219a9bd80b9a181cf840ccf08d87b943b76f4b",
+        "bytes": 69312,
         "driveFileId": "1bk15-KdNKs8URNlPcHmQjCyvkzAdJ4-F",
         "action": "synced-by-github-actions-and-byte-verified"
       },
       {
         "name": "SYSTEM_STATE.json",
-        "sha256": "d8955059f18791af853a1f776aa20efd15ecf3cd236ff868b8f6dc955c3349c1",
-        "bytes": 50255,
+        "sha256": "7a903499858705dc6fba7d065ea78713b90a70ab8bf58b188540732c2919347f",
+        "bytes": 55358,
         "driveFileId": "1wb0_LGiAMEP6wTAh47UO67g6CojGQgxV",
         "action": "synced-by-github-actions-and-byte-verified"
       },
       {
         "name": "PRODUCTION_MANIFEST.json",
-        "sha256": "7ace5247e1c2bd71611bde7e5bb24f6537bbeb3e2d99c8b262cf3883bb4fa348",
+        "sha256": "ee89373fbfd40bdee8ca96c1e3ec2e078da235ca577a3f417d0a65839e7b5abb",
         "bytes": 4416,
         "driveFileId": "1bg_a6leS7bduo5uqiGcNqa2fMesBqSsr",
         "action": "synced-by-github-actions-and-byte-verified"
