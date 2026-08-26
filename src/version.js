@@ -88,7 +88,62 @@
 // scan safety ceilings (MAX_LIST_LIMIT, MAX_ENTRIES_SCANNED) are
 // unchanged.
 
-export const APP_VERSION = 'V1.9.1';
+// V1.9.2 (2026-08-26) — KV Write Optimization + TDX Usage Summary
+// retirement. Real Cloudflare account alert: Cloudflare Workers KV's
+// free-tier daily write budget (1,000/day) was at 749/1,000, with
+// traffic-reporter-kv alone at 733 (97.9% of the account total). A
+// read-only forensic pass (same day, prior round) traced every KV write
+// reachable from the Cron path and found the cause.
+//
+// FOUR changes, all merged into this one version:
+//   1. WRITE_ON_CHANGE for traffic:shared-feed and
+//      line:incident-suppression-state — both were rewritten every
+//      single Cron tick (144/day) even when their real content (never
+//      just a generated timestamp) hadn't changed at all. Gated on a new
+//      shared primitive, src/util/contentEqual.js (order-independent
+//      deep equality) — see sharedFeed.js's runSharedFeedPersist and
+//      incidentSuppression.js's persistIncidentSuppressionState for the
+//      exact comparison each makes, and broadcastPipeline.js's own
+//      comment for a real aliasing hazard this uncovered and fixed
+//      (resolveIncidentNotifications mutates matched records in place,
+//      so the "previous" snapshot must be taken BEFORE calling it, never
+//      read back out afterward — see structuredClone there).
+//   2. Pipeline Trace batch persistence — one KV `put` per Cron round
+//      (occasionally a few, only if genuinely oversized) instead of one
+//      per traced event. See pipelineTrace.js's persistPipelineTraceBatch
+//      and TRACE_BATCH_KEY_PREFIX comment for the full v1/v2 schema
+//      coexistence design: legacy `debug:pipeline-trace:v1:*` keys are
+//      NEVER deleted or migrated (left to their own pre-existing 24h
+//      TTL); listPipelineTrace now reads and merges BOTH schemas into one
+//      correct newest-first timeline, so every existing filter/limit/
+//      admin page needed zero changes.
+//   3. TDX Usage Summary RETIRED — a real person now checks TDX's own
+//      official back-office dashboard directly for quota/usage; this
+//      Worker no longer maintains its own duplicate summary
+//      (tdx:usage:summary:v1) or the raw per-call ledger that fed it
+//      (tdx:usage:entry:v1:* — confirmed, by exhaustive dependency check,
+//      to have no OTHER reader). Both are now 0 writes/day from every
+//      live path (Cron, /debug/status, /debug/tdx, both admin CCTV
+//      probes). GET /health's "TDX 用量" card is now a small static note
+//      pointing at TDX's own dashboard — see health.js's
+//      renderTdxUsageRetiredCard. usageLedger.js's own functions are
+//      UNCHANGED and still directly unit-tested (they are simply no
+//      longer called from any live path) — nothing about TDX runtime,
+//      OAuth, RoadEvent/CCTV-metadata fetching, source-mode switching, or
+//      the 9/1 TDX quota restore path was touched.
+//   4. `[kv-write-budget]` — a new Cron console.log line (Workers Logs
+//      only, creates NO new KV key) reporting attempted/performed/
+//      skipped-as-unchanged writes across 8 named categories plus
+//      traceEntryCount/traceBatchCount, every tick — see scheduled.js.
+//
+// Cron frequency is unchanged (every 10 minutes). See
+// test/kvWriteOptimization.test.js for the full regression suite (WRITE_
+// ON_CHANGE skip/write correctness, batch chunking/splitting, v1/v2 merge
+// correctness, the retirement's own zero-KV-write proof, and the
+// quiet/medium/high fixture counts) and 07_KNOWN_ISSUES.md for the
+// quantified before/after write estimate.
+
+export const APP_VERSION = 'V1.9.2';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

@@ -282,6 +282,18 @@ export async function runLineBroadcast(
     // scheduled.js is the only caller that actually persists these to KV,
     // and only on the real (non-dryRun) Cron path.
     pipelineTraceEntries: [],
+    // V1.9.2 (KV Write Optimization) — purely observational counters for
+    // scheduled.js's `[kv-write-budget]` log line. persistNotifiedState is
+    // deliberately called once PER EVENT with successful targets (never
+    // batched — see this file's own call sites), so a single run can
+    // attempt it 0, 1, or N times; incidentSuppressionWriteAttempted/
+    // Written report the ONE persistIncidentSuppressionState call this
+    // run may make (see below). Neither counter changes what gets
+    // written or when — see notified.js/incidentSuppression.js for that.
+    notifiedStateWriteAttempts: 0,
+    notifiedStateWriteCommitted: 0,
+    incidentSuppressionWriteAttempted: false,
+    incidentSuppressionWriteWritten: false,
   };
 
   // V1.8.6.7 (Pipeline Trace) — accumulates PARTIAL trace input per event
@@ -486,6 +498,21 @@ export async function runLineBroadcast(
   const incidentState = await readIncidentSuppressionState(env.TRAFFIC_KV);
   if (!incidentState.kvAvailable) result.lineErrors.push(`incident suppression state unavailable: ${incidentState.kvError}`);
 
+  // V1.9.2 WRITE_ON_CHANGE — resolveIncidentNotifications below MUTATES
+  // matched records in place (`match.lastSeenAt = now.toISOString()` etc —
+  // see that function's own comment); its returned `nextIncidentsByGroup`
+  // shares object references with `incidentState.incidentsByGroup`, not a
+  // deep copy. A content comparison taken AFTER that call would therefore
+  // always find the "before" and "after" identical (the "before" object
+  // graph was mutated too) and silently skip every write, including the
+  // one case that most needs it (an already-notified incident sighted
+  // again — see incidentSuppression.js's own persistIncidentSuppressionState
+  // comment). Snapshotting a real, independent deep copy HERE — before
+  // resolveIncidentNotifications ever runs — is what makes the
+  // WRITE_ON_CHANGE comparison below compare against the ACTUAL prior
+  // persisted content, not a copy that was mutated out from under it.
+  const incidentsByGroupBeforeResolve = structuredClone(incidentState.incidentsByGroup);
+
   const accidentRelevant = relevant.filter(({ event, cluster }) => !cluster && event.type === 'accident');
   const otherRelevant = relevant.filter(({ event, cluster }) => cluster || event.type !== 'accident');
 
@@ -517,8 +544,13 @@ export async function runLineBroadcast(
   }
 
   if (!dryRun && incidentState.kvAvailable) {
-    const commit = await persistIncidentSuppressionState(env.TRAFFIC_KV, nextIncidentsByGroup, now);
+    result.incidentSuppressionWriteAttempted = true;
+    const commit = await persistIncidentSuppressionState(env.TRAFFIC_KV, nextIncidentsByGroup, now, {
+      previousIncidentsByGroup: incidentsByGroupBeforeResolve,
+      previousStateExisted: incidentState.existed,
+    });
     if (!commit.committed) result.lineErrors.push(`failed to persist incident suppression state: ${commit.error}`);
+    result.incidentSuppressionWriteWritten = Boolean(commit.written);
   }
 
   // V1.8.6.7 (Pipeline Trace) — the ONE finalize/build point, called
@@ -626,7 +658,9 @@ export async function runLineBroadcast(
     // Cron still ran fetch/normalize/baseline/dedupe — just no push. Still
     // flush a pending prune-only cleanup if there is one.
     if (prunedKeys.length > 0) {
+      result.notifiedStateWriteAttempts += 1;
       const commit = await persistNotifiedState(env.TRAFFIC_KV, notifiedMap, result.lastLinePushAt, now, result.partialPushFailures);
+      if (commit.committed) result.notifiedStateWriteCommitted += 1;
       if (!commit.committed) result.lineErrors.push(`failed to record notified-state prune cleanup: ${commit.error}`);
     }
     finalizeTrace();
@@ -942,7 +976,9 @@ export async function runLineBroadcast(
       // batched for the whole run — bounds a KV write failure's blast
       // radius to THIS event's successful targets, not every event this
       // run. See module comment in notified.js.
+      result.notifiedStateWriteAttempts += 1;
       const commit = await persistNotifiedState(env.TRAFFIC_KV, notifiedMap, result.lastLinePushAt, now, partialFailureCountThisRun);
+      if (commit.committed) result.notifiedStateWriteCommitted += 1;
       anyWriteHappened = true;
       if (!commit.committed) {
         result.lineErrors.push(
@@ -1031,7 +1067,9 @@ export async function runLineBroadcast(
   }
 
   if (!anyWriteHappened && prunedKeys.length > 0) {
+    result.notifiedStateWriteAttempts += 1;
     const commit = await persistNotifiedState(env.TRAFFIC_KV, notifiedMap, result.lastLinePushAt, now, partialFailureCountThisRun);
+    if (commit.committed) result.notifiedStateWriteCommitted += 1;
     if (!commit.committed) result.lineErrors.push(`failed to record notified-state prune cleanup: ${commit.error}`);
   }
 

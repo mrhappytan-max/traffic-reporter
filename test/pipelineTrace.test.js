@@ -505,7 +505,13 @@ test('V1.8.7.3 — 34: MAX_LIST_PAGES safety ceiling still bounds the number of 
     await recordPipelineTrace(kv, buildTraceEntry({ event: accidentEvent({ rawId: `P${i}` }), now: t }), t);
   }
   await listPipelineTrace(kv, {});
-  assert.ok(listCalls <= 40, `expected list() calls bounded by MAX_LIST_PAGES (40), got ${listCalls}`);
+  // V1.9.2 — listPipelineTrace now key-enumerates TWO prefixes (legacy v1
+  // per-entry keys AND the new v2 per-round batch keys — see that
+  // function's own comment), each independently bounded by
+  // MAX_LIST_PAGES(40). The v2 prefix has 0 keys here (nothing in this
+  // test wrote a batch), so it costs exactly one extra list() call to
+  // discover that, not another 40 — 41 total, not 80.
+  assert.ok(listCalls <= 41, `expected list() calls bounded by MAX_LIST_PAGES(40) per prefix x 2 prefixes, got ${listCalls}`);
 });
 
 // --- 28/29: GET /admin/pipeline-trace via the real Worker entry point --

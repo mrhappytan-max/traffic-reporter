@@ -1,16 +1,19 @@
 // GET /debug/tdx — fetches the production TDX sources and reports, per
 // source, how many records were found, a small sample, and any error.
 // Never schedules anything; this is a one-shot fetch for manual/CI
-// verification. CORRECTED comment (V1.8.6): this handler does NOT touch
-// KV/D1 in the traffic/dedupe/notified sense — no operational state is
-// ever read or written here. The one exception is deliberate and
-// isolated: it writes an append-only TDX usage-telemetry entry (see
-// ../tdx/usageLedger.js, context='debug-tdx') so a human opening this
-// URL is visible on /health's "人工額外呼叫" line instead of silently
-// inflating what looks like Production's own count. That write can never
-// affect this handler's own response, and a usage-ledger KV outage
-// degrades to "this call's usage entry is missing," never to an error
-// here.
+// verification. This handler does NOT touch KV/D1 in the traffic/dedupe/
+// notified sense — no operational state is ever read or written here.
+//
+// V1.8.6 used to also write an append-only TDX usage-telemetry entry
+// here (context='debug-tdx'). V1.9.2 (TDX Usage Summary retirement — a
+// real person now checks TDX's own official back-office dashboard
+// directly) removed that KV write: the raw ledger existed solely to feed
+// the now-retired tdx:usage:summary:v1 compaction/health-page dashboard
+// (see usageLedger.js's own header comment) and had no other reader.
+// `tdxUsageSink` is still threaded through fetchAllSources below —
+// recordTdxDataCall/recordTdxOAuthCall are pure in-memory pushes,
+// completely harmless to keep collecting — it is simply never persisted
+// to KV anymore.
 //
 // V1.6.2: restricted to PRODUCTION_TDX_SOURCE_IDS (freeway+highway) —
 // CMS/Bus Alert are retired from production entirely (see V1.6.1) and
@@ -19,15 +22,10 @@
 
 import { fetchAllSources } from './fetchAll.js';
 import { PRODUCTION_TDX_SOURCE_IDS } from './sources.js';
-import { commitTdxUsageBatch } from './usageLedger.js';
 
 export async function handleDebugTdx(env) {
-  // V1.8.6: tagged context='debug-tdx' in the usage ledger — see
-  // debugStatus.js's identical comment for why (visible on /health as
-  // "人工額外呼叫", not silently counted as Production).
   const tdxUsageSink = [];
   const { tokenOk, results } = await fetchAllSources(env, { sourceIds: PRODUCTION_TDX_SOURCE_IDS, usageSink: tdxUsageSink });
-  await commitTdxUsageBatch(env.TRAFFIC_KV, { context: 'debug-tdx', records: tdxUsageSink });
 
   const sources = results.map((r) => ({
     source: r.source,

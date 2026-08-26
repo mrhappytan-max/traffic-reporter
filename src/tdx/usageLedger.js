@@ -54,6 +54,7 @@
 // regardless of how much history has accumulated.
 
 import { toTaipeiParts } from '../traffic/broadcastHours.js';
+import { contentEqual } from '../util/contentEqual.js';
 
 export const USAGE_ENTRY_KEY_PREFIX = 'tdx:usage:entry:v1';
 export const USAGE_SUMMARY_KEY = 'tdx:usage:summary:v1';
@@ -446,12 +447,36 @@ function determineTrackingStartedAt(existing, now, todayEntryBodies) {
   return (earliestProdTs ? windowStartFor(earliestProdTs) : now).toISOString();
 }
 
+/**
+ * V1.9.2 WRITE_ON_CHANGE — real Cloudflare alert: this key was rewritten
+ * every single Cron tick (144/day) even on a TDX-off day, when
+ * rebuildDayRow legitimately recomputes the SAME all-zero row from zero
+ * raw entries every time. Compares only the real content — `days` and
+ * `trackingStartedAt` — never `updatedAt` (which by definition changes
+ * every call) or `schemaVersion` (a constant). Returns `{written}` so the
+ * two exported compaction functions below (and scheduled.js's
+ * `[kv-write-budget]` log) can report whether this tick's compaction
+ * actually touched KV.
+ *
+ * Always writes on the FIRST-ever call (`existing` is null — nothing to
+ * compare against yet), so a fresh deploy/fresh KV namespace establishes
+ * this key exactly as before. A future TDX restore is unaffected: the
+ * moment `days`/`trackingStartedAt` genuinely differ again (a real
+ * DayRow gains nonzero counts), this writes normally — nothing here
+ * special-cases "TDX is off", it only ever compares content.
+ */
 async function persistCompactedSummary(kv, now, dayRowsByDate, todayEntryBodiesForTracking) {
   const { summary: existing } = await readTdxUsageSummary(kv);
   const days = pruneOldDays({ ...((existing && existing.days) || {}), ...dayRowsByDate }, now);
   const trackingStartedAt = determineTrackingStartedAt(existing, now, todayEntryBodiesForTracking);
+
+  if (existing && existing.trackingStartedAt === trackingStartedAt && contentEqual(existing.days, days)) {
+    return { written: false };
+  }
+
   const summary = { schemaVersion: 1, trackingStartedAt, updatedAt: now.toISOString(), days };
   await kv.put(USAGE_SUMMARY_KEY, JSON.stringify(summary));
+  return { written: true };
 }
 
 /**
@@ -472,8 +497,8 @@ export async function compactTdxUsageSummaryForToday(kv, now = new Date()) {
   try {
     const date = taipeiDateString(now);
     const { row, entryBodies } = await rebuildDayRow(kv, date);
-    await persistCompactedSummary(kv, now, { [date]: row }, entryBodies);
-    return { committed: true, date };
+    const persistResult = await persistCompactedSummary(kv, now, { [date]: row }, entryBodies);
+    return { committed: true, date, written: persistResult.written };
   } catch (err) {
     return { committed: false, reason: 'kv-error', error: safeErrorMessage(err) };
   }
@@ -526,8 +551,8 @@ export async function compactTdxUsageSummaryRecentDays(kv, now = new Date()) {
     const dayRows = { [todayStr]: todayRow };
     if (yesterdayEntryBodies.length > 0) dayRows[yesterdayStr] = yesterdayRow;
 
-    await persistCompactedSummary(kv, now, dayRows, todayEntryBodies);
-    return { committed: true, dates: [yesterdayStr, todayStr] };
+    const persistResult = await persistCompactedSummary(kv, now, dayRows, todayEntryBodies);
+    return { committed: true, dates: [yesterdayStr, todayStr], written: persistResult.written };
   } catch (err) {
     return { committed: false, reason: 'kv-error', error: safeErrorMessage(err) };
   }

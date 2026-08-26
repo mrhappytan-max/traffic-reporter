@@ -70,6 +70,7 @@
 // out of any sane push-eligibility window on its own.
 
 import { computeFingerprint } from './dedupe.js';
+import { contentEqual } from '../util/contentEqual.js';
 
 export const SHARED_FEED_KEY = 'traffic:shared-feed';
 export const SHARED_FEED_SCHEMA_VERSION = 1;
@@ -353,17 +354,41 @@ export function selectFeedWindow(events, { windowMinutes, limit, offset, now = n
  * run's completed products, and writes it back. Callers MUST treat a rejection
  * or a committed:false result as non-fatal — the real broadcast has already
  * completed by the time this runs.
+ *
+ * V1.9.2 WRITE_ON_CHANGE — real Cloudflare alert (see this module's own
+ * V1.9.2 note): every Cron tick rewrote this key even on a quiet run that
+ * produced no new/changed events at all, because the previous write's
+ * `updatedAt` is always different. Skips the write ONLY when this key has
+ * already been persisted at least once (`previous.updatedAt !== null` —
+ * a truly first-ever run always writes, establishing the key exactly as
+ * before) AND the rebuilt `events` array is content-identical to what's
+ * already stored. This is safe specifically because buildSharedFeedEvents
+ * ITSELF already freezes each unchanged/retained entry's own `updatedAt`
+ * (see that function's own comment) — an identical `events` array here
+ * really does mean "nothing about the feed changed", never a false skip
+ * that would hide a real content change behind a frozen timestamp. This
+ * changes ONLY when the write happens — persistSharedFeed's own shape,
+ * schema, and content-decision logic (which events/images/text end up in
+ * the feed) are completely untouched.
  */
 export async function runSharedFeedPersist(env, { completedProducts, now = new Date() }) {
   const previous = await readSharedFeed(env.TRAFFIC_KV);
   if (!previous.kvAvailable) {
-    return { committed: false, error: previous.kvError, eventCount: 0, withImageCount: 0 };
+    return { committed: false, error: previous.kvError, eventCount: 0, withImageCount: 0, written: false };
   }
   const events = await buildSharedFeedEvents(completedProducts, previous.events, now);
+  const withImageCount = events.filter((entry) => entry.imageUrl).length;
+
+  const unchanged = previous.updatedAt !== null && contentEqual(previous.events, events);
+  if (unchanged) {
+    return { committed: true, written: false, eventCount: events.length, withImageCount };
+  }
+
   const commit = await persistSharedFeed(env.TRAFFIC_KV, events, now);
   return {
     ...commit,
+    written: commit.committed,
     eventCount: events.length,
-    withImageCount: events.filter((entry) => entry.imageUrl).length,
+    withImageCount,
   };
 }

@@ -27,6 +27,7 @@
 // every other event type, and vice versa.
 
 import { parseKM } from './roadSectionLabel.js';
+import { contentEqual } from '../util/contentEqual.js';
 
 const INCIDENT_STATE_KEY = 'line:incident-suppression-state';
 
@@ -125,25 +126,40 @@ function isMaterialEscalation(previous, current) {
   return false;
 }
 
-/** Read-only. */
+/**
+ * Read-only.
+ *
+ * V1.9.2 — `existed` additionally reports whether this key currently
+ * holds a VALID, already-persisted incidentsByGroup (raw found AND
+ * parsed successfully) — used only by persistIncidentSuppressionState's
+ * own WRITE_ON_CHANGE gate below, so a first-ever write (or a write after
+ * a corrupt blob) is never skipped just because {} happens to
+ * content-equal an empty comparison target. Purely additive; every
+ * existing caller that only reads kvAvailable/incidentsByGroup is
+ * unaffected.
+ */
 export async function readIncidentSuppressionState(kv) {
   if (!kv) {
-    return { kvAvailable: false, kvError: 'TRAFFIC_KV binding not configured', incidentsByGroup: {} };
+    return { kvAvailable: false, kvError: 'TRAFFIC_KV binding not configured', incidentsByGroup: {}, existed: false };
   }
   try {
     const raw = await kv.get(INCIDENT_STATE_KEY);
     let incidentsByGroup = {};
+    let existed = false;
     if (raw) {
       try {
         const parsed = JSON.parse(raw);
-        incidentsByGroup = parsed && parsed.incidents && typeof parsed.incidents === 'object' ? parsed.incidents : {};
+        if (parsed && parsed.incidents && typeof parsed.incidents === 'object') {
+          incidentsByGroup = parsed.incidents;
+          existed = true;
+        }
       } catch {
         incidentsByGroup = {};
       }
     }
-    return { kvAvailable: true, kvError: null, incidentsByGroup };
+    return { kvAvailable: true, kvError: null, incidentsByGroup, existed };
   } catch (err) {
-    return { kvAvailable: false, kvError: safeErrorMessage(err), incidentsByGroup: {} };
+    return { kvAvailable: false, kvError: safeErrorMessage(err), incidentsByGroup: {}, existed: false };
   }
 }
 
@@ -214,11 +230,39 @@ export function resolveIncidentNotifications(accidentEvents, incidentsByGroup, n
   return { results, nextIncidentsByGroup };
 }
 
-/** The only write in this module. */
-export async function persistIncidentSuppressionState(kv, incidentsByGroup, now) {
+/**
+ * The only write in this module.
+ *
+ * V1.9.2 WRITE_ON_CHANGE — real Cloudflare alert (see this module's own
+ * V1.9.2 note in the header comment... actually see usageLedger.js's
+ * fuller write-up, this is the same gate). `options.previousIncidentsByGroup`
+ * / `options.previousStateExisted` are OPTIONAL and default to "no
+ * previous known" (always write) — every existing caller that doesn't
+ * pass them (every test written before this round) keeps writing
+ * unconditionally, byte-for-byte the old behavior.
+ *
+ * Deliberately compares `incidentsByGroup` in full, INCLUDING each
+ * record's own `lastSeenAt` — unlike the top-level `updatedAt` this
+ * wrapper adds below, `lastSeenAt` is real functional state
+ * (resolveIncidentNotifications advances it on every matched sighting,
+ * and a later tick's alive-window pruning depends on that value staying
+ * accurate), never a "purely generated, safe to ignore" timestamp. A
+ * quiet tick with zero accident events, and nothing aging out of the
+ * suppression window, is the ONLY case this actually skips — exactly the
+ * common case on a low-traffic day, and precisely why this key was being
+ * rewritten every 10 minutes for no informational gain. The
+ * suppression/escalation/TTL logic in resolveIncidentNotifications above
+ * is completely untouched; this only ever changes whether the already-
+ * computed result gets written.
+ */
+export async function persistIncidentSuppressionState(kv, incidentsByGroup, now, options = {}) {
+  const { previousIncidentsByGroup, previousStateExisted = false } = options;
   try {
+    if (previousStateExisted && contentEqual(previousIncidentsByGroup, incidentsByGroup)) {
+      return { committed: true, written: false };
+    }
     await kv.put(INCIDENT_STATE_KEY, JSON.stringify({ incidents: incidentsByGroup, updatedAt: now.toISOString() })); // no TTL, same pattern as every other state key in this project
-    return { committed: true };
+    return { committed: true, written: true };
   } catch (err) {
     return { committed: false, error: safeErrorMessage(err) };
   }

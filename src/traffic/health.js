@@ -14,22 +14,6 @@
 import { readHealthSnapshot } from './healthSnapshot.js';
 import { formatTaipeiTime } from './broadcastHours.js';
 import { getDeploymentStatus } from './deploymentStatus.js';
-import {
-  readTdxUsageSummary,
-  taipeiDateString,
-  theoreticalProductionCallsToday,
-  theoreticalProductionCallsForDay,
-  isPartialTrackingDay,
-  estimatePoints,
-  estimateMonthUsage,
-  hasPendingBaselineCalibrationGap,
-  remainingPoints,
-  usagePercent,
-  projectEndOfMonthPoints,
-  TDX_MONTHLY_POINT_BUDGET,
-  TDX_CALLS_PER_POINT,
-  TDX_TRAFFIC_MB_PER_POINT,
-} from '../tdx/usageLedger.js';
 
 const STALE_WARNING_MS = 10 * 60 * 1000; // 10 min — "資料更新延遲"
 const STALE_CRITICAL_MS = 15 * 60 * 1000; // 15 min — force critical
@@ -259,301 +243,26 @@ function renderPage({ statusMeta, statusLabel, generatedAtLabel, staleNotice, bo
 </html>`;
 }
 
-// V1.8.6.1 — quota-first mobile dashboard: "3 秒看懂今天/本月用了多少、
-// 還剩多少、月底會不會爆" comes first; engineering-grade detail (official
-// historical reference, full byContext breakdown, OAuth counts) moves
-// into a collapsible "進階資訊" <details> at the bottom — no JS needed,
-// a native disclosure element. Every number still comes from
-// tdx:usage:summary:v1 (see ../tdx/usageLedger.js) via the single
-// extra read-only KV read in handleHealth — zero TDX/PBS/LINE calls.
-// Point-quota math (estimatePoints/remainingPoints/usagePercent/
-// projectEndOfMonthPoints) and "今日 Production 理論" are pure date/
-// arithmetic computed from that same already-read summary — no extra KV
-// read, no network call of any kind.
-
-const USAGE_CONTEXT_LABELS = {
-  'debug-status': 'Debug Status',
-  'debug-tdx': 'Debug TDX',
-  'admin-cctv': 'CCTV', // every admin-cctv call IS a CCTV metadata probe in practice (cctv-probe/cctv-hsinchu-probe) — shown here, under "人工/管理", never under Production
-  other: '其他',
-};
-
-// V1.8.6.2 — "TDX 來源（今日）" shows TDX API SOURCE usage (what actually
-// consumes TDX quota), not call CONTEXT — 國道/省道/CCTV metadata are the
-// three TDX sources this project ever fetches, confirmed against TDX's own
-// backend accounting. Reads `today.bySource` (the marginal total across
-// EVERY context — Production, Debug, Admin alike), deliberately NOT the
-// `byContextSource['production-cron']` slice used before V1.8.6.2 — a
-// person checking "how much TDX quota did today actually use" needs the
-// real total regardless of which code path made the call. Always renders
-// all three rows, even at 0 — see the task's own "三列固定顯示" requirement.
-// CCTV here is ONLY TDX CCTV metadata (cctv-probe/cctv-hsinchu-probe, via
-// fetchTdxJson -> bySource.cctv, see usageLedger.js) — the actual LINE
-// CCTV image fetch is a *.freeway.gov.tw MJPEG frame grab (see
-// hsinchuCctvProbe.js's handleHsinchuCctvFrame — "0 TDX calls"), not a TDX
-// API call, and must never be folded in here — untouched by this round.
-const TDX_SOURCE_LABELS = { freeway: '國道', highway: '省道', cctv: 'CCTV' };
-
-const RETIRED_SOURCE_LABELS = { cms: 'CMS', 'bus-hsinchu': '公車市', 'bus-hsinchu-county': '公車縣' };
-
-function formatBytesEstimate(bytes) {
-  const n = Number(bytes) || 0;
-  const mb = n / (1024 * 1024);
-  if (mb >= 0.1) return `${mb.toFixed(1)} MB`;
-  const kb = n / 1024;
-  return `${kb.toFixed(kb >= 10 ? 0 : 1)} KB`;
-}
-
-/** 3 decimals throughout, matching the required "X.XXX 點" display — this is a LOCAL ESTIMATE, never claimed identical to TDX's own official point accounting (see usageLedger.js's estimatePoints). */
-function formatPoints(points) {
-  return (Number(points) || 0).toFixed(3);
-}
-
-function formatPercent(fraction) {
-  return `${Math.round((Number(fraction) || 0) * 100)}%`;
-}
-
-function displayDate(dateStr) {
-  const parts = String(dateStr).split('-');
-  return parts.length === 3 ? `${parts[1]}/${parts[2]}` : dateStr;
-}
-
-function diffClass(diff) {
-  if (diff === 0) return 'diff-zero';
-  return diff > 0 ? 'diff-pos' : 'diff-neg';
-}
-
-function diffLabel(diff) {
-  if (diff === 0) return '0';
-  return diff > 0 ? `+${diff}` : `${diff}`;
-}
-
-function emptyDayTotals() {
-  return {
-    totalDataCalls: 0,
-    productionDataCalls: 0,
-    manualDataCalls: 0,
-    oauthRequests: 0,
-    payloadBytesEstimate: 0,
-    bySource: {},
-    byContext: {},
-    byContextSource: {},
-  };
-}
-
-/**
- * Last N calendar days (Asia/Taipei), newest first. A day with no ledger
- * entry at all (before V1.8.6 went live, or a genuinely missed write)
- * renders as "尚無資料" in the table below — NEVER a fabricated 0, per
- * the explicit instruction not to pretend this app can retroactively
- * know its own historical call volume.
- */
-function lastNDates(now, n) {
-  const dates = [];
-  for (let i = 0; i < n; i += 1) {
-    dates.push(taipeiDateString(new Date(now.getTime() - i * 24 * 60 * 60 * 1000)));
-  }
-  return dates;
-}
-
-/**
- * <70% -> 額度充足, 70–90% -> 注意用量, >=90% -> 接近上限. A quota WARNING
- * only — deliberately never promoted into this page's own critical/
- * degraded/normal `status` (see applyStaleness/STATUS_META above); a
- * near-exhausted TDX point budget is a usage anomaly to watch, not a
- * pipeline failure.
- */
-function quotaStatus(percent) {
-  if (percent < 0.7) return { emoji: '✅', label: '額度充足', className: 'quota-ok' };
-  if (percent < 0.9) return { emoji: '⚠️', label: '注意用量', className: 'quota-warn' };
-  return { emoji: '🔴', label: '接近上限', className: 'quota-bad' };
-}
-
-function renderTdxUsageBody(summary, now) {
-  const days = (summary && summary.days) || {};
-  const todayStr = taipeiDateString(now);
-  const today = days[todayStr] || emptyDayTotals();
-  const trackingStartedAt = summary && summary.trackingStartedAt;
-
-  const theoreticalToday = theoreticalProductionCallsToday(now, trackingStartedAt);
-  const todayIsPartialTracking = isPartialTrackingDay(todayStr, trackingStartedAt);
-  const todayPoints = estimatePoints(today);
-
-  // Monthly rollup — see usageLedger.js's estimateMonthUsage: Local-
-  // Ledger totals (aggregateUsageForMonth, at most USAGE_SUMMARY_
-  // RETENTION_DAYS=35 day-rows, all in the SAME Asia/Taipei calendar
-  // month as `now`) PLUS a hand-confirmed official pre-Ledger baseline
-  // when this exact month has one (2026-08 only, as of this writing —
-  // the Local Usage Ledger only started 2026-08-18; every later month is
-  // fully Ledger-covered and gets baseline=null automatically). No extra
-  // KV read, no full-history scan — computed entirely from the summary
-  // object already read.
-  const monthUsage = estimateMonthUsage(summary, now);
-  const monthTotals = monthUsage.localTotals; // still used below for the "OAuth（本月）" advanced-info row — baseline carries no OAuth figure
-  const remaining = remainingPoints(monthUsage.estimatedPoints);
-  const percent = usagePercent(monthUsage.estimatedPoints);
-  const quota = quotaStatus(percent);
-  const projection = projectEndOfMonthPoints(summary, now);
-  const baselineNoteHtml = monthUsage.baseline
-    ? `<p class="hint">含 ${escapeHtml(displayDate(monthUsage.baseline.fromDate))}–${escapeHtml(displayDate(monthUsage.baseline.throughDate))} TDX 官方既有用量 ${formatPoints(monthUsage.baseline.officialPoints)} 點（Local Usage Ledger 啟用前，使用者從 TDX 官方後台人工確認，非本機回推）。</p>`
-    : '';
-
-  // CORRECTION (post-review) — a genuine, currently-unresolved coverage
-  // gap: the official baseline covers real usage up through
-  // baseline.throughDate, but the Local Ledger only started tracking
-  // mid-day on a LATER date — the stretch in between is covered by
-  // NEITHER source (see usageLedger.js's hasPendingBaselineCalibrationGap
-  // for the exact condition and TDX_OFFICIAL_USAGE_BASELINES' own
-  // comment for how to resolve it once TDX's next official figure is
-  // available). Never estimated/guessed — only flagged, with the
-  // affected numbers explicitly marked "暫估" rather than presented as
-  // fully reconciled.
-  const pendingCalibrationGap = hasPendingBaselineCalibrationGap(summary, now);
-  const pendingGapDateLabel = pendingCalibrationGap ? displayDate(taipeiDateString(new Date(trackingStartedAt))) : '';
-  const pendingGapWarningHtml = pendingCalibrationGap
-    ? `<p class="hint">⚠️ ${escapeHtml(pendingGapDateLabel)} Ledger 啟用前用量尚待 TDX 官方日結校正（目前為暫估，非已完整校正的剩餘額度）。</p>`
-    : '';
-  const provisionalBadge = pendingCalibrationGap ? '（暫估）' : '';
-
-  // --- TDX 來源（今日） ---
-  // V1.8.6.2: this is a SOURCE breakdown (what TDX API resource was hit),
-  // not a CONTEXT breakdown (which call path hit it) — reads `bySource`
-  // directly, mixing every context on purpose. Always all 3 rows, even at
-  // 0 — see the top-of-file V1.8.6.2 comment above TDX_SOURCE_LABELS.
-  const todaySourceRows = Object.entries(TDX_SOURCE_LABELS)
-    .map(([key, label]) => `<li><span>${escapeHtml(label)}</span><span>${(today.bySource && today.bySource[key]) || 0}</span></li>`)
-    .join('');
-
-  // --- 呼叫情境（今日，進階） ---
-  // CONTEXT breakdown (Production Cron / Debug Status / Debug TDX / Admin
-  // CCTV) — a separate axis from the source breakdown above, moved into
-  // 進階資訊 per V1.8.6.2 so it never sits in the same visual layer as TDX
-  // 來源. The 今日 card's own "Production XX 次 / 人工額外 XX 次" rows
-  // already cover the common case at a glance.
-  const manualNonZero = Object.entries(USAGE_CONTEXT_LABELS).filter(([key]) => ((today.byContext && today.byContext[key]) || 0) > 0);
-  const manualRowsHtml =
-    manualNonZero.length > 0
-      ? `<ul class="source-list">${manualNonZero.map(([key, label]) => `<li><span>${escapeHtml(label)}</span><span>${today.byContext[key]}</span></li>`).join('')}</ul>`
-      : `<p class="hint" style="margin:0;">今日無人工額外呼叫</p>`;
-
-  const retiredNonZero = Object.entries(RETIRED_SOURCE_LABELS).filter(([key]) => ((today.bySource && today.bySource[key]) || 0) > 0);
-  const retiredWarningHtml =
-    retiredNonZero.length > 0
-      ? `<div class="card" style="border:1px solid #f0c36d;background:#fff8e8;">
-          <h2>⚠️ 發現已停用 TDX 來源</h2>
-          <ul class="source-list">${retiredNonZero.map(([key, label]) => `<li><span>${escapeHtml(label)}</span><span>${today.bySource[key]}</span></li>`).join('')}</ul>
-          <p class="hint">CMS／公車動態已於 V1.6.1 退出正式 Production，正常情況下這裡永遠是 0（/debug/tdx、/debug/status 本身也已限制只抓 freeway+highway，正常開 Debug 不會抓到這些來源）；若非 0，代表有未預期程式路徑呼叫到已停用來源。</p>
-        </div>`
-      : '';
-
-  // --- 每日對帳（近 7 天，手機優先；完整 30 天資料仍在 summary 裡） ---
-  const dailyRows = lastNDates(now, 7)
-    .map((date) => {
-      const row = days[date];
-      if (!row) {
-        return `<tr><td>${escapeHtml(displayDate(date))}</td><td colspan="4" style="text-align:center;color:#999;">尚無資料</td></tr>`;
-      }
-      const theoretical = date === todayStr ? theoreticalToday : theoreticalProductionCallsForDay(date, trackingStartedAt);
-      const diff = (row.totalDataCalls || 0) - theoretical;
-      const partial = isPartialTrackingDay(date, trackingStartedAt);
-      const dateCell = partial ? `${escapeHtml(displayDate(date))}<br><span class="hint" style="margin:0;">部分日</span>` : escapeHtml(displayDate(date));
-      return `<tr>
-        <td>${dateCell}</td>
-        <td>${row.totalDataCalls || 0}</td>
-        <td>${formatBytesEstimate(row.payloadBytesEstimate)}</td>
-        <td>${formatPoints(estimatePoints(row))}</td>
-        <td class="${diffClass(diff)}">${diffLabel(diff)}</td>
-      </tr>`;
-    })
-    .join('');
-
-  const partialTrackingNotice = todayIsPartialTracking
-    ? `<p class="hint">⚠️ 部分日（自 ${escapeHtml(formatTaipeiTime(new Date(trackingStartedAt)))} 開始追蹤），今日理論值只計算開始追蹤後應發生的排程次數。</p>`
-    : '';
-
-  const projectionBody = projection.ready
-    ? `<p class="big-number" style="font-size:28px;">${formatPoints(projection.projected)} <span class="big-unit">/ ${TDX_MONTHLY_POINT_BUDGET.toFixed(2)} 點</span></p>
-       <p class="hint">${projection.projected <= TDX_MONTHLY_POINT_BUDGET ? '✅ 預估額度足夠' : '🔴 依目前速度可能超額'}（依 ${projection.completeDayCount} 個完整追蹤日平均 ${formatPoints(projection.avgPointsPerDay)} 點/日，本月還剩 ${projection.remainingDaysAfterToday} 天）</p>`
-    : `<p class="hint">資料累積中（需要至少 2 個完整追蹤日才能預估月底用量，目前 ${projection.completeDayCount} 天）</p>`;
-
+// V1.9.2 — TDX Usage Summary RETIRED (formal decision, not a WRITE_ON_
+// CHANGE optimization). This page used to render a full "TDX 用量對帳"
+// quota dashboard (今日/本月/剩餘額度/月底預估/來源拆解/每日對帳) here,
+// entirely sourced from tdx:usage:summary:v1 (see ../tdx/usageLedger.js).
+// A real person now checks TDX quota/usage directly on TDX's own
+// official back-office dashboard instead — this Worker no longer
+// maintains its own duplicate summary, and scheduled.js no longer writes
+// that key at all (see that file's own V1.9.2 comment). Deliberately a
+// small, honest static note rather than leaving behind blank fields, a
+// KV-miss exception, or stale/frozen numbers from before retirement —
+// there is nothing left to read, so nothing here pretends otherwise.
+// usageLedger.js's underlying functions are UNCHANGED and still directly
+// unit-tested (test/tdxUsageLedger.test.js) — only this page's dependency
+// on them, and the periodic KV writes that fed them, are gone.
+function renderTdxUsageRetiredCard() {
   return `
   <div class="card">
-    <h2>TDX 今日</h2>
-    <p class="big-number">${today.totalDataCalls || 0} <span class="big-unit">次</span></p>
-    <div class="row"><span class="label">流量</span><span class="value">${formatBytesEstimate(today.payloadBytesEstimate)}</span></div>
-    <div class="row"><span class="label">估算點數</span><span class="value">${formatPoints(todayPoints)} 點</span></div>
-    <div class="row"><span class="label">Production</span><span class="value">${today.productionDataCalls || 0} 次</span></div>
-    <div class="row"><span class="label">人工額外</span><span class="value">${today.manualDataCalls || 0} 次</span></div>
-    ${partialTrackingNotice}
-  </div>
-
-  <div class="card">
-    <h2>TDX 本月${provisionalBadge}</h2>
-    <p class="big-number">${monthUsage.estimatedCalls} <span class="big-unit">次</span></p>
-    <div class="row"><span class="label">流量</span><span class="value">${formatBytesEstimate(monthUsage.estimatedBytes)}</span></div>
-    <div class="row"><span class="label">估算點數</span><span class="value">${formatPoints(monthUsage.estimatedPoints)} 點</span></div>
-    ${baselineNoteHtml}
-  </div>
-
-  <div class="card">
-    <h2>剩餘額度${provisionalBadge}</h2>
-    <p class="big-number">${formatPoints(remaining)} <span class="big-unit">/ ${TDX_MONTHLY_POINT_BUDGET.toFixed(3)} 點</span></p>
-    <div class="quota-bar"><div class="quota-bar-fill ${quota.className}" style="width:${Math.min(100, percent * 100)}%;"></div></div>
-    <div class="row"><span class="label">已使用</span><span class="value">${formatPercent(percent)}</span></div>
-    <div class="row"><span class="label">剩餘</span><span class="value">${formatPercent(Math.max(0, 1 - percent))}</span></div>
-    <p class="hint">${quota.emoji} ${quota.label}</p>
-    ${pendingGapWarningHtml}
-  </div>
-
-  <div class="card">
-    <h2>月底預估</h2>
-    ${projectionBody}
-  </div>
-
-  <div class="card">
-    <h2>TDX 來源（今日）</h2>
-    <ul class="source-list">${todaySourceRows}</ul>
-    <p class="hint">國道／省道即時道路事件與 CCTV metadata 皆為實際消耗 TDX 額度的資料來源（依 TDX 官方後台確認）；不分呼叫情境，Production／Debug／Admin 呼叫同一來源皆計入同一列。</p>
-  </div>
-
-  ${retiredWarningHtml}
-
-  <div class="card">
-    <h2>每日對帳（近 7 天）</h2>
-    <div class="table-wrap">
-      <table class="usage-table">
-        <thead><tr><th>日期</th><th>呼叫</th><th>流量</th><th>估算點數</th><th>差額</th></tr></thead>
-        <tbody>${dailyRows}</tbody>
-      </table>
-    </div>
-    <p class="hint">完整 30 天資料仍保留在系統內，這裡只顯示近 7 天。差額 0 為正常；正數代表有額外 TDX 呼叫（人工 Debug/Admin 或異常超量）；負數代表可能漏跑 Cron。僅供用量異常提示，不直接判定系統為 Critical。</p>
-  </div>
-
-  <details class="card">
-    <summary>進階資訊</summary>
-    <div style="margin-top:12px;">
-      <div class="row"><span class="label">今日 Production 理論</span><span class="value">${theoreticalToday} 次</span></div>
-      <div class="row"><span class="label">OAuth 真實刷新（今日）</span><span class="value">${today.oauthRequests || 0} 次</span></div>
-      <div class="row"><span class="label">OAuth 真實刷新（本月）</span><span class="value">${monthTotals.oauthRequests} 次</span></div>
-      <p class="hint">估算流量為「本地估算傳輸量」，可能與 TDX 官方傳輸量口徑不同（壓縮／計費方式可能不同），僅供長期校正參考。點數換算：${TDX_CALLS_PER_POINT} 次呼叫 = 1 點，${TDX_TRAFFIC_MB_PER_POINT}MB 傳輸 = 1 點，皆為「本地估算點數」，非官方帳務。</p>
-    </div>
-    <div style="margin-top:12px;">
-      <h3>呼叫情境（今日）</h3>
-      <p class="hint" style="margin:0 0 8px;">Production Cron／Debug Status／Debug TDX／Admin CCTV 是「呼叫情境」，與上方「TDX 來源」是不同的分類軸，僅供除錯參考。</p>
-      ${manualRowsHtml}
-    </div>
-    <div style="margin-top:12px;">
-      <h3>TDX 官方歷史參考（非本機統計）</h3>
-      <p class="hint" style="margin:0 0 8px;">以下數字來自 TDX 官方後台畫面，人工輸入，僅供比對參考，並非路況播報員本機的 Usage Ledger 統計。本機 Usage Ledger 自 V1.8.6 上線起才開始正式累積，之前的日期一律顯示「尚無資料」，不回推猜測。</p>
-      <div class="row"><span class="label">2026-08-16 官方呼叫</span><span class="value">1490 次</span></div>
-      <div class="row"><span class="label">2026-08-16 官方傳輸</span><span class="value">17016 KB</span></div>
-      <div class="row"><span class="label">2026-08-17 官方呼叫</span><span class="value">704 次</span></div>
-      <div class="row"><span class="label">2026-08-17 官方傳輸</span><span class="value">10534 KB</span></div>
-      <div class="row"><span class="label">2026-08-18 官方呼叫</span><span class="value">89 次（國道 42／省道 42／CCTV 5）</span></div>
-      <div class="row"><span class="label">2026-08-18 官方傳輸</span><span class="value">3177 KB</span></div>
-      <div class="row"><span class="label">當月官方累積（官方畫面顯示，截至 8/18）</span><span class="value">2283 次 / 約 30 MB</span></div>
-    </div>
-  </details>`;
+    <h2>TDX 用量</h2>
+    <p class="hint" style="margin:0;">TDX API 額度／用量請直接查看 TDX 官方後台，本頁不再重複維護用量摘要。</p>
+  </div>`;
 }
 
 // V1.8.6.9 — deployment identity, DISPLAY-ONLY. Deliberately does NOT
@@ -657,7 +366,7 @@ function renderCctvMetadataCard(cctvMetadata, now) {
   </div>`;
 }
 
-function renderSnapshotBody(snapshot, usageSummary, now, deploymentStatus) {
+function renderSnapshotBody(snapshot, now, deploymentStatus) {
   const { tdx, pbs, line, kv, broadcast } = snapshot;
   const cctvMetadataHtml = renderCctvMetadataCard(snapshot.cctvMetadata, now);
 
@@ -689,7 +398,7 @@ function renderSnapshotBody(snapshot, usageSummary, now, deploymentStatus) {
     <ul class="source-list">${tdxSourcesHtml}</ul>
   </div>
 
-  ${renderTdxUsageBody(usageSummary, now)}
+  ${renderTdxUsageRetiredCard()}
 
   <div class="card">
     <h2>PBS 警廣</h2>
@@ -741,13 +450,9 @@ export async function handleHealth(env) {
   const { status, staleNotice } = applyStaleness(snapshot, now);
   const statusMeta = STATUS_META[status] || STATUS_META.critical;
 
-  // V1.8.6: ONE extra read-only KV read of the pre-compacted usage
-  // summary (see ../tdx/usageLedger.js) — never a scan of raw entries,
-  // never a TDX/PBS/LINE call. A missing/unavailable summary (e.g. right
-  // after this round's first deploy, before the first Cron compaction)
-  // degrades to every count in the usage card reading 0/"尚無資料" —
-  // never an error, never affects this page's own status/staleness.
-  const { summary: usageSummary } = await readTdxUsageSummary(env.TRAFFIC_KV);
+  // V1.9.2 — this used to be an extra read-only KV read of the pre-
+  // compacted TDX usage summary here. Removed along with the "TDX 用量"
+  // dashboard card itself — see renderTdxUsageRetiredCard's own comment.
 
   // V1.8.6.9 — 0 I/O, 0 extra TDX/PBS/LINE/GitHub/Cloudflare calls (see
   // deploymentStatus.js). Display-only — see renderDeploymentCard's own
@@ -760,7 +465,7 @@ export async function handleHealth(env) {
     statusLabel: statusMeta.label,
     generatedAtLabel: formatTaipeiTime(new Date(snapshot.generatedAt)),
     staleNotice,
-    body: renderSnapshotBody(snapshot, usageSummary, now, deploymentStatus),
+    body: renderSnapshotBody(snapshot, now, deploymentStatus),
     now,
   });
 

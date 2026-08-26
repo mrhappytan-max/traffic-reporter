@@ -132,15 +132,15 @@ test('/debug/status has zero side effects: KV is byte-for-byte unchanged across 
   // fully idempotent from then on, including for the token cache itself.
   await handleDebugStatus(env);
 
-  // V1.8.6: /debug/status also now legitimately writes ONE new TDX
-  // usage-ledger entry per call (key prefix 'tdx:usage:entry:v1:',
-  // context='debug-status' — see usageLedger.js) — deliberately NOT
-  // idempotent across repeated calls (append-only, a fresh unique key
-  // every time), same "not traffic state" carve-out already established
-  // for the OAuth token cache above. The byte-for-byte comparison below
-  // is scoped to exclude that prefix — it's still proving the thing that
-  // actually matters: dedupe/notified/baseline/subscription state is
-  // untouched by repeated calls.
+  // V1.8.6 used to also write ONE new TDX usage-ledger entry per call
+  // here (key prefix 'tdx:usage:entry:v1:', context='debug-status'). V1.9.2
+  // retired that write entirely (TDX Usage Summary retired — see
+  // usageLedger.js/scheduled.js's own V1.9.2 comments) — a repeated
+  // /debug/status call is therefore now fully idempotent KV-wise,
+  // including that prefix, not just the traffic-state keys. The filter
+  // below is kept (now a no-op) purely so this test still reads as "the
+  // byte-for-byte comparison intentionally excludes this prefix" rather
+  // than silently changing its own meaning.
   const nonUsageLedgerEntries = (kv) => [...kv.store.entries()].filter(([k]) => !k.startsWith('tdx:usage:entry:v1:')).sort();
 
   const snapshotBefore = JSON.stringify(nonUsageLedgerEntries(kv));
@@ -152,8 +152,8 @@ test('/debug/status has zero side effects: KV is byte-for-byte unchanged across 
   const snapshotAfter = JSON.stringify(nonUsageLedgerEntries(kv));
   assert.equal(snapshotAfter, snapshotBefore);
 
-  // And confirm the usage ledger itself DID grow by exactly one entry per
-  // call — the positive counterpart of the assertion above.
+  // V1.9.2 — the usage ledger this call used to append to is retired;
+  // repeated calls now write literally 0 of these keys.
   const usageLedgerEntryCount = [...kv.store.keys()].filter((k) => k.startsWith('tdx:usage:entry:v1:')).length;
-  assert.equal(usageLedgerEntryCount, 4); // the initial call above + 3 more
+  assert.equal(usageLedgerEntryCount, 0);
 });

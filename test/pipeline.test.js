@@ -196,12 +196,14 @@ test('GET /debug/status is fully read-only: repeated calls never touch KV traffi
   const body1 = await r1.json();
   assert.equal(body1.baselineInitialized, false);
   // The very first call legitimately populates the shared TDX token cache
-  // (see V1.2C.1 comment above) AND writes exactly one usage-ledger entry
-  // (V1.8.6, context='debug-status' — see usageLedger.js) — those are the
-  // ONLY keys it may write; genuine traffic state stays at 0.
+  // (see V1.2C.1 comment above) — the ONLY key it may write; genuine
+  // traffic state stays at 0. V1.9.2 — the usage-ledger entry
+  // (V1.8.6, context='debug-status') this call used to also write is
+  // RETIRED (TDX Usage Summary retired — see usageLedger.js/scheduled.js's
+  // own V1.9.2 comments); this now writes literally 0 keys of its own.
   assert.equal(trafficStateKeyCount(kv), 0);
-  assert.equal(usageLedgerEntryCount(kv), 1);
-  assert.ok([...kv.store.keys()].every(isUsageLedgerKey)); // nothing but the token cache + 1 usage entry
+  assert.equal(usageLedgerEntryCount(kv), 0);
+  assert.ok([...kv.store.keys()].every(isUsageLedgerKey)); // nothing but the token cache
   const tokenCacheAfterFirstCall = kv.store.get(TDX_TOKEN_CACHE_KEY);
 
   const r2 = await handleDebugStatus(env);
@@ -210,9 +212,8 @@ test('GET /debug/status is fully read-only: repeated calls never touch KV traffi
   assert.equal(trafficStateKeyCount(kv), 0); // still no traffic state written
   // Second call reuses the cached token (memory tier) — doesn't re-write KV.
   assert.equal(kv.store.get(TDX_TOKEN_CACHE_KEY), tokenCacheAfterFirstCall);
-  // But it DOES append a second, independent usage-ledger entry — that's
-  // the whole point of an append-only ledger, deliberately not idempotent.
-  assert.equal(usageLedgerEntryCount(kv), 2);
+  // V1.9.2 — still 0: the usage-ledger write this used to append is retired.
+  assert.equal(usageLedgerEntryCount(kv), 0);
 
   // pushableEventsCount must be 0 pre-baseline in the preview too, mirroring
   // exactly what the real Cron run would do.
@@ -225,8 +226,7 @@ test('GET /debug/status is fully read-only: repeated calls never touch KV traffi
   assert.ok(trafficStateSizeAfterBaseline > 0);
 
   // ...and confirm /debug/status still never mutates TRAFFIC state, even
-  // though it can now see (read-only) that the baseline exists. Only the
-  // usage-ledger entry count is allowed to keep growing.
+  // though it can now see (read-only) that the baseline exists.
   const r3 = await handleDebugStatus(env);
   const body3 = await r3.json();
   assert.equal(body3.baselineInitialized, true);
@@ -235,7 +235,9 @@ test('GET /debug/status is fully read-only: repeated calls never touch KV traffi
   await handleDebugStatus(env);
   await handleDebugStatus(env);
   assert.equal(trafficStateKeyCount(kv), trafficStateSizeAfterBaseline); // unchanged after repeated calls
-  assert.equal(usageLedgerEntryCount(kv), 6); // 1 (Cron's own batch) + 5 debug/status calls total (r1, r2, r3, and 2 more)
+  // V1.9.2 — the usage ledger (both the Cron tick's own batch and every
+  // debug/status call's entry) is retired; this stays 0 throughout.
+  assert.equal(usageLedgerEntryCount(kv), 0);
 });
 
 test('KV read failure: kvAvailable=false and pushableEventsCount=0, TDX data itself is unaffected', async () => {

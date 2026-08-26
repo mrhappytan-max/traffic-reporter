@@ -108,7 +108,6 @@ import { toTaipeiParts } from '../traffic/broadcastHours.js';
 import { composeQuadrantCollage } from '../cctv/collage.js';
 import { publishCollageImage } from '../cctv/publishedImage.js';
 import { writeFreewayCctvMetadataCache } from '../cctv/freewayCctvMetadataCache.js';
-import { commitTdxUsageBatch } from './usageLedger.js';
 
 // cctv/jpegCodecWorker.js does a top-level `import ... from '*.wasm'` —
 // the only WASM-loading mechanism Cloudflare Workers actually supports
@@ -677,10 +676,16 @@ export async function handleHsinchuCctvProbe(env) {
     return htmlResponse(renderPage('<div class="card"><p class="warn">Could not arm the one-time-use guard; refusing to call TDX.</p></div>'), 503);
   }
 
-  // V1.8.6: this whole probe is exactly ONE invocation for usage-ledger
-  // purposes — one in-memory batch, committed context='admin-cctv' at
-  // every exit point below that could have made a real TDX call (OAuth
-  // and/or the CCTV metadata fetch). Best-effort; see usageLedger.js.
+  // V1.8.6 used to commit this whole probe's `tdxUsageSink` into the TDX
+  // usage ledger at every exit point below (context='admin-cctv'). V1.9.2
+  // (TDX Usage Summary retirement) removed that KV write: the raw ledger
+  // existed solely to feed the now-retired tdx:usage:summary:v1
+  // compaction/health-page dashboard (see usageLedger.js's own header
+  // comment) and had no other reader — TDX quota/usage is now checked
+  // directly on TDX's own official back-office dashboard. `tdxUsageSink`
+  // below is harmless, unpersisted in-memory bookkeeping — kept only
+  // because getAccessToken/fetchTdxJson still accept it as an optional
+  // parameter.
   const tdxUsageSink = [];
 
   // 2. OAuth token — reuses the project's existing cache-first flow.
@@ -689,7 +694,6 @@ export async function handleHsinchuCctvProbe(env) {
   try {
     accessToken = await getAccessToken(env, tdxUsageSink);
   } catch {
-    await commitTdxUsageBatch(env.TRAFFIC_KV, { context: 'admin-cctv', records: tdxUsageSink });
     return htmlResponse(
       renderPage('<div class="card"><p class="warn">probe locked after failed attempt; manual reset required (OAuth failed)</p></div>'),
       502
@@ -702,7 +706,6 @@ export async function handleHsinchuCctvProbe(env) {
   try {
     cctvJson = await fetchTdxJson(CCTV_URL, accessToken, { source: 'cctv-hsinchu-probe', usageSink: tdxUsageSink });
   } catch (err) {
-    await commitTdxUsageBatch(env.TRAFFIC_KV, { context: 'admin-cctv', records: tdxUsageSink });
     return htmlResponse(
       renderPage(
         `<div class="card"><p class="warn">probe locked after failed attempt; manual reset required (CCTV metadata failed${err instanceof TdxApiError && err.status ? `, HTTP ${err.status}` : ''})</p></div>`
@@ -710,7 +713,6 @@ export async function handleHsinchuCctvProbe(env) {
       502
     );
   }
-  await commitTdxUsageBatch(env.TRAFFIC_KV, { context: 'admin-cctv', records: tdxUsageSink });
 
   const records = Array.isArray(cctvJson) ? cctvJson : cctvJson.CCTVs || cctvJson.Data || [];
   const candidates = selectFourQuadrantCandidates(records);

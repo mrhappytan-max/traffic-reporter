@@ -14,6 +14,14 @@ import { setUserEnabled } from '../src/traffic/subscriptions.js';
 import { normalizeRoadEvent } from '../src/tdx/normalize.js';
 import { FREEWAY_METADATA_KEY } from '../src/cctv/freewayCctvMetadataCache.js';
 import { decodeJpeg, encodeJpeg } from './testJpegCodec.js';
+// V1.9.2 — the real Cron path (scheduled.js) now writes via
+// persistPipelineTraceBatch (one 'debug:pipeline-trace-batch:v2:...' key
+// per round, see pipelineTrace.js), not one 'debug:pipeline-trace:v1:...'
+// key per entry. listPipelineTrace already reads and merges BOTH schemas
+// — using it here (instead of hand-scanning a hardcoded key prefix) is
+// what makes these tests correct against either write path, matching how
+// every real reader (the admin JSON/HTML endpoints) actually reads.
+import { listPipelineTrace, TRACE_BATCH_KEY_PREFIX } from '../src/traffic/pipelineTrace.js';
 
 const TEST_CODEC = { decodeJpeg, encodeJpeg };
 const NOW = new Date('2026-08-20T20:20:00+08:00');
@@ -181,8 +189,7 @@ test('3: a TDX duplicate (unchanged content) -> a standalone trace entry with de
   const second = await runScheduledTdxSync(env, new Date(NOW.getTime() + 20 * 60_000));
   assert.equal(second.duplicateCount, 1);
 
-  const traceKeys = [...env.TRAFFIC_KV.store.keys()].filter((k) => k.startsWith('debug:pipeline-trace:v1:'));
-  const records = traceKeys.map((k) => JSON.parse(env.TRAFFIC_KV.store.get(k)));
+  const { records } = await listPipelineTrace(env.TRAFFIC_KV, { limit: 100 });
   const duplicateTrace = records.find((r) => r.identity.rawId === 'A1' && r.decision.dedupeResult === 'duplicate');
   assert.ok(duplicateTrace, 'a duplicate-tick trace entry must exist');
   assert.equal(duplicateTrace.status, 'duplicate');
@@ -226,8 +233,7 @@ test('5: an unmatched 國道 PBS event -> standalone trace entry with gatingResu
   const result = await runScheduledTdxSync(env, NOW); // no TDX_CLIENT_ID -> TDX sits out, PBS-only tick
   assert.equal(result.pbs.freewayGatedCount, 1);
 
-  const traceKeys = [...env.TRAFFIC_KV.store.keys()].filter((k) => k.startsWith('debug:pipeline-trace:v1:'));
-  const records = traceKeys.map((k) => JSON.parse(env.TRAFFIC_KV.store.get(k)));
+  const { records } = await listPipelineTrace(env.TRAFFIC_KV, { limit: 100 });
   const gatedTrace = records.find((r) => r.identity.rawId === 'PBS-1');
   assert.ok(gatedTrace);
   assert.equal(gatedTrace.decision.gatingResult, 'gated-freeway-no-tdx-match');
@@ -372,8 +378,7 @@ test('11: a full Cron run patches sharedFeedPersisted/sharedFeedWithImage from t
 
   await runScheduledTdxSync(env, NOW);
 
-  const traceKeys = [...env.TRAFFIC_KV.store.keys()].filter((k) => k.startsWith('debug:pipeline-trace:v1:'));
-  const records = traceKeys.map((k) => JSON.parse(env.TRAFFIC_KV.store.get(k)));
+  const { records } = await listPipelineTrace(env.TRAFFIC_KV, { limit: 100 });
   const trace = records.find((r) => r.identity.rawId === 'A1' && r.status === 'line-sent');
   assert.ok(trace, 'a line-sent trace entry for this event must exist');
   assert.equal(trace.delivery.sharedFeedPersisted, true);
@@ -386,7 +391,7 @@ test('25: pipeline trace KV write failure never affects the real LINE push outco
   const { env } = await envWithSubscriber();
   const originalPut = env.TRAFFIC_KV.put.bind(env.TRAFFIC_KV);
   env.TRAFFIC_KV.put = async (key, value, options) => {
-    if (key.startsWith('debug:pipeline-trace:v1:')) throw new Error('trace KV outage');
+    if (key.startsWith(TRACE_BATCH_KEY_PREFIX)) throw new Error('trace KV outage');
     return originalPut(key, value, options);
   };
   env.TDX_CLIENT_ID = 'id';

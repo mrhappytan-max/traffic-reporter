@@ -27,9 +27,8 @@ import { resolveLinePushPolicy } from './broadcastPolicy.js';
 import { readDedupeState } from './dedupe.js';
 import { PRODUCTION_TDX_SOURCE_IDS } from '../tdx/sources.js';
 import { persistProductionTdxEventCache, readProductionTdxEventCache } from './tdxEventCache.js';
-import { commitTdxUsageBatch, compactTdxUsageSummaryRecentDays } from '../tdx/usageLedger.js';
 import { runSharedFeedPersist, readSharedFeed } from './sharedFeed.js';
-import { buildTraceEntry, persistPipelineTraceEntries } from './pipelineTrace.js';
+import { buildTraceEntry, persistPipelineTraceBatch } from './pipelineTrace.js';
 import { describeFreewayCctvMetadata } from '../cctv/freewayCctvMetadataCache.js';
 
 /**
@@ -140,9 +139,12 @@ export async function runScheduledTdxSync(env, now = new Date()) {
   // tdxEventCache.js. Only written on a genuinely successful scheduled
   // fetch (at least one source ok); own try/catch, same isolation
   // principle as every other side-effect in this function.
-  if (tdxScheduleState === 'scheduled' && summary.sources.some((s) => s.ok)) {
+  const tdxEventCacheAttempted = tdxScheduleState === 'scheduled' && summary.sources.some((s) => s.ok);
+  let tdxEventCacheWritten = false;
+  if (tdxEventCacheAttempted) {
     try {
       const cacheCommit = await persistProductionTdxEventCache(env.TRAFFIC_KV, summary.allEvents, now);
+      tdxEventCacheWritten = Boolean(cacheCommit.committed);
       if (!cacheCommit.committed) console.error(`[cron][tdx-cache] write failed: ${cacheCommit.reason} ${cacheCommit.error ?? ''}`);
     } catch (err) {
       console.error(`[cron][tdx-cache] write failed: ${err && err.message}`);
@@ -277,6 +279,7 @@ export async function runScheduledTdxSync(env, now = new Date()) {
   // fails, the snapshot already in KV just keeps aging — /health's own
   // staleness check (see health.js) is what correctly surfaces that as
   // critical, no separate "write failed" flag needed here.
+  let healthSnapshotWritten = false;
   try {
     const previous = await readHealthSnapshot(env.TRAFFIC_KV);
     // One extra KV read, no network, no TDX — describeFreewayCctvMetadata
@@ -299,31 +302,29 @@ export async function runScheduledTdxSync(env, now = new Date()) {
       previousTdx: previous.snapshot ? previous.snapshot.tdx : null,
     });
     const commit = await persistHealthSnapshot(env.TRAFFIC_KV, healthSnapshot);
+    healthSnapshotWritten = Boolean(commit.committed);
     if (!commit.committed) console.error(`[cron][health] snapshot write failed: ${commit.reason} ${commit.error ?? ''}`);
   } catch (err) {
     console.error(`[cron][health] snapshot build/write failed: ${err && err.message}`);
   }
 
-  // V1.8.6 — TDX usage ledger: write this tick's batch (if any real TDX
-  // call was attempted), then recompact BOTH today's and yesterday's
-  // summary rows from the raw entries (compactTdxUsageSummaryRecentDays —
-  // catches a cross-midnight Debug/Admin invocation whose "yesterday"
-  // entry only finished writing after yesterday's row was last frozen;
-  // still just 2 bounded list() scans, never the full history). Neither
-  // function ever throws (each reduces any KV failure to a returned
-  // {committed:false, reason, error} — see usageLedger.js), so no extra
-  // try/catch is needed here — same isolation principle as the health
-  // snapshot write above and the tdx-cache write further up: a usage-
-  // ledger outage must never affect the real TDX/PBS/LINE pipeline this
-  // tick already fully completed by this point.
-  const batchCommit = await commitTdxUsageBatch(env.TRAFFIC_KV, { context: 'production-cron', now, records: tdxUsageSink });
-  if (!batchCommit.committed && batchCommit.reason === 'kv-error') {
-    console.error(`[cron][tdx-usage] batch write failed: ${batchCommit.error ?? ''}`);
-  }
-  const compaction = await compactTdxUsageSummaryRecentDays(env.TRAFFIC_KV, now);
-  if (!compaction.committed && compaction.reason === 'kv-error') {
-    console.error(`[cron][tdx-usage] summary compaction failed: ${compaction.error ?? ''}`);
-  }
+  // V1.9.2 (TDX Usage Summary retirement) — this used to be where the
+  // TDX usage ledger's per-tick batch write (commitTdxUsageBatch,
+  // 'tdx:usage:entry:v1:*') and the compacted-summary recompaction
+  // (compactTdxUsageSummaryRecentDays, 'tdx:usage:summary:v1') happened,
+  // unconditionally, EVERY Cron tick — 144 times/day regardless of
+  // whether TDX made any real calls this tick. A real person now checks
+  // TDX's own official back-office dashboard directly for quota/usage,
+  // so this Worker no longer maintains its own duplicate summary. Both
+  // KV keys are RETIRED (0 writes/day) — see usageLedger.js's own header
+  // comment and 07_KNOWN_ISSUES.md's V1.9.2 record for the full
+  // reasoning (the raw ledger existed solely to feed the now-retired
+  // summary/dashboard and had no other reader — TDX runtime, auth,
+  // RoadEvent/CCTV metadata fetching, source-mode switching, and the 9/1
+  // TDX quota restore path are all completely independent of this ledger
+  // and are untouched). `tdxUsageSink` above is still collected in
+  // memory (recordTdxDataCall/recordTdxOAuthCall — harmless, unpersisted)
+  // purely because fetchAllSources/getAccessToken still accept it.
 
   // V57 — persist this run's completed products (the exact finished text, and
   // the CCTV image URL this run already published) so another project can
@@ -399,15 +400,80 @@ export async function runScheduledTdxSync(env, now = new Date()) {
       ),
     ];
 
-    pipelineTraceSummary = await persistPipelineTraceEntries(env.TRAFFIC_KV, [...patchedLineEntries, ...dropoutEntries], now);
+    // V1.9.2 — batched: one KV `put` per Cron round (occasionally a few,
+    // only if this round's entries are genuinely too large for one key —
+    // see chunkEntriesForTraceBatch), replacing the old one-`put`-per-
+    // entry write. See pipelineTrace.js's own TRACE_BATCH_KEY_PREFIX
+    // comment for the full backward-compatibility write-up.
+    pipelineTraceSummary = await persistPipelineTraceBatch(env.TRAFFIC_KV, [...patchedLineEntries, ...dropoutEntries], now);
     console.log(
       `[cron][pipeline-trace] attempted=${pipelineTraceSummary.attempted} ` +
-        `committed=${pipelineTraceSummary.committed} failed=${pipelineTraceSummary.failed}`
+        `committed=${pipelineTraceSummary.committed} failed=${pipelineTraceSummary.failed} ` +
+        `batchCount=${pipelineTraceSummary.batchCount}`
     );
   } catch (err) {
     console.error(`[cron][pipeline-trace] persistence failed: ${err && err.message}`);
-    pipelineTraceSummary = { attempted: 0, committed: 0, failed: 0, error: err && err.message };
+    pipelineTraceSummary = { attempted: 0, committed: 0, failed: 0, batchCount: 0, error: err && err.message };
   }
+
+  // V1.9.2 — KV Write Optimization observability. Workers Logs ONLY —
+  // deliberately creates no new KV key (per this round's own instruction)
+  // — a single console.log line per Cron tick reporting exactly which of
+  // this project's own KV-writing categories attempted a write, how many
+  // actually reached KV, and (for the three WRITE_ON_CHANGE keys) how
+  // many were skipped because their real content hadn't changed.
+  // `attempted`/`performed`/`skippedUnchanged` are counted per-category
+  // below; `tdxUsageSummary`/`tdxUsageEntry` are permanently 0/0/0 — kept
+  // as their own named categories (rather than removed outright) so this
+  // log line itself is the ongoing, visible proof that the V1.9.2
+  // retirement holds on every single Production tick, not just at
+  // deploy time.
+  const budgetCategories = {
+    tdxUsageSummary: { attempted: 0, performed: 0, skippedUnchanged: 0 }, // RETIRED V1.9.2 — see above
+    tdxUsageEntry: { attempted: 0, performed: 0, skippedUnchanged: 0 }, // RETIRED V1.9.2 — see above
+    healthSnapshot: { attempted: 1, performed: healthSnapshotWritten ? 1 : 0, skippedUnchanged: 0 },
+    tdxEventCache: {
+      attempted: tdxEventCacheAttempted ? 1 : 0,
+      performed: tdxEventCacheWritten ? 1 : 0,
+      skippedUnchanged: 0,
+    },
+    sharedFeed: {
+      attempted: 1,
+      performed: sharedFeedSummary.written ? 1 : 0,
+      skippedUnchanged: sharedFeedSummary.written ? 0 : 1,
+    },
+    incidentSuppression: {
+      attempted: lineSummary.incidentSuppressionWriteAttempted ? 1 : 0,
+      performed: lineSummary.incidentSuppressionWriteWritten ? 1 : 0,
+      skippedUnchanged: lineSummary.incidentSuppressionWriteAttempted && !lineSummary.incidentSuppressionWriteWritten ? 1 : 0,
+    },
+    notifiedState: {
+      attempted: lineSummary.notifiedStateWriteAttempts || 0,
+      performed: lineSummary.notifiedStateWriteCommitted || 0,
+      skippedUnchanged: 0, // never gated by WRITE_ON_CHANGE — per-event failure isolation is preserved as-is
+    },
+    pipelineTraceBatch: {
+      attempted: pipelineTraceSummary.batchCount || 0,
+      performed: pipelineTraceSummary.batchesCommitted || 0,
+      skippedUnchanged: 0, // batching, not change-detection
+    },
+  };
+  const totals = Object.values(budgetCategories).reduce(
+    (acc, c) => ({
+      attempted: acc.attempted + c.attempted,
+      performed: acc.performed + c.performed,
+      skippedUnchanged: acc.skippedUnchanged + c.skippedUnchanged,
+    }),
+    { attempted: 0, performed: 0, skippedUnchanged: 0 }
+  );
+  const categoryLog = Object.entries(budgetCategories)
+    .map(([name, c]) => `${name}=${c.attempted}/${c.performed}/${c.skippedUnchanged}`)
+    .join(' ');
+  console.log(
+    `[kv-write-budget] attemptedWrites=${totals.attempted} performedWrites=${totals.performed} ` +
+      `skippedUnchangedWrites=${totals.skippedUnchanged} ${categoryLog} ` +
+      `traceEntryCount=${pipelineTraceSummary.attempted || 0} traceBatchCount=${pipelineTraceSummary.batchCount || 0}`
+  );
 
   return { ...summary, line: lineSummary, pbs: pbsSummary, sharedFeed: sharedFeedSummary, pipelineTrace: pipelineTraceSummary };
 }

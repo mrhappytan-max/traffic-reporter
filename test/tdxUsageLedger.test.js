@@ -224,25 +224,27 @@ test('5. a full 5-source fetch tagged context=debug-tdx -> the batch entry carri
   assert.equal(body.records.filter((r) => r.kind === 'data').length, 5);
 });
 
-test('/debug/tdx (the real handler) is tagged context=debug-tdx and costs exactly 2 TDX data calls (production-restricted, V1.6.2)', async () => {
+test('V1.9.2 — /debug/tdx (the real handler) still costs exactly 2 TDX data calls (production-restricted, V1.6.2), but no longer writes a usage-ledger entry (TDX Usage Summary retired)', async () => {
   const kvStore = kv();
   originalFetch = globalThis.fetch;
   globalThis.fetch = mockTdxFetch({ freewayEvents: [] });
 
-  await handleDebugTdx({ TDX_CLIENT_ID: 'id', TDX_CLIENT_SECRET: 'secret', TRAFFIC_KV: kvStore });
+  const response = await handleDebugTdx({ TDX_CLIENT_ID: 'id', TDX_CLIENT_SECRET: 'secret', TRAFFIC_KV: kvStore });
+  const body = await response.json();
+
+  // The real TDX fetch behavior (2 sources, freeway+highway) is completely
+  // unaffected by the usage-ledger retirement — only the KV write is gone.
+  assert.equal(body.sources.length, 2);
 
   const usageKeys = [...kvStore.store.keys()].filter((k) => k.startsWith(USAGE_ENTRY_KEY_PREFIX));
-  assert.equal(usageKeys.length, 1);
-  const body = JSON.parse(kvStore.store.get(usageKeys[0]));
-  assert.equal(body.context, 'debug-tdx');
-  assert.equal(body.records.filter((r) => r.kind === 'data').length, 2);
+  assert.equal(usageKeys.length, 0);
 });
 
 // ===========================================================================
-// 6. admin CCTV probe -> context=admin-cctv, +1
+// 6. admin CCTV probe — V1.9.2: usage-ledger write retired
 // ===========================================================================
 
-test('6. the Hsinchu admin CCTV probe records exactly 1 data call under context=admin-cctv', async () => {
+test('V1.9.2 — the Hsinchu admin CCTV probe still makes exactly 1 real TDX data call under context=admin-cctv, but no longer writes a usage-ledger entry (TDX Usage Summary retired)', async () => {
   const kvStore = kv();
   originalFetch = globalThis.fetch;
   globalThis.fetch = mockTdxFetch({});
@@ -250,12 +252,7 @@ test('6. the Hsinchu admin CCTV probe records exactly 1 data call under context=
   await handleHsinchuCctvProbe({ TDX_CLIENT_ID: 'id', TDX_CLIENT_SECRET: 'secret', TRAFFIC_KV: kvStore });
 
   const usageKeys = [...kvStore.store.keys()].filter((k) => k.startsWith(USAGE_ENTRY_KEY_PREFIX));
-  assert.equal(usageKeys.length, 1);
-  const body = JSON.parse(kvStore.store.get(usageKeys[0]));
-  assert.equal(body.context, 'admin-cctv');
-  const dataRecords = body.records.filter((r) => r.kind === 'data');
-  assert.equal(dataRecords.length, 1);
-  assert.equal(dataRecords[0].source, 'cctv-hsinchu-probe');
+  assert.equal(usageKeys.length, 0);
 });
 
 // ===========================================================================
@@ -355,11 +352,16 @@ test('11. GET /health makes 0 TDX/PBS/LINE calls even with a populated usage sum
   const response = await handleHealth({ TRAFFIC_KV: kvStore });
   assert.equal(response.status, 200);
   const html = await response.text();
-  // V1.8.6.1 — the page was redesigned into a quota-first dashboard
-  // ("TDX 今日"/"TDX 本月"/"剩餘額度"/"月底預估"); the old single "TDX 用量
-  // 對帳" heading no longer exists as its own card, so this asserts
-  // against the new top card instead.
-  assert.match(html, /TDX 今日/);
+  // V1.9.2 — the quota-first dashboard ("TDX 今日"/"TDX 本月"/"剩餘額度"/
+  // "月底預估") is RETIRED (a real person now checks TDX's own official
+  // back-office dashboard directly — see health.js's own
+  // renderTdxUsageRetiredCard comment). USAGE_SUMMARY_KEY is still seeded
+  // above purely to prove /health tolerates a leftover pre-V1.9.2 summary
+  // key without reading or erroring on it; the page now shows the small
+  // static retirement note instead.
+  assert.match(html, /TDX 用量/);
+  assert.match(html, /TDX 官方後台/);
+  assert.doesNotMatch(html, /TDX 今日/);
 });
 
 // ===========================================================================
@@ -669,14 +671,15 @@ test('7. a normal (non-midnight-straddling) invocation still writes exactly ONE 
   assert.equal(kvStore.store.size, 1);
 });
 
-test('a real Cron tick (freeway+highway, same-day timestamps) still produces exactly one usage-ledger KV key end to end', async () => {
+test('V1.9.2 — a real Cron tick (freeway+highway, same-day timestamps) no longer produces ANY usage-ledger KV key (TDX Usage Summary retired) or summary key', async () => {
   const kvStore = kv();
   originalFetch = globalThis.fetch;
   globalThis.fetch = mockTdxFetch({ freewayEvents: [] });
   const now = new Date('2026-08-18T08:00:00+08:00');
   await runScheduledTdxSync({ TDX_CLIENT_ID: 'id', TDX_CLIENT_SECRET: 'secret', TRAFFIC_KV: kvStore, PBS_RELAY_WINDOWS: undefined }, now);
   const usageKeys = [...kvStore.store.keys()].filter((k) => k.startsWith(USAGE_ENTRY_KEY_PREFIX));
-  assert.equal(usageKeys.length, 1);
+  assert.equal(usageKeys.length, 0);
+  assert.equal(kvStore.store.has(USAGE_SUMMARY_KEY), false);
 });
 
 // ===========================================================================

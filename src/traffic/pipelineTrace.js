@@ -59,6 +59,43 @@ import { canonicalFreewayRoad, canonicalProvincialRoad } from './roadIdentity.js
 
 export const TRACE_KEY_PREFIX = 'debug:pipeline-trace:v1';
 export const TRACE_TTL_SECONDS = 24 * 60 * 60; // 24h, per instruction
+
+// V1.9.2 (KV Write Optimization) — BATCH persistence. Real Cloudflare
+// alert: traffic-reporter-kv hit 733/1000 daily KV writes (97.9% of the
+// account's whole daily budget), and the prior round's read-only KV
+// forensic pass named Pipeline Trace's one-`put`-per-entry write pattern
+// as a top writer — a busy tick with 20-30 traced events cost 20-30
+// separate KV writes, every 10 minutes. This schema writes the WHOLE
+// round's entries in ONE key instead: `debug:pipeline-trace-batch:v2:
+// <date>:<epochMs>:<partIndex>:<opaqueId>`, `{schemaVersion:2,
+// generatedAt, entries:[...]}`. `partIndex` only ever exceeds `00` when
+// a single round's entries are large enough to need deterministic
+// splitting (see chunkEntriesForTraceBatch below) — a real day's volume
+// (this module's own PERFORMANCE note: "typically low tens" per tick)
+// never comes close to needing a second part.
+//
+// BACKWARD COMPATIBILITY, non-negotiable: the OLD v1 per-entry keys
+// (TRACE_KEY_PREFIX above) are NEVER deleted, NEVER bulk-migrated, and
+// keep expiring on their own pre-existing 24h TTL exactly as before —
+// recordPipelineTrace/persistPipelineTraceEntries below are UNCHANGED and
+// stay exported (existing direct callers/tests keep working unmodified).
+// listPipelineTrace now reads BOTH schemas and merges them into one
+// newest-first timeline (see that function's own comment) — every
+// existing v1-only record already in KV from before this deploy renders
+// exactly as it always did, right up until its own 24h TTL expires it.
+export const TRACE_BATCH_KEY_PREFIX = 'debug:pipeline-trace-batch:v2';
+
+// Safety caps for deterministic splitting — real Cloudflare Workers KV
+// per-value ceiling is 25 MiB, and this project's own realistic volume
+// (low tens of entries/tick) puts a genuine batch at well under 100 KB
+// even generously estimated. Both numbers below are therefore pure
+// runaway-anomaly guards, not expected limits — "splitting only if truly
+// needed", per this round's own instruction. MAX_TRACE_BATCH_BYTES is
+// checked against each entry's OWN serialized size, so a single
+// pathologically large entry is still written alone in its own part
+// (never silently dropped) rather than blocked from ever committing.
+export const MAX_TRACE_ENTRIES_PER_BATCH = 500;
+export const MAX_TRACE_BATCH_BYTES = 2 * 1024 * 1024; // 2 MiB
 const DESCRIPTION_SUMMARY_MAX_CHARS = 120; // per instruction — Description 只存摘要，最多 120 字
 const UPSTREAM_FIELD_MAX_CHARS = 80; // same cap already used by provenance's classificationSource/locationSource values
 // V1.9.1 — 30 -> 60. Raised per human-reported查修 need: a real查修 pass
@@ -546,6 +583,88 @@ export async function persistPipelineTraceEntries(kv, entries, now = new Date())
 }
 
 /**
+ * Pure. Splits `entries` (in their given order) into deterministic chunks,
+ * each respecting BOTH MAX_TRACE_ENTRIES_PER_BATCH and
+ * MAX_TRACE_BATCH_BYTES (measured as each entry's own UTF-8 JSON byte
+ * length, additive). A chunk never starts empty-then-overflows: a single
+ * entry larger than the byte cap on its own still becomes its own
+ * one-entry chunk (never dropped, never blocked) — only ADDING a further
+ * entry to an already-nonempty chunk is what the byte check guards
+ * against. Deterministic given the same input — no randomness, no
+ * wall-clock dependency, safe to unit-test directly.
+ */
+export function chunkEntriesForTraceBatch(entries) {
+  const list = Array.isArray(entries) ? entries : [];
+  const chunks = [];
+  let current = [];
+  let currentBytes = 0;
+  const encoder = new TextEncoder();
+
+  for (const entry of list) {
+    const entryBytes = encoder.encode(JSON.stringify(entry)).length;
+    const wouldExceedCount = current.length + 1 > MAX_TRACE_ENTRIES_PER_BATCH;
+    const wouldExceedBytes = current.length > 0 && currentBytes + entryBytes > MAX_TRACE_BATCH_BYTES;
+    if (current.length > 0 && (wouldExceedCount || wouldExceedBytes)) {
+      chunks.push(current);
+      current = [];
+      currentBytes = 0;
+    }
+    current.push(entry);
+    currentBytes += entryBytes;
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
+}
+
+/**
+ * V1.9.2 — the Cron path's new write entry point, replacing
+ * persistPipelineTraceEntries (kept above, unchanged, for backward-
+ * compatible reads/tests — see this module's TRACE_BATCH_KEY_PREFIX
+ * comment). Writes this WHOLE round's entries as one (or, only if
+ * genuinely oversized, a few deterministically-split) KV `put` instead of
+ * one per entry. Same isolation discipline as every write in this module:
+ * never throws, a partial/total KV outage degrades to a `failed` count,
+ * never affects the real pipeline outcome (already fully completed by the
+ * time scheduled.js calls this).
+ *
+ * `committed`/`failed` below count ENTRIES (not batch keys) — same
+ * meaning persistPipelineTraceEntries' return already had, so
+ * scheduled.js's `[cron][pipeline-trace]` log line keeps its existing
+ * shape. `batchCount`/`batchesCommitted` are the NEW, additional
+ * batch-level numbers this round's `[kv-write-budget]` log reports.
+ */
+export async function persistPipelineTraceBatch(kv, entries, now = new Date()) {
+  const list = Array.isArray(entries) ? entries : [];
+  if (!kv) return { attempted: list.length, committed: 0, failed: list.length, batchCount: 0, batchesCommitted: 0 };
+  if (list.length === 0) return { attempted: 0, committed: 0, failed: 0, batchCount: 0, batchesCommitted: 0 };
+
+  const chunks = chunkEntriesForTraceBatch(list);
+  const date = taipeiDateString(now);
+  const timestamp = now.getTime();
+
+  let committed = 0;
+  let failed = 0;
+  let batchesCommitted = 0;
+  const keys = [];
+
+  for (let partIndex = 0; partIndex < chunks.length; partIndex += 1) {
+    const chunk = chunks[partIndex];
+    const key = `${TRACE_BATCH_KEY_PREFIX}:${date}:${timestamp}:${String(partIndex).padStart(2, '0')}:${opaqueId()}`;
+    const body = { schemaVersion: 2, generatedAt: now.toISOString(), entries: chunk };
+    try {
+      await kv.put(key, JSON.stringify(body), { expirationTtl: TRACE_TTL_SECONDS });
+      committed += chunk.length;
+      batchesCommitted += 1;
+      keys.push(key);
+    } catch {
+      failed += chunk.length;
+    }
+  }
+
+  return { attempted: list.length, committed, failed, batchCount: chunks.length, batchesCommitted, keys };
+}
+
+/**
  * Admin-only read. Bounded KV list+get, newest first, optional
  * source/road/rawId/status filters — never touches TDX/PBS/CCTV/LINE,
  * pure KV reads only. Never throws — a KV outage degrades to an empty
@@ -607,50 +726,124 @@ function matchesFreeText(record, query) {
   return haystack.includes(needle);
 }
 
+/**
+ * Bounded key-ENUMERATION pass for one key prefix — cheap `kv.list()`
+ * calls only, no record bodies read yet. Shared by both the legacy v1
+ * (one-entry-per-key) and the new v2 (one-batch-per-Cron-round) prefixes
+ * — see MAX_LIST_PAGES's own comment for why this is a generous PAGE
+ * ceiling, not an entry-count ceiling.
+ */
+async function listTraceKeysForPrefix(kv, prefix) {
+  const keys = [];
+  let cursor;
+  let pages = 0;
+  for (;;) {
+    const page = await kv.list({ prefix, cursor });
+    for (const k of page.keys || []) keys.push(k.name);
+    pages += 1;
+    if (page.list_complete || !page.cursor || pages >= MAX_LIST_PAGES) break;
+    cursor = page.cursor;
+  }
+  return keys;
+}
+
+/**
+ * V1.9.2 — reads descriptors newest-first (already merged/sorted by the
+ * caller — see listPipelineTrace) and flattens them into individual trace
+ * records, stopping once `maxEntries` have been collected. A v1
+ * descriptor yields exactly one record (its own `kv.get`); a v2 batch
+ * descriptor yields every record in its `entries` array, newest-within-
+ * batch first (see the loop below for why). `scannedKeyCount` counts KV
+ * `get` OPERATIONS (one per descriptor actually read), matching what this
+ * field always meant before v2 existed — "how many keys did this listing
+ * actually read", not "how many entries came out of them".
+ */
+async function collectFlattenedTraceEntries(kv, descriptorsNewestFirst, maxEntries) {
+  const entries = [];
+  let scannedKeyCount = 0;
+  for (const descriptor of descriptorsNewestFirst) {
+    if (entries.length >= maxEntries) break;
+    scannedKeyCount += 1;
+    const raw = await kv.get(descriptor.key);
+    if (!raw) continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      continue; // corrupt entry/batch — skip it, never let one bad write break the listing
+    }
+    if (descriptor.type === 'v1') {
+      if (parsed && typeof parsed === 'object') entries.push(parsed);
+      continue;
+    }
+    // v2 batch — flatten. Reversed (last-appended-this-round shown
+    // first): every entry in one batch shares the same (or
+    // near-identical) round timestamp, so there is no real chronological
+    // order to preserve within it — this mirrors the OLD v1 scheme's own
+    // `sequence` tiebreak (higher sequence = written later this round =
+    // shown first after the newest-first reverse — see
+    // recordPipelineTrace's own comment), so a mixed v1/v2 history still
+    // reads as one consistent convention throughout.
+    if (!parsed || !Array.isArray(parsed.entries)) continue;
+    for (let i = parsed.entries.length - 1; i >= 0; i -= 1) {
+      if (entries.length >= maxEntries) break;
+      const record = parsed.entries[i];
+      if (record && typeof record === 'object') entries.push(record);
+    }
+  }
+  return { entries, scannedKeyCount };
+}
+
+/**
+ * Admin-only read. Bounded KV list+get, newest first, optional
+ * source/road/rawId/status filters — never touches TDX/PBS/CCTV/LINE,
+ * pure KV reads only. Never throws — a KV outage degrades to an empty
+ * list with `kvAvailable:false`, same fail-safe shape as
+ * broadcastProvenance.js's listBroadcastProvenance.
+ *
+ * V1.9.2 — reads and MERGES both schemas: the legacy per-entry
+ * `debug:pipeline-trace:v1:...` keys (never deleted, never migrated —
+ * left to expire on their own pre-existing 24h TTL) and the new
+ * `debug:pipeline-trace-batch:v2:...` keys scheduled.js now writes (see
+ * persistPipelineTraceBatch). Both key formats embed
+ * `<date>:<epochMs>:...` immediately after their own (different-length,
+ * different-text) fixed prefix, and epochMs is always exactly 13 digits
+ * for every real date this project will ever run on (2001-09-09 through
+ * 2286-11-20 — see recordPipelineTrace's own comment) — stripping each
+ * key's own prefix before comparing means a v1 key and a v2 key from the
+ * SAME instant sort correctly against each other on that shared suffix
+ * alone, so the two schemas merge into one correct newest-first timeline
+ * with no special-casing. Every existing filter/limit/pagination/
+ * scan-truncation behavior is unchanged from the caller's point of view —
+ * `handlePipelineTrace`/`handlePipelineTraceView` needed zero changes.
+ */
 export async function listPipelineTrace(kv, { limit = DEFAULT_LIST_LIMIT, source, road, rawId, status, q } = {}) {
   const boundedLimit = Math.max(1, Math.min(MAX_LIST_LIMIT, Number(limit) || DEFAULT_LIST_LIMIT));
   if (!kv) return { records: [], kvAvailable: false };
 
   try {
-    const keys = [];
-    let cursor;
-    let pages = 0;
-    for (;;) {
-      const page = await kv.list({ prefix: `${TRACE_KEY_PREFIX}:`, cursor });
-      for (const k of page.keys || []) keys.push(k.name);
-      pages += 1;
-      // V1.8.7.3 — deliberately NOT `keys.length >= MAX_ENTRIES_SCANNED`
-      // here: that condition used to cut key-enumeration off after just
-      // one list() page on any day with real trace volume above a single
-      // page, which silently stranded the scan on the OLDEST slice of the
-      // 24h key range and made both the unfiltered view and every
-      // filtered query miss genuinely-matching newest records (see
-      // MAX_LIST_PAGES's comment above for the full write-up). Enumeration
-      // now always continues until the true end of the range
-      // (list_complete/no cursor) or the much more generous MAX_LIST_PAGES
-      // safety ceiling — MAX_ENTRIES_SCANNED is applied only below, to the
-      // now-correctly-identified newest keys.
-      if (page.list_complete || !page.cursor || pages >= MAX_LIST_PAGES) break;
-      cursor = page.cursor;
-    }
+    const v1Keys = await listTraceKeysForPrefix(kv, `${TRACE_KEY_PREFIX}:`);
+    const v2Keys = await listTraceKeysForPrefix(kv, `${TRACE_BATCH_KEY_PREFIX}:`);
 
-    // Keys embed <date>:<epochMs>:<opaqueId> — lexicographic order already
-    // matches chronological order (same construction as
-    // broadcastProvenance.js's own keys), so list() returns oldest-first;
-    // take the most recent slice, then reverse for newest-first display.
-    const newestFirstKeys = keys.slice(-MAX_ENTRIES_SCANNED).reverse();
+    const descriptors = [
+      ...v1Keys.map((key) => ({ type: 'v1', key, sortKey: key.slice(TRACE_KEY_PREFIX.length + 1) })),
+      ...v2Keys.map((key) => ({ type: 'v2', key, sortKey: key.slice(TRACE_BATCH_KEY_PREFIX.length + 1) })),
+    ];
+    // Newest first — see this function's own comment on why comparing
+    // just the shared `<date>:<epochMs>:...` suffix is already correct
+    // chronological order across both schemas.
+    descriptors.sort((a, b) => (a.sortKey < b.sortKey ? 1 : a.sortKey > b.sortKey ? -1 : 0));
+
+    // V1.8.7.3's own MAX_ENTRIES_SCANNED bound, now applied to flattened
+    // ENTRIES rather than raw keys (see collectFlattenedTraceEntries) —
+    // a v2 batch can carry many entries per key, so bounding by entry
+    // count (not key count) is what actually keeps this cheap and
+    // predictable regardless of how many entries one Cron round wrote.
+    const { entries: scannedEntries, scannedKeyCount } = await collectFlattenedTraceEntries(kv, descriptors, MAX_ENTRIES_SCANNED);
 
     const records = [];
-    for (const key of newestFirstKeys) {
+    for (const record of scannedEntries) {
       if (records.length >= boundedLimit) break;
-      const raw = await kv.get(key);
-      if (!raw) continue;
-      let record;
-      try {
-        record = JSON.parse(raw);
-      } catch {
-        continue; // corrupt entry — skip it, never let one bad record break the listing
-      }
       if (!record || typeof record !== 'object') continue;
       if (source && record.identity?.source !== source) continue;
       if (!roadFilterMatches(record.identity?.road, road)) continue;
@@ -661,8 +854,8 @@ export async function listPipelineTrace(kv, { limit = DEFAULT_LIST_LIMIT, source
     }
 
     // 2026-08-24 — a query only ever READS the newest MAX_ENTRIES_SCANNED
-    // keys, so "no rows" can mean either "no such event" or "it is older
-    // than the window I looked at". Those are completely different
+    // entries, so "no rows" can mean either "no such event" or "it is
+    // older than the window I looked at". Those are completely different
     // answers to a human debugging a missed broadcast, and no surface may
     // present the second as the first.
     //
@@ -671,8 +864,8 @@ export async function listPipelineTrace(kv, { limit = DEFAULT_LIST_LIMIT, source
     // liked the result. Presentation (when to actually warn a reader) is
     // the view's decision, not this function's. See this project's "no
     // silent caps" discipline.
-    const scanTruncated = keys.length > newestFirstKeys.length;
-    return { records, kvAvailable: true, scannedKeyCount: newestFirstKeys.length, totalKeyCount: keys.length, scanTruncated };
+    const scanTruncated = descriptors.length > scannedKeyCount;
+    return { records, kvAvailable: true, scannedKeyCount, totalKeyCount: descriptors.length, scanTruncated };
   } catch (err) {
     return { records: [], kvAvailable: false, error: safeErrorMessage(err) };
   }

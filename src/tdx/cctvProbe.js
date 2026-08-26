@@ -56,7 +56,15 @@
 
 import { getAccessToken } from './auth.js';
 import { fetchTdxJson, TdxApiError } from './client.js';
-import { commitTdxUsageBatch } from './usageLedger.js';
+// V1.9.2 — this module used to commit `tdxUsageSink` into the TDX usage
+// ledger here (context='admin-cctv'). Retired: the raw ledger existed
+// solely to feed the now-retired tdx:usage:summary:v1 compaction/health-
+// page dashboard (see usageLedger.js's own header comment) and had no
+// other reader — TDX quota/usage is now checked directly on TDX's own
+// official back-office dashboard. `tdxUsageSink` below is harmless,
+// unpersisted in-memory bookkeeping (recordTdxDataCall/recordTdxOAuthCall
+// are pure pushes) — kept only because getAccessToken/fetchTdxJson still
+// accept it as an optional parameter.
 
 const CCTV_PROBE_USED_KEY = 'admin:cctv-probe-used:v1';
 const CCTV_URL = 'https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/CCTV/Freeway?$top=1&$format=JSON';
@@ -254,7 +262,6 @@ export async function handleCctvProbe(env) {
   try {
     accessToken = await getAccessToken(env, tdxUsageSink);
   } catch (err) {
-    await commitTdxUsageBatch(env.TRAFFIC_KV, { context: 'admin-cctv', records: tdxUsageSink });
     return jsonResponse(
       {
         status: 'locked',
@@ -274,7 +281,6 @@ export async function handleCctvProbe(env) {
   try {
     cctvJson = await fetchTdxJson(CCTV_URL, accessToken, { source: 'cctv-probe', usageSink: tdxUsageSink });
   } catch (err) {
-    await commitTdxUsageBatch(env.TRAFFIC_KV, { context: 'admin-cctv', records: tdxUsageSink });
     return jsonResponse(
       {
         status: 'locked',
@@ -287,7 +293,6 @@ export async function handleCctvProbe(env) {
       502
     );
   }
-  await commitTdxUsageBatch(env.TRAFFIC_KV, { context: 'admin-cctv', records: tdxUsageSink });
 
   // Metadata call genuinely succeeded — flip armed -> completed. If
   // THIS write itself fails, the KV value simply stays 'armed' (a

@@ -22,7 +22,6 @@ import { mergeForBroadcast } from '../pbs/crossSourceDedup.js';
 import { PBS_BROADCAST_ENABLED } from '../pbs/pbsConfig.js';
 import { getLastTdxTokenSource } from '../tdx/auth.js';
 import { PRODUCTION_TDX_SOURCE_IDS } from '../tdx/sources.js';
-import { commitTdxUsageBatch } from '../tdx/usageLedger.js';
 
 // Safety cap so a runaway source can't blow up the response payload.
 const MAX_LISTED_EVENTS = 100;
@@ -33,18 +32,19 @@ export async function handleDebugStatus(env) {
   // CMS/Bus Alert are retired from production entirely (V1.6.1); opening
   // this URL must cost at most 2 TDX data calls, never 5.
   //
-  // V1.8.6: usageSink records those (at most 2) real TDX calls into the
-  // usage ledger, tagged context='debug-status', so a human opening this
-  // URL is visible on /health's "人工額外呼叫" line instead of silently
-  // inflating what looks like Production's own count. Committed
-  // best-effort AFTER the preview finishes — a ledger-write failure here
-  // must never change what this read-only preview itself returns.
+  // V1.8.6 used to record those (at most 2) real TDX calls into the TDX
+  // usage ledger here (tagged context='debug-status'). V1.9.2 (TDX Usage
+  // Summary retirement — a real person now checks TDX's own official
+  // back-office dashboard directly) removed that KV write: the raw
+  // ledger existed solely to feed the now-retired tdx:usage:summary:v1
+  // compaction/health-page dashboard (see usageLedger.js's own header
+  // comment) and had no other reader. `tdxUsageSink` is still threaded
+  // through fetchAllSources/getAccessToken below — recordTdxDataCall/
+  // recordTdxOAuthCall are pure in-memory pushes (see usageLedger.js),
+  // completely harmless to keep collecting — it is simply never
+  // persisted to KV anymore.
   const tdxUsageSink = [];
   const summary = await runTdxPipelinePreview(env, { sourceIds: PRODUCTION_TDX_SOURCE_IDS, usageSink: tdxUsageSink });
-  // commitTdxUsageBatch never throws (see usageLedger.js) — its own
-  // try/catch already reduces any KV failure to a returned {committed:
-  // false} — so no extra try/catch is needed at this call site.
-  await commitTdxUsageBatch(env.TRAFFIC_KV, { context: 'debug-status', now, records: tdxUsageSink });
 
   const newUpdatedKeys = new Set(
     [...summary.newEvents, ...summary.updatedEvents].map((e) => `${e.source}:${e.rawId}`)
