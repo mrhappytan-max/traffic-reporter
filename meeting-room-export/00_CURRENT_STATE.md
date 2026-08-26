@@ -10,19 +10,19 @@
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
 | Current Version | V1.9.2（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | a0373ff43733b2323d772c432a13c119de292774 |
+| Source main HEAD | cfc31569f3b8d721290509cab69448fc1482c354 |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty (10 changed source file(s)) |
+| Source working tree | dirty (5 changed source file(s)) |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
 | Current Phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
-| Current Task | none（無進行中工作）。Latest completed task = KV_WRITE_OPTIMIZATION_V1_9_2，status = SEALED（前序 PIPELINE_TRACE_FILTER_ROOT_CAUSE_V1_9_1、CCTV_QUAD_PREPARE_TIMEOUT_OBSERVABILITY_V1_9_0 亦為 SEALED）。本輪：Shared Feed／Incident Suppression 改為 WRITE_ON_CHANGE；Pipeline Trace 改為每輪一把 batch key（v1/v2 相容）；TDX Usage Summary 正式退休（0 writes/day，/health 用量卡片改為官方後台提示，TDX 本身能力未動）；新增 [kv-write-budget] 觀察 log。雲端治理維持 V2：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源。 |
+| Current Task | none（無進行中工作）。Latest completed PRODUCT release = KV_WRITE_OPTIMIZATION_V1_9_2，status = SEALED。CURRENT_PRODUCT_VERSION = V1.9.2（未變動）。本輪新增文件記錄（非 Release）：PBS_LOCAL_EDGE_FILTER_PROTOTYPE = COMPLETED_LOCAL_ONLY——真人在 Windows 本機完成的 PBS 邊緣篩選 Prototype，LOCAL_PROTOTYPE_CODE_GITHUB_STATUS = NOT_COMMITTED（程式碼只在本機，未進 GitHub），WINDOWS_TO_CLOUDFLARE_PUSH = NOT_STARTED。詳見 SYSTEM_STATE.json 的 pbsLocalEdgeFilterPrototype 與 07_KNOWN_ISSUES.md。雲端治理維持 V2：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源。 |
 | Latest Completed Version | V1.9.2 |
 | Known Blocker | 無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md |
 | Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 無待辦。下一個真實 Asia/Taipei 帳務日重置後，蒐集 ≥3 筆 Production [kv-write-budget] log 樣本核實實際 writes/day；若日後 TDX 額度於 9/1 恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX（與本輪退休決策無關，兩者完全獨立）；**若要開工，建議處理約 33 項過期斷言**（見 07_KNOWN_ISSUES.md，既有技術債，與本輪無關）。 |
-| Export Generated At | 2026-08-26T09:17:50.906Z |
+| Next Action | 無待辦。PBS Prototype 若要推進 PHASE C 以後（Windows → Cloudflare 實際傳輸），需真人另行明確授權。下一個真實 Asia/Taipei 帳務日重置後，可蒐集 ≥3 筆 Production [kv-write-budget] log 樣本核實 V1.9.2 實際效果。若要開工，建議處理約 33 項過期斷言（見 07_KNOWN_ISSUES.md，既有技術債，與本輪無關）。 |
+| Export Generated At | 2026-08-26T15:17:15.591Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
@@ -53,6 +53,20 @@ bump 到 `V1.9.0`，同一個 commit 內完成。
 - 明顯新功能／架構階段 → minor：`V1.9.x → V1.10.0`
 - 大型不相容版本 → major：`→ V2.0.0`
 - 純文件／治理／Engineering Memory／測試整理 → 不升 Product Version
+
+## PBS 本機邊緣篩選 Prototype（2026-08-26，LOCAL_ONLY，不是本輪 Product Version 事件）
+
+真人已在自己的 Windows 機器（`C:\Users\mrhap\traffic-reporter\pbs-relay`）完成一個
+**本機（Windows）** PBS 邊緣篩選 Prototype（`localMonitor.js`/`localPrototype.js`/
+`localState.js`），對官方 PBS raw feed 做服務區＋事故關鍵字篩選與
+NEW/UPDATED/CLEARED/UNCHANGED 判斷，輸出 `SHOULD_PUSH` 信號。**這段程式碼目前只存在
+Windows 本機，尚未 commit 進 GitHub**（`LOCAL_PROTOTYPE_CODE_GITHUB_STATUS =
+NOT_COMMITTED`），Windows → Cloudflare 的實際傳輸也尚未建立
+（`WINDOWS_TO_CLOUDFLARE_PUSH = NOT_STARTED`）。**不影響本專案任何 Production
+runtime**——`PRODUCT_VERSION_BUMP = NO`，版本仍是 `V1.9.2`。完整架構、真實測試結果
+（68/68）、已知限制與路線圖 → `07_KNOWN_ISSUES.md`；機器可讀狀態 →
+`SYSTEM_STATE.json` 的 `pbsLocalEdgeFilterPrototype`。**下一個 Agent 不要假設這段
+程式碼已經在 GitHub 上，也不要自行開始 Windows → Cloudflare 的正式傳輸。**
 
 ## 我能改什麼／不能改什麼（一句話版）
 

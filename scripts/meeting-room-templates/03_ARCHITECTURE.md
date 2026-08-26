@@ -65,6 +65,41 @@ Pipeline Trace  (traffic/pipelineTrace.js, pipelineTraceView.js — 24h 人工�
 - **R2 image lifecycle**：`cctv/publishedImage.js`，opaque 128-bit id、`customMetadata.expiresAt` 於每次讀取時檢查（不依賴 R2 lifecycle rule 本身作為有效性依據），TTL 900 秒（15 分鐘）。
 - **LINE delivery path**：`line/pushMessage.js`（Push API，text-only 或 text+image 兩則訊息同一次呼叫）、`line/webhook.js`（處理使用者訂閱/取消訂閱等互動指令）、`line/verifySignature.js`（Webhook 簽章驗證）。
 
+## PBS Local Edge Filter Prototype（2026-08-26，Windows 本機，LOCAL_ONLY）
+
+與上面「主要資料流」完全分開的一條**尚未接入 Production** 的實驗路徑，程式碼只存在
+Windows 本機（`C:\Users\mrhap\traffic-reporter\pbs-relay`），**未 commit 進
+GitHub**，`src/` 掃描結果（下方模組清單）不會出現它：
+
+```
+PBS 官方 opendata（roadData）
+    ↓
+localMonitor.js（Windows 本機排程）
+    ↓
+localPrototype.js
+    - 服務區篩選（areaNm/comment/road/region 文字比對：新竹市／新竹縣／竹北／竹南／頭份；
+      座標 lat 24.45~24.95／lng 120.80~121.35 僅作 Prototype 輔助，非正式 service-area truth）
+    - 事故關鍵字篩選（事故/擦撞/追撞/自撞/對撞/相撞/撞及；排除施工/壅塞/封路/故障車）
+    - 有效／解除判斷
+    ↓
+localState.js（主鍵 PBS UID；fingerprint = roadtype+road+areaNm+region+direction+
+    comment+longitude+latitude+sourceDetail，刻意排除 modDttm——避免 PBS 只更新時間戳
+    但內容不變時被誤判 UPDATED；第一次執行 baseline=true，既有事件一律 UNCHANGED，
+    不會把冷啟動的既有事故全部當 NEW；PBS fetch 失敗時 state 不變、不產生假 CLEARED）
+    ↓
+NEW / UPDATED / CLEARED / UNCHANGED
+    ↓
+SHOULD_PUSH = YES/NO（目前只是記憶體內的判斷信號，Windows → Cloudflare 的實際
+    傳輸尚未建立）
+```
+
+**已知限制**：CLEARED 目前有兩種觸發——明確解除文字（已排除/排除/已解除/解除）已可信；
+「一輪內從 feed 完全消失即判定 CLEARED」（`CLEAR_ON_SINGLE_ABSENCE`）僅為
+**PROTOTYPE_ONLY**，正式 Production 前必須重新決策（連續兩輪缺席／grace period／
+PBS lifecycle evidence 三選一）。完整路線圖（PHASE A～F）、真實測試結果（68/68）、
+真實兩次本機執行證據 → `07_KNOWN_ISSUES.md`；機器可讀欄位 →
+`SYSTEM_STATE.json` 的 `pbsLocalEdgeFilterPrototype`。
+
 ## 模組清單（自動掃描）
 
 {{MODULE_INVENTORY}}

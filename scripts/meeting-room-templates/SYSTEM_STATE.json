@@ -127,6 +127,40 @@
     "supportingSignal": "broadcastPolicy.js already records, per pushed accident, whether the record stated real road impact (policy-major-accident-blocked-lanes / -impact-keyword vs policy-accident-no-stated-impact). Those counts are visible in ineligibleByReason and the Pipeline Trace, and are what a future tightening should be argued from — not guesswork.",
     "readerNote": "OBSERVATION, not construction. Do not modify src/, the broadcast policy, Cron, TDX, CCTV, the Consumer, or redeploy because of this entry."
   },
+  "pbsLocalEdgeFilterPrototype": {
+    "PBS_LOCAL_EDGE_FILTER_PROTOTYPE": "COMPLETED_LOCAL_ONLY",
+    "recordedAt": "2026-08-26",
+    "recordedBy": "human directive (路況工程部 PBS 本機邊緣篩選 Prototype 工程記憶封存令) — documentation-only round, no code read or committed from this session",
+    "LOCAL_PROTOTYPE_CODE_GITHUB_STATUS": "NOT_COMMITTED",
+    "WINDOWS_TO_CLOUDFLARE_PUSH": "NOT_STARTED",
+    "PRODUCTION_INTEGRATION": "NOT_STARTED",
+    "CURRENT_PRODUCT_VERSION": "V1.9.2",
+    "PRODUCT_VERSION_BUMP": "NO",
+    "NEXT_PRODUCT_RELEASE": "尚未決定 — 這個 Prototype 本身不是 Product Version 事件；下一個 V1.9.x/V1.10.0 只會在真正改變 Production runtime 的下一輪施工令裡決定",
+    "localPaths": {
+      "windowsProjectRoot": "C:\\Users\\mrhap\\traffic-reporter",
+      "prototypeRoot": "C:\\Users\\mrhap\\traffic-reporter\\pbs-relay",
+      "prototypeSource": [
+        "pbs-relay/src/localPrototype.js",
+        "pbs-relay/src/localState.js",
+        "pbs-relay/src/localMonitor.js"
+      ],
+      "prototypeTests": [
+        "pbs-relay/tests/localPrototype.test.js",
+        "pbs-relay/tests/localState.test.js"
+      ],
+      "runtimeState": "pbs-relay/data/relevant-state.json — gitignored, NEVER committed to GitHub or synced to Drive; Windows-local runtime state only",
+      "existingRelayUnaffected": "pbs-relay/src/server.js, cache.js, pbsHandler.js, upstreamClient.js — the pre-existing raw-relay path. This round did not modify or verify these; a Cloud Session earlier in this project noted main's own pbs-relay/src/server.js imports a cache.js that main's tree does not contain (a pre-existing, already-baselined test failure, unrelated to this Prototype) — see 07_KNOWN_ISSUES.md's known-failure baseline."
+    },
+    "architectureSummary": "既有 Relay：PBS 官方 -> upstreamClient.js -> pbsHandler.js -> 3 分鐘 memory cache -> GET /pbs/<token> -> Cloudflare（只搬運 raw PBS，不解析不篩選）。新 Prototype（Windows 本機，尚未接上 Cloudflare）：PBS 官方 -> localMonitor.js -> localPrototype.js（服務區篩選 -> 事故關鍵字篩選 -> 有效/解除判斷）-> localState.js（上一輪 vs 本輪比對）-> NEW/UPDATED/CLEARED/UNCHANGED -> SHOULD_PUSH（目前只輸出判斷信號，Windows -> Cloudflare 的實際傳輸尚未建立）。詳見 07_KNOWN_ISSUES.md 的完整記錄。",
+    "testResult": "pbs-relay 全套：68 tests / 68 passed / 0 failed（真人在 Windows 本機實跑回報，本 Cloud Session 未曾直接執行）。",
+    "realWorldSamples": "2026-08-26 22:42:09 Asia/Taipei：raw=1000, service-area accident records=13, explicit cleared=12, active=1, baseline=true, NEW=0, UPDATED=0, CLEARED=0, UNCHANGED=1, SHOULD_PUSH=NO。19 秒後（22:42:28）：raw=1000, active=1, baseline=false, 同樣 UNCHANGED=1, SHOULD_PUSH=NO —— 證明 local state persistence／same-event dedup／no-change detection 三者皆 PASS。",
+    "knownLimitation": "CLEAR_ON_SINGLE_ABSENCE = PROTOTYPE_ONLY — 一輪內事件從 feed 完全消失就判定 CLEARED，正式 Production 前必須重新決策（連續兩輪缺席 / grace period / PBS lifecycle evidence 三選一），避免官方短暫漏資料造成假解除。PRODUCTION_DECISION = PENDING。",
+    "roadmap": "PHASE A（Windows 本機觀察期，持續記錄 raw/relevant/active/NEW/UPDATED/CLEARED/UNCHANGED/matchReason/SHOULD_PUSH）-> PHASE B（規則校準：座標誤判、跨區國道、事故關鍵字、UPDATED 欄位、CLEARED grace policy）-> PHASE C（Windows -> Cloudflare Push Contract 設計：generatedAt/source/eventId/lifecycle/fingerprint/event/requestId，僅 local mock）-> PHASE D（安全傳輸設計：authentication/idempotency/retry/timeout/ack/failure queue/secret storage）-> PHASE E（Debug-only Cloudflare 接收：不寫正式 KV、不進 LINE、不影響 TDX）-> PHASE F（Production 評估，需另行真人授權才可正式接收/KV/LINE/Cron 調整/Production deploy/Product Version bump）。",
+    "longTermTarget": "PBS 官方 -> Windows 本機守門員 -> 只有與新竹服務區真正相關的事件變化 -> Windows 主動 Push Cloudflare -> Cloudflare 才啟動正式事件 Pipeline（CCTV/LINE/Shared Feed）。目標：NO_RELEVANT_CHANGE -> WINDOWS_TO_CLOUDFLARE_PUSH=0 -> PBS 相關 KV 寫入 ≈ 0，避免 Cloudflare 固定輪詢搬運約 1000 筆 PBS raw data 才判斷。",
+    "driveGovernance": "Claude Drive WRITE = FORBIDDEN（本輪維持）。本輪只同步 Engineering Memory 文字紀錄到 Drive；Prototype 程式碼本身仍只存在 Windows 本機，未同步 GitHub 亦未同步 Drive。",
+    "readerNote": "這是文件記錄，不是完工的 Production 功能。下一個 Agent 讀到這裡：不要假設程式碼已在 GitHub，不要假設 Windows -> Cloudflare 傳輸已存在，不要因為看到這個記錄就開始 Phase C 以後的工作——那需要真人另行授權。"
+  },
   "taskSeal": {
     "task": "KV_WRITE_OPTIMIZATION_V1_9_2",
     "status": "SEALED",

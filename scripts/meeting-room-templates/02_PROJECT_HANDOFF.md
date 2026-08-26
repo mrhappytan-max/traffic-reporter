@@ -139,6 +139,40 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 `GET /cctv/image/:id` 是另一個刻意公開的路由（LINE 伺服器要能抓圖），安全性靠 128-bit 不可猜 id + 程式強制的 15 分鐘到期檢查。
 
+## PBS Local Edge Filter Prototype（2026-08-26，LOCAL_ONLY，非本輪 Product Version 事件）
+
+真人在 Windows 本機（`C:\Users\mrhap\traffic-reporter\pbs-relay`）完成了一個**與上面
+Production VPC Relay 完全分開**的邊緣篩選 Prototype：
+
+```
+既有 Relay（Production，未變動）：
+PBS 官方 -> upstreamClient.js -> pbsHandler.js -> 3分鐘 memory cache
+        -> GET /pbs/<token> -> Cloudflare（只搬運 raw，不解析不篩選）
+
+新 Prototype（Windows 本機，尚未接上 Cloudflare）：
+PBS 官方 -> localMonitor.js -> localPrototype.js
+        （服務區篩選 -> 事故關鍵字篩選 -> 有效/解除判斷）
+        -> localState.js（上一輪 vs 本輪比對，主鍵 PBS UID，
+           fingerprint 排除 modDttm）
+        -> NEW / UPDATED / CLEARED / UNCHANGED
+        -> SHOULD_PUSH（目前只是判斷信號，尚未實際傳輸）
+```
+
+**狀態**：`PBS_LOCAL_EDGE_FILTER_PROTOTYPE = COMPLETED_LOCAL_ONLY`。
+`LOCAL_PROTOTYPE_CODE_GITHUB_STATUS = NOT_COMMITTED`（程式碼只在 Windows 本機，
+GitHub 上沒有）。`WINDOWS_TO_CLOUDFLARE_PUSH = NOT_STARTED`。
+`PRODUCT_VERSION_BUMP = NO`（仍是 V1.9.2，這不是一次 Release）。
+
+真實測試：pbs-relay 68/68 通過。真實兩次本機執行（22:42:09 / 22:42:28
+Asia/Taipei）證明 local state persistence／same-event dedup／no-change
+detection 三者皆正常。已知限制（`CLEAR_ON_SINGLE_ABSENCE = PROTOTYPE_ONLY`，
+正式 Production 前需重新決策）、六階段路線圖（PHASE A 觀察期 → … →
+PHASE F 需真人另行授權的 Production 評估）、長期目標架構，完整記錄於
+`07_KNOWN_ISSUES.md`；機器可讀欄位於 `SYSTEM_STATE.json` 的
+`pbsLocalEdgeFilterPrototype`。**下一個 Agent／新工程師讀到這裡就不需要重新拆
+PBS Relay 或重新研究 upstreamClient/cache/handler，也不會誤把這個 Prototype
+當成 Production 已完成的功能。**
+
 ## Next action
 
 {{NEXT_ACTION}}
