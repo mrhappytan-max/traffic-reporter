@@ -966,6 +966,117 @@ commit 內**把 `APP_VERSION` bump 到 `V1.9.0`，同時：
 - **不要重寫 V1.8.7.8～V1.8.7.14 既有版本列**；四段式版本線原樣保留在歷史裡。
 - **不要把這次治理決議當成一次 release**——沒有 commit 觸發功能性部署。
 
+## 修正紀錄｜Quad CCTV Prepare-Timeout 可觀測性（V1.9.0，國3 96K+700 事件）（2026-08-26）
+
+### 真實事件
+
+2026-08-26 09:20，國3 南向 96K+700 事故。event 進入 Shared Feed，**withImage=0**，
+CCTV prepare **完全沒有 completion log**（沒有 imagePrepared、沒有帶 stage 的
+cctvSkippedByReason）。09:30（下一個 Cron tick），**同一事件**重新處理：
+candidates=1、eligible=1、attempted=1、attached=1，quad image **成功**。
+
+攝影機名冊、道路解析、CCTV 整體能力因此**不是**永久失效——問題是
+「第一次為什麼失敗、失敗在哪裡完全看不出來」。
+
+### Root Cause（以程式碼檢視＋7 項決定性測試確認，非推測）
+
+`cctv/dynamicCollage.js` 的 quad（事故）路徑**完全沒有 stage 追蹤機制**。
+動態路肩單鏡頭路徑（`prepareSingleCctvImageWork`）早就有：一個
+`stageTracker` 物件在 metadata/candidate-selection/frame-fetch/r2-publish
+四個邊界被更新，逾時時讀出 `timeoutStage`。quad 路徑從來沒有這個機制——
+它的 `prepare-timeout` 結果從不帶 stage、不帶部分影格數、不帶任何部分計時。
+
+因此：**09:20 沒有 completion log，不是漏記，是根本沒有東西在記錄。**
+任何一次真實的外部延遲（frame fetch、JPEG compose、R2 publish——
+三者已用決定性測試證實共用同一個 4000ms budget）在那個當下都是結構性不可見。
+
+### 誠實揭露：沒有證實的部分
+
+**09:20 當下具體是哪一段外部 I/O 慢，本輪無法從既有證據回推。**
+那天的 Pipeline Trace 沒有 stage 級別資料——正是本輪要補的缺口。
+不把「可能性」寫成「事實」；具體外部歸因誠實地標示為未知，
+若再發生，本次修復之後就會有完整 stage 級別紀錄可查。
+
+### 用決定性測試證實的機制（`test/cctvQuadPrepareForensics.test.js`，7 項 A-G）
+
+- **FRAME_FETCH_MODE = PARALLEL**：`composeCollageFromCandidates` 是
+  `Promise.all` 同時發起 4 支候選，實測 4 支 fetch 的起始時間差 <100ms
+  （測試 D：4 支各延遲 1200ms，總耗時 ~1200ms 而非 ~4800ms）。
+- **SLOW_CAMERA_CAN_BLOCK_ALL = YES**：單一支延遲或永遠不回的候選，
+  會拖住整批 compose——`Promise.all` 等所有 4 支都 settle，每支各自的
+  逾時（`AbortSignal.timeout`）都源自同一個剩餘 run budget，不是各自獨立
+  的固定值（測試 B、C）。
+- **4000MS_BUDGET_SCOPE**：frame-fetch、collage compose（序列解碼
+  最多 4 張 JPEG）、R2 publish **三者共用同一個** 4000ms budget，
+  不是分開計時的三個獨立階段（測試 E：人工拖慢 compose 單獨就能耗盡
+  budget；測試 F：人工拖慢 R2 PUT 單獨也能耗盡 budget）。
+- **TIMEOUT_ABORTS_UNDERLYING_WORK = NO**：outer race 逾時後，
+  背景中的 `work`（`prepareCctvImageWork`）不會被中止，會自行跑完
+  （受限於自己每個階段各自的 timeout），結果被安全丟棄——這是既有、
+  刻意的設計，本輪只是用測試直接證實它，不是新發現的缺陷（測試 C）。
+
+### 修正
+
+`prepareCctvImageWork` 比照單鏡頭路徑加上 `stageTracker`，在四個邊界
+（metadata／camera-selection／frame-fetch／r2-publish）記錄進度與耗時。
+`composeCollageFromCandidates`（`hsinchuCctvProbe.js`）額外回報
+`frameFetchElapsedMs`／`collageElapsedMs`／`successfulFrameCount`／
+`failedFrameCount`（累加式欄位，既有回傳形狀不變）。`broadcastPipeline.js`
+在三個既有呼叫點（LINE push 主迴圈、feed-only 回填、
+`topUpSharedFeedCctvImages`）把 7 個新欄位接進 Pipeline Trace，
+`pipelineTrace.js` 的 `buildTraceEntry` 白名單新增對應參數。
+
+**全部欄位皆為純數字或短字串，測試 G 鎖定絕不含 stream URL、candidate
+record 或 frame bytes**——沿用既有的 whitelist-only 紀律。
+
+**禁止再出現「prepare-timeout 但 timeoutStage=null」**：quad 路徑現在
+無論成功／失敗／逾時，都至少留下已完成階段的計時，逾時時額外帶
+`timeoutStage`。
+
+### RETRY_REQUIRED = NO
+
+本輪**沒有**新增任何 retry、第二輪 fetch、fallback，**沒有**調整
+4000ms 這個數字。純粹是可觀測性 + 既有 outer race 行為的直接證實，
+不是行為變更。
+
+### 防死亡螺旋（Phase 5，以程式碼證實）
+
+- `MAX_FRAME_FETCH_PER_EVENT = 4`（`QUADRANTS.length`，固定常數，
+  本輪未變動）。
+- `MAX_RETRY_PER_EVENT = 0`：`prepareCctvImageForEvent` 每個事件每輪
+  恰好呼叫一次，沒有迴圈、沒有第二次呼叫（本來就沒有，本輪也沒加）。
+- Cron 不會因 CCTV 卡死：outer `withTimeout` race 保證呼叫端一定在
+  `budgetMs` 內被釋放，不受背景工作影響（測試 B/C 再次證實）；
+  `src/index.js` 的 `scheduled()` 用
+  `ctx.waitUntil(runScheduledTdxSync(...))` 包住整輪，沒有任何東西把
+  被丟棄的逾時 `work` 串接上去——一旦這輪本身的 promise settle，
+  isolate 對那個被丟棄的 straggler 沒有進一步保活義務，而 straggler
+  自己每個階段都有時間上限（KV get、每支 frame fetch 各自的
+  `AbortSignal.timeout`、in-process JPEG codec、單次 R2 PUT），
+  不可能無限跑下去。
+
+### 未實作的優化（誠實記錄，非本輪範圍）
+
+「3 支已成功、1 支還在等」的情境——讓已成功的 3 支不必等到第 4 支逾時
+才組圖——是一個真實存在、但本輪**未實作**的可能優化。呼叫端的 outer
+race 早已保證不影響 LINE 文字準時推播，這個優化只影響「能不能在還有
+一點剩餘時間時多組出一張 3/4 的圖」，屬於錦上添花而非本輪已證實的
+Root Cause 範圍，留待有實際 Production 證據支持時再處理，也留待有
+真實資料能證實這值得做的時候。
+
+### 不要誤讀
+
+- **不要以為 09:20 具體慢在哪一段已被證實**——只有「沒有 stage 追蹤」
+  這個結構性缺陷被證實。
+- **不要把 `timeoutStage='frame-fetch'` 誤解為一定是頻寬慢**——它涵蓋
+  frame fetch 與 compose 兩個子步驟（同一個 await 內，無法從外部進一步
+  拆分），這個粒度限制已誠實揭露在程式註解與測試裡。
+- **不要把這次修復理解成加了 retry 或加大了 timeout**——4000ms 完全
+  未變動。
+- **不要因為證實了「slow camera 拖住整批」就去把 `Promise.all` 改成
+  `Promise.allSettled`**——`extractFirstJpegFrame` 本來就從不 throw，
+  改了也不會改變任何行為，不是真正的修法。
+
 ## TDX 還原程序（RESTORE TDX）
 
 **前提**：真人確認 TDX 額度確實已恢復。

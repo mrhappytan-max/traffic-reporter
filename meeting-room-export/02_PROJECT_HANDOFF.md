@@ -17,10 +17,10 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | 2cbcadc146ce85cd0fe82c09098b5712481a64ca |
-| Snapshot generated at | 2026-08-25T14:13:08.951Z |
-| Source working tree | clean |
-| Current version | V1.8.7.14 |
+| Source main HEAD | 3af5c8b5ad5d0aa6bf167a053407b2f8cfde861b |
+| Snapshot generated at | 2026-08-26T02:41:04.094Z |
+| Source working tree | dirty (3 changed source file(s)) |
+| Current version | V1.9.0 |
 | Current phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
 
 `Source main HEAD` 是這份快照所描述的正式 main commit（取自 `origin/main`），**不是**包含本檔案自己的那個 commit——兩者刻意分開，避免 Git 自我參照循環。詳見 `SYSTEM_STATE.json` 的 `sourceMainHead` / `exportArtifactCommit`。
@@ -98,7 +98,7 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 | 欄位 | 值 |
 |---|---|
-| Latest completed | V1.8.7.14 |
+| Latest completed | V1.9.0 |
 | package.json version | 0.1.0 |
 | Production status | DEPLOYED |
 | Production verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |

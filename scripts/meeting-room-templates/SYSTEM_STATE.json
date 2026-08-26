@@ -128,39 +128,76 @@
     "readerNote": "OBSERVATION, not construction. Do not modify src/, the broadcast policy, Cron, TDX, CCTV, the Consumer, or redeploy because of this entry."
   },
   "taskSeal": {
-    "task": "THREE_PART_VERSIONING_TRANSITION",
+    "task": "CCTV_QUAD_PREPARE_TIMEOUT_OBSERVABILITY_V1_9_0",
     "status": "SEALED",
-    "sealedAt": "2026-08-25",
-    "sealedBy": "human directive (路況工程部 三段式版本治理切換)",
-    "scope": "docs/governance only。未修改任何 CCTV／PBS／TDX／LINE 或其他 Production runtime 程式，未 deploy 功能變更。",
-    "decision": {
-      "CURRENT_OFFICIAL_VERSION": "V1.8.7.14",
-      "LAST_FOUR_PART_VERSION": "V1.8.7.14",
-      "FOUR_PART_VERSIONING": "RETIRED",
-      "THREE_PART_VERSIONING": "ACTIVE",
-      "NEXT_RELEASE_VERSION": "V1.9.0"
+    "sealedAt": "2026-08-26",
+    "sealedBy": "human directive (路況工程部 V1.9.0 高優先補充令｜先找 Root Cause，禁止先加 Retry)",
+    "releaseVersion": "V1.9.0",
+    "realWorldTrigger": "2026-08-26 09:20 國3南向96K+700事故：event 進 Shared Feed、withImage=0、CCTV prepare 完全沒有 completion log。09:30（下一個 Cron tick）同一事件重跑：candidates=1、eligible=1、attempted=1、attached=1，quad image 成功。",
+    "rootCause": "以程式碼檢視＋7項決定性測試確認（非推測）：cctv/dynamicCollage.js 的 quad（事故）路徑完全沒有 stage 追蹤機制——動態路肩單鏡頭路徑早就有（timeoutStage），quad 路徑的 prepare-timeout 從未帶過 stage、部分影格數、或任何部分計時。因此任一次真實的外部延遲（frame fetch／JPEG compose／R2 publish——三者皆已證實共用同一個 4000ms budget）在 09:20 都是結構性地不可見：不是記錄漏了，是根本沒有東西在記錄。",
+    "whatWasNotClaimed": "09:20 當下具體是哪一段外部 I/O 慢（frame fetch？compose？R2？）——當時的 Pipeline Trace 沒有 stage 級別資料（正是本輪要補的缺口），所以這個特定歸因無法從既有證據回推，本輪誠實地不予斷言。",
+    "provenByDeterministicTests": {
+      "FRAME_FETCH_MODE": "PARALLEL（Promise.all，4支候選同時發起，實測 start 時間差 <100ms）",
+      "SLOW_CAMERA_CAN_BLOCK_ALL": "YES——單一慢/永遠不回的候選會拖住整批 compose，因為 Promise.all 等所有4支都 settle，每支各自的 timeout 都源自同一個剩餘 budget",
+      "BUDGET_SCOPE": "frame-fetch、collage compose、R2 publish 三者共用同一個 4000ms budget，不是分開計時",
+      "TIMEOUT_ABORTS_UNDERLYING_WORK": "NO——outer race 逾時後，背景中的 work 不會被中止，會自行跑完（受限於自己的 stage timeout），結果被安全丟棄"
     },
-    "permanentRule": {
-      "bugFix": "V1.9.0 → V1.9.1 → V1.9.2 …（patch）",
-      "newFeatureOrArchPhase": "V1.9.x → V1.10.0（minor）",
-      "largeIncompatibleChange": "→ V2.0.0（major）",
-      "docsGovernanceMemoryTestsOnly": "不升 Product Version，但仍須有 commit"
+    "fix": "cctv/dynamicCollage.js 的 prepareCctvImageWork 比照單鏡頭路徑加上 stageTracker，在 metadata/camera-selection/frame-fetch/r2-publish 四個邊界記錄進度；composeCollageFromCandidates（hsinchuCctvProbe.js）額外回報 frameFetchElapsedMs/collageElapsedMs/successfulFrameCount/failedFrameCount；broadcastPipeline.js 在三個既有呼叫點把 7 個新欄位接進 Pipeline Trace（pipelineTrace.js 的 buildTraceEntry 白名單）。全部欄位皆為純數字，測試 G 鎖定絕不含 stream URL／candidate record／frame bytes。",
+    "retryRequired": "NO——本輪沒有新增任何 retry、第二輪 fetch、fallback，也沒有調整 4000ms 這個數字。",
+    "antiDeathSpiral": {
+      "MAX_FRAME_FETCH_PER_EVENT": "4（QUADRANTS.length，固定常數，本輪未變動）",
+      "MAX_RETRY_PER_EVENT": "0（prepareCctvImageForEvent 每個事件每輪恰好呼叫一次，無迴圈、無第二次呼叫）",
+      "cronNeverStuck": "outer withTimeout race 保證呼叫端一定在 budgetMs 內被釋放，不受背景工作影響（測試B/C再次證實）；src/index.js 的 scheduled() 用 ctx.waitUntil(runScheduledTdxSync(...)) 包住整輪，沒有任何東西把被丟棄的逾時 work 串接上去，一旦這輪本身的 promise settle，isolate 對那個被丟棄的 straggler 沒有進一步保活義務，而 straggler 自己每個階段都有時間上限（KV get／每支 frame fetch 的 AbortSignal.timeout／in-process JPEG codec／單次 R2 PUT），不可能無限跑下去"
     },
-    "whatDidNotChange": "src/version.js 的 APP_VERSION 本輪維持 'V1.8.7.14'，未提前改為 V1.9.0。依施工令明文：只有下一次真正 Production runtime release 才會在該次 commit 內同步 bump APP_VERSION → V1.9.0。src/version.js 與 test/versionLineage.test.js 各自新增了說明本次切換的註解，但兩者的『當前值』與『現行斷言』本身都沒有變動——APP_VERSION 仍是 V1.8.7.14，versionLineage 測試仍鎖 'V1.8.7.' 前綴，等下一次真正 release 才會一起改成 'V1.9.'。",
-    "supersedes": "PRODUCTION_VERSION_LINEAGE_RECONCILIATION 記錄的 NEXT_RELEASE_VERSION = V1.8.7.15 由本次正式決議取代為 V1.9.0。V1.8.7.8～V1.8.7.14 的既有補記版本列不受影響、不重寫。",
+    "testResult": "npm test 共 1286 項；NEW FAILURES = 0（同一輪 git stash -u 對照乾淨 checkout，38 項既有失敗完全相同）。新增 test/cctvQuadPrepareForensics.test.js 8 項（A-G）全數通過，其中一項時序敏感測試連續跑 8 次驗證非 flake。",
+    "canonicalVersionSource": "src/version.js 的 APP_VERSION 已 bump 為 V1.9.0（三段式版本治理生效後第一個正式版本，patch-level 起點）——與本次修復同一個 commit。",
     "githubSeal": "PASS",
     "githubEngineeringMemory": "SEALED",
     "claudeDriveUpload": "NO",
     "doNotMisread": [
-      "不要把 src/version.js 的 APP_VERSION 提前改成 V1.9.0——本輪是治理紀錄，不是 release。",
-      "不要因為本輪切換就重寫 V1.8.7.8～V1.8.7.14 既有版本列；四段式版本線在 V1.8.7.14 停止，原樣保留。",
-      "下一次真正 Production runtime release 時，必須在同一 commit 內：bump src/version.js 到 V1.9.0、更新 test/versionLineage.test.js 第 1 項的前綴斷言、更新 06_VERSION_HISTORY.md。",
-      "三段式規則：bug fix 動 patch、明顯新功能/架構階段動 minor、大型不相容變更才動 major。",
+      "不要以為 09:20 的具體慢在哪一段已被證實——只有『沒有 stage 追蹤』這個結構性缺陷被證實，具體外部歸因誠實地標示為無法回推。",
+      "不要把這次修復理解成加了 retry 或加大了 timeout——RETRY_REQUIRED = NO，4000ms 完全未變動。",
+      "不要把 timeoutStage='frame-fetch' 誤解為『一定是頻寬慢』——它涵蓋 frame fetch 與 compose 兩個子步驟（同一個 await 內，無法從外部進一步拆分），已在程式註解與測試裡誠實揭露這個粒度限制。",
+      "不要因為看到『slow camera 拖住整批』就去改 Promise.all 為 Promise.allSettled——extractFirstJpegFrame 本來就從不 throw，改了也不會改變行為，不是真正的修法。",
       "不要對 Google Drive 做任何寫入——Claude 唯讀，GitHub 是唯一正式寫入來源。"
     ],
+    "openFollowUp": "若未來想進一步優化『3支已成功、1支還在等』這種情境（讓已成功的3支不必等到第4支逾時才組圖），這是一個真實存在、但本輪未實作的可能優化——因為呼叫端的 outer race 早已保證不影響 LINE 文字準時推播，這個優化只影響『能不能在還有一點剩餘時間時多組出一張3/4的圖』，屬於錦上添花而非本輪已證實的 Root Cause 範圍，留待有實際 Production 證據支持時再處理。",
     "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
   },
   "taskSealHistory": [
+    {
+      "task": "THREE_PART_VERSIONING_TRANSITION",
+      "status": "SEALED",
+      "sealedAt": "2026-08-25",
+      "sealedBy": "human directive (路況工程部 三段式版本治理切換)",
+      "scope": "docs/governance only。未修改任何 CCTV／PBS／TDX／LINE 或其他 Production runtime 程式，未 deploy 功能變更。",
+      "decision": {
+        "CURRENT_OFFICIAL_VERSION": "V1.8.7.14",
+        "LAST_FOUR_PART_VERSION": "V1.8.7.14",
+        "FOUR_PART_VERSIONING": "RETIRED",
+        "THREE_PART_VERSIONING": "ACTIVE",
+        "NEXT_RELEASE_VERSION": "V1.9.0"
+      },
+      "permanentRule": {
+        "bugFix": "V1.9.0 → V1.9.1 → V1.9.2 …（patch）",
+        "newFeatureOrArchPhase": "V1.9.x → V1.10.0（minor）",
+        "largeIncompatibleChange": "→ V2.0.0（major）",
+        "docsGovernanceMemoryTestsOnly": "不升 Product Version，但仍須有 commit"
+      },
+      "whatDidNotChange": "src/version.js 的 APP_VERSION 本輪維持 'V1.8.7.14'，未提前改為 V1.9.0。依施工令明文：只有下一次真正 Production runtime release 才會在該次 commit 內同步 bump APP_VERSION → V1.9.0。src/version.js 與 test/versionLineage.test.js 各自新增了說明本次切換的註解，但兩者的『當前值』與『現行斷言』本身都沒有變動——APP_VERSION 仍是 V1.8.7.14，versionLineage 測試仍鎖 'V1.8.7.' 前綴，等下一次真正 release 才會一起改成 'V1.9.'。",
+      "supersedes": "PRODUCTION_VERSION_LINEAGE_RECONCILIATION 記錄的 NEXT_RELEASE_VERSION = V1.8.7.15 由本次正式決議取代為 V1.9.0。V1.8.7.8～V1.8.7.14 的既有補記版本列不受影響、不重寫。",
+      "githubSeal": "PASS",
+      "githubEngineeringMemory": "SEALED",
+      "claudeDriveUpload": "NO",
+      "doNotMisread": [
+        "不要把 src/version.js 的 APP_VERSION 提前改成 V1.9.0——本輪是治理紀錄，不是 release。",
+        "不要因為本輪切換就重寫 V1.8.7.8～V1.8.7.14 既有版本列；四段式版本線在 V1.8.7.14 停止，原樣保留。",
+        "下一次真正 Production runtime release 時，必須在同一 commit 內：bump src/version.js 到 V1.9.0、更新 test/versionLineage.test.js 第 1 項的前綴斷言、更新 06_VERSION_HISTORY.md。",
+        "三段式規則：bug fix 動 patch、明顯新功能/架構階段動 minor、大型不相容變更才動 major。",
+        "不要對 Google Drive 做任何寫入——Claude 唯讀，GitHub 是唯一正式寫入來源。"
+      ],
+      "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
+    },
     {
       "task": "PRODUCTION_VERSION_LINEAGE_RECONCILIATION",
       "status": "SEALED",
@@ -312,7 +349,7 @@
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
   "currentPhase": "{{CURRENT_PHASE}}",
-  "currentTask": "none（無進行中工作）。Latest completed task = THREE_PART_VERSIONING_TRANSITION，status = SEALED（前序 PRODUCTION_VERSION_LINEAGE_RECONCILIATION、CCTV_METADATA_RECOVERY_V1 = V1.8.7.14、DRIVE_SYNC_GOVERNANCE_V2、PBS_ACCIDENT_CCTV_ENRICHMENT_FIX、PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX、PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。CURRENT_OFFICIAL_VERSION = V1.8.7.14（LAST_FOUR_PART_VERSION）。FOUR_PART_VERSIONING = RETIRED，THREE_PART_VERSIONING = ACTIVE。NEXT_RELEASE_VERSION = V1.9.0——僅在下一次真正 Production runtime release 時，才在該次 commit 內同步 bump src/version.js 的 APP_VERSION。三段式規則：bug fix 動 patch（V1.9.0→V1.9.1）、明顯新功能/架構階段動 minor（V1.9.x→V1.10.0）、大型不相容變更才動 major（→V2.0.0）；純文件/治理/Engineering Memory/測試整理不升版本。雲端同步治理維持 V2：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源。**下一件事若要開工，建議處理約 33 項過期斷言**——詳見 07_KNOWN_ISSUES.md。",
+  "currentTask": "none（無進行中工作）。Latest completed task = CCTV_QUAD_PREPARE_TIMEOUT_OBSERVABILITY_V1_9_0，status = SEALED（前序 THREE_PART_VERSIONING_TRANSITION、PRODUCTION_VERSION_LINEAGE_RECONCILIATION、CCTV_METADATA_RECOVERY_V1 = V1.8.7.14、DRIVE_SYNC_GOVERNANCE_V2 亦為 SEALED）。CURRENT_OFFICIAL_VERSION = V1.9.0（三段式版本治理生效後第一個正式版本）。Quad（事故）CCTV prepare-timeout 現在會留下完整 stage 級別追蹤（metadataElapsedMs／cameraSelectionElapsedMs／frameFetchElapsedMs／collageElapsedMs／successfulFrameCount／failedFrameCount／r2PublishElapsedMs／timeoutStage），『timeoutStage=null』的觀察缺口已消除。本輪未新增任何 retry，4000ms budget 未變動。雲端同步治理維持 V2：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源。**下一件事若要開工，建議處理約 33 項過期斷言**（見 07_KNOWN_ISSUES.md），或視 Production 實際觀察結果決定是否需要 openFollowUp 提到的 3/4-frame 提早組圖優化。",
   "knownBlocker": "{{KNOWN_BLOCKER}}",
   "realWorldConfirmation": {
     "status": "{{REAL_WORLD_CONFIRMATION}}",
