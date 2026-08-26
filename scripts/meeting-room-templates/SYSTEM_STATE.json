@@ -128,43 +128,83 @@
     "readerNote": "OBSERVATION, not construction. Do not modify src/, the broadcast policy, Cron, TDX, CCTV, the Consumer, or redeploy because of this entry."
   },
   "taskSeal": {
-    "task": "CCTV_QUAD_PREPARE_TIMEOUT_OBSERVABILITY_V1_9_0",
+    "task": "PIPELINE_TRACE_FILTER_ROOT_CAUSE_V1_9_1",
     "status": "SEALED",
     "sealedAt": "2026-08-26",
-    "sealedBy": "human directive (路況工程部 V1.9.0 高優先補充令｜先找 Root Cause，禁止先加 Retry)",
-    "releaseVersion": "V1.9.0",
-    "realWorldTrigger": "2026-08-26 09:20 國3南向96K+700事故：event 進 Shared Feed、withImage=0、CCTV prepare 完全沒有 completion log。09:30（下一個 Cron tick）同一事件重跑：candidates=1、eligible=1、attempted=1、attached=1，quad image 成功。",
-    "rootCause": "以程式碼檢視＋7項決定性測試確認（非推測）：cctv/dynamicCollage.js 的 quad（事故）路徑完全沒有 stage 追蹤機制——動態路肩單鏡頭路徑早就有（timeoutStage），quad 路徑的 prepare-timeout 從未帶過 stage、部分影格數、或任何部分計時。因此任一次真實的外部延遲（frame fetch／JPEG compose／R2 publish——三者皆已證實共用同一個 4000ms budget）在 09:20 都是結構性地不可見：不是記錄漏了，是根本沒有東西在記錄。",
-    "whatWasNotClaimed": "09:20 當下具體是哪一段外部 I/O 慢（frame fetch？compose？R2？）——當時的 Pipeline Trace 沒有 stage 級別資料（正是本輪要補的缺口），所以這個特定歸因無法從既有證據回推，本輪誠實地不予斷言。",
-    "provenByDeterministicTests": {
-      "FRAME_FETCH_MODE": "PARALLEL（Promise.all，4支候選同時發起，實測 start 時間差 <100ms）",
-      "SLOW_CAMERA_CAN_BLOCK_ALL": "YES——單一慢/永遠不回的候選會拖住整批 compose，因為 Promise.all 等所有4支都 settle，每支各自的 timeout 都源自同一個剩餘 budget",
-      "BUDGET_SCOPE": "frame-fetch、collage compose、R2 publish 三者共用同一個 4000ms budget，不是分開計時",
-      "TIMEOUT_ABORTS_UNDERLYING_WORK": "NO——outer race 逾時後，背景中的 work 不會被中止，會自行跑完（受限於自己的 stage timeout），結果被安全丟棄"
+    "sealedBy": "human directive (路況工程部 V1.9.1 正式施工令｜Pipeline Trace 查修頁篩選失效修正＋預設 60 筆)",
+    "releaseVersion": "V1.9.1",
+    "realWorldTrigger": "真人在真實手機（iOS Safari）操作 /admin/pipeline-trace-view：選擇來源／關鍵字／道路／rawId／狀態／筆數後按「篩選」，畫面完全不跟著變。",
+    "rootCause": "以真實 headless Chromium 對著真實部署的 HTTP 回應（含真實 response headers）重現，非猜測。applyAdminSecurityHeaders 的 CSP 帶 form-action 'none'——任何有強制 CSP 的瀏覽器（包含真人回報所用的 iOS Safari）都會用這個指令完全拒絕頁面上任何 <form> 的送出，包含這個篩選表單、也包含本專案任何其他 admin HTML 頁面上的表單。前一輪（V1.8.7.6）已完整查證伺服器端每一層（表單標記、query string、listPipelineTrace 的 predicate、分頁邏輯，含小規模與 2000+ key 真實分頁規模）都是對的，並推測是「client-side staleness」——但那一輪自己承認其 headless 瀏覽器重現「不在本 repo 的自動化測試套件內」，顯然從未真正對著這個 Worker 自己的安全標頭送出過請求，因此從未撞見這個指令真正擋下點擊的瞬間。",
+    "reproductionEvidence": "真實 Chromium 載入真實 handlePipelineTraceView 回應（經過真實 applyAdminSecurityHeaders），實際點擊渲染出來的送出按鈕，瀏覽器完全不導頁。瀏覽器主控台明確寫出原因：「Refused to send form data to '...' because it violates the following Content Security Policy directive: form-action 'none'.」只拿掉這一個指令（其餘完全不動），同一個點擊就能正確導頁到篩選後的網址——同時證實了原因、也證實了沒有其他層需要改。",
+    "fix": {
+      "plan": "A（修好既有篩選功能，UI 保留，未移除任何篩選欄位）",
+      "cspChange": "security/adminAuth.js：form-action 'none' → 'self'。同源表單（本專案唯一擁有、未來合理新增的也會是同源）仍可送出；攻擊者仍無法把這個頁面的表單資料導到外部網域——這才是 form-action 真正要保護的東西。CSP 其餘指令（default-src／style-src／img-src／base-uri／frame-ancestors）完全未動。",
+      "defaultLimitChange": "traffic/pipelineTrace.js：DEFAULT_LIST_LIMIT 30→60。MAX_LIST_LIMIT（100）與 KV list() 掃描安全上限 MAX_ENTRIES_SCANNED（500）完全不變——只移動「未指定 limit 時」的預設值。",
+      "filterLogicChange": "無。伺服器端篩選邏輯（source/keyword/road/rawId/status/組合/清除）本來就是對的，V1.8.7.6 已證實，本輪未改動任何 predicate。"
     },
-    "fix": "cctv/dynamicCollage.js 的 prepareCctvImageWork 比照單鏡頭路徑加上 stageTracker，在 metadata/camera-selection/frame-fetch/r2-publish 四個邊界記錄進度；composeCollageFromCandidates（hsinchuCctvProbe.js）額外回報 frameFetchElapsedMs/collageElapsedMs/successfulFrameCount/failedFrameCount；broadcastPipeline.js 在三個既有呼叫點把 7 個新欄位接進 Pipeline Trace（pipelineTrace.js 的 buildTraceEntry 白名單）。全部欄位皆為純數字，測試 G 鎖定絕不含 stream URL／candidate record／frame bytes。",
-    "retryRequired": "NO——本輪沒有新增任何 retry、第二輪 fetch、fallback，也沒有調整 4000ms 這個數字。",
-    "antiDeathSpiral": {
-      "MAX_FRAME_FETCH_PER_EVENT": "4（QUADRANTS.length，固定常數，本輪未變動）",
-      "MAX_RETRY_PER_EVENT": "0（prepareCctvImageForEvent 每個事件每輪恰好呼叫一次，無迴圈、無第二次呼叫）",
-      "cronNeverStuck": "outer withTimeout race 保證呼叫端一定在 budgetMs 內被釋放，不受背景工作影響（測試B/C再次證實）；src/index.js 的 scheduled() 用 ctx.waitUntil(runScheduledTdxSync(...)) 包住整輪，沒有任何東西把被丟棄的逾時 work 串接上去，一旦這輪本身的 promise settle，isolate 對那個被丟棄的 straggler 沒有進一步保活義務，而 straggler 自己每個階段都有時間上限（KV get／每支 frame fetch 的 AbortSignal.timeout／in-process JPEG codec／單次 R2 PUT），不可能無限跑下去"
+    "sourceFilter": "有效（既有邏輯，未改動，測試涵蓋）",
+    "keywordFilter": "有效（既有邏輯，未改動，測試涵蓋）",
+    "roadFilter": "有效（既有邏輯，含道路正規化，未改動，測試涵蓋）",
+    "rawIdFilter": "有效（既有邏輯，未改動，測試涵蓋）",
+    "statusFilter": "有效（既有邏輯，未改動，測試涵蓋）",
+    "combinedFilter": "有效（AND 語意，既有邏輯，未改動，測試涵蓋）",
+    "clearReset": "有效（清除連結指向無 query string 的原始路徑，新增測試鎖定）",
+    "defaultLimit": {
+      "server": "60",
+      "ui": "60（placeholder 與空值時皆為 60）"
     },
-    "testResult": "npm test 共 1286 項；NEW FAILURES = 0（同一輪 git stash -u 對照乾淨 checkout，38 項既有失敗完全相同）。新增 test/cctvQuadPrepareForensics.test.js 8 項（A-G）全數通過，其中一項時序敏感測試連續跑 8 次驗證非 flake。",
-    "canonicalVersionSource": "src/version.js 的 APP_VERSION 已 bump 為 V1.9.0（三段式版本治理生效後第一個正式版本，patch-level 起點）——與本次修復同一個 commit。",
+    "testResult": "npm test 共 1292 項；NEW FAILURES = 0（同一輪 git stash -u 對照乾淨 checkout，38 項既有失敗完全相同）。新增／更新測試：adminAuth.test.js（CSP 值翻轉＋不得回退斷言）、pipelineTraceView.test.js（5 項 V1.9.1 新測試：CSP、表單無跨網域 action、預設 60 placeholder、75 筆真實資料下無 limit 回傳恰好 60、清除連結無殘留 query）、pipelineTrace.test.js（無 limit 對 75 筆真實資料回傳恰好 60）。",
+    "canonicalVersionSource": "src/version.js 的 APP_VERSION 已 bump 為 V1.9.1（patch release，三段式版本治理）——與本次修復同一個 commit。",
     "githubSeal": "PASS",
     "githubEngineeringMemory": "SEALED",
     "claudeDriveUpload": "NO",
     "doNotMisread": [
-      "不要以為 09:20 的具體慢在哪一段已被證實——只有『沒有 stage 追蹤』這個結構性缺陷被證實，具體外部歸因誠實地標示為無法回推。",
-      "不要把這次修復理解成加了 retry 或加大了 timeout——RETRY_REQUIRED = NO，4000ms 完全未變動。",
-      "不要把 timeoutStage='frame-fetch' 誤解為『一定是頻寬慢』——它涵蓋 frame fetch 與 compose 兩個子步驟（同一個 await 內，無法從外部進一步拆分），已在程式註解與測試裡誠實揭露這個粒度限制。",
-      "不要因為看到『slow camera 拖住整批』就去改 Promise.all 為 Promise.allSettled——extractFirstJpegFrame 本來就從不 throw，改了也不會改變行為，不是真正的修法。",
+      "不要以為伺服器端篩選邏輯曾經壞過——它從 V1.8.7.6 起就是對的；壞的是瀏覽器層級的 CSP form-action，擋住了表單送出這個動作本身。",
+      "不要把 form-action 改回 'none'——那正是這次的缺陷本身。",
+      "不要把 form-action 放寬到 '*' 或加上外部網域——'self' 已經是這次修復所需要、且唯一安全的值。",
+      "不要因為新增了真實瀏覽器重現的技巧，就把 Playwright 加成本 repo 的正式相依套件——這次的重現是一次性的人工驗證，本輪沒有、也不應該把瀏覽器測試變成 CI 的一部分；CI 覆蓋改用不需要瀏覽器的斷言（直接檢查 CSP 標頭字串）鎖住這個值。",
       "不要對 Google Drive 做任何寫入——Claude 唯讀，GitHub 是唯一正式寫入來源。"
     ],
-    "openFollowUp": "若未來想進一步優化『3支已成功、1支還在等』這種情境（讓已成功的3支不必等到第4支逾時才組圖），這是一個真實存在、但本輪未實作的可能優化——因為呼叫端的 outer race 早已保證不影響 LINE 文字準時推播，這個優化只影響『能不能在還有一點剩餘時間時多組出一張3/4的圖』，屬於錦上添花而非本輪已證實的 Root Cause 範圍，留待有實際 Production 證據支持時再處理。",
     "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
   },
   "taskSealHistory": [
+    {
+      "task": "CCTV_QUAD_PREPARE_TIMEOUT_OBSERVABILITY_V1_9_0",
+      "status": "SEALED",
+      "sealedAt": "2026-08-26",
+      "sealedBy": "human directive (路況工程部 V1.9.0 高優先補充令｜先找 Root Cause，禁止先加 Retry)",
+      "releaseVersion": "V1.9.0",
+      "realWorldTrigger": "2026-08-26 09:20 國3南向96K+700事故：event 進 Shared Feed、withImage=0、CCTV prepare 完全沒有 completion log。09:30（下一個 Cron tick）同一事件重跑：candidates=1、eligible=1、attempted=1、attached=1，quad image 成功。",
+      "rootCause": "以程式碼檢視＋7項決定性測試確認（非推測）：cctv/dynamicCollage.js 的 quad（事故）路徑完全沒有 stage 追蹤機制——動態路肩單鏡頭路徑早就有（timeoutStage），quad 路徑的 prepare-timeout 從未帶過 stage、部分影格數、或任何部分計時。因此任一次真實的外部延遲（frame fetch／JPEG compose／R2 publish——三者皆已證實共用同一個 4000ms budget）在 09:20 都是結構性地不可見：不是記錄漏了，是根本沒有東西在記錄。",
+      "whatWasNotClaimed": "09:20 當下具體是哪一段外部 I/O 慢（frame fetch？compose？R2？）——當時的 Pipeline Trace 沒有 stage 級別資料（正是本輪要補的缺口），所以這個特定歸因無法從既有證據回推，本輪誠實地不予斷言。",
+      "provenByDeterministicTests": {
+        "FRAME_FETCH_MODE": "PARALLEL（Promise.all，4支候選同時發起，實測 start 時間差 <100ms）",
+        "SLOW_CAMERA_CAN_BLOCK_ALL": "YES——單一慢/永遠不回的候選會拖住整批 compose，因為 Promise.all 等所有4支都 settle，每支各自的 timeout 都源自同一個剩餘 budget",
+        "BUDGET_SCOPE": "frame-fetch、collage compose、R2 publish 三者共用同一個 4000ms budget，不是分開計時",
+        "TIMEOUT_ABORTS_UNDERLYING_WORK": "NO——outer race 逾時後，背景中的 work 不會被中止，會自行跑完（受限於自己的 stage timeout），結果被安全丟棄"
+      },
+      "fix": "cctv/dynamicCollage.js 的 prepareCctvImageWork 比照單鏡頭路徑加上 stageTracker，在 metadata/camera-selection/frame-fetch/r2-publish 四個邊界記錄進度；composeCollageFromCandidates（hsinchuCctvProbe.js）額外回報 frameFetchElapsedMs/collageElapsedMs/successfulFrameCount/failedFrameCount；broadcastPipeline.js 在三個既有呼叫點把 7 個新欄位接進 Pipeline Trace（pipelineTrace.js 的 buildTraceEntry 白名單）。全部欄位皆為純數字，測試 G 鎖定絕不含 stream URL／candidate record／frame bytes。",
+      "retryRequired": "NO——本輪沒有新增任何 retry、第二輪 fetch、fallback，也沒有調整 4000ms 這個數字。",
+      "antiDeathSpiral": {
+        "MAX_FRAME_FETCH_PER_EVENT": "4（QUADRANTS.length，固定常數，本輪未變動）",
+        "MAX_RETRY_PER_EVENT": "0（prepareCctvImageForEvent 每個事件每輪恰好呼叫一次，無迴圈、無第二次呼叫）",
+        "cronNeverStuck": "outer withTimeout race 保證呼叫端一定在 budgetMs 內被釋放，不受背景工作影響（測試B/C再次證實）；src/index.js 的 scheduled() 用 ctx.waitUntil(runScheduledTdxSync(...)) 包住整輪，沒有任何東西把被丟棄的逾時 work 串接上去，一旦這輪本身的 promise settle，isolate 對那個被丟棄的 straggler 沒有進一步保活義務，而 straggler 自己每個階段都有時間上限（KV get／每支 frame fetch 的 AbortSignal.timeout／in-process JPEG codec／單次 R2 PUT），不可能無限跑下去"
+      },
+      "testResult": "npm test 共 1286 項；NEW FAILURES = 0（同一輪 git stash -u 對照乾淨 checkout，38 項既有失敗完全相同）。新增 test/cctvQuadPrepareForensics.test.js 8 項（A-G）全數通過，其中一項時序敏感測試連續跑 8 次驗證非 flake。",
+      "canonicalVersionSource": "src/version.js 的 APP_VERSION 已 bump 為 V1.9.0（三段式版本治理生效後第一個正式版本，patch-level 起點）——與本次修復同一個 commit。",
+      "githubSeal": "PASS",
+      "githubEngineeringMemory": "SEALED",
+      "claudeDriveUpload": "NO",
+      "doNotMisread": [
+        "不要以為 09:20 的具體慢在哪一段已被證實——只有『沒有 stage 追蹤』這個結構性缺陷被證實，具體外部歸因誠實地標示為無法回推。",
+        "不要把這次修復理解成加了 retry 或加大了 timeout——RETRY_REQUIRED = NO，4000ms 完全未變動。",
+        "不要把 timeoutStage='frame-fetch' 誤解為『一定是頻寬慢』——它涵蓋 frame fetch 與 compose 兩個子步驟（同一個 await 內，無法從外部進一步拆分），已在程式註解與測試裡誠實揭露這個粒度限制。",
+        "不要因為看到『slow camera 拖住整批』就去改 Promise.all 為 Promise.allSettled——extractFirstJpegFrame 本來就從不 throw，改了也不會改變行為，不是真正的修法。",
+        "不要對 Google Drive 做任何寫入——Claude 唯讀，GitHub 是唯一正式寫入來源。"
+      ],
+      "openFollowUp": "若未來想進一步優化『3支已成功、1支還在等』這種情境（讓已成功的3支不必等到第4支逾時才組圖），這是一個真實存在、但本輪未實作的可能優化——因為呼叫端的 outer race 早已保證不影響 LINE 文字準時推播，這個優化只影響『能不能在還有一點剩餘時間時多組出一張3/4的圖』，屬於錦上添花而非本輪已證實的 Root Cause 範圍，留待有實際 Production 證據支持時再處理。",
+      "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
+    },
     {
       "task": "THREE_PART_VERSIONING_TRANSITION",
       "status": "SEALED",
@@ -349,7 +389,7 @@
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
   "currentPhase": "{{CURRENT_PHASE}}",
-  "currentTask": "none（無進行中工作）。Latest completed task = CCTV_QUAD_PREPARE_TIMEOUT_OBSERVABILITY_V1_9_0，status = SEALED（前序 THREE_PART_VERSIONING_TRANSITION、PRODUCTION_VERSION_LINEAGE_RECONCILIATION、CCTV_METADATA_RECOVERY_V1 = V1.8.7.14、DRIVE_SYNC_GOVERNANCE_V2 亦為 SEALED）。CURRENT_OFFICIAL_VERSION = V1.9.0（三段式版本治理生效後第一個正式版本）。Quad（事故）CCTV prepare-timeout 現在會留下完整 stage 級別追蹤（metadataElapsedMs／cameraSelectionElapsedMs／frameFetchElapsedMs／collageElapsedMs／successfulFrameCount／failedFrameCount／r2PublishElapsedMs／timeoutStage），『timeoutStage=null』的觀察缺口已消除。本輪未新增任何 retry，4000ms budget 未變動。雲端同步治理維持 V2：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源。**下一件事若要開工，建議處理約 33 項過期斷言**（見 07_KNOWN_ISSUES.md），或視 Production 實際觀察結果決定是否需要 openFollowUp 提到的 3/4-frame 提早組圖優化。",
+  "currentTask": "none（無進行中工作）。Latest completed task = PIPELINE_TRACE_FILTER_ROOT_CAUSE_V1_9_1，status = SEALED（前序 CCTV_QUAD_PREPARE_TIMEOUT_OBSERVABILITY_V1_9_0、THREE_PART_VERSIONING_TRANSITION、PRODUCTION_VERSION_LINEAGE_RECONCILIATION 亦為 SEALED）。CURRENT_OFFICIAL_VERSION = V1.9.1。/admin/pipeline-trace-view 的篩選功能已修好：Root Cause 是 CSP form-action 'none' 擋住所有 admin 頁面的表單送出，已改為 form-action 'self'；DEFAULT_LIST_LIMIT 30→60（掃描安全上限不變）。雲端同步治理維持 V2：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源。**下一件事若要開工，建議處理約 33 項過期斷言**（見 07_KNOWN_ISSUES.md）。",
   "knownBlocker": "{{KNOWN_BLOCKER}}",
   "realWorldConfirmation": {
     "status": "{{REAL_WORLD_CONFIRMATION}}",

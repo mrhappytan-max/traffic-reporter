@@ -1077,6 +1077,82 @@ Root Cause 範圍，留待有實際 Production 證據支持時再處理，也留
   `Promise.allSettled`**——`extractFirstJpegFrame` 本來就從不 throw，
   改了也不會改變任何行為，不是真正的修法。
 
+## 修正紀錄｜Pipeline Trace 查修頁篩選失效（V1.9.1，form-action CSP）（2026-08-26）
+
+### 真實回報
+
+真人在真實手機（iOS Safari）操作 `/admin/pipeline-trace-view`：
+選擇來源／關鍵字／道路／rawId／狀態／筆數後按「篩選」，**畫面完全不跟著變**。
+
+### Root Cause（以真實 headless Chromium 對著真實部署的回應重現，非猜測）
+
+`applyAdminSecurityHeaders`（`security/adminAuth.js`）的 CSP 帶
+`form-action 'none'`。任何有強制執行 CSP 的瀏覽器（含真人回報所用的
+iOS Safari，以及所有現代主流瀏覽器）都會用這個指令**完全拒絕**頁面上
+任何 `<form>` 的送出——不只是這個篩選表單，本專案任何其他 admin HTML
+頁面上的表單也一樣會被擋。
+
+前一輪（V1.8.7.6）已經完整查證過伺服器端每一層：表單標記、
+真實瀏覽器產生的 query string、`listPipelineTrace` 的 filter predicate、
+分頁邏輯（含小規模與 2000+ key 真實分頁規模），**全部都是對的**，
+並推測剩下的解釋是「client-side staleness」。但那一輪自己的文件承認
+其 headless 瀏覽器重現「不在本 repo 的自動化測試套件內」——顯然從未
+真正對著這個 Worker 自己的安全標頭送出過請求，因此從未撞見這個指令
+真正擋下點擊的那一刻。
+
+### 重現（真實證據）
+
+真實 Chromium 載入真實 `handlePipelineTraceView` 回應（經過真實
+`applyAdminSecurityHeaders`），實際點擊渲染出來的送出按鈕——
+**瀏覽器完全不導頁**。瀏覽器主控台明確寫出原因：
+
+```
+Refused to send form data to '...' because it violates the following
+Content Security Policy directive: "form-action 'none'".
+```
+
+只拿掉這一個指令（其餘完全不動），同一個點擊就能正確導頁到篩選後的
+網址——同時證實了原因，也證實了沒有其他層需要改。
+
+### 修正（採方案 A：修好既有篩選功能，UI 保留）
+
+- `security/adminAuth.js`：`form-action 'none'` → `'self'`。
+  同源表單（本專案唯一擁有、未來合理新增的也會是同源）仍可送出；
+  攻擊者仍無法把這個頁面的表單資料導到外部網域——這才是 form-action
+  真正要保護的東西。CSP 其餘指令（`default-src`／`style-src`／
+  `img-src`／`base-uri`／`frame-ancestors`）完全未動。
+- `traffic/pipelineTrace.js`：`DEFAULT_LIST_LIMIT` 30 → 60。
+  `MAX_LIST_LIMIT`（100）與 KV `list()` 掃描安全上限
+  `MAX_ENTRIES_SCANNED`（500）完全不變——只移動「未指定 limit 時」
+  的預設值。
+- **伺服器端篩選邏輯本身沒有任何改動**——source/keyword/road/rawId/
+  status/組合/清除，V1.8.7.6 已證實全部正確，本輪未動任何 predicate。
+
+### 各項篩選驗證結果
+
+| 項目 | 結果 |
+|---|---|
+| source filter | 有效（既有邏輯，未改動） |
+| keyword (q) filter | 有效（既有邏輯，未改動） |
+| road filter | 有效（含道路正規化，既有邏輯，未改動） |
+| rawId filter | 有效（既有邏輯，未改動） |
+| status filter | 有效（既有邏輯，未改動） |
+| combined filter | 有效（AND 語意，既有邏輯，未改動） |
+| clear/reset | 有效（清除連結指向無 query string 的原始路徑） |
+| default limit | server=60、UI placeholder=60 |
+
+### 不要誤讀
+
+- **不要以為伺服器端篩選邏輯曾經壞過**——它從 V1.8.7.6 起就是對的；
+  壞的是瀏覽器層級的 CSP `form-action`，擋住了表單送出這個動作本身。
+- **不要把 `form-action` 改回 `'none'`**——那正是這次的缺陷本身。
+- **不要把 `form-action` 放寬到 `'*'` 或加上外部網域**——`'self'`
+  已經是這次修復所需要、且唯一安全的值。
+- **不要把 Playwright 加成本 repo 的正式相依套件**——這次的重現是
+  一次性的人工驗證；CI 覆蓋改用不需要瀏覽器的斷言（直接檢查 CSP
+  標頭字串）鎖住這個值，見 `test/adminAuth.test.js`／
+  `test/pipelineTraceView.test.js` 的 V1.9.1 測試。
+
 ## TDX 還原程序（RESTORE TDX）
 
 **前提**：真人確認 TDX 額度確實已恢復。
