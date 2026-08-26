@@ -5,13 +5,19 @@
 // (broadcastPipeline.js), both of which have read-only counterparts used
 // by GET /debug/status.
 //
-// V1.6.1 — "資料來源與 TDX 用量瘦身": PBS still runs every tick, 24/7.
-// TDX (國道+省道 only, see ../tdx/sources.js's PRODUCTION_TDX_SOURCE_IDS)
-// is now only fetched every 2nd tick (minute 00/20/40), and only
-// 08:00–21:59:59 Asia/Taipei — see tdxSchedule.js. A tick that doesn't
-// fetch TDX still runs PBS + the LINE broadcast step normally (PBS-only
-// broadcasts must never be blocked just because TDX itself sat this tick
-// out) — only the TDX-specific portion of the pipeline is skipped.
+// V1.6.1 — "資料來源與 TDX 用量瘦身": TDX (國道+省道 only, see
+// ../tdx/sources.js's PRODUCTION_TDX_SOURCE_IDS) is only fetched every 2nd
+// tick (minute 00/20/40), and only 08:00–21:59:59 Asia/Taipei — see
+// tdxSchedule.js. A tick that doesn't fetch TDX still runs PBS + the LINE
+// broadcast step normally (PBS-only broadcasts must never be blocked just
+// because TDX itself sat this tick out) — only the TDX-specific portion
+// of the pipeline is skipped.
+//
+// V1.9.3 (KV Write Optimization Phase 2) — PBS is likewise no longer
+// fetched every tick: at most every 30 minutes, only 07:00–22:00 Asia/
+// Taipei — see pbsSchedule.js. Cron ITSELF still runs every 10 minutes
+// unchanged; a tick that skips the PBS fetch still runs the LINE broadcast
+// step normally against whatever TDX/cached-PBS candidates exist.
 //
 // `now` defaults to the real clock; tests pass an explicit Date.
 
@@ -22,6 +28,8 @@ import { mergeForBroadcast } from '../pbs/crossSourceDedup.js';
 import { PBS_BROADCAST_ENABLED } from '../pbs/pbsConfig.js';
 import { buildHealthSnapshot, persistHealthSnapshot, readHealthSnapshot } from './healthSnapshot.js';
 import { getTdxScheduleState } from './tdxSchedule.js';
+import { getPbsScheduleState } from './pbsSchedule.js';
+import { hasPipelineTraceRelevantChange } from './pipelineTrace.js';
 import { isTdxRuntimeEnabled, describeSourceMode } from './sourceMode.js';
 import { resolveLinePushPolicy } from './broadcastPolicy.js';
 import { readDedupeState } from './dedupe.js';
@@ -42,6 +50,47 @@ import { describeFreewayCctvMetadata } from '../cctv/freewayCctvMetadataCache.js
  * PBS-only broadcasts must not fail closed just because TDX sat this
  * tick out.
  */
+/**
+ * V1.9.3 (KV Write Optimization Phase 2, item 二) — shape-compatible with
+ * pbs/pipeline.js's buildSummary() output for a tick that made ZERO PBS
+ * calls at all (see pbsSchedule.js — outside the 07:00–22:00 Asia/Taipei
+ * window, or not on a 30-minute mark). No fetch, no lifecycle read/write,
+ * no cross-source dedup — a genuinely absent fetch must never be misread
+ * as "0 active PBS events this run" (which would incorrectly start
+ * absence/staleness clocks). `pbsOk` is deliberately `null` here (not
+ * `false`) — healthSnapshot.js's carry-forward reads the REAL last-fetch
+ * health from the previous snapshot, not from this placeholder; `null`
+ * only means "this shape itself carries no health opinion", so nothing
+ * downstream can mistake a schedule skip for a PBS failure.
+ */
+function buildSkippedPbsSummary() {
+  return {
+    pbsOk: null,
+    pbsError: null,
+    kvAvailable: true,
+    kvError: null,
+    committed: false,
+    commitReason: 'skipped-by-schedule',
+    pbsNewCount: 0,
+    pbsUpdatedCount: 0,
+    pbsNewlyClearedCount: 0,
+    rawCount: 0,
+    hsinchuCount: 0,
+    activeCount: 0,
+    clearedCount: 0,
+    staleCount: 0,
+    filteredCount: 0,
+    crossSourceDuplicateCount: 0,
+    canonicalEventCount: 0,
+    canonicalEvents: [],
+    uniquePbsEvents: [],
+    freewayGatedCount: 0,
+    freewayGatedEvents: [],
+    relayOk: null,
+    relayStatus: null,
+  };
+}
+
 async function buildSkippedTdxSummary(env, now) {
   const dedupeState = await readDedupeState(env.TRAFFIC_KV);
   return {
@@ -170,31 +219,57 @@ export async function runScheduledTdxSync(env, now = new Date()) {
   const tdxEventsForPbsDedup =
     tdxScheduleState === 'scheduled' ? summary.allEvents : (await readProductionTdxEventCache(env.TRAFFIC_KV, now)).events;
 
+  // V1.9.3 (KV Write Optimization Phase 2, item 二) — PBS is no longer
+  // fetched every Cron tick: at most every 30 minutes, only 07:00–22:00
+  // Asia/Taipei (see pbsSchedule.js's own module comment for the full
+  // safety analysis — every PBS lifecycle rule this could plausibly
+  // affect is wall-clock-based, not tick-based, and comfortably larger
+  // than the gap this introduces). Cron itself still runs every 10
+  // minutes unchanged.
+  const pbsScheduleState = getPbsScheduleState(now);
+  const pbsFetchPerformed = pbsScheduleState === 'scheduled';
+
   // PBS runs BEFORE the LINE broadcast now (V1.4: PBS+TDX merge, Alpha),
   // so its cross-source dedup result can be folded into what actually
   // gets pushed below. Still fully isolated: its own KV key
   // (pbs:lifecycle-state), its own fetch — and critically, its own
   // try/catch here, so a PBS failure can NEVER prevent or reduce TDX's
   // own broadcast (see the mergeForBroadcast call below, and requirement
-  // "PBS 掛掉時 TDX 必須繼續正常播報"). Unconditional — PBS runs every
-  // tick, 24/7, regardless of tdxScheduleState.
+  // "PBS 掛掉時 TDX 必須繼續正常播報").
   let pbsSummary;
-  try {
-    pbsSummary = await runPbsPipelineAndCommit(env, { tdxEvents: tdxEventsForPbsDedup, now });
-    console.log(
-      `[cron][pbs] pbsOk=${pbsSummary.pbsOk} pbsError=${pbsSummary.pbsError ?? 'none'} ` +
-        `kvAvailable=${pbsSummary.kvAvailable} committed=${pbsSummary.committed} ` +
-        `raw=${pbsSummary.rawCount} hsinchu=${pbsSummary.hsinchuCount} active=${pbsSummary.activeCount} ` +
-        `cleared=${pbsSummary.clearedCount} stale=${pbsSummary.staleCount} filtered=${pbsSummary.filteredCount} ` +
-        `crossSourceDuplicates=${pbsSummary.crossSourceDuplicateCount} canonical=${pbsSummary.canonicalEventCount} ` +
-        `freewayGated=${pbsSummary.freewayGatedCount ?? 0}` // V57.2: 國道 PBS events with no TDX match this run — never broadcast, observability only
-    );
-  } catch (err) {
-    // Belt-and-suspenders: PBS must never be able to take down the Cron
-    // run even if something in this pipeline throws unexpectedly.
-    console.error(`[cron][pbs] pipeline failed: ${err && err.message}`);
-    pbsSummary = { pbsOk: false, pbsError: err && err.message, canonicalEvents: [], uniquePbsEvents: [] };
+  if (pbsFetchPerformed) {
+    try {
+      pbsSummary = await runPbsPipelineAndCommit(env, { tdxEvents: tdxEventsForPbsDedup, now });
+      console.log(
+        `[cron][pbs] pbsOk=${pbsSummary.pbsOk} pbsError=${pbsSummary.pbsError ?? 'none'} ` +
+          `kvAvailable=${pbsSummary.kvAvailable} committed=${pbsSummary.committed} ` +
+          `raw=${pbsSummary.rawCount} hsinchu=${pbsSummary.hsinchuCount} active=${pbsSummary.activeCount} ` +
+          `cleared=${pbsSummary.clearedCount} stale=${pbsSummary.staleCount} filtered=${pbsSummary.filteredCount} ` +
+          `crossSourceDuplicates=${pbsSummary.crossSourceDuplicateCount} canonical=${pbsSummary.canonicalEventCount} ` +
+          `freewayGated=${pbsSummary.freewayGatedCount ?? 0} ` + // V57.2: 國道 PBS events with no TDX match this run — never broadcast, observability only
+          `new=${pbsSummary.pbsNewCount ?? 0} updated=${pbsSummary.pbsUpdatedCount ?? 0} newlyCleared=${pbsSummary.pbsNewlyClearedCount ?? 0}`
+      );
+    } catch (err) {
+      // Belt-and-suspenders: PBS must never be able to take down the Cron
+      // run even if something in this pipeline throws unexpectedly.
+      console.error(`[cron][pbs] pipeline failed: ${err && err.message}`);
+      pbsSummary = {
+        pbsOk: false,
+        pbsError: err && err.message,
+        canonicalEvents: [],
+        uniquePbsEvents: [],
+        pbsNewCount: 0,
+        pbsUpdatedCount: 0,
+        pbsNewlyClearedCount: 0,
+      };
+    }
+  } else {
+    pbsSummary = buildSkippedPbsSummary();
   }
+  console.log(
+    `[cron][pbs-schedule] state=${pbsScheduleState} pbsFetchPerformed=${pbsFetchPerformed} ` +
+      `pbsFetchSkippedSchedule=${!pbsFetchPerformed}`
+  );
 
   // V1.4 Alpha: fold PBS's cross-source dedup result into what gets
   // broadcast — same real incident reported by both TDX and an active PBS
@@ -274,11 +349,17 @@ export async function runScheduledTdxSync(env, now = new Date()) {
   // V1.6.1: also reads the PREVIOUS snapshot first (one extra read-only
   // KV read) so buildHealthSnapshot can carry the `tdx` block forward
   // unchanged on a tick that skipped/slept — see healthSnapshot.js.
+  // V1.9.3 (KV Write Optimization Phase 2, item 一): that SAME previous
+  // snapshot also carries the `pbs` block forward on a PBS schedule skip,
+  // AND is passed into persistHealthSnapshot so it can skip the write
+  // entirely when the real content hasn't changed (WRITE_ON_CHANGE) — no
+  // second KV read needed for either purpose.
   // Own try/catch: a bug here must never break the Cron run itself, same
   // isolation principle as the PBS step above. If this write itself
   // fails, the snapshot already in KV just keeps aging — /health's own
   // staleness check (see health.js) is what correctly surfaces that as
   // critical, no separate "write failed" flag needed here.
+  let healthSnapshotCommitted = false;
   let healthSnapshotWritten = false;
   try {
     const previous = await readHealthSnapshot(env.TRAFFIC_KV);
@@ -291,6 +372,7 @@ export async function runScheduledTdxSync(env, now = new Date()) {
       lineSummary,
       now,
       tdxScheduleState,
+      pbsScheduleState,
       sourceMode,
       cctvMetadata: {
         source: cctvMetadata.source,
@@ -300,9 +382,11 @@ export async function runScheduledTdxSync(env, now = new Date()) {
         sourceUpdatedAt: cctvMetadata.sourceUpdatedAt,
       },
       previousTdx: previous.snapshot ? previous.snapshot.tdx : null,
+      previousPbs: previous.snapshot ? previous.snapshot.pbs : null,
     });
-    const commit = await persistHealthSnapshot(env.TRAFFIC_KV, healthSnapshot);
-    healthSnapshotWritten = Boolean(commit.committed);
+    const commit = await persistHealthSnapshot(env.TRAFFIC_KV, healthSnapshot, previous.snapshot);
+    healthSnapshotCommitted = Boolean(commit.committed);
+    healthSnapshotWritten = Boolean(commit.written);
     if (!commit.committed) console.error(`[cron][health] snapshot write failed: ${commit.reason} ${commit.error ?? ''}`);
   } catch (err) {
     console.error(`[cron][health] snapshot build/write failed: ${err && err.message}`);
@@ -363,6 +447,8 @@ export async function runScheduledTdxSync(env, now = new Date()) {
   // here can never reduce or delay this Worker's own broadcast, which
   // (including the Shared Feed write above) already fully completed.
   let pipelineTraceSummary;
+  let pipelineTraceEntryCount = 0;
+  let pipelineTraceRelevantChange = false;
   try {
     // One extra, read-only KV get (not a `list`) so this run's trace
     // entries can carry the ACTUAL persisted Shared Feed outcome, not
@@ -400,16 +486,41 @@ export async function runScheduledTdxSync(env, now = new Date()) {
       ),
     ];
 
-    // V1.9.2 — batched: one KV `put` per Cron round (occasionally a few,
-    // only if this round's entries are genuinely too large for one key —
-    // see chunkEntriesForTraceBatch), replacing the old one-`put`-per-
-    // entry write. See pipelineTrace.js's own TRACE_BATCH_KEY_PREFIX
-    // comment for the full backward-compatibility write-up.
-    pipelineTraceSummary = await persistPipelineTraceBatch(env.TRAFFIC_KV, [...patchedLineEntries, ...dropoutEntries], now);
+    // V1.9.3 (KV Write Optimization Phase 2, item 三) — NO_RELEVANT_CHANGE:
+    // when this round has no new/updated/cleared service-area event and no
+    // LINE push failure (see hasPipelineTraceRelevantChange's own comment
+    // for the exact rule and why CCTV anomalies need no separate check),
+    // skip the batch write entirely — the entries this round would have
+    // produced are the SAME still-active-and-unchanged events the last
+    // relevant round already traced once. Computed here, not inside
+    // persistPipelineTraceBatch itself, so that function's own existing
+    // "always write whatever I'm given" contract (and its own tests) stay
+    // untouched.
+    const allEntries = [...patchedLineEntries, ...dropoutEntries];
+    pipelineTraceEntryCount = allEntries.length;
+    const relevantChange = hasPipelineTraceRelevantChange({ summary, pbsSummary, lineSummary });
+    pipelineTraceRelevantChange = relevantChange;
+    if (relevantChange) {
+      // V1.9.2 — batched: one KV `put` per Cron round (occasionally a few,
+      // only if this round's entries are genuinely too large for one key —
+      // see chunkEntriesForTraceBatch), replacing the old one-`put`-per-
+      // entry write. See pipelineTrace.js's own TRACE_BATCH_KEY_PREFIX
+      // comment for the full backward-compatibility write-up.
+      pipelineTraceSummary = await persistPipelineTraceBatch(env.TRAFFIC_KV, allEntries, now);
+    } else {
+      pipelineTraceSummary = {
+        attempted: allEntries.length,
+        committed: 0,
+        failed: 0,
+        batchCount: 0,
+        batchesCommitted: 0,
+        skippedNoRelevantChange: true,
+      };
+    }
     console.log(
       `[cron][pipeline-trace] attempted=${pipelineTraceSummary.attempted} ` +
         `committed=${pipelineTraceSummary.committed} failed=${pipelineTraceSummary.failed} ` +
-        `batchCount=${pipelineTraceSummary.batchCount}`
+        `batchCount=${pipelineTraceSummary.batchCount} relevantChange=${relevantChange}`
     );
   } catch (err) {
     console.error(`[cron][pipeline-trace] persistence failed: ${err && err.message}`);
@@ -431,7 +542,11 @@ export async function runScheduledTdxSync(env, now = new Date()) {
   const budgetCategories = {
     tdxUsageSummary: { attempted: 0, performed: 0, skippedUnchanged: 0 }, // RETIRED V1.9.2 — see above
     tdxUsageEntry: { attempted: 0, performed: 0, skippedUnchanged: 0 }, // RETIRED V1.9.2 — see above
-    healthSnapshot: { attempted: 1, performed: healthSnapshotWritten ? 1 : 0, skippedUnchanged: 0 },
+    healthSnapshot: {
+      attempted: 1,
+      performed: healthSnapshotWritten ? 1 : 0,
+      skippedUnchanged: healthSnapshotCommitted && !healthSnapshotWritten ? 1 : 0,
+    },
     tdxEventCache: {
       attempted: tdxEventCacheAttempted ? 1 : 0,
       performed: tdxEventCacheWritten ? 1 : 0,
@@ -453,9 +568,14 @@ export async function runScheduledTdxSync(env, now = new Date()) {
       skippedUnchanged: 0, // never gated by WRITE_ON_CHANGE — per-event failure isolation is preserved as-is
     },
     pipelineTraceBatch: {
-      attempted: pipelineTraceSummary.batchCount || 0,
+      // V1.9.3: when this round had entries but no relevant change,
+      // report it as "attempted 1, skipped 1" (a real decision was made
+      // NOT to write) rather than silently 0/0/0, which would look
+      // indistinguishable from "there was nothing to trace at all".
+      attempted:
+        pipelineTraceRelevantChange || pipelineTraceEntryCount === 0 ? pipelineTraceSummary.batchCount || 0 : 1,
       performed: pipelineTraceSummary.batchesCommitted || 0,
-      skippedUnchanged: 0, // batching, not change-detection
+      skippedUnchanged: !pipelineTraceRelevantChange && pipelineTraceEntryCount > 0 ? 1 : 0,
     },
   };
   const totals = Object.values(budgetCategories).reduce(

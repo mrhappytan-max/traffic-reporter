@@ -143,7 +143,77 @@
 // quiet/medium/high fixture counts) and 07_KNOWN_ISSUES.md for the
 // quantified before/after write estimate.
 
-export const APP_VERSION = 'V1.9.2';
+// V1.9.3 (2026-08-26) — KV Write Optimization Phase 2. Same real
+// Cloudflare account write-budget pressure V1.9.2 addressed; this round
+// closes three further sources found in that round's own record.
+//
+// THREE changes, all merged into this one version:
+//   1. health:snapshot:v1 is now WRITE_ON_CHANGE (healthSnapshot.js) —
+//      real health content (ignoring generatedAt/tdx.pbs.lastFetchedAt/
+//      line.lastLinePushAt AND tdx/pbs.scheduledThisRun+sleeping AND the
+//      whole momentary `broadcast` block — none of those represent a real
+//      health-state change, only "this tick ran" bookkeeping) must
+//      actually differ from what's stored before a write happens. PBS's
+//      own `pbs` block gets the exact same carry-forward-on-skip
+//      treatment tdx already had, now that PBS itself is on a schedule
+//      gate (see #2). Discovered via this round's OWN deterministic
+//      fixture (test/kvWriteQuantificationV193.test.js) that
+//      scheduledThisRun/sleeping/the broadcast block toggle every tick
+//      independent of real health, which would have silently defeated
+//      WRITE_ON_CHANGE if left in the comparison — fixed before this
+//      shipped, not after.
+//   2. PBS fetch schedule gate (pbsSchedule.js) — PBS is no longer
+//      fetched every Cron tick, only at most every 30 minutes, and only
+//      07:00:00–22:00:00 Asia/Taipei. Cron itself is UNCHANGED (still
+//      every 10 minutes — see wrangler.jsonc); this only gates whether a
+//      given tick performs the actual PBS HTTP fetch. Safety analysis
+//      performed before writing this (see pbsSchedule.js's own comment):
+//      every PBS lifecycle rule that could plausibly depend on fetch
+//      cadence (PBS_STALE_THRESHOLD_MS=2h, PBS_ABSENCE_GRACE_PERIOD_MS=
+//      24h, both in pbsConfig.js) is wall-clock-based, not tick-based,
+//      and comfortably larger than both the 30-minute daytime gap and
+//      the ~9-hour night gap this introduces; LINE push itself is
+//      already restricted to 08:00–21:59:59, so the 07:00 PBS restart
+//      gives a full hour of buffer before broadcasting resumes. A tick
+//      that skips PBS builds a minimal placeholder summary
+//      (buildSkippedPbsSummary in scheduled.js) so mergeForBroadcast/
+//      health/Pipeline Trace all degrade the same safe way an already-
+//      established PBS pipeline failure does — never misread as "0
+//      active events found this run". `commitPbsLifecycleState`
+//      (lifecycle.js) additionally now returns real per-UID
+//      new/updated/newly-cleared transition counts (from the SAME
+//      comparison it already made to decide whether to write), reused by
+//      #3 below.
+//   3. Pipeline Trace NO_RELEVANT_CHANGE (pipelineTrace.js's
+//      hasPipelineTraceRelevantChange, wired into scheduled.js) — a round
+//      with no new/updated/cleared TDX or PBS event, no TDX duplicate or
+//      PBS freeway-gated dropout, and no LINE push attempt skips the
+//      Pipeline Trace batch write entirely (persistPipelineTraceBatch is
+//      simply not called), rather than re-writing the same still-active-
+//      but-unchanged event's trace entry every single tick forever. TDX
+//      duplicates and PBS freeway-gated dropouts are deliberately still
+//      treated as "relevant" (preserving the existing V1.8.6.7 "why
+//      didn't this broadcast" audit guarantee — see
+//      test/pipelineTraceIntegration.test.js's pre-existing tests) — this
+//      costs nothing in the actual deployed configuration this round
+//      targets (TRAFFIC_SOURCE_MODE=PBS_ONLY means TDX makes zero calls
+//      and PBS's freeway gate is bypassed entirely, so both are always 0
+//      today). A LINE push ATTEMPT (success or failure, not just
+//      failure) is also always relevant — this correctly covers a
+//      cold-start push too, where dedupe.js classifies the very first
+//      broadcast as a baseline-seed rather than "new" even though a real
+//      LINE send happens.
+//
+// Cron frequency is unchanged (every 10 minutes — only what a tick
+// actually DOES changed). See test/pbsSchedule.test.js,
+// test/healthSnapshot.test.js's V1.9.3 additions,
+// test/pipelineTraceNoRelevantChange.test.js, and
+// test/kvWriteQuantificationV193.test.js (deterministic QUIET/NORMAL/HIGH
+// EVENT DAY fixtures run through the real Cron path) for the full
+// regression suite and measured write/day figures, and
+// 07_KNOWN_ISSUES.md for the quantified V1.9.2-vs-V1.9.3 comparison.
+
+export const APP_VERSION = 'V1.9.3';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

@@ -264,6 +264,27 @@ test('9b. an ABSENT flag behaves exactly like ALL (a missing var never starves p
   assert.ok(hits.some((h) => h.includes('/RoadEvent/LiveEvent/Freeway')));
 });
 
+// V1.9.3 (KV Write Optimization Phase 2) — the 9/1 TDX restore path
+// (flipping TRAFFIC_SOURCE_MODE back to ALL/absent) must remain
+// completely independent of PBS's own new 30-minute fetch schedule (see
+// pbsSchedule.js): restoring TDX must neither couple PBS's cadence to
+// TDX's nor accidentally revert PBS to its old 24/7 cadence. A tick that
+// is NOT a PBS-scheduled minute (10:10, unlike TDX_SCHEDULED_TICK's
+// 10:00) must skip PBS the exact same way whether TDX is ON or OFF.
+test('9c (V1.9.3): PBS\'s own 30-minute schedule is identical whether TDX is restored (ALL) or still off (PBS_ONLY) — the two schedules never couple', async () => {
+  const offPbsSchedule = new Date('2026-08-23T10:10:00+08:00'); // TDX-scheduled (mod20=0) but NOT PBS-scheduled (mod30=10)
+
+  const pbsCallsAll = [];
+  const envAll = await envFor(SOURCE_MODE_ALL, pbsCallsAll, [pbsItem()]);
+  await withFetch([], {}, () => runScheduledTdxSync(envAll, offPbsSchedule));
+  assert.equal(pbsCallsAll.length, 0, 'mode ALL: PBS still correctly skips a non-PBS-scheduled minute');
+
+  const pbsCallsPbsOnly = [];
+  const envPbsOnly = await envFor(SOURCE_MODE_PBS_ONLY, pbsCallsPbsOnly, [pbsItem()]);
+  await withFetch([], {}, () => runScheduledTdxSync(envPbsOnly, offPbsSchedule));
+  assert.equal(pbsCallsPbsOnly.length, 0, 'mode PBS_ONLY: identical PBS skip behavior — TDX mode never changes PBS\'s own schedule');
+});
+
 // --- the resolver itself ---
 
 test('resolver: only the exact PBS_ONLY value disables TDX; PBS is never gated', () => {

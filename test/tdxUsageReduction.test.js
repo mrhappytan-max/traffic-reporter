@@ -135,42 +135,50 @@ test('1. 08:00 -> PBS + 國道 + 省道 both run', async () => {
   assert.equal(pbsCalls.length, 1);
 });
 
-test('2. 08:10 -> PBS only, TDX makes 0 requests', async () => {
+// V1.9.3 (KV Write Optimization Phase 2, item 二) — PBS is no longer 24/7
+// either: it now fetches at most every 30 minutes, only 07:00–22:00
+// Asia/Taipei (pbsSchedule.js). TDX's own marks (minute 00/20/40) and
+// PBS's (minute 00/30) only BOTH land on minute :00 within any given
+// hour — the times below are chosen so each test's own "PBS only" /
+// "TDX only" / "both run" narrative is still exactly true under the new
+// PBS schedule, not just the old always-on one.
+
+test('2. 08:30 -> PBS only, TDX makes 0 requests', async () => {
   const pbsCalls = [];
   const env = await envWithPbs(pbsCalls);
   const hits = [];
-  await withTdxFetch(hits, {}, () => runScheduledTdxSync(env, taipei('2026-08-18T08:10:00+08:00')));
+  await withTdxFetch(hits, {}, () => runScheduledTdxSync(env, taipei('2026-08-18T08:30:00+08:00')));
 
   assert.equal(hits.length, 0);
   assert.equal(pbsCalls.length, 1);
 });
 
-test('3. 08:20 -> PBS + TDX both run again', async () => {
+test('3. 09:00 -> PBS + TDX both run again (the next minute both schedules land on)', async () => {
   const pbsCalls = [];
   const env = await envWithPbs(pbsCalls);
   const hits = [];
-  await withTdxFetch(hits, {}, () => runScheduledTdxSync(env, taipei('2026-08-18T08:20:00+08:00')));
+  await withTdxFetch(hits, {}, () => runScheduledTdxSync(env, taipei('2026-08-18T09:00:00+08:00')));
 
   assert.ok(hits.some((h) => h.includes('/RoadEvent/LiveEvent/Freeway')));
   assert.ok(hits.some((h) => h.includes('/RoadEvent/LiveEvent/Highway')));
   assert.equal(pbsCalls.length, 1);
 });
 
-test('4. 21:40 -> PBS + TDX (last daytime tick of the day)', async () => {
+test('4. 21:00 -> PBS + TDX both run (an hour-aligned tick common to both schedules)', async () => {
   const pbsCalls = [];
   const env = await envWithPbs(pbsCalls);
   const hits = [];
-  await withTdxFetch(hits, {}, () => runScheduledTdxSync(env, taipei('2026-08-18T21:40:00+08:00')));
+  await withTdxFetch(hits, {}, () => runScheduledTdxSync(env, taipei('2026-08-18T21:00:00+08:00')));
 
   assert.ok(hits.some((h) => h.includes('/RoadEvent/LiveEvent/Freeway')));
   assert.equal(pbsCalls.length, 1);
 });
 
-test('5. 21:50 -> PBS only', async () => {
+test('5. 21:30 -> PBS only (TDX is between its own 20-minute marks)', async () => {
   const pbsCalls = [];
   const env = await envWithPbs(pbsCalls);
   const hits = [];
-  await withTdxFetch(hits, {}, () => runScheduledTdxSync(env, taipei('2026-08-18T21:50:00+08:00')));
+  await withTdxFetch(hits, {}, () => runScheduledTdxSync(env, taipei('2026-08-18T21:30:00+08:00')));
 
   assert.equal(hits.length, 0);
   assert.equal(pbsCalls.length, 1);
@@ -188,21 +196,21 @@ test('6. 22:00 -> PBS only, TDX enters night-sleep', async () => {
   assert.equal(pbsCalls.length, 1);
 });
 
-test('7. 03:00 -> PBS only (deep night)', async () => {
+test('7. 03:00 -> BOTH TDX and PBS skip (deep night; V1.9.3: PBS is no longer 24/7 either)', async () => {
   const pbsCalls = [];
   const env = await envWithPbs(pbsCalls);
   const hits = [];
   await withTdxFetch(hits, {}, () => runScheduledTdxSync(env, taipei('2026-08-18T03:00:00+08:00')));
 
   assert.equal(hits.length, 0);
-  assert.equal(pbsCalls.length, 1);
+  assert.equal(pbsCalls.length, 0); // pre-V1.9.3 this was 1 (PBS ran 24/7) — now correctly 0
 });
 
-test('8. 07:50 -> PBS only (just before daytime starts)', async () => {
+test('8. 07:30 -> PBS only (PBS\'s own 07:00-22:00 window starts an hour before TDX\'s 08:00-22:00 one)', async () => {
   const pbsCalls = [];
   const env = await envWithPbs(pbsCalls);
   const hits = [];
-  await withTdxFetch(hits, {}, () => runScheduledTdxSync(env, taipei('2026-08-18T07:50:00+08:00')));
+  await withTdxFetch(hits, {}, () => runScheduledTdxSync(env, taipei('2026-08-18T07:30:00+08:00')));
 
   assert.equal(hits.length, 0);
   assert.equal(pbsCalls.length, 1);
@@ -277,9 +285,21 @@ test('13. 09:10 TDX skipped-by-schedule -> /health must not show degraded/critic
     await runScheduledTdxSync(env, taipei('2026-08-18T09:10:00+08:00')); // skipped-by-schedule
   });
 
+  // V1.9.3 (KV Write Optimization Phase 2, item 一): health:snapshot:v1
+  // is now WRITE_ON_CHANGE, and `scheduledThisRun`/`sleeping` are
+  // deliberately EXCLUDED from that comparison (see healthSnapshot.js's
+  // stripVolatileTimeFields) — they're "did this exact tick run"
+  // bookkeeping, not real health content. Here, 09:00's real fetch and
+  // 09:10's carried-forward content are identical in every OTHER field,
+  // so 09:10 correctly skips the write entirely and the stored snapshot
+  // is still 09:00's (scheduledThisRun:true there, not false) — this is
+  // the accepted trade-off, not a bug: the KV snapshot may lag a tick or
+  // two on these two purely-informational fields; Workers Logs (see
+  // scheduled.js's own [cron] log line) is the source of truth for "did
+  // THIS exact tick run", not this key. What must still hold regardless
+  // of which tick's content ended up stored is the actual point of this
+  // test: a skip never degrades status.
   const { snapshot } = await readHealthSnapshot(env.TRAFFIC_KV);
-  assert.equal(snapshot.tdx.scheduledThisRun, false);
-  assert.equal(snapshot.tdx.sleeping, false);
   // Carried forward from the healthy 09:00 fetch — 2/2 sources ok.
   assert.equal(snapshot.tdx.successfulSourceCount, 2);
   assert.equal(snapshot.tdx.totalSourceCount, 2);
@@ -339,7 +359,10 @@ test('16. PBS relay throws -> TDX still fetches and still broadcasts normally', 
   };
   let result;
   try {
-    result = await runScheduledTdxSync(env, taipei('2026-08-18T08:20:00+08:00'));
+    // V1.9.3: use a minute where BOTH TDX and PBS are scheduled (see the
+    // module comment above tests #2-#5) so the PBS relay throw this test
+    // sets up is actually exercised this tick.
+    result = await runScheduledTdxSync(env, taipei('2026-08-18T08:00:00+08:00'));
   } finally {
     globalThis.fetch = priorFetch;
   }
@@ -378,7 +401,10 @@ test('17. TDX freeway+highway both fail -> PBS still fetches and still broadcast
   };
   let result;
   try {
-    result = await runScheduledTdxSync(env, taipei('2026-08-18T08:20:00+08:00'));
+    // V1.9.3: same reasoning as test #16 above — pick a minute where PBS
+    // is also scheduled, so this scenario (PBS resilient to TDX failure)
+    // actually exercises a real PBS fetch this tick.
+    result = await runScheduledTdxSync(env, taipei('2026-08-18T08:00:00+08:00'));
   } finally {
     globalThis.fetch = priorFetch;
   }

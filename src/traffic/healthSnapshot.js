@@ -34,26 +34,110 @@
 //
 // V1.6.1 addition — "資料來源與 TDX 用量瘦身": TDX (國道+省道 only, see
 // ../tdx/sources.js) is no longer fetched every Cron tick, only every 2nd
-// tick during 08:00–22:00 Asia/Taipei (see tdxSchedule.js); PBS still
-// writes this snapshot every tick, 24/7. A tick that did NOT attempt a
-// TDX fetch (skipped-by-schedule, or night-sleep) must NEVER be read as a
-// TDX failure — see the requirement "TDX skipped/sleeping 不得因此降級".
-// Handled by carrying the `tdx` block FORWARD unchanged from the previous
-// snapshot whenever this tick didn't fetch — only `tdx.scheduledThisRun`/
-// `tdx.sleeping` themselves reflect THIS tick; `tdx.tokenOk`/
-// `successfulSourceCount`/`totalSourceCount`/`sources`/`lastFetchedAt`
-// always reflect the LAST REAL TDX fetch, however long ago that was. This
-// is also why TDX must NOT reuse health.js's whole-snapshot 10/15-minute
-// staleness rule (that rule is about the Cron itself being alive, still
-// valid since PBS keeps generatedAt fresh every 10 min) — TDX positions
-// itself only via lastFetchedAt/scheduledThisRun/sleeping, deliberately
-// with no separate auto-escalating threshold of its own.
+// tick during 08:00–22:00 Asia/Taipei (see tdxSchedule.js). A tick that
+// did NOT attempt a TDX fetch (skipped-by-schedule, or night-sleep) must
+// NEVER be read as a TDX failure — see the requirement "TDX
+// skipped/sleeping 不得因此降級". Handled by carrying the `tdx` block
+// FORWARD unchanged from the previous snapshot whenever this tick didn't
+// fetch — only `tdx.scheduledThisRun`/`tdx.sleeping` themselves reflect
+// THIS tick; `tdx.tokenOk`/`successfulSourceCount`/`totalSourceCount`/
+// `sources`/`lastFetchedAt` always reflect the LAST REAL TDX fetch,
+// however long ago that was. This is also why TDX must NOT reuse
+// health.js's whole-snapshot 10/15-minute staleness rule (that rule is
+// about the Cron itself being alive, still valid since this snapshot is
+// written on WRITE_ON_CHANGE terms — see V1.9.3 below, not on a fixed
+// "every tick" cadence) — TDX positions itself only via
+// lastFetchedAt/scheduledThisRun/sleeping, deliberately with no separate
+// auto-escalating threshold of its own.
+//
+// V1.9.3 (KV Write Optimization Phase 2) addition — TWO further changes:
+//   1. PBS (see pbsSchedule.js) is no longer fetched every Cron tick
+//      either — same carry-forward idiom as TDX above, now applied to the
+//      `pbs` block too (see buildHealthSnapshot's `pbsScheduleState`/
+//      `previousPbs` params). A PBS skip/sleep tick must never read as a
+//      PBS failure, for the exact same reason as TDX above.
+//   2. persistHealthSnapshot itself is now WRITE_ON_CHANGE: a tick whose
+//      REAL health content (ignoring the handful of fields that only ever
+//      represent "this tick ran again" — see stripVolatileTimeFields
+//      below) is identical to what's already in KV skips the write
+//      entirely. Workers Logs still get a heartbeat every tick regardless
+//      (see scheduled.js's own [cron] log lines) — a human must never
+//      mistake "KV wasn't rewritten" for "the Worker didn't run".
+
+import { contentEqual } from '../util/contentEqual.js';
 
 const HEALTH_SNAPSHOT_KEY = 'health:snapshot:v1';
 
 function safeErrorMessage(err) {
   if (err && typeof err.message === 'string') return err.message;
   return 'Unknown KV error';
+}
+
+// V1.9.3 (KV Write Optimization Phase 2, item 一) — real Cloudflare
+// account alert (see 07_KNOWN_ISSUES.md's V1.9.2/V1.9.3 records): this key
+// was rewritten on EVERY Cron tick even when nothing about actual health
+// changed at all, because `generatedAt`/`tdx.lastFetchedAt`/
+// `pbs.lastFetchedAt` always differ. This is the exact list of fields that
+// represent ONLY "this tick ran again", never a real health-state change —
+// stripped before comparing two snapshots so "PBS OK -> OK" (only the
+// timestamp moved) reads as unchanged, while "PBS OK -> FAIL" (a real
+// field flips) always still reads as changed. Deliberately does NOT strip
+// `line.lastLinePushAt`: unlike the other two, it only ever moves when a
+// real LINE push actually succeeded (see broadcastPipeline.js — it's
+// re-read from persisted notified-state and left untouched on a
+// no-push tick), so a change there already means real activity, not mere
+// bookkeeping — however, per this round's own instruction that ONLY true
+// health-state changes should gate the write (not "a push happened"),
+// `line.lastLinePushAt` is stripped anyway: `line.pushAttempted`/
+// `pushSucceeded`/`partialPushFailures` already carry the real signal a
+// human needs, without a timestamp that would force a write merely
+// because a push occurred, independent of any actual health change.
+function stripVolatileTimeFields(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return snapshot;
+  const clone = structuredClone(snapshot);
+  delete clone.generatedAt;
+  if (clone.tdx && typeof clone.tdx === 'object') {
+    delete clone.tdx.lastFetchedAt;
+    // `scheduledThisRun`/`sleeping` are THIS tick's schedule position
+    // (tdxSchedule.js), not a health fact — they flip true/false every
+    // 20-minute mark by design, same "this tick ran again" category as
+    // the timestamps above, just spelled as booleans instead of an ISO
+    // string. Discovered via this round's own deterministic fixture
+    // (test/kvWriteQuantificationV193.test.js): without stripping these,
+    // a genuinely quiet PBS_ONLY day still wrote health:snapshot:v1 on
+    // every schedule-state transition (~60/day), defeating WRITE_ON_CHANGE
+    // entirely. Trade-off, accepted per this round's own instruction: the
+    // STORED snapshot's scheduledThisRun/sleeping can lag until the next
+    // REAL content change — /health's "本輪執行狀態" row may show a tick
+    // or two old, Workers Logs (unconditional every tick) is the source
+    // of truth for "did this exact tick run", not this KV key.
+    delete clone.tdx.scheduledThisRun;
+    delete clone.tdx.sleeping;
+  }
+  if (clone.pbs && typeof clone.pbs === 'object') {
+    delete clone.pbs.lastFetchedAt;
+    delete clone.pbs.scheduledThisRun; // same reasoning as tdx above
+    delete clone.pbs.sleeping;
+  }
+  if (clone.line && typeof clone.line === 'object') delete clone.line.lastLinePushAt;
+  // `broadcast` (broadcastRelevantCount/pendingTargetCount/
+  // typeIneligibleCount/ineligibleByReason/incidentSuppressedCount) is
+  // THIS TICK's own momentary processing counts, not standing health
+  // state — none of it feeds computeStatus (unlike partialPushFailures,
+  // deliberately left untouched above). Discovered via this round's own
+  // deterministic fixture: a single persistent, completely unchanged PBS
+  // accident still made incidentSuppressedCount flip 1/0 every round
+  // purely because PBS itself only fetches every 30 minutes now (a tick
+  // that skipped PBS naturally re-evaluates 0 candidate events) — the
+  // exact same "did this tick happen to run" category as scheduledThisRun
+  // above, just one level deeper. Excluded for the same reason.
+  delete clone.broadcast;
+  return clone;
+}
+
+/** Exported for tests only — the exact comparison persistHealthSnapshot uses to decide WRITE_ON_CHANGE. */
+export function healthSnapshotContentEqual(a, b) {
+  return contentEqual(stripVolatileTimeFields(a), stripVolatileTimeFields(b));
 }
 
 /**
@@ -96,6 +180,16 @@ export function buildHealthSnapshot({
   now = new Date(),
   tdxScheduleState = 'scheduled',
   previousTdx = null,
+  // V1.9.3 — PBS fetch schedule gate (see pbsSchedule.js). Same
+  // three-state idiom as tdxScheduleState; defaults to 'scheduled' so
+  // every existing/direct caller (tests that build a snapshot from a real
+  // PBS fetch) keeps computing the `pbs` block from `pbsSummary` unchanged.
+  pbsScheduleState = 'scheduled',
+  // V1.9.3 — the `pbs` block from the PREVIOUSLY persisted snapshot (see
+  // readHealthSnapshot), used to carry real PBS health forward on a tick
+  // that didn't fetch — same principle as `previousTdx`. null/undefined on
+  // the very first snapshot ever.
+  previousPbs = null,
   sourceMode = null,
   // 2026-08-25 (CCTV_METADATA_RECOVERY_V1) — describeFreewayCctvMetadata()'s
   // result, carried verbatim. A real 國1 93K accident lost its image because
@@ -151,7 +245,53 @@ export function buildHealthSnapshot({
   const tdxAllFailed = tdx.totalSourceCount > 0 && tdx.successfulSourceCount === 0;
   const tdxAnyFailed = tdx.totalSourceCount > 0 && tdx.successfulSourceCount < tdx.totalSourceCount;
 
-  const pbsFailed = !pbsSummary.pbsOk;
+  // V1.9.3 — same carry-forward idiom as `tdx` above, now that PBS itself
+  // is on a schedule gate (pbsSchedule.js) instead of fetching every tick.
+  // A 'skipped-by-schedule'/'night-sleep' tick must NEVER be misread as a
+  // PBS failure — only `pbsScheduledThisRun`/`pbsSleeping` themselves
+  // reflect THIS tick; every other pbs field reuses the LAST REAL fetch's
+  // health, however long ago that was.
+  const pbsScheduledThisRun = pbsScheduleState === 'scheduled';
+  const pbsSleeping = pbsScheduleState === 'night-sleep';
+
+  let pbs;
+  if (pbsScheduledThisRun) {
+    pbs = {
+      ok: Boolean(pbsSummary.pbsOk),
+      relayOk: Boolean(pbsSummary.relayOk),
+      relayStatus: typeof pbsSummary.relayStatus === 'number' ? pbsSummary.relayStatus : null,
+      rawCount: pbsSummary.rawCount ?? 0,
+      hsinchuCount: pbsSummary.hsinchuCount ?? 0,
+      activeCount: pbsSummary.activeCount ?? 0,
+      clearedCount: pbsSummary.clearedCount ?? 0,
+      staleCount: pbsSummary.staleCount ?? 0,
+      lastFetchedAt: now.toISOString(),
+      scheduledThisRun: true,
+      sleeping: false,
+    };
+  } else {
+    const prior = previousPbs || {};
+    pbs = {
+      ok: prior.ok ?? null,
+      relayOk: prior.relayOk ?? null,
+      relayStatus: prior.relayStatus ?? null,
+      rawCount: prior.rawCount ?? 0,
+      hsinchuCount: prior.hsinchuCount ?? 0,
+      activeCount: prior.activeCount ?? 0,
+      clearedCount: prior.clearedCount ?? 0,
+      staleCount: prior.staleCount ?? 0,
+      lastFetchedAt: prior.lastFetchedAt ?? null,
+      scheduledThisRun: false,
+      sleeping: pbsSleeping,
+    };
+  }
+
+  // Derived from the (possibly carried-forward) `pbs` block above, NEVER
+  // from whether THIS tick happened to fetch — a skip/sleep tick reuses
+  // whatever the last real fetch's health was. `ok === null` (no real PBS
+  // fetch yet at all, e.g. moments after a fresh deploy) is treated as
+  // "unknown", not "failed" — same reasoning as TDX's totalSourceCount===0.
+  const pbsFailed = pbs.ok === false;
 
   const kvAvailable = Boolean(summary.kvAvailable);
   const lineReady = Boolean(lineSummary.lineReady);
@@ -180,20 +320,7 @@ export function buildHealthSnapshot({
 
     tdx,
 
-    pbs: {
-      ok: Boolean(pbsSummary.pbsOk),
-      relayOk: Boolean(pbsSummary.relayOk),
-      relayStatus: typeof pbsSummary.relayStatus === 'number' ? pbsSummary.relayStatus : null,
-      rawCount: pbsSummary.rawCount ?? 0,
-      hsinchuCount: pbsSummary.hsinchuCount ?? 0,
-      activeCount: pbsSummary.activeCount ?? 0,
-      clearedCount: pbsSummary.clearedCount ?? 0,
-      staleCount: pbsSummary.staleCount ?? 0,
-      // PBS runs unconditionally every Cron tick (24/7, no schedule gate
-      // — see scheduled.js), so this is always "now": PBS just attempted
-      // a fetch this tick, whether or not it succeeded.
-      lastFetchedAt: now.toISOString(),
-    },
+    pbs,
 
     line: {
       ready: lineReady,
@@ -219,14 +346,33 @@ export function buildHealthSnapshot({
   };
 }
 
-/** The only write. Never throws — a failure here must never break the Cron run (see scheduled.js). */
-export async function persistHealthSnapshot(kv, snapshot) {
-  if (!kv) return { committed: false, reason: 'no-kv' };
+/**
+ * The only write. Never throws — a failure here must never break the Cron
+ * run (see scheduled.js).
+ *
+ * V1.9.3 (KV Write Optimization Phase 2, item 一) — WRITE_ON_CHANGE:
+ * `previousSnapshot` (the snapshot already read this tick for the
+ * tdx/pbs carry-forward above — no extra KV read needed) is compared
+ * against the new one with the volatile timestamp fields stripped (see
+ * stripVolatileTimeFields). A truly first-ever snapshot (`previousSnapshot`
+ * null/undefined) always writes, establishing the key exactly as before.
+ * Returns `written: false` (distinct from `committed`, which stays true —
+ * nothing failed) when the write was skipped because content didn't
+ * really change, mirroring sharedFeed.js's runSharedFeedPersist shape so
+ * scheduled.js's [kv-write-budget] log can report it the same way.
+ */
+export async function persistHealthSnapshot(kv, snapshot, previousSnapshot = null) {
+  if (!kv) return { committed: false, written: false, reason: 'no-kv' };
+
+  if (previousSnapshot && healthSnapshotContentEqual(previousSnapshot, snapshot)) {
+    return { committed: true, written: false };
+  }
+
   try {
     await kv.put(HEALTH_SNAPSHOT_KEY, JSON.stringify(snapshot)); // no TTL — staleness is judged by `generatedAt`, not key expiry
-    return { committed: true };
+    return { committed: true, written: true };
   } catch (err) {
-    return { committed: false, reason: 'kv-error', error: safeErrorMessage(err) };
+    return { committed: false, written: false, reason: 'kv-error', error: safeErrorMessage(err) };
   }
 }
 

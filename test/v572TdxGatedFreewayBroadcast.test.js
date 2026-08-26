@@ -207,12 +207,16 @@ test('CASE 2: PBS reports first (no TDX yet), TDX reports the same incident next
   assert.equal(first.pushed.length, 0);
   assert.equal(first.result.pbs.freewayGatedCount, 1);
 
-  // Tick 2 (08:20): TDX now reports the same incident. PBS relay returns
+  // Tick 2 (09:00): TDX now reports the same incident. PBS relay returns
   // the same report again (still active) — but it now cross-source-
   // matches the fresh TDX event, so it merges into the canonical TDX
-  // event instead of being gated a second time.
+  // event instead of being gated a second time. V1.9.3: PBS is now only
+  // fetched every 30 minutes (pbsSchedule.js) — 09:00 is the next minute
+  // both TDX's 20-minute marks and PBS's 30-minute marks land on
+  // together, so this tick genuinely re-fetches PBS too (needed for the
+  // cross-source match this assertion checks), not just TDX.
   const second = await withPushCapture(mockTdxFetch([freewayAccidentRaw()]), () =>
-    runScheduledTdxSync(env, new Date('2026-08-20T08:20:00+08:00'))
+    runScheduledTdxSync(env, new Date('2026-08-20T09:00:00+08:00'))
   );
 
   assert.equal(second.pushed.length, 1); // exactly one message — the TDX-identity one
@@ -232,7 +236,12 @@ test('CASE 3: PBS reports it, TDX never does, across many ticks -> still 0 exter
   env.PBS_RELAY_TOKEN = 'relay-token';
   env.PBS_RELAY_WINDOWS = pbsRelay([pbsFreewayOnlyRaw()]);
 
-  const tickTimes = ['08:00', '08:20', '08:40', '09:00', '09:20'].map((t) => new Date(`2026-08-20T${t}:00+08:00`));
+  // V1.9.3: every tick here must be a genuine PBS-scheduled minute (see
+  // pbsSchedule.js — every 30 minutes, not every 10) so each round really
+  // does re-fetch PBS and re-evaluate the gate, proving there's no
+  // timeout fallback across REAL repeated PBS fetches, not just repeated
+  // Cron ticks that happen to skip PBS entirely.
+  const tickTimes = ['08:00', '08:30', '09:00', '09:30', '10:00'].map((t) => new Date(`2026-08-20T${t}:00+08:00`));
   for (const now of tickTimes) {
     const { pushed, result } = await withPushCapture(mockTdxFetch([]), () => runScheduledTdxSync(env, now));
     assert.equal(pushed.length, 0, `tick ${now.toISOString()} must push 0`);

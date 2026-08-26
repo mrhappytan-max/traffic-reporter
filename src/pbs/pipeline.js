@@ -82,6 +82,8 @@ async function runPbsCore(env, now) {
   };
 }
 
+const ZERO_PBS_TRANSITIONS = { newCount: 0, updatedCount: 0, newlyClearedCount: 0 };
+
 function buildSummary(core, tdxEvents, commitResult, env) {
   const { rawItems, hsinchuFiltered, clearedEvents, staleEvents, activeEvents, pbsOk, pbsError, attempts, durationMs, relayConfigured, relayOk, relayStatus, relayCache, relayUpstreamDurationMs, lifecycleState } = core;
   // 2026-08-24 — V57.2's 國道 gate defers a PBS 國道 event to a more
@@ -114,6 +116,19 @@ function buildSummary(core, tdxEvents, commitResult, env) {
     kvError: lifecycleState.kvError,
     committed: Boolean(commitResult && commitResult.committed),
     commitReason: commitResult ? commitResult.reason || null : null,
+    // V1.9.3 (KV Write Optimization Phase 2) — real per-UID transition
+    // counts from commitPbsLifecycleState's own comparison (see
+    // lifecycle.js), so scheduled.js can tell "PBS fetched, but every
+    // active event is exactly the same as last round" apart from a
+    // genuine new/updated/cleared change, WITHOUT re-deriving a second
+    // copy of that comparison. Always present (zeros when nothing
+    // transitioned, e.g. a healthy fetch with no lifecycle change, or a
+    // failed fetch where commitResult itself is the source-unhealthy
+    // shape) — never omitted.
+    pbsNewCount: (commitResult && commitResult.transitions ? commitResult.transitions : ZERO_PBS_TRANSITIONS).newCount,
+    pbsUpdatedCount: (commitResult && commitResult.transitions ? commitResult.transitions : ZERO_PBS_TRANSITIONS).updatedCount,
+    pbsNewlyClearedCount: (commitResult && commitResult.transitions ? commitResult.transitions : ZERO_PBS_TRANSITIONS)
+      .newlyClearedCount,
     rawCount: rawItems.length,
     hsinchuCount: hsinchuFiltered.length,
     activeCount: activeEvents.length,

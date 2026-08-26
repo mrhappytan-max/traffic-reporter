@@ -135,13 +135,17 @@ test('E. 08:00 TDX sees the accident; 08:10 PBS reports the SAME accident -> not
   });
   assert.equal(first.pushed.length, 1); // TDX accident broadcast once
 
-  const hits08_10 = [];
-  const second = await withPushCapture(trackingTdxFetch(hits08_10, { freewayEvents: [] }), () => {
+  // V1.9.3: PBS itself is now only fetched every 30 minutes (see
+  // pbsSchedule.js) — 08:30 (not 08:10) is the next minute that's a real
+  // PBS fetch AND still a TDX skip, so this tick genuinely exercises a
+  // real PBS-side cross-source-dedup match against the cached TDX event.
+  const hits08_30 = [];
+  const second = await withPushCapture(trackingTdxFetch(hits08_30, { freewayEvents: [] }), () => {
     env.PBS_RELAY_WINDOWS = pbsRelay(pbsCalls, [pbsMatchingAccidentRaw()]); // PBS now reports the same accident
-    return runScheduledTdxSync(env, taipei('2026-08-18T08:10:00+08:00'));
+    return runScheduledTdxSync(env, taipei('2026-08-18T08:30:00+08:00'));
   });
 
-  assert.equal(hits08_10.length, 0); // PBS-only tick: 0 TDX calls
+  assert.equal(hits08_30.length, 0); // PBS-only tick: 0 TDX calls
   assert.equal(second.pushed.length, 0); // NOT re-broadcast — already seen at 08:00
   assert.equal(second.result.pbs.crossSourceDuplicateCount, 1); // matched the cached TDX event
 });
@@ -165,9 +169,11 @@ test('F. a >30-min-old cached TDX event is ignored -> a 國道 PBS event is NOT 
     },
   ], staleWrittenAt);
 
+  // V1.9.3: 08:30, not 08:10 — the next minute that is both a genuine PBS
+  // fetch (pbsSchedule.js: every 30 min) and still a TDX skip.
   const hits = [];
   const { pushed, result } = await withPushCapture(trackingTdxFetch(hits, { freewayEvents: [] }), () =>
-    runScheduledTdxSync(env, taipei('2026-08-18T08:10:00+08:00')) // 40 min after the cache was written
+    runScheduledTdxSync(env, taipei('2026-08-18T08:30:00+08:00')) // 60 min after the cache was written
   );
 
   assert.equal(hits.length, 0); // still a PBS-only tick: 0 TDX calls
@@ -207,7 +213,7 @@ test('G. a PBS-only tick with a cache match never produces a TDX new/updated eve
 
 // --- H. Night-sleep tick: PBS fetches normally, TDX still 0 calls ---
 
-test('H. night-sleep tick -> PBS fetches normally, TDX still makes 0 calls', async () => {
+test('H. night-sleep tick -> BOTH TDX and PBS make 0 calls (V1.9.3: PBS is no longer 24/7 either, see pbsSchedule.js)', async () => {
   const env = await envWithSubscriber();
   const pbsCalls = [];
   env.PBS_RELAY_TOKEN = 'relay-token';
@@ -217,5 +223,5 @@ test('H. night-sleep tick -> PBS fetches normally, TDX still makes 0 calls', asy
   await withPushCapture(trackingTdxFetch(hits, {}), () => runScheduledTdxSync(env, taipei('2026-08-18T23:00:00+08:00')));
 
   assert.equal(hits.length, 0);
-  assert.equal(pbsCalls.length, 1);
+  assert.equal(pbsCalls.length, 0); // pre-V1.9.3 this was 1 (PBS ran 24/7) — now correctly 0, 23:00 is within PBS's own 22:10-06:50 night-sleep window
 });

@@ -617,6 +617,71 @@ export function chunkEntriesForTraceBatch(entries) {
 }
 
 /**
+ * V1.9.3 (KV Write Optimization Phase 2, item 三) — pure, no I/O. Decides
+ * whether THIS round has anything genuinely worth a Pipeline Trace batch
+ * write, as opposed to the same active/ineligible PBS events simply being
+ * re-confirmed unchanged round after round (which, before this round,
+ * still produced one trace entry per active PBS event, every single
+ * tick, forever — see this function's own tests for the real-world
+ * shape: a persistent Hsinchu accident that never changes was re-traced
+ * 144 times/day even after it stopped being news). A round counts as
+ * having a relevant change when ANY of:
+ *
+ *   - a NEW or UPDATED TDX event this run (summary.newEventsCount /
+ *     updatedEventsCount — already Hsinchu-scoped by pipeline.js).
+ *   - a NEW, UPDATED, or newly-CLEARED PBS event this run
+ *     (pbsSummary.pbsNewCount/pbsUpdatedCount/pbsNewlyClearedCount — see
+ *     lifecycle.js's commitPbsLifecycleState, the same per-UID comparison
+ *     that already decides whether to write pbs:lifecycle-state itself).
+ *   - a TDX-level duplicate this run (summary.duplicateCount) or a
+ *     freeway-gated PBS dropout (pbsSummary.freewayGatedCount) — both are
+ *     "why didn't this broadcast" evidence this project already commits
+ *     to keeping (see scheduled.js's own V1.8.6.7 comment on
+ *     dropoutEntries), so they count as relevant here too. This costs
+ *     NOTHING in the actual deployed configuration this round targets:
+ *     TRAFFIC_SOURCE_MODE=PBS_ONLY means TDX makes zero calls at all
+ *     (duplicateCount is always 0) and PBS's freeway gate is bypassed
+ *     entirely when TDX is off (freewayGatedCount is always 0) — this
+ *     only matters for TRAFFIC_SOURCE_MODE=ALL, unaffected by this
+ *     round's savings target.
+ *   - any LINE push ATTEMPT this run, success or failure
+ *     (lineSummary.pushAttempted — the order's own preserved list is
+ *     explicit: "LINE push success/failure 不得被吃掉", not failure
+ *     alone). This also correctly covers the cold-start case: a brand
+ *     new subscriber's very first tick against a fresh dedupe baseline
+ *     classifies the event as a baseline-seed, not "new" (see
+ *     dedupe.js), yet it still genuinely gets pushed — a real LINE send
+ *     must never go untraced just because dedupe's OWN "new" counter
+ *     didn't fire for that reason.
+ *
+ * CCTV preparation anomalies are deliberately NOT a separate condition
+ * here: CCTV is only ever attempted for an event about to be pushed,
+ * which is already covered by the NEW/UPDATED conditions above — an
+ * event with no new/updated status was not pushed this round, so it
+ * cannot have a fresh CCTV anomaly to report either. A round where NONE
+ * of the above hold may still contain trace-worthy-looking entries (the
+ * same still-active-but-unchanged PBS accident, a routine congestion
+ * event) — those are exactly the entries this function is designed to
+ * let go unwritten for this round; the LAST round that DID have a
+ * relevant change already wrote them once.
+ */
+export function hasPipelineTraceRelevantChange({ summary, pbsSummary, lineSummary }) {
+  const s = summary || {};
+  const p = pbsSummary || {};
+  const l = lineSummary || {};
+  return Boolean(
+    (s.newEventsCount || 0) > 0 ||
+      (s.updatedEventsCount || 0) > 0 ||
+      (s.duplicateCount || 0) > 0 ||
+      (p.pbsNewCount || 0) > 0 ||
+      (p.pbsUpdatedCount || 0) > 0 ||
+      (p.pbsNewlyClearedCount || 0) > 0 ||
+      (p.freewayGatedCount || 0) > 0 ||
+      (l.pushAttempted || 0) > 0
+  );
+}
+
+/**
  * V1.9.2 — the Cron path's new write entry point, replacing
  * persistPipelineTraceEntries (kept above, unchanged, for backward-
  * compatible reads/tests — see this module's TRACE_BATCH_KEY_PREFIX
@@ -632,6 +697,12 @@ export function chunkEntriesForTraceBatch(entries) {
  * scheduled.js's `[cron][pipeline-trace]` log line keeps its existing
  * shape. `batchCount`/`batchesCommitted` are the NEW, additional
  * batch-level numbers this round's `[kv-write-budget]` log reports.
+ *
+ * V1.9.3 — scheduled.js now calls hasPipelineTraceRelevantChange() BEFORE
+ * this function and skips calling it entirely on a no-relevant-change
+ * round (see scheduled.js's own comment) — this function itself is
+ * unchanged, so a direct caller (or an existing test) that still wants
+ * "always write whatever entries I give you" keeps that exact behavior.
  */
 export async function persistPipelineTraceBatch(kv, entries, now = new Date()) {
   const list = Array.isArray(entries) ? entries : [];

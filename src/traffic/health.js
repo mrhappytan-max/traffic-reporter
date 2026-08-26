@@ -87,6 +87,29 @@ function describeTdxRunState({ scheduledThisRun, sleeping }) {
   return '⏭️ 本輪略過（PBS 專用時段，每 20 分鐘才擷取一次 TDX）';
 }
 
+// V1.9.3: same tri-state idiom as tdxTokenLabel/tdxTokenPillClass above —
+// pbs.ok is null only moments after a fresh deploy, before the very first
+// real PBS fetch has ever happened. Never "異常".
+function pbsOkLabel(ok) {
+  if (ok === null || ok === undefined) return '尚無資料';
+  return ok ? '正常' : '異常';
+}
+function pbsOkPillClass(ok) {
+  if (ok === null || ok === undefined) return 'pill-unknown';
+  return ok ? 'pill-ok' : 'pill-bad';
+}
+
+// V1.9.3 — PBS (see pbsSchedule.js) is now fetched at most every 30
+// minutes, only 07:00–22:00 Asia/Taipei, instead of every Cron tick — this
+// describes what THIS tick actually did, purely informational, never
+// affects page color/tier (see healthSnapshot.js — a skip/sleep tick
+// never changes `status`), same principle as describeTdxRunState above.
+function describePbsRunState({ scheduledThisRun, sleeping }) {
+  if (sleeping) return '🌙 夜間休眠中（22:10–06:50 不擷取）';
+  if (scheduledThisRun) return '✅ 本輪已擷取';
+  return '⏭️ 本輪略過（每 30 分鐘才擷取一次 PBS）';
+}
+
 /**
  * Layers snapshot AGE on top of the snapshot's own `status` — this can
  * only be known at read time (see healthSnapshot.js). Also what quietly
@@ -402,12 +425,14 @@ function renderSnapshotBody(snapshot, now, deploymentStatus) {
 
   <div class="card">
     <h2>PBS 警廣</h2>
-    <div class="row"><span class="label">狀態</span><span class="pill ${pbs.ok ? 'pill-ok' : 'pill-bad'}">${pbs.ok ? '正常' : describeHttpStatus(pbs.relayStatus)}</span></div>
+    <div class="row"><span class="label">狀態</span><span class="pill ${pbsOkPillClass(pbs.ok)}">${pbs.ok === false ? describeHttpStatus(pbs.relayStatus) : pbsOkLabel(pbs.ok)}</span></div>
     <div class="row"><span class="label">全台原始資料</span><span class="value">${pbs.rawCount}</span></div>
     <div class="row"><span class="label">新竹相關</span><span class="value">${pbs.hsinchuCount}</span></div>
     <div class="row"><span class="label">目前有效</span><span class="value">${pbs.activeCount}</span></div>
     <div class="row"><span class="label">已排除</span><span class="value">${pbs.clearedCount}</span></div>
     <div class="row"><span class="label">過期</span><span class="value">${pbs.staleCount}</span></div>
+    <div class="row"><span class="label">本輪執行狀態</span><span class="value">${escapeHtml(describePbsRunState(pbs))}</span></div>
+    <div class="row"><span class="label">最近一次擷取時間</span><span class="value">${pbs.lastFetchedAt ? escapeHtml(formatTaipeiTime(new Date(pbs.lastFetchedAt))) : '尚無資料'}</span></div>
   </div>
 
   <div class="card">

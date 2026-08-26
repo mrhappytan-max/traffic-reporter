@@ -230,7 +230,12 @@ test('5: an unmatched 國道 PBS event -> standalone trace entry with gatingResu
     throw new Error(`unexpected fetch: ${url}`);
   };
 
-  const result = await runScheduledTdxSync(env, NOW); // no TDX_CLIENT_ID -> TDX sits out, PBS-only tick
+  // V1.9.3: PBS now only fetches on a 30-minute mark (see pbsSchedule.js)
+  // — this test is specifically about a PBS-only tick, so it must land on
+  // one; NOW itself (20:20) is not (this file's other tests pin NOW to a
+  // TDX-scheduled minute instead, which need not also be a PBS one).
+  const pbsScheduledNow = new Date(NOW.getTime() - 20 * 60_000); // 20:00 — divisible by both 20 and 30
+  const result = await runScheduledTdxSync(env, pbsScheduledNow); // no TDX_CLIENT_ID -> TDX sits out, PBS-only tick
   assert.equal(result.pbs.freewayGatedCount, 1);
 
   const { records } = await listPipelineTrace(env.TRAFFIC_KV, { limit: 100 });
