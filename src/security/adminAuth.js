@@ -161,6 +161,37 @@ export async function requireAdminAuth(request, env) {
  * Rebuilds the Response (rather than mutating `response.headers` in
  * place) so this is safe regardless of how the original Response was
  * constructed.
+ *
+ * V1.9.1 CORRECTION — `form-action 'none'` (real Production bug, root
+ * cause confirmed with a real browser, not inferred from the CSP spec):
+ * pipelineTraceView.js's filter <form method="get"> looked completely
+ * broken to a real human on a real phone — selecting a source/road and
+ * tapping 篩選 never changed the results. A prior investigation
+ * (V1.8.7.6) traced the ENTIRE server-side path (form markup, query
+ * string, listPipelineTrace's predicates, pagination, at both small and
+ * realistic KV scale) and found every layer correct, concluding the
+ * remaining leading hypothesis was client-side staleness — but its own
+ * headless-browser reproduction was "not itself part of this repo's own
+ * CI-run test suite" and evidently never drove a REAL HTTP response
+ * carrying this header. Reproduced here directly: a real Chromium
+ * instance (Playwright) loading the actual handlePipelineTraceView
+ * response through applyAdminSecurityHeaders, then physically clicking
+ * the rendered submit button, never navigates — the browser's own
+ * console reports exactly why:
+ *   "Refused to send form data to '...' because it violates the
+ *    following Content Security Policy directive: form-action 'none'."
+ * Stripping only this one directive (all else identical) makes the same
+ * click navigate correctly to the filtered URL. So the server-side
+ * filtering logic was never broken; this ONE directive silently blocked
+ * every admin page's <form> from ever submitting, on every browser that
+ * enforces CSP form-action (which is all current major engines).
+ *
+ * Fixed to `form-action 'self'`: a same-origin GET/POST form (exactly
+ * what this project's one <form> — and any future one — legitimately
+ * needs) may still submit; an attacker still cannot redirect this page's
+ * form data to an external origin, which is the actual protection
+ * form-action exists to provide. This is the ONLY directive changed;
+ * default-src/style-src/img-src/base-uri/frame-ancestors are untouched.
  */
 export function applyAdminSecurityHeaders(response) {
   const headers = new Headers(response.headers);
@@ -173,7 +204,7 @@ export function applyAdminSecurityHeaders(response) {
   if ((headers.get('Content-Type') || '').includes('text/html')) {
     headers.set(
       'Content-Security-Policy',
-      "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+      "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
     );
   }
 

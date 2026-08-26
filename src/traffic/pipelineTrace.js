@@ -61,7 +61,13 @@ export const TRACE_KEY_PREFIX = 'debug:pipeline-trace:v1';
 export const TRACE_TTL_SECONDS = 24 * 60 * 60; // 24h, per instruction
 const DESCRIPTION_SUMMARY_MAX_CHARS = 120; // per instruction — Description 只存摘要，最多 120 字
 const UPSTREAM_FIELD_MAX_CHARS = 80; // same cap already used by provenance's classificationSource/locationSource values
-export const DEFAULT_LIST_LIMIT = 30;
+// V1.9.1 — 30 -> 60. Raised per human-reported查修 need: a real查修 pass
+// on a busy day routinely wants more than 30 rows visible without having
+// to type a limit every time. MAX_LIST_LIMIT (the hard ceiling) and
+// MAX_ENTRIES_SCANNED (the KV list() scan safety cap, unchanged) are
+// untouched — this only moves the UNSPECIFIED-limit default, never the
+// upper bound.
+export const DEFAULT_LIST_LIMIT = 60;
 export const MAX_LIST_LIMIT = 100;
 // Same bounded-scan idiom as broadcastProvenance.js's MAX_ENTRIES_SCANNED
 // — this endpoint is Admin-triggered, on-demand, never on the hot

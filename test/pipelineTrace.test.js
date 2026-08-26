@@ -20,6 +20,7 @@ import {
   recordPipelineTrace,
   persistPipelineTraceEntries,
   listPipelineTrace,
+  DEFAULT_LIST_LIMIT,
 } from '../src/traffic/pipelineTrace.js';
 
 function createMockKV() {
@@ -355,7 +356,7 @@ test('21: ?status= filters by computed status', async () => {
   assert.equal(records[0].identity.rawId, 'A1');
 });
 
-test('limit defaults to 30, caps at 100', async () => {
+test('an explicit limit is honored, and an over-cap request never exceeds MAX_LIST_LIMIT', async () => {
   const kv = createMockKV();
   for (let i = 0; i < 5; i += 1) {
     await recordPipelineTrace(kv, buildTraceEntry({ event: accidentEvent({ rawId: `X${i}` }), now: NOW }), NOW);
@@ -364,6 +365,22 @@ test('limit defaults to 30, caps at 100', async () => {
   assert.equal(records.length, 3);
   const { records: overCap } = await listPipelineTrace(kv, { limit: 99999 });
   assert.equal(overCap.length <= 100, true);
+});
+
+// V1.9.1 — DEFAULT_LIST_LIMIT raised 30 -> 60 (real查修 need: a busy day
+// routinely has more than 30 events worth checking). This test actually
+// exercises the no-limit-supplied path with MORE than 60 real records —
+// the prior version of this test never did, so it would not have caught
+// a regression back to 30, or a default that silently stopped applying
+// at all.
+test('V1.9.1 — omitting limit entirely defaults to DEFAULT_LIST_LIMIT (60), not all records', async () => {
+  assert.equal(DEFAULT_LIST_LIMIT, 60, 'this test assumes the current default; update both together if it ever changes again');
+  const kv = createMockKV();
+  for (let i = 0; i < 75; i += 1) {
+    await recordPipelineTrace(kv, buildTraceEntry({ event: accidentEvent({ rawId: `Y${i}` }), now: NOW }), NOW);
+  }
+  const { records } = await listPipelineTrace(kv, {}); // no `limit` key at all
+  assert.equal(records.length, 60);
 });
 
 // --- V1.8.7.3: paginated KV list() — filter-before-limit, no stale-scan bias --

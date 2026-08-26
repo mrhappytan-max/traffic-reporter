@@ -250,6 +250,13 @@ test('13. protected responses (200/401/503) all carry Cache-Control/Pragma/X-Rob
   // 'self' (for the Hsinchu CCTV probe page's same-origin <img> tags) —
   // confirm /health's own CSP still carries every other original
   // directive unchanged.
+  //
+  // V1.9.1 — form-action moved from 'none' to 'self'. 'none' silently
+  // blocked EVERY admin <form> (including pipelineTraceView.js's filter
+  // form) from ever submitting, on every CSP-enforcing browser —
+  // confirmed with a real headless-Chromium reproduction against this
+  // exact header (see adminAuth.js's own comment on this line). 'self'
+  // still forbids submitting to any external origin.
   const csp = authed.headers.get('Content-Security-Policy');
   assert.match(csp, /default-src 'none'/);
   assert.match(csp, /style-src 'unsafe-inline'/);
@@ -257,7 +264,8 @@ test('13. protected responses (200/401/503) all carry Cache-Control/Pragma/X-Rob
   assert.doesNotMatch(csp, /img-src \*/);
   assert.match(csp, /base-uri 'none'/);
   assert.match(csp, /frame-ancestors 'none'/);
-  assert.match(csp, /form-action 'none'/);
+  assert.match(csp, /form-action 'self'/);
+  assert.doesNotMatch(csp, /form-action 'none'/);
 
   const misconfigured = await worker.fetch(getRequest('/debug/tdx'), baseEnv({ ADMIN_PASSWORD: undefined }));
   assert.equal(misconfigured.status, 503);

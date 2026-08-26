@@ -481,3 +481,91 @@ test('V1.8.6.9a correction: /admin/pipeline-trace (JSON API) contract is unchang
   assert.equal(record.identity.timestamp, '2026-08-20T04:00:00.000Z');
   assert.equal(record.upstream.upstreamUpdatedAt, '2026-08-20T03:30:00.000Z');
 });
+
+// =======================================================================
+// V1.9.1 — real ROOT CAUSE fix, confirmed with a real headless-Chromium
+// reproduction (not part of this repo's automated suite — no browser
+// binary dependency was added — but its finding is locked in here as a
+// deterministic, no-browser regression test): pipelineTraceView.js's
+// filter <form> was correct at every layer already (V1.8.7.6 verified
+// this exhaustively), but applyAdminSecurityHeaders' own CSP shipped
+// `form-action 'none'`, which every CSP-enforcing browser (which is
+// every current major browser, including the iOS Safari a real
+// Production report came from) uses to REFUSE to ever submit ANY <form>
+// on this or any other admin HTML page — the browser's own console error
+// was: "Refused to send form data to '...' because it violates the
+// following Content Security Policy directive: form-action 'none'."
+// Confirmed directly: stripping only this one directive (all else
+// identical) let a real Chromium instance's click on the rendered
+// submit button navigate correctly to the filtered URL.
+// =======================================================================
+
+test('V1.9.1 — the CSP no longer ships form-action \'none\' (root cause of "篩選按了沒有用" — every admin <form> was silently blocked by every CSP-enforcing browser)', async () => {
+  const kv = createMockKV();
+  const env = { ADMIN_PASSWORD, TRAFFIC_KV: kv };
+  const auth = basicAuthHeader(ADMIN_USERNAME, ADMIN_PASSWORD);
+  const res = await worker.fetch(adminRequest('/admin/pipeline-trace-view', { auth }), env);
+  const csp = res.headers.get('Content-Security-Policy');
+  assert.ok(csp, 'the page must still carry a CSP at all');
+  assert.doesNotMatch(csp, /form-action 'none'/, 'this exact value silently blocked every <form> submission on every CSP-enforcing browser');
+  assert.match(csp, /form-action 'self'/, 'same-origin forms (the only kind this project ever ships) must still be allowed to submit');
+});
+
+test('V1.9.1 — the rendered filter <form> has no method/action that would conflict with form-action \'self\' (same-origin GET, no explicit action attribute)', async () => {
+  const kv = createMockKV();
+  const env = { ADMIN_PASSWORD, TRAFFIC_KV: kv };
+  const auth = basicAuthHeader(ADMIN_USERNAME, ADMIN_PASSWORD);
+  const res = await worker.fetch(adminRequest('/admin/pipeline-trace-view', { auth }), env);
+  const html = await res.text();
+  assert.match(html, /<form class="filters" method="get">/);
+  // No `action="https://..."` / `action="//..."` anywhere — a same-origin,
+  // no-action form is exactly what `form-action 'self'` allows.
+  assert.doesNotMatch(html, /<form[^>]*action=/);
+});
+
+// =======================================================================
+// V1.9.1 — DEFAULT_LIST_LIMIT 30 -> 60. The placeholder text and the
+// unfiltered record count must both reflect the new default — a stale
+// placeholder would itself be a "the UI lies about what it's doing" bug
+// of exactly the kind this round exists to eliminate.
+// =======================================================================
+
+test('V1.9.1 — the 筆數 placeholder reads 60, not the old 30', async () => {
+  const kv = createMockKV();
+  const env = { ADMIN_PASSWORD, TRAFFIC_KV: kv };
+  const auth = basicAuthHeader(ADMIN_USERNAME, ADMIN_PASSWORD);
+  const res = await worker.fetch(adminRequest('/admin/pipeline-trace-view', { auth }), env);
+  const html = await res.text();
+  assert.match(html, /筆數（預設 60）/);
+  assert.doesNotMatch(html, /筆數（預設 30）/);
+});
+
+test('V1.9.1 — with more than 60 real records and no limit specified, exactly 60 are returned (not 30, not unbounded)', async () => {
+  const kv = createMockKV();
+  for (let i = 0; i < 75; i += 1) {
+    await recordPipelineTrace(kv, buildTraceEntry({ event: accidentEvent({ rawId: `V191-${i}` }), now: NOW }), NOW);
+  }
+  const env = { ADMIN_PASSWORD, TRAFFIC_KV: kv };
+  const auth = basicAuthHeader(ADMIN_USERNAME, ADMIN_PASSWORD);
+  const res = await worker.fetch(adminRequest('/admin/pipeline-trace-view', { auth }), env);
+  const html = await res.text();
+  const rowCount = (html.match(/class="trace-row/g) || []).length;
+  assert.equal(rowCount, 60);
+});
+
+// =======================================================================
+// V1.9.1 — 清除 (clear/reset) link genuinely resets to a query-string-free
+// URL — the server-side "no filters" behavior itself was already proven
+// correct (pipelineTraceFilterProduction.test.js test 6); this confirms
+// the actual rendered link a real tap follows has no leftover params of
+// its own that could re-apply a filter the human just tried to clear.
+// =======================================================================
+
+test('V1.9.1 — the 清除 link points at the bare path with no query string at all', async () => {
+  const kv = createMockKV();
+  const env = { ADMIN_PASSWORD, TRAFFIC_KV: kv };
+  const auth = basicAuthHeader(ADMIN_USERNAME, ADMIN_PASSWORD);
+  const res = await worker.fetch(adminRequest('/admin/pipeline-trace-view?source=pbs&road=%E5%9C%8B%E9%81%93%E4%B8%89%E8%99%9F', { auth }), env);
+  const html = await res.text();
+  assert.match(html, /<a class="clear" href="\/admin\/pipeline-trace-view">清除<\/a>/);
+});

@@ -63,7 +63,32 @@
 // = NO for this round; this is pure observability plus the outer
 // budget's pre-existing behavior, unchanged.
 
-export const APP_VERSION = 'V1.9.0';
+// V1.9.1 (2026-08-26) — root-cause fix, /admin/pipeline-trace-view
+// filter form. Real Production report: selecting a source/road/status
+// and tapping 篩選 never changed the results, on a real phone. A prior
+// round (V1.8.7.6) had already traced the entire server-side path (form
+// markup, query string, listPipelineTrace's predicates, pagination) and
+// found every layer correct — but its own headless-browser reproduction
+// was never part of this repo's automated suite, and evidently never
+// drove a real HTTP response carrying this Worker's own security
+// headers. Reproduced directly THIS round: a real Chromium instance
+// loading the actual response through applyAdminSecurityHeaders, then
+// physically clicking the rendered submit button, never navigated — the
+// browser's own console named the reason exactly: the CSP shipped
+// `form-action 'none'`, which every CSP-enforcing browser (all current
+// major engines, including the iOS Safari the report came from) uses to
+// refuse ANY form submission on ANY admin HTML page. Confirmed the fix
+// with the same real browser: changing only this one directive to
+// `form-action 'self'` (same-origin forms still allowed; an external
+// origin still is not) let the identical click navigate correctly to
+// the filtered URL. See security/adminAuth.js's own comment on that
+// line, and test/pipelineTraceView.test.js's V1.9.1 tests. Server-side
+// filtering itself was never broken and needed no change. Also raises
+// DEFAULT_LIST_LIMIT 30 -> 60 (real查修 need for a busier day) — the
+// scan safety ceilings (MAX_LIST_LIMIT, MAX_ENTRIES_SCANNED) are
+// unchanged.
+
+export const APP_VERSION = 'V1.9.1';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,
