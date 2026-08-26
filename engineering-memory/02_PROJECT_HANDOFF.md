@@ -17,10 +17,10 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | 917b8abd1bdda57223e745c38dddba847bd5444f |
-| Snapshot generated at | 2026-08-26T03:23:11.204Z |
-| Source working tree | dirty (3 changed source file(s)) |
-| Current version | V1.9.1 |
+| Source main HEAD | a0373ff43733b2323d772c432a13c119de292774 |
+| Snapshot generated at | 2026-08-26T09:17:50.906Z |
+| Source working tree | dirty (10 changed source file(s)) |
+| Current version | V1.9.2 |
 | Current phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
 
 `Source main HEAD` 是這份快照所描述的正式 main commit（取自 `origin/main`），**不是**包含本檔案自己的那個 commit——兩者刻意分開，避免 Git 自我參照循環。詳見 `SYSTEM_STATE.json` 的 `sourceMainHead` / `exportArtifactCommit`。
@@ -98,7 +98,7 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 | 欄位 | 值 |
 |---|---|
-| Latest completed | V1.9.1 |
+| Latest completed | V1.9.2 |
 | package.json version | 0.1.0 |
 | Production status | DEPLOYED |
 | Production verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
@@ -141,7 +141,7 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 ## Next action
 
-無待辦。TDX 額度恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計）
+無待辦。下一個真實 Asia/Taipei 帳務日重置後，蒐集 ≥3 筆 Production [kv-write-budget] log 樣本核實實際 writes/day；若日後 TDX 額度於 9/1 恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX（與本輪退休決策無關，兩者完全獨立）；**若要開工，建議處理約 33 項過期斷言**（見 07_KNOWN_ISSUES.md，既有技術債，與本輪無關）。
 
 ## Full history location
 

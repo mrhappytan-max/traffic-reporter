@@ -9,20 +9,20 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V1.9.1（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | 917b8abd1bdda57223e745c38dddba847bd5444f |
+| Current Version | V1.9.2（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | a0373ff43733b2323d772c432a13c119de292774 |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty (3 changed source file(s)) |
+| Source working tree | dirty (10 changed source file(s)) |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
 | Current Phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
-| Current Task | none（無進行中工作）。Latest completed task = DRIVE_SYNC_GOVERNANCE_V2，status = SEALED（前序 PBS_ACCIDENT_CCTV_ENRICHMENT_FIX、PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX、PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。雲端治理：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源，封版時只寫 GitHub、不要自己搬檔案到 Drive；GitHub → Drive 自動同步已由真人建置並實測通過（GitHub Actions，engineering-memory/ 為 canonical mirror source），GITHUB_TO_DRIVE_SYNC = PASS；不得人工補上傳，也不要重建那套自動同步。詳見 SYSTEM_STATE.json 的 cloudSyncGovernance。觀察中（非工作項，不是待辦）：一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數 |
-| Latest Completed Version | V1.9.1 |
+| Current Task | none（無進行中工作）。Latest completed task = KV_WRITE_OPTIMIZATION_V1_9_2，status = SEALED（前序 PIPELINE_TRACE_FILTER_ROOT_CAUSE_V1_9_1、CCTV_QUAD_PREPARE_TIMEOUT_OBSERVABILITY_V1_9_0 亦為 SEALED）。本輪：Shared Feed／Incident Suppression 改為 WRITE_ON_CHANGE；Pipeline Trace 改為每輪一把 batch key（v1/v2 相容）；TDX Usage Summary 正式退休（0 writes/day，/health 用量卡片改為官方後台提示，TDX 本身能力未動）；新增 [kv-write-budget] 觀察 log。雲端治理維持 V2：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源。 |
+| Latest Completed Version | V1.9.2 |
 | Known Blocker | 無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md |
 | Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 無待辦。TDX 額度恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計） |
-| Export Generated At | 2026-08-26T03:23:11.204Z |
+| Next Action | 無待辦。下一個真實 Asia/Taipei 帳務日重置後，蒐集 ≥3 筆 Production [kv-write-budget] log 樣本核實實際 writes/day；若日後 TDX 額度於 9/1 恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX（與本輪退休決策無關，兩者完全獨立）；**若要開工，建議處理約 33 項過期斷言**（見 07_KNOWN_ISSUES.md，既有技術債，與本輪無關）。 |
+| Export Generated At | 2026-08-26T09:17:50.906Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）

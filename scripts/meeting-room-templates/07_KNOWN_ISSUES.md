@@ -4,7 +4,15 @@
 
 ## 已知、無關、既有的測試失敗基準線
 
-**實測基準（2026-08-25 重新量測，非回憶）：`npm test` 共 1272 項，穩定 38 項失敗。**
+**實測基準（2026-08-26 重新量測，V1.9.2 施工後，非回憶）：`npm test` 共 1300 項，穩定 35 項失敗。**
+
+> **V1.9.2 更新**：舊基準的第 3 類（`test/healthQuotaDashboard.test.js`，3 項）
+> 已隨 TDX Usage Summary 正式退休整個刪除——那 3 項測的正是被移除的
+> UI 本身，不是回歸，是測試檔案跟著功能一起除役。38 → 35 的差額正好是
+> 這 3 項。同輪另新增 `test/kvWriteOptimization.test.js`（38 項，全數
+> 通過），故總測試數 1272 → 1300（扣除刪除的 3 項、加上新增的 38
+> 項，另有既有檔案內的斷言更新，見 `06_VERSION_HISTORY.md` 的 V1.9.2
+> 列）。
 
 > **重要更正（CCTV_METADATA_RECOVERY_V1，2026-08-25）——舊版本節寫錯了 Root Cause。**
 > 舊記載說「13 項 CCTV/JPEG 失敗是因為依賴 Workers-only 的 `.wasm` codec，在此沙盒無法載入」。
@@ -23,7 +31,7 @@
 > 被靜音好幾輪。當時該做而沒做的一步只是 `npm install`。
 > 這正是「不要為了交差把合理推測當 Root Cause」的實例，且這次是我們自己犯的。
 
-目前 38 項的正確分類（每輪仍以同一輪 `git stash -u` 對照乾淨 checkout 驗證）：
+目前 35 項的正確分類（每輪仍以同一輪 `git stash -u` 對照乾淨 checkout 驗證）：
 
 1. `pbs-relay/tests/*`（2 項）— `pbs-relay/src/server.js` 匯入的 `pbs-relay/src/cache.js` 不存在於 repo。
    獨立子系統，非本 Worker 主程式。
@@ -32,9 +40,8 @@
    `cctvPrepareTimeoutStages`、`freeway3CctvAudit`、`pipelineTraceIntegration`、
    `productionIntegrationFixtures`、`hsinchuCctvCollageEndpoint`、`cctvImagePublish` 等檔。
    **這是本專案目前最大的一筆技術債，已列為 openFollowUp。**
-3. `test/healthQuotaDashboard.test.js`（3 項）— wall-clock 相依，會隨真實日期自然過期。
 
-若出現這 38 項以外的新失敗，才視為真正回歸。
+若出現這 35 項以外的新失敗，才視為真正回歸。
 
 **還有一項會時有時無的全套執行雜訊**（不是本專案缺陷、也不要為它改程式）：
 `test/deploymentStatus.test.js` 的「missing/placeholder build metadata」在
@@ -1152,6 +1159,176 @@ Content Security Policy directive: "form-action 'none'".
   一次性的人工驗證；CI 覆蓋改用不需要瀏覽器的斷言（直接檢查 CSP
   標頭字串）鎖住這個值，見 `test/adminAuth.test.js`／
   `test/pipelineTraceView.test.js` 的 V1.9.1 測試。
+
+## 修正紀錄｜Cloudflare KV Write Optimization ＋ TDX Usage Summary 正式退休（V1.9.2）（2026-08-26）
+
+### 真實觸發（Cloudflare 帳號用量警示）
+
+真實 Cloudflare 帳號告警：Reads 1,935/100,000、**Writes 749/1,000**
+（`traffic-reporter-kv` 單一 KV namespace = 733，佔帳號總寫入量
+**97.9%**）、Lists 163/1,000、Deletes 0。同日先完成一輪**唯讀鑑識**
+（不修改任何程式／Cron／KV／Production），逐一列出 Cron 每輪會寫的每一把
+KV key、其觸發條件、TTL 與必要性，找出可優化項目後才進入本輪正式施工。
+
+### 本輪四項變更
+
+**1. WRITE_ON_CHANGE（`src/util/contentEqual.js` 新增的共用比對原語）**
+
+| Key | 比對範圍 | 忽略欄位 |
+|---|---|---|
+| `traffic:shared-feed` | 整個 `events` 陣列（`buildSharedFeedEvents` 本身已會凍結未變動項目自己的 `updatedAt`，所以陣列內容相同即代表真的沒變） | 最外層 `updatedAt` |
+| `line:incident-suppression-state` | `incidentsByGroup`（**含**每筆 record 的 `lastSeenAt`——這是每次同一事故被重新偵測到就會推進的真實功能性狀態，不是可忽略的產生時間戳） | 最外層 `updatedAt` |
+
+兩者都只改變「何時寫入 KV」，內容決策邏輯（Shared Feed 的 fingerprint／
+carry-forward 規則、Incident Suppression 的抑制／材料升級／TTL 判定）
+完全未動一行。第一次寫入（KV 從未有過這把 key）永遠正常寫入，不受影響。
+
+**真實踩到的一個 aliasing bug（施工中被自己的測試抓到，出貨前修正）**：
+`resolveIncidentNotifications` 會**就地修改**（mutate）比對用的既有
+record 物件（`match.lastSeenAt = now.toISOString()` 等）。若直接拿呼叫前
+讀到的 `incidentState.incidentsByGroup` 當作「先前內容」跟呼叫後的
+`nextIncidentsByGroup` 比較，會發現兩者「先前」也已經被就地改過，
+永遠比對成「沒有變化」——導致本應寫入的一輪被誤判為跳過。修正：
+`broadcastPipeline.js` 在呼叫 `resolveIncidentNotifications` **之前**
+用 `structuredClone` 先拍一份真正獨立的快照，才拿去跟之後的結果比較。
+
+**2. Pipeline Trace 改為每輪批次寫入（`src/traffic/pipelineTrace.js`）**
+
+- 新增 `persistPipelineTraceBatch`：一輪 Cron 的所有追蹤事件寫進**一把**
+  `debug:pipeline-trace-batch:v2:<date>:<epochMs>:<part>:<opaqueId>`
+  金鑰，內容為 `{schemaVersion:2, generatedAt, entries:[...]}`。
+- 舊制 `persistPipelineTraceEntries`（`debug:pipeline-trace:v1:*`，一筆
+  事件一把 key）**完全保留、未刪除、未改行為**——只是 Cron 路徑
+  （`scheduled.js`）不再呼叫它。既有 `debug:pipeline-trace:v1:*` 資料
+  靠原本的 24h TTL 自然過期，不做任何批次遷移。
+- `listPipelineTrace` 改為**同時**列舉 v1／v2 兩種 KV 前綴，依兩者共用的
+  `<date>:<epochMs>:...` 尾端字串排序合併成一條正確的新到舊時間軸
+  （兩種 key 前綴長度不同但都在同一個相對位置嵌入 13 位數 epoch 毫秒，
+  純字串比較即可正確反映時間先後）。`MAX_ENTRIES_SCANNED` 語意從「掃描
+  幾把 key」改為「攤平後掃描幾筆 entry」（v2 一把 key 可能含多筆
+  entry），`scanTruncated`／`totalKeyCount`／`scannedKeyCount` 三個既有
+  欄位語意不變。
+- `/admin/pipeline-trace`、`/admin/pipeline-trace-view` **兩個既有
+  handler 完全沒有改一行程式碼**，篩選（來源／關鍵字／道路／rawId／
+  狀態）、預設 60 筆／上限 100、掃描安全上限、CCTV／provenance／
+  location quality 各欄位全部沿用既有測試證明無迴歸。
+- 新增安全上限 `MAX_TRACE_ENTRIES_PER_BATCH`(500)／
+  `MAX_TRACE_BATCH_BYTES`(2 MiB，Cloudflare KV 單一 value 上限為
+  25 MiB，這裡刻意抓遠低於官方上限的保守值)：只有真的超量（本專案
+  一輪實務量級是「低幾十筆」，遠低於這兩個上限）才會啟動
+  `chunkEntriesForTraceBatch` 的決定性切分；單一超大 entry 仍會單獨
+  成一批，絕不會被靜默丟棄。
+
+**3. TDX Usage Summary 正式退休（人類決策，非 WRITE_ON_CHANGE 優化）**
+
+真人決策：TDX API 額度／用量改由**真人直接查看 TDX 官方後台**，
+路況播報員不再自行維護重複的用量摘要，以避免無必要的 Cloudflare KV
+寫入。施工前先完整查清依賴關係，確認：
+
+- `tdx:usage:summary:v1` 唯一寫入路徑：`scheduled.js` 每輪呼叫
+  `compactTdxUsageSummaryRecentDays`（現已移除呼叫）。
+- 唯一讀取路徑：`health.js` 的「TDX 用量」儀表板（現已移除卡片，
+  改為指向官方後台的靜態提示，見下）。
+- `tdx:usage:entry:v1:*`（底層原始帳本，由 `commitTdxUsageBatch` 寫入）
+  除了餵給上述已退休的摘要以外，**找不到任何其他讀者**——
+  `TDX_USAGE_LEDGER_CAN_RETIRE = YES`。
+- 沒有任何 Production safety logic／source-mode 判斷／quota
+  protection／9/1 TDX 額度恢復路徑依賴這兩把 key 或這個底層帳本
+  （這些全部只靠環境變數與獨立的 `sourceMode.js`／`tdxSchedule.js`
+  判斷，與用量帳本完全無關）。
+
+**移除 `commitTdxUsageBatch` 呼叫的 5 個位置**：`scheduled.js`
+（production-cron，每輪）、`debugStatus.js`（debug-status）、
+`tdx/debug.js`（debug-tdx）、`tdx/cctvProbe.js`（admin-cctv，3 處）、
+`tdx/hsinchuCctvProbe.js`（admin-cctv，3 處）。`usageSink` 陣列本身
+（`recordTdxDataCall`／`recordTdxOAuthCall`，純記憶體 push，零 KV 寫入）
+在這 5 個位置維持不變，只是收集到的內容不再被提交到 KV。
+
+**`health.js` 頁面變更**：整個「TDX 用量對帳」儀表板（今日／本月／
+剩餘額度／月底預估／來源拆解／每日對帳／進階資訊）移除，改為一張
+小卡片：
+
+> TDX 用量　
+> TDX API 額度／用量請直接查看 TDX 官方後台，本頁不再重複維護用量摘要。
+
+刻意不留空白欄位、不留錯誤欄位、不讀取已不存在的 key、不顯示假資料或
+過期資料——即使 KV 裡還殘留部署前的舊 `tdx:usage:summary:v1`，這個
+key 也完全不會被讀取，更不會出現在頁面上（`test/kvWriteOptimization.test.js`
+的 C3 直接證明這一點）。
+
+**明確保留、完全未動**：TDX API client／OAuth token 取得與快取、
+TDX RoadEvent（國道／省道）擷取能力、TDX CCTV metadata 擷取能力、
+`tdxEventCache.js`、`sourceMode.js`／`tdxSchedule.js` 的 TDX 排程與
+PBS_ONLY 判斷、9/1 TDX 額度恢復路徑、PBS／CCTV／LINE／Shared Feed 各自
+既有邏輯、Cron 10 分鐘頻率。`src/tdx/usageLedger.js` 的既有函式（含本輪
+稍早已加上 WRITE_ON_CHANGE 的 `persistCompactedSummary`）**程式碼與匯出
+完全保留**，`test/tdxUsageLedger.test.js` 的直接單元測試全數維持並通過
+——只是不再被任何正式 Cron／Debug／Admin 路徑呼叫。
+
+**4. `[kv-write-budget]` 可觀測性 log（`scheduled.js`）**
+
+每輪 Cron 新增一行 `console.log`（僅 Workers Logs 可見，**未新增任何
+KV key**），回報 8 個具名分類（`tdxUsageSummary`／`tdxUsageEntry`／
+`healthSnapshot`／`tdxEventCache`／`sharedFeed`／`incidentSuppression`／
+`notifiedState`／`pipelineTraceBatch`）各自的
+`attempted/performed/skippedUnchanged`，另加總計與
+`traceEntryCount`／`traceBatchCount`。`tdxUsageSummary`／`tdxUsageEntry`
+兩項永遠是 `0/0/0`——這行 log 本身就是「退休持續生效」的每輪即時證明。
+
+### 量化估算（BEFORE / AFTER）
+
+| 情境 | BEFORE（每輪約略） | AFTER（每輪約略） |
+|---|---|---|
+| 依前一輪唯讀鑑識的一般營運情境 | 約 11～21 writes（隨 Pipeline Trace 追蹤到的事件數線性成長） | — |
+| QUIET（本輪 0 筆追蹤事件、內容與上一輪相同） | 同上限 | 約 1～4 writes（health snapshot 固定 1；TDX event cache 僅排程輪次；Shared Feed／Incident Suppression 皆因內容不變而跳過；Pipeline Trace 因 0 筆而不寫） |
+| MEDIUM（本輪 10 筆追蹤事件） | 約 19～20 writes（其中 10 筆是 Pipeline Trace 逐筆寫入） | 約 4～8 writes（Pipeline Trace 固定 1 把 key，不再隨事件數增加） |
+| HIGH（本輪 20 筆追蹤事件） | 約 29～30 writes | 約 4～8 writes（與 MEDIUM 幾乎相同——這正是批次寫入把 Pipeline Trace 這一類別從 `O(事件數)` 降為 `O(1)` 的效果） |
+
+**TDX Usage Summary 退休本身**：每輪固定省下至少 2 次寫入
+（`tdx:usage:summary:v1` + 至少 1 把 `tdx:usage:entry:v1:*`），144
+輪/日的理論上限約 288 writes/day（實際依 TDX 排程頻率——每 20 分鐘
+才擷取一次——略低於此上限）。
+
+**距離免費額度（1,000 writes/day）的安全空間**：即使沿用鑑識當天
+「每輪皆為高流量、TDX 每輪皆擷取」的最壞情境估算，144 輪/日 ×
+（4～8 writes/round 上限）也遠低於 1,000，安全空間顯著擴大。
+
+**誠實限制**：帳號層級的「今日累計總量」在部署當天已被 V1.9.2 部署前
+的舊用量污染，無法單獨反映本次優化的真實效果——真正的每日效果只有在
+下一個 Asia/Taipei 帳務日重置之後才看得出來。本輪改以蒐集真實
+Production `[kv-write-budget]` Cron log 樣本（至少 3 筆）作為驗證依據。
+
+### 新增測試
+
+`test/kvWriteOptimization.test.js`（38 項，涵蓋 contentEqual 原語、
+Shared Feed／Incident Suppression 的 WRITE_ON_CHANGE skip/write 正確性、
+上述 aliasing bug 的迴歸鎖定、Pipeline Trace 批次寫入與切分、v1/v2
+混合資料的合併排序與所有既有 filter、退休後 0 KV 寫入的直接證明、
+`[kv-write-budget]` log 格式、quiet/medium/high 三種情境的批次寫入
+計數）；同步更新 `test/pipeline.test.js`、`test/debugStatusLine.test.js`、
+`test/tdxUsageLedger.test.js`、`test/pipelineTraceIntegration.test.js`、
+`test/pipelineTrace.test.js`；刪除兩個測的正是「已退休 UI」本身的檔案：
+`test/healthQuotaDashboard.test.js`、`test/healthCctvSourceBreakdown.test.js`。
+
+NEW FAILURES = 0（同一輪 `git stash -u` 對照乾淨 checkout，35 項既有
+失敗完全相同、無新增、無被本輪意外掩蓋）。
+
+### 不要誤讀
+
+- **不要以為 `tdx:usage:summary:v1`／`tdx:usage:entry:v1:*` 的退休是刪除
+  程式碼**——`src/tdx/usageLedger.js` 完全保留、完全可測試，只是不再被
+  任何正式路徑呼叫；若未來真人決定重新啟用，程式碼與測試都還在。
+- **不要以為 WRITE_ON_CHANGE 改變了內容決策邏輯**——Shared Feed／
+  Incident Suppression 的資料產生規則完全未動，只改變「何時寫入」。
+- **不要以為 Pipeline Trace 的舊版 v1 per-entry key 被刪除或遷移了**——
+  完全沒被動過，只是靠原本的 24h TTL 自然過期；新資料一律走 v2 batch。
+- **不要把 `[kv-write-budget]` log 誤讀為新的 KV 儲存機制**——純
+  `console.log`，Workers Logs 可見，沒有建立任何新的 KV key。
+- **不要因為帳號層級「今日總量」看起來還很高就誤判優化沒有效果**——
+  必須等下一個 Asia/Taipei 帳務日重置後看真實 Production
+  `[kv-write-budget]` 樣本才準。
+- **不要對 Google Drive 做任何寫入**——Claude 唯讀，GitHub 是唯一正式
+  寫入來源。
 
 ## TDX 還原程序（RESTORE TDX）
 
