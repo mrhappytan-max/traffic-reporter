@@ -1,0 +1,18 @@
+{
+  "name": "pbs-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal PBS (警廣) JSON relay/cache. Proxies the official PBS road-data endpoint behind a bearer token with a short-TTL in-memory cache. No business logic (no parsing, no Hsinchu filter, no dedup) — that stays in the Cloudflare Worker's own src/pbs/* pipeline. Not wired into production yet.",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test tests/*.test.js",
+    "diagnose": "node scripts/compare-fetch.mjs",
+    "prototype": "node src/localMonitor.js",
+    "prototype:watch": "node src/localMonitor.js --watch"
+  }
+}
