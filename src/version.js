@@ -335,7 +335,62 @@
 // plus auth/schema/idempotency/boundary edge cases, and 07_KNOWN_ISSUES.md
 // for the full record.
 
-export const APP_VERSION = 'V1.9.5';
+// V1.9.6 (2026-08-27) — PBS Windows Local Edge Debug Push Integration
+// (GOVERNANCE SEAL). This is a documentation/version-governance round,
+// not a Cloudflare runtime change: no source file under src/ other than
+// this one was touched. It records, into Engineering Memory, an
+// architecture that was actually built and is actually running on the
+// human's own Windows machine between 2026-08-26 and 2026-08-27 —
+// see 03_ARCHITECTURE.md's own new section and 07_KNOWN_ISSUES.md's
+// "PBS Windows Local Edge Debug Push Integration" record for the full
+// write-up. Bumped (not left as a docs-only non-bump) because the order
+// itself is explicit that this is a genuine Product architecture
+// addition, not pure prose: Windows now runs a persistent local-edge PBS
+// monitor with a real, active push channel into the V1.9.5 Cloudflare
+// Debug-only receiver.
+//
+// Summary (full detail in 07_KNOWN_ISSUES.md, independently verified by
+// this Cloud Session where noted):
+//   - Windows side: feature/pbs-local-edge-filter-prototype branch,
+//     commit 95ecdc4718f836ff36c974e829b549f262e6b936, confirmed NOT
+//     merged into main (git merge-base --is-ancestor). Confirmed via a
+//     clean `git worktree` checkout + `node --test`: 118/118 tests pass
+//     (the prior round's missing cache.js gap is fixed in this commit).
+//   - Service-area governance fix (confirmed by reading the diff): the
+//     old loose lat/lng rectangle that could independently INCLUDE an
+//     event (causing real false-positives at 國3 55.8K 鶯歌 and 國1
+//     68.1K 楊梅) is retired; pbs-relay/src/localPrototype.js now
+//     directly imports and reuses this repo's own
+//     src/pbs/hsinchuFilter.js#isPbsEventHsinchuRelevant and
+//     src/pbs/roadName.js#normalizePbsRoad.
+//   - CLEARED governance fix (confirmed by reading the code): explicit
+//     clear text (已排除/排除/已解除/解除) still clears immediately;
+//     absence-only now requires two consecutive successful PBS fetch
+//     rounds missing the UID (MISSING_PENDING_CLEAR -> CONFIRMED_CLEARED)
+//     before SHOULD_PUSH=YES, replacing the old single-round-absence
+//     design that was proven to false-positive.
+//   - Windows now runs a persistent Task Scheduler job
+//     (TrafficReporter-PBS-LocalMonitor) with a watchdog, and a real
+//     Debug Push Client (5s timeout, max 2 attempts, retries only
+//     timeout/network/5xx) calling V1.9.5's POST /internal/pbs-debug-push
+//     — PBS_DEBUG_PUSH_ENABLED is now true (human-enabled), and a real
+//     Secret-binding incident (a Secret existing on a non-Active
+//     Deployment Version) was hit, diagnosed, and resolved — recorded as
+//     a permanent lesson for future Secret changes.
+//   - Explicitly NOT done this round or before it: merging the feature
+//     branch, LINE/CCTV/business-KV integration, retiring Cloudflare's
+//     own existing PBS 30-minute poll (still PRESERVED and still the
+//     production path), or resolving cross-isolate persistent
+//     idempotency (flagged PENDING_BEFORE_PRODUCTION, required before any
+//     future LINE integration).
+//
+// See 07_KNOWN_ISSUES.md for the full architecture diagram, the two real
+// bugs found and fixed, the Secret governance incident, the current stage
+// flags, and the six-phase roadmap (Phase 1 real-debug-observation is
+// current; Phase 6 Cloudflare-polling-retirement is explicitly not to be
+// started early).
+
+export const APP_VERSION = 'V1.9.6';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,
