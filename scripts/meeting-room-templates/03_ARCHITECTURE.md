@@ -65,42 +65,88 @@ Pipeline Trace  (traffic/pipelineTrace.js, pipelineTraceView.js — 24h 人工�
 - **R2 image lifecycle**：`cctv/publishedImage.js`，opaque 128-bit id、`customMetadata.expiresAt` 於每次讀取時檢查（不依賴 R2 lifecycle rule 本身作為有效性依據），TTL 900 秒（15 分鐘）。
 - **LINE delivery path**：`line/pushMessage.js`（Push API，text-only 或 text+image 兩則訊息同一次呼叫）、`line/webhook.js`（處理使用者訂閱/取消訂閱等互動指令）、`line/verifySignature.js`（Webhook 簽章驗證）。
 
-## PBS Local Edge Filter Prototype（2026-08-26，feature branch，LOCAL/NOT_MERGED）
+## PBS Windows Local Edge Debug Push Integration（V1.9.6，2026-08-27，feature branch，ACTIVE／Debug-only／NOT_MERGED）
 
-與上面「主要資料流」完全分開的一條**尚未接入 Production** 的實驗路徑，程式碼原本
-只存在 Windows 本機（`C:\Users\mrhap\traffic-reporter\pbs-relay`），現已由真人（經
-另一個 Windows 本機 agent）commit/push 進 GitHub 的 `feature/pbs-local-edge-filter-prototype`
-分支（commit `c34b52c045cd05eb4be01b91debe5ba002c73cb6`），**尚未 merge 進 main**，
-`src/` 掃描結果（下方模組清單）不會出現它（它在 `pbs-relay/`，不在 `src/` 下）：
+與上面「主要資料流」完全分開、**目前只到 Debug-only 接收端為止**的一條路徑——尚未
+接入 LINE／CCTV／Shared Feed／正式 Business KV／正式 Broadcast Pipeline 任何一段。
+Windows 端程式碼在 `pbs-relay/`（`src/` 掃描結果——下方模組清單——不會出現它），已
+push 進 GitHub 的 `feature/pbs-local-edge-filter-prototype` 分支（最新 commit
+`95ecdc4718f836ff36c974e829b549f262e6b936`，**尚未 merge 進 main**）；Cloudflare 端
+接收端在 `src/pbs/debugPush.js`／`src/pbs/debugPushAuth.js`（V1.9.5，已在 `src/`
+下，會出現在下方模組清單）。**本 Cloud Session 對 Windows 端 commit 做過的唯一
+獨立驗證**：`git fetch`＋`git rev-parse` 確認 SHA、`git merge-base --is-ancestor`
+確認未合併、`git worktree` 乾淨簽出跑 `node --test tests/*.test.js` —— **118 項
+測試、118 pass、0 fail**（與真人回報數字一致；前一輪回報的 `pbsHandler.test.js`／
+`server.test.js` 因缺 `cache.js` 整檔失敗的問題，這個 commit 已補上該檔並修正）。
+Windows 端的**執行期狀態**（Task Scheduler 是否真的常駐、真實 PBS Push 觀察紀錄、
+Cloudflare Secret 是否確實生效等）無法從這個 sandbox 獨立驗證，以下按真人回報記錄，
+不冒充為本 Session 自行證實：
 
 ```
-PBS 官方 opendata（roadData）
+PBS 警廣官方來源
     ↓
-localMonitor.js（Windows 本機排程）
+Windows 本機每 3 分鐘抓取（localMonitor.js，Task Scheduler 常駐，見下方治理段落）
     ↓
-localPrototype.js
-    - 服務區篩選（areaNm/comment/road/region 文字比對：新竹市／新竹縣／竹北／竹南／頭份；
-      座標 lat 24.45~24.95／lng 120.80~121.35 僅作 Prototype 輔助，非正式 service-area truth）
-    - 事故關鍵字篩選（事故/擦撞/追撞/自撞/對撞/相撞/撞及；排除施工/壅塞/封路/故障車）
-    - 有效／解除判斷
+Local Edge Filter（localPrototype.js）
     ↓
-localState.js（主鍵 PBS UID；fingerprint = roadtype+road+areaNm+region+direction+
-    comment+longitude+latitude+sourceDetail，刻意排除 modDttm——避免 PBS 只更新時間戳
-    但內容不變時被誤判 UPDATED；第一次執行 baseline=true，既有事件一律 UNCHANGED，
-    不會把冷啟動的既有事故全部當 NEW；PBS fetch 失敗時 state 不變、不產生假 CLEARED）
+Production Service Area Rule（見下方「服務區治理修正」——**現重用**
+    src/pbs/hsinchuFilter.js#isPbsEventHsinchuRelevant、
+    src/pbs/roadName.js#normalizePbsRoad，不再是舊版自己的寬鬆矩形）
     ↓
-NEW / UPDATED / CLEARED / UNCHANGED
+事件生命週期比較（localState.js，主鍵 PBS UID，見下方「CLEARED 治理修正」）
     ↓
-SHOULD_PUSH = YES/NO（目前只是記憶體內的判斷信號，Windows → Cloudflare 的實際
-    傳輸尚未建立）
+NEW / UPDATED / CLEARED / UNCHANGED / MISSING_PENDING_CLEAR
+    ↓
+SHOULD_PUSH 判斷（localDebugPush.js；只有 NEW/UPDATED/CLEARED 三種 lifecycle
+    才可能送出，UNCHANGED／MISSING_PENDING_CLEAR／baseline 一律不送）
+    ↓
+若 SHOULD_PUSH=NO
+    → 完全停在 Windows，不呼叫 Cloudflare（0 次 request）
+若 SHOULD_PUSH=YES
+    ↓
+Windows Debug Push Client（debugPushClient.js）
+    ↓
+POST /internal/pbs-debug-push
+    ↓
+Cloudflare V1.9.5 Debug-only Receiver（src/pbs/debugPush.js）
+    ↓
+Authentication → Validation → best-effort duplicate check → Workers Logs → ACK
 ```
 
-**已知限制**：CLEARED 目前有兩種觸發——明確解除文字（已排除/排除/已解除/解除）已可信；
-「一輪內從 feed 完全消失即判定 CLEARED」（`CLEAR_ON_SINGLE_ABSENCE`）僅為
-**PROTOTYPE_ONLY**，正式 Production 前必須重新決策（連續兩輪缺席／grace period／
-PBS lifecycle evidence 三選一）。完整路線圖（PHASE A～F）、測試結果（含本 Cloud
-Session 對該 commit 的獨立唯讀驗證）、真實兩次本機執行證據 → `07_KNOWN_ISSUES.md`；
-機器可讀欄位 → `SYSTEM_STATE.json` 的 `pbsLocalEdgeFilterPrototype`。
+### 服務區治理修正（真實踩過的誤收 bug）
+
+舊版 Prototype 自己的服務區輔助判斷用一個寬鬆矩形（`lat 24.45~24.95 / lng
+120.80~121.35`）就可以單獨 INCLUDE 一筆事件，真實造成**國3 55.8K 鶯歌**、**國1
+68.1K 楊梅**被誤收（兩者都在矩形內但完全不是新竹服務區）。現已修正：本機
+`localPrototype.js` **直接 import 並重用 Production 自己的服務區/新竹篩選規則**
+（`src/pbs/hsinchuFilter.js#isPbsEventHsinchuRelevant`、
+`src/pbs/roadName.js#normalizePbsRoad`——本 Cloud Session 讀取該 commit 的
+`pbs-relay/src/localPrototype.js` 原始碼確認這兩個 import 確實存在，非僅依真人
+描述），舊矩形不再能單獨 INCLUDE 任何事件。真人回報的驗證結果：鶯歌 55.8K =
+EXCLUDE、楊梅 68.1K = EXCLUDE、竹北 91.9K = INCLUDE、台68 9K = INCLUDE。
+
+### CLEARED 防誤判治理（二輪確認，本 Session 已讀程式碼確認邏輯存在）
+
+舊版「這一輪 fetch 成功但看不到這個 UID 就立刻 CLEARED」的設計已證實會誤判。現行
+規則（`pbs-relay/src/localPrototype.js`，本 Cloud Session 直接讀取該 commit 原始碼
+確認）：**明確解除文字**（`已排除`／`排除`／`已解除`／`解除` 四種 pattern）→ 立即
+CLEARED；**單純從 feed 消失**（absence-only）→ 需要**連續兩輪成功的 PBS fetch**
+都看不到才確認：第一輪缺席記為 `MISSING_PENDING_CLEAR`（`missingCount=1`，
+`CLEARED=0`，`SHOULD_PUSH=NO`），第二輪仍缺席才變成 `CONFIRMED_CLEARED`
+（`missingCount>=2`，`CLEARED=1`，`SHOULD_PUSH=YES`）；若 fetch 本身失敗，
+`missingCount` 不累加；若中途事件重新出現，pending clear 取消、`missingCount`
+歸零。真人回報以真實案例（UID `11508260013-5`，國3 96.7K 寶山休息站）完成完整
+fixture regression 驗證。
+
+### 已知限制、路線圖、Secret 治理教訓、Emergency kill switch
+
+完整記錄於 `07_KNOWN_ISSUES.md`（機器可讀欄位 → `SYSTEM_STATE.json` 的
+`pbsLocalEdgeFilterPrototype`）：Windows 常駐模式（Task Scheduler／watchdog／log
+retention）、Cloudflare Secret binding 曾經歷的一次真實 503 事故與根因、
+per-isolate 冪等限制（`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY = PENDING_BEFORE_
+PRODUCTION`）、六階段路線圖（Phase 1 現行觀察 → … → Phase 6 才評估 Cloudflare PBS
+輪詢退休，不得提前）、緊急停用方法（Windows 端環境變數 `PBS_DEBUG_PUSH_ENABLED=false`
++ 重啟本機排程即可，不需動 Cloudflare／不需動既有 PBS 輪詢）。
 
 ## 模組清單（自動掃描）
 

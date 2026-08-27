@@ -128,89 +128,164 @@
     "readerNote": "OBSERVATION, not construction. Do not modify src/, the broadcast policy, Cron, TDX, CCTV, the Consumer, or redeploy because of this entry."
   },
   "pbsLocalEdgeFilterPrototype": {
-    "PBS_LOCAL_EDGE_FILTER_PROTOTYPE": "COMMITTED_TO_FEATURE_BRANCH",
-    "recordedAt": "2026-08-26",
-    "recordedBy": "human directive (路況工程部 PBS 本機邊緣篩選 Prototype 工程記憶封存令 + 最新事實補記令) — a separate Windows-local agent has since committed the Prototype to GitHub; this Cloud Session independently verified the commit (git fetch/show/diff/merge-base) and re-ran the Prototype's own two new test files in a read-only worktree checkout",
+    "PBS_LOCAL_EDGE_FILTER_PROTOTYPE": "ACTIVE_DEBUG_ONLY",
+    "recordedAt": "2026-08-27",
+    "recordedBy": "human directive (路況工程部 V1.9.6 第二棒正式封版令｜PBS Windows Local Edge Debug Push Integration) — governance-only round: Engineering Memory/Version Governance/Documentation/Canonical Sync only, no merge, no new Cloudflare runtime change, no LINE/CCTV/business-KV integration, no PBS polling retirement, no Windows Secret/Task Scheduler change, no Prototype runtime change this round.",
     "LOCAL_PROTOTYPE_CODE_GITHUB_STATUS": "COMMITTED_TO_FEATURE_BRANCH",
     "LOCAL_PROTOTYPE_GITHUB_BRANCH": "feature/pbs-local-edge-filter-prototype",
-    "LOCAL_PROTOTYPE_GITHUB_COMMIT": "c34b52c045cd05eb4be01b91debe5ba002c73cb6",
+    "LOCAL_PROTOTYPE_GITHUB_COMMIT": "95ecdc4718f836ff36c974e829b549f262e6b936",
+    "LOCAL_PROTOTYPE_PRIOR_COMMIT": "c34b52c045cd05eb4be01b91debe5ba002c73cb6 (superseded by the commit above)",
     "PROTOTYPE_MERGED_TO_MAIN": "NO",
-    "WINDOWS_TO_CLOUDFLARE_PUSH": "NOT_STARTED",
-    "PRODUCTION_INTEGRATION": "NOT_STARTED",
-    "CURRENT_PRODUCT_VERSION": "V1.9.5",
-    "PRODUCT_VERSION_BUMP": "NO",
-    "NEXT_PRODUCT_RELEASE": "尚未決定 — 這個 Prototype 本身不是 Product Version 事件；下一個 V1.9.x/V1.10.0 只會在真正改變 Production runtime 的下一輪施工令裡決定（V1.9.3 KV Write Optimization Phase 2 與此 Prototype 無關，未曾修改 Prototype 任何程式碼）",
+    "independentVerification": "此 Cloud Session 對新 commit 做的唯一獨立驗證（read-only）：(1) `git fetch origin feature/pbs-local-edge-filter-prototype` + `git rev-parse` 確認 HEAD SHA 與人類回報完全相符；(2) `git merge-base --is-ancestor <head> origin/main` 確認尚未合併；(3) `git diff --stat c34b52c..95ecdc4 -- pbs-relay/` 確認新增/修改檔案清單（新增 cache.js/debugPushClient.js/localDebugPush.js/localRuntime.js/log.js/upstreamClient.js 等，含對應測試檔）；(4) `git worktree add --detach` 乾淨隔離簽出 + `node --test tests/*.test.js`：**118 項測試、118 pass、0 fail**，與真人回報數字完全一致（前一輪 c34b52c 因缺 cache.js 導致 pbsHandler.test.js/server.test.js 整檔載入失敗的落差，本 commit 已修正）；(5) 直接讀取 localPrototype.js/localDebugPush.js/debugPushClient.js 原始碼，確認下方 architectureSummary/serviceAreaGovernance/clearGovernance/debugPushClient 各欄位描述的 import/邏輯/常數確實存在於程式碼中。Windows 端的執行期狀態（Task Scheduler 是否真的常駐、真實 Cloudflare Secret Dashboard 狀態、Claude Browser mock 驗證畫面）本 sandbox 無法連線驗證，相關欄位明確標示為人類回報。",
+    "WINDOWS_LOCAL_EDGE_FILTER": "ACTIVE",
+    "WINDOWS_REAL_DEBUG_PUSH": "ACTIVE",
+    "CLOUDFLARE_DEBUG_RECEIVER": "ACTIVE",
+    "WINDOWS_TO_CLOUDFLARE_DEBUG_CHANNEL": "VERIFIED",
+    "WINDOWS_TO_PRODUCTION_BUSINESS_PIPELINE": "NOT_STARTED",
+    "LINE_INTEGRATION": "NOT_STARTED",
+    "CCTV_INTEGRATION": "NOT_STARTED",
+    "PBS_CLOUDFLARE_POLLING_RETIREMENT": "NOT_STARTED",
+    "PBS_30_MIN_POLLING": "PRESERVED — Cloudflare 既有 V1.9.3 排程閘門完全不變，仍是目前的正式/備援路徑",
+    "PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY": "PENDING_BEFORE_PRODUCTION — 目前僅 per-isolate 記憶體內 best-effort 判斷（PBS_DEBUG_PUSH_IDEMPOTENCY_MODE=NOT_PERSISTENT，見 V1.9.5），正式 LINE 整合前必須解決跨 isolate/跨 deployment/跨 restart 的重複事件保護",
+    "PBS_DEBUG_PUSH_ENABLED_CURRENT_STATE": "true（真人已啟用，Feature Switch 預設值為 false，讀 pbs-relay/src/localDebugPush.js#isDebugPushEnabled 程式碼確認）",
+    "CURRENT_PRODUCT_VERSION": "V1.9.6",
+    "PRODUCT_VERSION_BUMP": "YES — 本輪的封版令本身就是升版理由：Windows Local Edge Runtime + Persistent Monitor + SHOULD_PUSH Automation + Debug Channel Integration 正式併入 Product 架構線，即使本輪 Cloudflare 端沒有新增程式碼（Cloudflare runtime 仍是 V1.9.5 的 src/pbs/debugPush.js）",
     "localPaths": {
       "windowsProjectRoot": "C:\\Users\\mrhap\\traffic-reporter",
       "prototypeRoot": "C:\\Users\\mrhap\\traffic-reporter\\pbs-relay",
-      "prototypeSource": [
-        "pbs-relay/src/localPrototype.js",
-        "pbs-relay/src/localState.js",
-        "pbs-relay/src/localMonitor.js"
+      "prototypeSourceNew": [
+        "pbs-relay/src/cache.js",
+        "pbs-relay/src/debugPushClient.js",
+        "pbs-relay/src/localDebugPush.js",
+        "pbs-relay/src/localRuntime.js",
+        "pbs-relay/src/log.js",
+        "pbs-relay/src/upstreamClient.js"
       ],
-      "prototypeTests": [
-        "pbs-relay/tests/localPrototype.test.js",
-        "pbs-relay/tests/localState.test.js"
+      "prototypeSourceModified": [
+        "pbs-relay/src/localMonitor.js",
+        "pbs-relay/src/localPrototype.js"
       ],
       "runtimeState": "pbs-relay/data/relevant-state.json — gitignored, NEVER committed to GitHub or synced to Drive; Windows-local runtime state only",
-      "existingRelayUnaffected": "pbs-relay/src/server.js, cache.js, pbsHandler.js, upstreamClient.js — the pre-existing raw-relay path. This round did not modify or verify these; a Cloud Session earlier in this project noted main's own pbs-relay/src/server.js imports a cache.js that main's tree does not contain (a pre-existing, already-baselined test failure, unrelated to this Prototype) — see 07_KNOWN_ISSUES.md's known-failure baseline."
+      "logs": "pbs-relay/logs/YYYY-MM-DD.jsonl — 7 天 retention，JSONL 持久化 log（人類回報，未由本 Session 驗證）",
+      "existingRelayUnaffected": "pbs-relay/src/server.js, pbsHandler.js — the pre-existing raw-relay path, not modified by this integration beyond cache.js now existing (which also fixes the prior known test-load gap)."
     },
-    "architectureSummary": "既有 Relay：PBS 官方 -> upstreamClient.js -> pbsHandler.js -> 3 分鐘 memory cache -> GET /pbs/<token> -> Cloudflare（只搬運 raw PBS，不解析不篩選）。新 Prototype（Windows 本機，尚未接上 Cloudflare）：PBS 官方 -> localMonitor.js -> localPrototype.js（服務區篩選 -> 事故關鍵字篩選 -> 有效/解除判斷）-> localState.js（上一輪 vs 本輪比對）-> NEW/UPDATED/CLEARED/UNCHANGED -> SHOULD_PUSH（目前只輸出判斷信號，Windows -> Cloudflare 的實際傳輸尚未建立）。詳見 07_KNOWN_ISSUES.md 的完整記錄。",
-    "testResult": "真人（經 Windows 本機另一個 GPT-based agent）回報：pbs-relay 全套 68 tests / 68 passed / 0 failed。本 Cloud Session 對同一個 commit（c34b52c045cd05eb4be01b91debe5ba002c73cb6）另外做了一次獨立、唯讀的驗證（`git worktree add --detach` 乾淨簽出，不動主工作樹）：Prototype 自己新增的兩個測試檔在乾淨簽出下全數通過（auth.test.js=6、localPrototype.test.js=5、localState.test.js=1，共 12 項）；但 `tests/pbsHandler.test.js` 與 `tests/server.test.js` 兩個既有檔案在這個乾淨簽出下整檔載入失敗（`Cannot find module '.../pbs-relay/src/cache.js'`）——這與本專案已知、與本 Prototype 無關的既有缺口一致（`main` 的 `pbs-relay/src/server.js` 引用一個從未 commit 進任何分支的 `cache.js`，見 `localPaths.existingRelayUnaffected`）。判斷：真人回報的 68/0 很可能是在 Windows 本機執行、本機磁碟上存在一份未 commit 的 `cache.js`（因此兩個既有檔案在本機可以載入）；GitHub 上的乾淨簽出無法重現 68/0 這個數字，但 Prototype 本身新增的測試（12 項）在兩種環境下皆乾淨通過，沒有找到 Prototype 程式碼本身的缺陷。",
-    "realWorldSamples": "2026-08-26 22:42:09 Asia/Taipei：raw=1000, service-area accident records=13, explicit cleared=12, active=1, baseline=true, NEW=0, UPDATED=0, CLEARED=0, UNCHANGED=1, SHOULD_PUSH=NO。19 秒後（22:42:28）：raw=1000, active=1, baseline=false, 同樣 UNCHANGED=1, SHOULD_PUSH=NO —— 證明 local state persistence／same-event dedup／no-change detection 三者皆 PASS。",
-    "knownLimitation": "CLEAR_ON_SINGLE_ABSENCE = PROTOTYPE_ONLY — 一輪內事件從 feed 完全消失就判定 CLEARED，正式 Production 前必須重新決策（連續兩輪缺席 / grace period / PBS lifecycle evidence 三選一），避免官方短暫漏資料造成假解除。PRODUCTION_DECISION = PENDING。",
-    "roadmap": "PHASE A（Windows 本機觀察期，持續記錄 raw/relevant/active/NEW/UPDATED/CLEARED/UNCHANGED/matchReason/SHOULD_PUSH）-> PHASE B（規則校準：座標誤判、跨區國道、事故關鍵字、UPDATED 欄位、CLEARED grace policy）-> PHASE C（Windows -> Cloudflare Push Contract 設計：generatedAt/source/eventId/lifecycle/fingerprint/event/requestId，僅 local mock）-> PHASE D（安全傳輸設計：authentication/idempotency/retry/timeout/ack/failure queue/secret storage）-> PHASE E（Debug-only Cloudflare 接收：不寫正式 KV、不進 LINE、不影響 TDX）-> PHASE F（Production 評估，需另行真人授權才可正式接收/KV/LINE/Cron 調整/Production deploy/Product Version bump）。",
-    "longTermTarget": "PBS 官方 -> Windows 本機守門員 -> 只有與新竹服務區真正相關的事件變化 -> Windows 主動 Push Cloudflare -> Cloudflare 才啟動正式事件 Pipeline（CCTV/LINE/Shared Feed）。目標：NO_RELEVANT_CHANGE -> WINDOWS_TO_CLOUDFLARE_PUSH=0 -> PBS 相關 KV 寫入 ≈ 0，避免 Cloudflare 固定輪詢搬運約 1000 筆 PBS raw data 才判斷。",
-    "driveGovernance": "Claude Drive WRITE = FORBIDDEN（本輪維持）。本輪只同步 Engineering Memory 文字紀錄到 Drive；Prototype 程式碼本身已由真人（經另一個 Windows 本機 agent）commit/push 進 `feature/pbs-local-edge-filter-prototype` 分支，但該分支本身不經過 Engineering Memory 的 GitHub→Drive 鏡射流程（鏡射對象是 `engineering-memory/` 這 10 份文件，不是 repo 的每一個分支），Prototype 程式碼本身沒有、也不需要被同步到 Drive。",
-    "readerNote": "這是文件記錄，不是完工的 Production 功能。Prototype 程式碼已在 GitHub 的 feature branch（未 merge 進 main），下一個 Agent 讀到這裡：不要假設它已 merge 進 main，不要假設 Windows -> Cloudflare 傳輸已存在，不要因為看到這個記錄就開始 Phase C 以後的工作——那需要真人另行授權，也不要自行 merge 這個 feature branch。"
+    "serviceAreaGovernance": {
+      "oldBug": "舊版寬鬆矩形（lat 24.45~24.95 / lng 120.80~121.35）可單獨 INCLUDE，真實造成國3 55.8K 鶯歌、國1 68.1K 楊梅被誤收",
+      "fix": "本 Session 讀取 pbs-relay/src/localPrototype.js 原始碼確認：直接 import Production 自己的 src/pbs/hsinchuFilter.js#isPbsEventHsinchuRelevant 與 src/pbs/roadName.js#normalizePbsRoad，舊矩形不再能單獨 INCLUDE",
+      "humanReportedVerification": "鶯歌55.8K=EXCLUDE、楊梅68.1K=EXCLUDE、竹北91.9K=INCLUDE、台68 9K=INCLUDE（本 Session 未逐一重跑）"
+    },
+    "clearGovernance": {
+      "oldBug": "單輪成功fetch看不到UID就立即CLEARED，證實會誤判",
+      "fix": "本 Session 讀取原始碼確認：CLEARED_PATTERNS=[/已排除/,/排除/,/已解除/,/解除/] 明確文字立即CLEARED；absence-only需連續2輪成功fetch缺席（missingCount>=2）才CONFIRMED_CLEARED，第1輪為MISSING_PENDING_CLEAR（SHOULD_PUSH=NO）；fetch失敗missingCount不累加；中途重現則pending clear取消、missingCount歸零",
+      "humanReportedRegression": "UID 11508260013-5（國3 96.7K 寶山休息站）完整fixture regression驗證（本Session未重跑）"
+    },
+    "secretGovernanceIncident": {
+      "secretName": "PBS_DEBUG_PUSH_SECRET",
+      "incident": "Cloudflare Secret最初只存在於新Worker Version(9ddc58ea)，但當時Active Deployment仍是舊版(47f54b17)，導致Runtime持續回應503 pbs_debug_push_not_configured",
+      "rootCause": "Secret binding存在於Dashboard ≠ 已經進入正在服務流量的Active Production Version",
+      "resolution": "真人明確授權將9ddc58ea promote為100% Production traffic後，Windows真實Debug Push變成HTTP 200 accepted=true debugOnly=true",
+      "permanentRule": "未來新增/修改任何Cloudflare Secret後，必須確認該Secret所在Version是否為目前Active Deployment，不能只看Dashboard顯示Secret已存在就假設Production已經拿得到它"
+    },
+    "debugPushClient": {
+      "file": "pbs-relay/src/debugPushClient.js（本Session已讀原始碼確認）",
+      "timeoutMs": 5000,
+      "maxAttempts": 2,
+      "retryOn": [
+        "timeout",
+        "network",
+        "5xx"
+      ],
+      "noRetryOn": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "405",
+        "503 (not_configured — 立即停止)"
+      ],
+      "requestIdFormat": "pbs:<UID>:<lifecycle>:<fingerprint前16碼>（決定性，重試沿用同一個requestId）"
+    },
+    "mockVerificationEvidence": "人類回報（本Session未親自操作Claude Browser）：對正確Worker(traffic-reporter)完整跑過NEW/DUPLICATE/UPDATED/CLEARED四種情境皆PASS；Workers Logs交叉驗證NEW_LOG_FOUND/DUPLICATE_LOG_FOUND/UPDATED_LOG_FOUND/CLEARED_LOG_FOUND皆YES；LINE_SIDE_EFFECT/CCTV_SIDE_EFFECT/R2_SIDE_EFFECT/SHARED_FEED_SIDE_EFFECT/BUSINESS_KV_WRITE_SIDE_EFFECT皆0，SECRET_LEAK=NO，DEBUG_PUSH_CHANNEL_VERIFIED=YES。",
+    "architectureSummary": "PBS警廣官方來源 -> Windows本機每3分鐘抓取(localMonitor.js，Task Scheduler常駐) -> Local Edge Filter(localPrototype.js，重用Production服務區規則) -> 事件生命週期比較(localState.js，二輪CLEARED確認) -> NEW/UPDATED/CLEARED/UNCHANGED/MISSING_PENDING_CLEAR -> SHOULD_PUSH判斷(localDebugPush.js) -> [NO:停在Windows / YES:Windows Debug Push Client] -> POST /internal/pbs-debug-push -> Cloudflare V1.9.5 Debug-only Receiver -> Authentication -> Validation -> best-effort duplicate check -> Workers Logs -> ACK。明確不進：LINE/CCTV/R2/Shared Feed/正式Business KV/正式Broadcast Pipeline。",
+    "roadmap": "Phase 1（目前）Real Debug Observation：至少觀察2-4小時或至少1筆真實NEW/UPDATED/CLEARED，驗證Windows detection/Cloudflare ACK/duplicate/failure rate/false positive/false clear -> Phase 2 Persistent Idempotency Design（正式Production前解決跨isolate/跨deployment/跨restart重複保護）-> Phase 3 Debug Receiver -> Production Business Pipeline（仍先LINE disabled，驗證Shared Feed/Pipeline/State lifecycle）-> Phase 4 LINE limited activation（先小範圍/管理員測試）-> Phase 5 Windows Edge becomes primary PBS trigger（Cloudflare 30分鐘輪詢降為fallback）-> Phase 6（長期觀察後才評估PBS Cloudflare輪詢退休，不得提前）。",
+    "emergencyKillSwitch": "若Windows Debug Push異常：Windows User Environment設定PBS_DEBUG_PUSH_ENABLED=false，重啟TrafficReporter-PBS-LocalMonitor即可停止Windows自動Push，不需停PBS monitor/刪Secret/rollback Cloudflare/關PBS輪詢。Production PBS 30分鐘輪詢仍存在作為既有路徑，完全不受影響。",
+    "windowsPersistentMode": {
+      "taskSchedulerName": "TrafficReporter-PBS-LocalMonitor",
+      "command": "C:\\Program Files\\nodejs\\node.exe C:\\Users\\mrhap\\traffic-reporter\\pbs-relay\\src\\localMonitor.js --watch",
+      "intervalMinutes": 3,
+      "features": [
+        "Task Scheduler登入後自動啟動",
+        "1分鐘watchdog",
+        "IgnoreNew",
+        "PID/lock防重複",
+        "stale lock recovery",
+        "異常恢復",
+        "state recovery",
+        "JSONL持久化log(7天retention)"
+      ],
+      "rebootTestStatus": "PENDING（尚未測試真實重開機），但manual restart/watchdog restart/state recovery三者皆人類回報PASS",
+      "knownUxIssue": "執行時可能顯示Node console視窗，真人已決定暫不修改，視窗顯示可作為運行提示，不得誤判為未完成的blocker",
+      "note": "以上為人類回報，本Cloud Session無法連線Windows機器獨立驗證執行期狀態"
+    },
+    "driveGovernance": "Claude Drive WRITE = FORBIDDEN（本輪維持）。本輪只同步 Engineering Memory 文字紀錄到 Drive；Prototype 程式碼本身已由真人 commit/push 進 feature/pbs-local-edge-filter-prototype 分支，該分支不經過 Engineering Memory 的 GitHub→Drive 鏡射流程（鏡射對象是 engineering-memory/ 這 10 份文件，不是 repo 的每一個分支）。",
+    "readerNote": "這是治理封版記錄，不是完工的 Production Business 功能。目前僅 Debug-only：Windows 真的在跑、真的會呼叫 Cloudflare，但 Cloudflare 端只做驗證/記錄/ACK，不進 LINE/CCTV/Shared Feed/正式KV/正式Pipeline。下一個 Agent：不要自行 merge 這個 feature branch；不要開始 LINE/CCTV/Business KV 整合；不要退休 Cloudflare 既有 PBS 輪詢；不要修改 Windows Secret 或 Task Scheduler；不要碰本機 Prototype runtime；不要自行開始 V1.9.7。"
   },
   "taskSeal": {
-    "task": "WINDOWS_CLOUDFLARE_DEBUG_PUSH_ENDPOINT_V1_9_5",
+    "task": "PBS_WINDOWS_LOCAL_EDGE_DEBUG_PUSH_INTEGRATION_V1_9_6",
     "status": "SEALED",
     "sealedAt": "2026-08-27",
-    "sealedBy": "human directive (路況工程部 V1.9.5 正式施工令｜Windows → Cloudflare Debug-only Push Endpoint)",
-    "releaseVersion": "V1.9.5",
-    "fixCommit": "56b24d3",
-    "scopeStatement": "本輪只建立一個Debug-only接收端，證明Windows->Cloudflare的push機制可行：驗證身份、驗證資料格式、做冪等判斷、寫Workers Logs、回ACK。WINDOWS_PUSH_ENABLED=NO（Windows尚未真的發送任何真實事件）、PRODUCTION_PIPELINE_INTEGRATION=NO（未整合進正式Pipeline）、PBS_30_MIN_POLLING=PRESERVED（既有V1.9.3 PBS排程閘門完全不變）。",
-    "endpoint": {
-      "path": "/internal/pbs-debug-push",
-      "method": "POST only (405 for others)",
-      "authMethod": "Authorization: Bearer <PBS_DEBUG_PUSH_SECRET>（沿用traffic/sharedFeedHandler.js既有TRAFFIC_FEED_SECRET的header慣例），雜湊後常數時間比對（與security/adminAuth.js同技術）。missing secret=503 fail closed；wrong/absent token=401。",
-      "secretVariableName": "PBS_DEBUG_PUSH_SECRET",
-      "secretIndependence": "獨立Secret，測試證實不會回退到PBS_RELAY_TOKEN（既有、不相關的Cloudflare->Windows PULL憑證）、ADMIN_PASSWORD，或任何LINE/TDX secret。",
-      "payloadSchema": "必填：generatedAt/source(僅pbs)/eventId/lifecycle(NEW|UPDATED|CLEARED)/fingerprint/requestId。選填event（白名單讀取road/areaNm/direction/comment/longitude/latitude/sourceDetail，僅供log使用）。",
-      "bodySizeLimit": "16 KiB"
+    "sealedBy": "human directive (路況工程部 V1.9.6 第二棒正式封版令｜PBS Windows Local Edge Debug Push Integration — Engineering Memory/架構/路線圖正式封存)",
+    "releaseVersion": "V1.9.6",
+    "natureOfThisRound": "GOVERNANCE_SEAL — Engineering Memory/Version Governance/Documentation/Canonical Sync only. No merge, no new Cloudflare runtime code change, no LINE/CCTV/business-KV integration, no PBS polling retirement, no Windows Secret/Task Scheduler change, no Prototype runtime change.",
+    "windowsPrototypeFacts": {
+      "branch": "feature/pbs-local-edge-filter-prototype",
+      "head": "95ecdc4718f836ff36c974e829b549f262e6b936",
+      "mergedToMain": false,
+      "independentlyVerifiedByThisSession": true,
+      "verificationMethod": "git fetch + git rev-parse (SHA match) + git merge-base --is-ancestor (not merged) + git worktree add --detach + node --test",
+      "testResult": "118 tests / 118 pass / 0 fail (matches human-reported figure exactly; prior round cache.js gap now fixed)"
     },
-    "idempotency": {
-      "mode": "PBS_DEBUG_PUSH_IDEMPOTENCY_MODE = NOT_PERSISTENT",
-      "design": "per-isolate記憶體內fingerprint Map（10分鐘視窗，上限500筆），best-effort、非持久。依施工令自身明確指示未新增任何KV寫入。"
+    "architectureRecorded": true,
+    "serviceAreaGovernanceRecorded": true,
+    "clearGovernanceRecorded": true,
+    "windowsPersistentMonitorRecorded": true,
+    "secretGovernanceRecorded": true,
+    "debugEndpointRecorded": true,
+    "idempotencyLimitationRecorded": true,
+    "shouldPushIntegrationRecorded": true,
+    "currentStageFlags": {
+      "WINDOWS_LOCAL_EDGE_FILTER": "ACTIVE",
+      "WINDOWS_REAL_DEBUG_PUSH": "ACTIVE",
+      "CLOUDFLARE_DEBUG_RECEIVER": "ACTIVE",
+      "WINDOWS_TO_CLOUDFLARE_DEBUG_CHANNEL": "VERIFIED",
+      "WINDOWS_TO_PRODUCTION_BUSINESS_PIPELINE": "NOT_STARTED",
+      "LINE_INTEGRATION": "NOT_STARTED",
+      "CCTV_INTEGRATION": "NOT_STARTED",
+      "PBS_CLOUDFLARE_POLLING_RETIREMENT": "NOT_STARTED",
+      "PBS_30_MIN_POLLING": "PRESERVED",
+      "PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY": "PENDING_BEFORE_PRODUCTION"
     },
-    "debugOnlyBoundary": "結構性保證（非執行期旗標）：src/pbs/debugPush.js完全不import line/、cctv/、traffic/sharedFeed(Handler)?.js、traffic/incidentSuppression.js、traffic/notified.js、traffic/broadcastProvenance.js、traffic/pipelineTrace.js，或pbs/lifecycle.js|pipeline.js任何一個模組，也完全不觸碰env.TRAFFIC_KV（或任何其他binding）。測試以counting mock直接確認：0次fetch呼叫、0次KV get/put呼叫（NEW/UPDATED/CLEARED三種情境皆同）。",
     "testEvidence": {
-      "newTestFile": "test/pbsDebugPush.test.js — 33項測試，涵蓋施工令CASE A-R（正確secret x NEW/UPDATED/CLEARED、無secret、錯secret、GET方法、無效JSON、source!=pbs、無效lifecycle、缺eventId、缺fingerprint、過大body、確認不呼叫LINE/CCTV、確認不寫Shared Feed/notified-state/Pipeline Trace、確認零Production business KV寫入）加上auth防回退、secret不外洩、冪等行為、index.js routing整合測試。",
-      "fullRegression": "1385項測試／1352 pass／33 fail，失敗清單與變更前基線（1352/1319/33）逐項比對完全相同，NEW FAILURES=0。"
+      "windowsPrototypeTests": "118/118 pass, independently verified by this Cloud Session (git worktree)",
+      "cloudflareFullRegression": "1385 tests / 1352 pass / 33 fail — identical failure set to the pre-round baseline (1385/1352/33, unchanged since V1.9.5 as no Cloudflare src/ code was touched this round), NEW FAILURES = 0. Verified via git stash -u diff methodology."
     },
-    "notTouchedByThisRound": [
-      "LINE",
-      "CCTV",
-      "Shared Feed",
-      "正式Pipeline",
-      "正式KV business event state",
-      "Production PBS接管",
-      "V1.9.3 PBS 30分鐘輪詢閘門",
-      "TDX",
-      "Cron",
-      "Windows Prototype",
-      "feature/pbs-local-edge-filter-prototype分支（未merge，未讀取，未修改）"
-    ],
-    "nextPhase": "Claude Browser對已部署的endpoint做唯讀/安全驗證（尚未執行，見production Verification）；之後才由GPT/Windows端新增Debug Push client——必須等Claude Browser驗證後才進行，且secret未曾發給Windows。",
+    "notMergedToMain": true,
     "productionVerification": {
-      "attempted": true,
-      "result": "NOT_OBSERVED — sandbox對Production Worker網域（含Cloudflare Dashboard）的outbound HTTPS一律被環境自身的egress proxy阻擋（與V1.9.3/V1.9.4輪已確認的限制相同）。未假報PASS。"
+      "attempted": false,
+      "note": "This round made no Cloudflare runtime change to verify in Production — the Debug Receiver itself (V1.9.5) was already sealed with its own Production-verification note. Windows-side runtime/Secret-promotion facts are human-reported and explicitly marked as such throughout this record; this session verified only what git could confirm (branch/commit/merge-state/test count)."
     },
-    "readerNote": "完成後STOP，未自行開始：Windows Debug Push client、LINE integration、PBS polling retirement、V1.9.6。"
+    "readerNote": "完成後 STOP，未自行開始 V1.9.7。不得自行開始：merge feature branch、LINE/CCTV/business-KV整合、PBS輪詢退休、修改Windows Secret/Task Scheduler、修改本機Prototype runtime。",
+    "sealCommit": "a674b47"
   },
   "taskSealHistory": [
+    {
+      "task": "WINDOWS_CLOUDFLARE_DEBUG_PUSH_ENDPOINT_V1_9_5",
+      "status": "SEALED",
+      "sealedAt": "2026-08-27",
+      "releaseVersion": "V1.9.5",
+      "fixCommit": "56b24d3",
+      "summary": "Windows->Cloudflare Debug-only Push Endpoint：新增POST /internal/pbs-debug-push，獨立Secret PBS_DEBUG_PUSH_SECRET、雜湊常數時間比對、結構性debug-only邊界（0 import到LINE/CCTV/SharedFeed/PipelineTrace，0 KV觸碰）、per-isolate冪等（NOT_PERSISTENT）。33項新測試，NEW FAILURES=0（1385項）。Production驗證NOT_OBSERVED（sandbox egress阻擋）。完整記錄見06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V1.9.5條目。"
+    },
     {
       "task": "PIPELINE_TRACE_READ_OPTIMIZATION_V1_9_4",
       "status": "SEALED",

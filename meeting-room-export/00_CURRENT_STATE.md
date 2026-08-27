@@ -9,20 +9,20 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V1.9.5（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | 948401150dbb61e592b09052c250c9376275ebf5 |
+| Current Version | V1.9.6（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | d07ba0e666230a4c1c38af562920f44c8f07352c |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty (5 changed source file(s)) |
+| Source working tree | dirty (13 changed source file(s)) |
 | Production | DEPLOYED |
-| Production Verification | V1.9.5 endpoint added and unit-tested (test/pbsDebugPush.test.js, 33 tests, 0 fetch/0 KV calls confirmed) — real Production endpoint verification NOT_OBSERVED (sandbox egress blocked, see 07_KNOWN_ISSUES.md); Claude Browser read-only verification is the recommended next step |
-| Current Phase | Production maintenance — V1.9.5 SEALED（無施工中項目） |
-| Current Task | none（無進行中工作）。Latest completed task = WINDOWS_CLOUDFLARE_DEBUG_PUSH_ENDPOINT_V1_9_5，status = SEALED（前序 PIPELINE_TRACE_READ_OPTIMIZATION_V1_9_4、KV_WRITE_OPTIMIZATION_V1_9_3_PHASE_2 亦為 SEALED）。CURRENT_OFFICIAL_VERSION = V1.9.5。本輪新增 POST /internal/pbs-debug-push（Debug-only接收端），只證明 Windows→Cloudflare push 可行：驗證身份/資料格式/冪等判斷/log/ACK。WINDOWS_PUSH_ENABLED=NO（尚未真的發送任何真實事件），PRODUCTION_PIPELINE_INTEGRATION=NO，PBS_30_MIN_POLLING=PRESERVED。零新增業務KV寫入，結構性保證不觸碰LINE/CCTV/Shared Feed/Pipeline Trace。詳見 SYSTEM_STATE.json 的 taskSeal 與 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md 的 V1.9.5 條目。 |
-| Latest Completed Version | V1.9.5 |
-| Known Blocker | 無程式碼層級 blocker。本 sandbox session 對 Production Worker 網域（含 Cloudflare Dashboard）的 outbound HTTPS 一律被環境自身的 egress proxy 阻擋，故本輪 endpoint 的 Production 唯讀驗證為 NOT_OBSERVED——下一步（Claude Browser 對已部署 endpoint 做唯讀/安全驗證）需等有可連線 Production 的環境或真人執行。 |
+| Production Verification | V1.9.6 is a governance/documentation seal — no new Cloudflare runtime code this round (Debug Receiver remains V1.9.5 code, already verified in that round). Windows-side runtime facts (Task Scheduler, real Secret promotion, Claude Browser mock verification) are human-reported and explicitly marked as such, not independently verified by this sandbox (no network access to the Windows machine or Cloudflare Dashboard). |
+| Current Phase | Production maintenance — V1.9.6 SEALED（治理封版，無施工中項目） |
+| Current Task | none（無進行中工作）。Latest completed task = PBS_WINDOWS_LOCAL_EDGE_DEBUG_PUSH_INTEGRATION_V1_9_6，status = SEALED（前序 WINDOWS_CLOUDFLARE_DEBUG_PUSH_ENDPOINT_V1_9_5、PIPELINE_TRACE_READ_OPTIMIZATION_V1_9_4 亦為 SEALED）。CURRENT_OFFICIAL_VERSION = V1.9.6。本輪為治理封版令：把 2026-08-26～27 完成的 Windows 本機邊緣篩選＋Cloudflare Debug Push 架構正式寫入 Engineering Memory，本輪未 merge feature branch、未新增 Cloudflare runtime 變更、未整合 LINE/CCTV/Business KV、未退休既有 PBS 輪詢。WINDOWS_REAL_DEBUG_PUSH=ACTIVE（真人已啟用），WINDOWS_TO_CLOUDFLARE_DEBUG_CHANNEL=VERIFIED，PBS_30_MIN_POLLING=PRESERVED，PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY=PENDING_BEFORE_PRODUCTION。詳見 SYSTEM_STATE.json 的 taskSeal 與 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md／03_ARCHITECTURE.md 的 V1.9.6 條目。 |
+| Latest Completed Version | V1.9.6 |
+| Known Blocker | 無程式碼層級 blocker。本輪為治理封版，Windows 端執行期狀態（Task Scheduler 常駐、真實 Secret 生效、Claude Browser mock 驗證）本 sandbox 無法連線 Windows 機器或 Cloudflare Dashboard 獨立驗證，相關欄位已誠實標示為人類回報，未假冒本 Session 證實。 |
 | Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 無待辦，需真人另行授權才能繼續。下一步：Claude Browser 對已部署的 /internal/pbs-debug-push 做唯讀/安全驗證（尚未執行）；驗證通過後才由 GPT/Windows 端新增 Debug Push client 並開始真實推送——本輪未把 secret 發給 Windows，未啟用真實推送，不自行開始。 |
-| Export Generated At | 2026-08-27T04:24:26.219Z |
+| Next Action | 無待辦，需真人另行授權才能繼續。Phase 1（目前）：Real Debug Observation，至少觀察2-4小時或至少1筆真實NEW/UPDATED/CLEARED，驗證Windows detection/Cloudflare ACK/duplicate/failure rate/false positive/false clear。不自行開始 Phase 2 以後工作（Persistent Idempotency Design／Production Business Pipeline／LINE activation／PBS輪詢退休），也不自行開始 V1.9.7。 |
+| Export Generated At | 2026-08-27T09:58:55.323Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
@@ -54,23 +54,37 @@ bump 到 `V1.9.0`，同一個 commit 內完成。
 - 大型不相容版本 → major：`→ V2.0.0`
 - 純文件／治理／Engineering Memory／測試整理 → 不升 Product Version
 
-## PBS 本機邊緣篩選 Prototype（2026-08-26，LOCAL_ONLY，不是本輪 Product Version 事件）
+## PBS Windows Local Edge Debug Push Integration（V1.9.6，2026-08-27，ACTIVE／Debug-only）
 
-真人已在自己的 Windows 機器（`C:\Users\mrhap\traffic-reporter\pbs-relay`）完成一個
-**本機（Windows）** PBS 邊緣篩選 Prototype（`localMonitor.js`/`localPrototype.js`/
-`localState.js`），對官方 PBS raw feed 做服務區＋事故關鍵字篩選與
-NEW/UPDATED/CLEARED/UNCHANGED 判斷，輸出 `SHOULD_PUSH` 信號。**這段程式碼已由真人
-（經另一個 Windows 本機 agent）commit/push 進 GitHub 的 feature branch**
-（`LOCAL_PROTOTYPE_CODE_GITHUB_STATUS = COMMITTED_TO_FEATURE_BRANCH`，
-`LOCAL_PROTOTYPE_GITHUB_BRANCH = feature/pbs-local-edge-filter-prototype`，
-commit `c34b52c045cd05eb4be01b91debe5ba002c73cb6`，**尚未 merge 進 main**），
-Windows → Cloudflare 的實際傳輸尚未建立（`WINDOWS_TO_CLOUDFLARE_PUSH =
-NOT_STARTED`）。**不影響本專案任何 Production runtime**——`PRODUCT_VERSION_BUMP =
-NO`，版本仍照 Production 自己的節奏推進（與此 Prototype 無關），目前為 `V1.9.5`。
-完整架構、獨立驗證後的真實測試結果、已知限制與路線圖 →
-`07_KNOWN_ISSUES.md`；機器可讀狀態 → `SYSTEM_STATE.json` 的
-`pbsLocalEdgeFilterPrototype`。**下一個 Agent 不要假設這個 feature branch 已經
-merge 進 main，不要自行 merge，也不要自行開始 Windows → Cloudflare 的正式傳輸。**
+真人的 Windows 機器（`C:\Users\mrhap\traffic-reporter\pbs-relay`）現在**真的在跑**一個
+常駐的 PBS 本機邊緣篩選＋Debug Push 整合：`localMonitor.js` 每 3 分鐘抓一次官方 PBS
+feed，經本機服務區篩選（**現已改為直接 import 並重用 Production 自己的
+`src/pbs/hsinchuFilter.js#isPbsEventHsinchuRelevant` 與 `src/pbs/roadName.js#normalizePbsRoad`**，
+不再是舊版那個會誤收鶯歌/楊梅的寬鬆矩形）與事件生命週期比較（NEW/UPDATED/CLEARED/
+UNCHANGED/MISSING_PENDING_CLEAR），只有 `SHOULD_PUSH=YES` 的事件才呼叫 V1.9.5 建立的
+Debug-only 接收端 `POST /internal/pbs-debug-push`。**程式碼已 push 進 GitHub feature
+branch**（`feature/pbs-local-edge-filter-prototype`，最新 commit
+`95ecdc4718f836ff36c974e829b549f262e6b936`，**尚未 merge 進 main**）——本 Cloud
+Session 已獨立唯讀驗證：`git fetch`＋`git merge-base --is-ancestor`（確認未合併）＋
+`git worktree` 乾淨簽出跑 `node --test`，**118 項全數通過，0 失敗**，與真人回報數字
+完全一致（先前輪次的 `cache.js` 缺口，此 commit 已補上）。
+
+**現狀旗標**：`WINDOWS_LOCAL_EDGE_FILTER = ACTIVE`、`WINDOWS_REAL_DEBUG_PUSH = ACTIVE`
+（真人已設定 `PBS_DEBUG_PUSH_ENABLED=true`）、`CLOUDFLARE_DEBUG_RECEIVER = ACTIVE`
+（V1.9.5）、`WINDOWS_TO_CLOUDFLARE_DEBUG_CHANNEL = VERIFIED`、
+`WINDOWS_TO_PRODUCTION_BUSINESS_PIPELINE = NOT_STARTED`（不進 LINE／CCTV／Shared
+Feed／正式 KV）、`LINE_INTEGRATION = NOT_STARTED`、`PBS_30_MIN_POLLING = PRESERVED`
+（Cloudflare 既有 PBS 輪詢完全不受影響，仍是目前的正式路徑）、
+`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY = PENDING_BEFORE_PRODUCTION`（目前只有
+per-isolate 記憶體內判斷，**正式接上 LINE 前必須解決**）。**不影響本專案任何 Product
+Version 的 runtime 行為改變本身不是這個 Prototype 造成的**——`src/version.js` 這次的
+bump 是治理封版（把已完成的 Windows 端架構正式寫入 Engineering Memory），並非新的
+Cloudflare runtime 變更；Cloudflare Worker 端的實際程式碼仍是 V1.9.5 的
+`/internal/pbs-debug-push`。完整架構圖、服務區/CLEARED 治理修正、Secret 治理教訓、
+路線圖 → `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`；機器可讀狀態 →
+`SYSTEM_STATE.json` 的 `pbsLocalEdgeFilterPrototype`。**下一個 Agent：不要自行 merge
+這個 feature branch、不要自行開始 LINE/CCTV/Business KV 整合、不要修改 Windows
+Secret 或 Task Scheduler、不要碰本機 Prototype runtime、不要自行開始 V1.9.7。**
 
 ## 我能改什麼／不能改什麼（一句話版）
 

@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "project": "traffic-reporter",
-  "verifiedFromRepoAt": "2026-08-27T04:24:26.219Z",
-  "verifiedFromCommit": "948401150dbb61e592b09052c250c9376275ebf5",
+  "verifiedFromRepoAt": "2026-08-27T09:58:55.323Z",
+  "verifiedFromCommit": "d07ba0e666230a4c1c38af562920f44c8f07352c",
   "note": "Everything in this file is derived from wrangler.jsonc/src/index.js in THIS repo checkout, verifiable by any future reader by re-running the export script. Fields the repo cannot itself verify (real Cloudflare Dashboard state) are explicitly marked unverified, never guessed.",
   "worker": {
     "name": "traffic-reporter",
