@@ -213,7 +213,73 @@
 // regression suite and measured write/day figures, and
 // 07_KNOWN_ISSUES.md for the quantified V1.9.2-vs-V1.9.3 comparison.
 
-export const APP_VERSION = 'V1.9.3';
+// V1.9.4 (2026-08-27) — Pipeline Trace Read Optimization. Real Production
+// measurement, reported right after V1.9.3 went live: GET
+// /admin/pipeline-trace and /admin/pipeline-trace-view both TTFB'd at
+// ≈59.1s (against ≈0.4-0.8s for /, /version, /health). Root cause,
+// confirmed from the code itself, not guessed: listPipelineTrace's old
+// collectFlattenedTraceEntries always decoded up to MAX_ENTRIES_SCANNED
+// (500) keys SEQUENTIALLY — one `await kv.get()` at a time — BEFORE the
+// page's own `limit` (default 60) was ever applied, regardless of whether
+// any filter was even set. A plain "show me the latest 60" page paid for
+// 500 sequential KV round-trips every single time.
+//
+// Fixed by ONE new function, scanTraceEntriesProgressively (replacing
+// collectFlattenedTraceEntries), combining three "cuts" that are really
+// the same mechanism seen from three angles:
+//   1. EARLY STOP — a no-filter query (every entry matches) stops the
+//      instant `boundedLimit` entries have been decoded — never anywhere
+//      near 500. Measured (test/pipelineTraceReadPerformance.test.js CASE
+//      C): 500 keys available, default limit 60 -> only 60 kv.get() calls
+//      (was 500).
+//   2. PROGRESSIVE SCAN — a filtered query reads in ROUNDS with a growing
+//      cumulative decode target (round 1 = boundedLimit +
+//      NO_FILTER_SCAN_BUFFER(20); each further round doubles via
+//      PROGRESSIVE_SCAN_GROWTH_FACTOR(2), capped at MAX_ENTRIES_SCANNED) —
+//      never starts by fixedly reading 500. CASE D/E/G cover a sparse
+//      filter, a road filter, and a filter whose matches only exist in
+//      the oldest segment (forcing several rounds, still bounded).
+//   3. BOUNDED PARALLEL READS — kv.get() calls within a round now run in
+//      fixed PARALLEL_GET_BATCH_SIZE(20) concurrent chunks via
+//      Promise.all (one chunk completing before the next starts), never
+//      fully sequential and never the whole scan in one giant
+//      Promise.all. 20 was chosen empirically (this repo has no existing
+//      KV/Workers concurrency ceiling to defer to) as a middle value in
+//      the order's own suggested 20-30 range — see
+//      test/pipelineTraceReadPerformance.test.js's own round-trip-count
+//      comparison across 10/20/30/50.
+//
+// V1/V2 SCHEMA COEXISTENCE — UNCHANGED policy, improved mechanism: the
+// legacy per-entry `debug:pipeline-trace:v1:*` keys are still never
+// deleted or bulk-migrated (left to expire on their own pre-existing 24h
+// TTL); the two prefixes' cheap kv.list() enumerations now run
+// CONCURRENTLY (Promise.all) instead of sequentially, and an empty prefix
+// (e.g. once V1 fully expires) already finishes on its first page via the
+// existing `list_complete` check — no separate fast-path needed.
+//
+// OBSERVABILITY (new, read straight off numbers already computed, zero
+// new KV writes) — GET /admin/pipeline-trace now also returns
+// kvListCalls/kvGetCalls/v1KeysScanned/v2BatchKeysScanned/v1KeyCount/
+// v2BatchKeyCount/entriesDecoded/entriesMatched/readDurationMs alongside
+// the pre-existing scannedKeyCount/totalKeyCount/scanTruncated (which
+// existed in the function's return value before this round but never
+// reached the JSON response until now); /admin/pipeline-trace-view shows
+// the same numbers in a small page-bottom diagnostics strip. No secrets/
+// tokens/raw CCTV URLs in either.
+//
+// NOT touched by this round (explicit prohibition, verified): Pipeline
+// Trace WRITE path (persistPipelineTraceBatch/recordPipelineTrace/
+// hasPipelineTraceRelevantChange), V1.9.3's PBS 30-minute schedule gate,
+// Health Snapshot WRITE_ON_CHANGE, the Windows Prototype, Windows ->
+// Cloudflare Push, LINE, CCTV, TDX, Cron cadence. KV writes added by this
+// round: 0 (test/pipelineTraceReadPerformance.test.js #23 asserts this
+// directly against a counting mock).
+//
+// See test/pipelineTraceReadPerformance.test.js for the full CASE A-I
+// deterministic fixture and 23-item regression suite, and
+// 07_KNOWN_ISSUES.md for the quantified before/after read-cost figures.
+
+export const APP_VERSION = 'V1.9.4';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

@@ -402,6 +402,10 @@ const PAGE_STYLE = `
     border-radius: 8px; padding: 8px 12px; margin: -8px 0 16px;
   }
   .filter-banner-none { color: #9aa1ac; background: #171b21; border-color: #2a2f3a; }
+  .diagnostics-footer {
+    font-size: 12px; color: #6b7280; background: #14171d; border: 1px solid #262b34;
+    border-radius: 8px; padding: 6px 12px; margin: 16px 0 0;
+  }
   .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; background: #1b1f26; padding: 12px; border-radius: 12px; border: 1px solid #262b34; }
   .filters input, .filters select {
     flex: 1 1 120px; min-width: 90px; padding: 8px 10px; border: 1px solid #333a46; border-radius: 8px;
@@ -504,7 +508,25 @@ function renderActiveFiltersBanner(filters) {
   return `<p class="filter-banner">✅ 目前套用篩選：${parts.join('　')}</p>`;
 }
 
-function renderPage({ rows, filters, count, kvAvailable, scanTruncated }) {
+// V1.9.4 (order section 八) — small, plain-numbers-only diagnostic strip
+// so a human can see WHY a page took however long it took without having
+// to reverse-engineer it via external measurement (exactly the gap this
+// round's own root-cause investigation had to fill by hand). Deliberately
+// only counts/ms already computed by listPipelineTrace — no secrets,
+// tokens, raw CCTV URLs, or any payload field.
+function renderDiagnosticsFooter({ scannedKeyCount, kvGetCalls, kvListCalls, totalKeyCount, scanTruncated, readDurationMs }) {
+  const parts = [
+    `掃描鍵數 scannedKeyCount=${escapeHtml(String(scannedKeyCount ?? '?'))}`,
+    `KV get 次數=${escapeHtml(String(kvGetCalls ?? '?'))}`,
+    `KV list 次數=${escapeHtml(String(kvListCalls ?? '?'))}`,
+    `總鍵數 totalKeyCount=${escapeHtml(String(totalKeyCount ?? '?'))}`,
+    `耗時=${escapeHtml(String(readDurationMs ?? '?'))}ms`,
+    `是否截斷 scanTruncated=${scanTruncated ? '是' : '否'}`,
+  ];
+  return `<p class="diagnostics-footer">🔧 ${parts.join('　')}</p>`;
+}
+
+function renderPage({ rows, filters, count, kvAvailable, scanTruncated, diagnostics }) {
   return `<!doctype html>
 <html lang="zh-Hant">
 <head>
@@ -526,6 +548,7 @@ ${
       : ''
   }
 ${!kvAvailable ? '<div class="empty">⚠️ 無法讀取 KV，暫無資料</div>' : count === 0 ? '<div class="empty">這個篩選條件下沒有資料</div>' : rows}
+${kvAvailable && diagnostics ? renderDiagnosticsFooter(diagnostics) : ''}
 <div class="footer">
   <a href="/admin/pipeline-trace">查看原始 JSON</a>
   <a href="/admin/broadcast-provenance">Broadcast Provenance（僅成功推播）</a>
@@ -558,17 +581,27 @@ export async function handlePipelineTraceView(env, request, now = new Date()) {
     limit: url.searchParams.get('limit') || '',
   };
 
-  const { records, kvAvailable, scanTruncated } = await listPipelineTrace(env.TRAFFIC_KV, {
-    limit: filters.limit || undefined,
-    source: filters.source || undefined,
-    q: filters.q || undefined,
-    road: filters.road || undefined,
-    rawId: filters.rawId || undefined,
-    status: filters.status || undefined,
-  });
+  const { records, kvAvailable, scanTruncated, scannedKeyCount, kvGetCalls, kvListCalls, totalKeyCount, readDurationMs } =
+    await listPipelineTrace(env.TRAFFIC_KV, {
+      limit: filters.limit || undefined,
+      source: filters.source || undefined,
+      q: filters.q || undefined,
+      road: filters.road || undefined,
+      rawId: filters.rawId || undefined,
+      status: filters.status || undefined,
+    });
 
   const rows = records.map((entry) => renderRow(entry, now)).join('\n');
-  const html = renderPage({ rows, filters, count: records.length, kvAvailable, scanTruncated });
+  const html = renderPage({
+    rows,
+    filters,
+    count: records.length,
+    kvAvailable,
+    scanTruncated,
+    // V1.9.4 (order section 八) — page-bottom diagnostics, see
+    // renderDiagnosticsFooter's own comment.
+    diagnostics: { scannedKeyCount, kvGetCalls, kvListCalls, totalKeyCount, scanTruncated, readDurationMs },
+  });
 
   // V1.8.7.6 — belt-and-suspenders on top of applyAdminSecurityHeaders'
   // own Cache-Control:no-store (index.js wraps every ADMIN_PATHS response

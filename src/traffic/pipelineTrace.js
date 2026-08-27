@@ -110,7 +110,12 @@ export const MAX_LIST_LIMIT = 100;
 // — this endpoint is Admin-triggered, on-demand, never on the hot
 // broadcast path, but still kept cheap and predictable regardless of how
 // many entries exist within the 24h TTL window.
-const MAX_ENTRIES_SCANNED = 500;
+// V1.9.4 — exported (was private) so the read-performance fixture
+// (test/pipelineTraceReadPerformance.test.js) and the final-report
+// numbers it produces reference this ONE constant, never a hand-copied
+// literal `500` that could silently drift out of sync with the real
+// value.
+export const MAX_ENTRIES_SCANNED = 500;
 // V1.8.7.3 — root cause of "Pipeline Trace 篩選失效"/"看不到最新事件":
 // see listPipelineTrace's own comment for the full write-up. This bounds
 // the KEY-ENUMERATION pass (cheap `kv.list()` calls, no record bodies
@@ -123,6 +128,53 @@ const MAX_ENTRIES_SCANNED = 500;
 // genuinely pathological key count (e.g. a future TTL/pruning bug) — the
 // real termination condition is always `page.list_complete`.
 const MAX_LIST_PAGES = 40;
+
+// V1.9.4 (Pipeline Trace Read Optimization) — real Production measurement:
+// GET /admin/pipeline-trace and /admin/pipeline-trace-view both TTFB'd at
+// ≈59.1s. Root cause, confirmed from the code itself (not guessed): the
+// old collectFlattenedTraceEntries always decoded up to MAX_ENTRIES_SCANNED
+// (500) keys SEQUENTIALLY — one `await kv.get()` at a time — BEFORE the
+// page's own `limit` (default 60) was ever applied, regardless of whether
+// any filter was even set. A plain, unfiltered "show me the latest 60"
+// page paid for 500 sequential KV round-trips every time. See
+// scanTraceEntriesProgressively's own comment for the replacement
+// algorithm; these three constants are its only tunables.
+
+// How many entries PAST `boundedLimit` the first scan round targets on a
+// completely unfiltered query, to absorb a small number of corrupt/
+// unparseable stored entries (collectFlattenedTraceEntries's successor
+// still skips those, same fail-open principle — "one bad write must
+// never break the whole listing"). Sized at roughly a third of
+// DEFAULT_LIST_LIMIT (60 -> 20): generous enough to cover corruption far
+// beyond anything ever actually observed in this project (zero corrupt-
+// entry reports to date), while keeping a plain no-filter page's scan a
+// small double-digit number of keys — never hundreds. See
+// test/pipelineTraceReadPerformance.test.js CASE A/B for the measured
+// shape this produces.
+export const NO_FILTER_SCAN_BUFFER = 20;
+
+// A filtered query that doesn't find enough matches in round 1 (target =
+// boundedLimit + NO_FILTER_SCAN_BUFFER) needs to scan further back — each
+// subsequent round DOUBLES the cumulative scan target rather than
+// growing it by a small fixed step, so a query that genuinely needs to
+// reach deep into the 24h window (or all the way to MAX_ENTRIES_SCANNED)
+// gets there in a handful of rounds, not dozens of tiny ones — while the
+// overwhelmingly common case (enough matches in round 1) never pays for
+// a second round at all.
+export const PROGRESSIVE_SCAN_GROWTH_FACTOR = 2;
+
+// How many kv.get() calls run CONCURRENTLY per batch, replacing the old
+// fully-sequential one-at-a-time await. This repo has no existing
+// documented KV/Workers concurrency ceiling to defer to (checked before
+// picking a number). 20 was chosen empirically — see
+// test/pipelineTraceReadPerformance.test.js's own PARALLEL_BATCH_SIZE
+// comparison across 10/20/30/50 — as a middle value that captures nearly
+// all of the available speedup over sequential reads without issuing a
+// burst large enough to risk overwhelming KV or this Worker's own
+// subrequest budget in one shot. Deliberately never the FULL scan target
+// in one Promise.all (explicitly forbidden by this round's own order) —
+// always this fixed, small batch size, however many batches that takes.
+export const PARALLEL_GET_BATCH_SIZE = 20;
 
 function safeErrorMessage(err) {
   if (err && typeof err.message === 'string') return err.message;
@@ -812,57 +864,121 @@ async function listTraceKeysForPrefix(kv, prefix) {
     const page = await kv.list({ prefix, cursor });
     for (const k of page.keys || []) keys.push(k.name);
     pages += 1;
+    // V1.9.4 — when a prefix genuinely has zero (or few) keys, this loop
+    // already exits on its first page via `page.list_complete` — no
+    // change needed here for that (order section 六, item 4: "V1 前綴沒有
+    // key 時應能快速結束 V1 掃描"). `pages` is now returned as `listCalls`
+    // so the caller (listPipelineTrace) can report a real kv.list() count
+    // instead of leaving it invisible, per section 八's observability ask.
     if (page.list_complete || !page.cursor || pages >= MAX_LIST_PAGES) break;
     cursor = page.cursor;
   }
-  return keys;
+  return { keys, listCalls: pages };
 }
 
 /**
- * V1.9.2 — reads descriptors newest-first (already merged/sorted by the
- * caller — see listPipelineTrace) and flattens them into individual trace
- * records, stopping once `maxEntries` have been collected. A v1
- * descriptor yields exactly one record (its own `kv.get`); a v2 batch
- * descriptor yields every record in its `entries` array, newest-within-
- * batch first (see the loop below for why). `scannedKeyCount` counts KV
- * `get` OPERATIONS (one per descriptor actually read), matching what this
- * field always meant before v2 existed — "how many keys did this listing
- * actually read", not "how many entries came out of them".
+ * V1.9.4 (Pipeline Trace Read Optimization) — replaces the old
+ * collectFlattenedTraceEntries, which always sequentially decoded up to
+ * MAX_ENTRIES_SCANNED (500) keys — one `await kv.get()` at a time — before
+ * the page's own `limit` was ever applied, regardless of whether a filter
+ * was even set. This is the real ≈59s-TTFB root cause (see the
+ * NO_FILTER_SCAN_BUFFER/PROGRESSIVE_SCAN_GROWTH_FACTOR/
+ * PARALLEL_GET_BATCH_SIZE constants above for the full write-up).
+ *
+ * Combines the order's three "cuts" into ONE loop, since they are really
+ * the same mechanism seen from three angles:
+ *   - EARLY STOP (section 三): the scan stops the instant `boundedLimit`
+ *     MATCHES have been found — a no-filter query (matches() always true)
+ *     therefore stops almost immediately after decoding ~boundedLimit
+ *     entries, never anywhere near 500.
+ *   - PROGRESSIVE SCAN (section 四): descriptors are consumed in ROUNDS
+ *     with a growing CUMULATIVE decode target (round 1 =
+ *     boundedLimit + NO_FILTER_SCAN_BUFFER; each further round multiplies
+ *     that target by PROGRESSIVE_SCAN_GROWTH_FACTOR, capped at
+ *     `maxEntries`) — a filtered query that doesn't find enough matches in
+ *     round 1 reaches further back, but never starts by fixedly reading
+ *     `maxEntries`.
+ *   - BOUNDED PARALLEL READS (section 五): within a round, descriptors are
+ *     read in fixed PARALLEL_GET_BATCH_SIZE chunks via `Promise.all` — one
+ *     chunk completing before the next starts — never the whole round (let
+ *     alone all `maxEntries`) in a single `Promise.all`.
+ *
+ * `matches` is applied to each entry AS IT IS DECODED (before it is ever
+ * pushed to `records`), so the loop can break out of a chunk the instant
+ * enough matches exist — a heavily-filtered query still has to actually
+ * DECODE candidates to know they don't match (no way around that without
+ * a secondary index this project doesn't have), but never decodes more
+ * than it needs to find out.
+ *
+ * `scannedKeyCount` counts kv.get() OPERATIONS (one per descriptor
+ * actually read) — same meaning this field always had.
+ * `entriesDecoded` counts flattened entries actually parsed (a v2 batch
+ * key can yield many), independent of how many of them matched.
  */
-async function collectFlattenedTraceEntries(kv, descriptorsNewestFirst, maxEntries) {
-  const entries = [];
+async function scanTraceEntriesProgressively(kv, descriptorsNewestFirst, boundedLimit, maxEntries, matches) {
+  const records = [];
   let scannedKeyCount = 0;
-  for (const descriptor of descriptorsNewestFirst) {
-    if (entries.length >= maxEntries) break;
-    scannedKeyCount += 1;
-    const raw = await kv.get(descriptor.key);
-    if (!raw) continue;
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      continue; // corrupt entry/batch — skip it, never let one bad write break the listing
+  let entriesDecoded = 0;
+  let v1KeysScanned = 0;
+  let v2BatchKeysScanned = 0;
+  let descriptorCursor = 0;
+
+  let cumulativeTarget = Math.min(maxEntries, boundedLimit + NO_FILTER_SCAN_BUFFER);
+
+  while (descriptorCursor < descriptorsNewestFirst.length && records.length < boundedLimit && entriesDecoded < maxEntries) {
+    while (
+      descriptorCursor < descriptorsNewestFirst.length &&
+      entriesDecoded < cumulativeTarget &&
+      entriesDecoded < maxEntries &&
+      records.length < boundedLimit
+    ) {
+      const chunk = descriptorsNewestFirst.slice(descriptorCursor, descriptorCursor + PARALLEL_GET_BATCH_SIZE);
+      descriptorCursor += chunk.length;
+      scannedKeyCount += chunk.length;
+      // eslint-disable-next-line no-await-in-loop -- intentionally one
+      // bounded batch at a time, never all descriptors at once (section 五)
+      const rawValues = await Promise.all(chunk.map((descriptor) => kv.get(descriptor.key)));
+
+      for (let i = 0; i < chunk.length; i += 1) {
+        if (records.length >= boundedLimit) break;
+        const descriptor = chunk[i];
+        const raw = rawValues[i];
+        if (descriptor.type === 'v1') v1KeysScanned += 1;
+        else v2BatchKeysScanned += 1;
+        if (!raw) continue;
+        let parsed;
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          continue; // corrupt entry/batch — skip it, never let one bad write break the listing
+        }
+        if (descriptor.type === 'v1') {
+          if (!parsed || typeof parsed !== 'object') continue;
+          entriesDecoded += 1;
+          if (matches(parsed)) records.push(parsed);
+          continue;
+        }
+        // v2 batch — flatten, newest-within-batch first (same convention
+        // collectFlattenedTraceEntries always used — see that history's
+        // own comment, preserved here verbatim).
+        if (!parsed || !Array.isArray(parsed.entries)) continue;
+        for (let j = parsed.entries.length - 1; j >= 0; j -= 1) {
+          if (records.length >= boundedLimit) break;
+          const record = parsed.entries[j];
+          if (!record || typeof record !== 'object') continue;
+          entriesDecoded += 1;
+          if (matches(record)) records.push(record);
+        }
+      }
     }
-    if (descriptor.type === 'v1') {
-      if (parsed && typeof parsed === 'object') entries.push(parsed);
-      continue;
-    }
-    // v2 batch — flatten. Reversed (last-appended-this-round shown
-    // first): every entry in one batch shares the same (or
-    // near-identical) round timestamp, so there is no real chronological
-    // order to preserve within it — this mirrors the OLD v1 scheme's own
-    // `sequence` tiebreak (higher sequence = written later this round =
-    // shown first after the newest-first reverse — see
-    // recordPipelineTrace's own comment), so a mixed v1/v2 history still
-    // reads as one consistent convention throughout.
-    if (!parsed || !Array.isArray(parsed.entries)) continue;
-    for (let i = parsed.entries.length - 1; i >= 0; i -= 1) {
-      if (entries.length >= maxEntries) break;
-      const record = parsed.entries[i];
-      if (record && typeof record === 'object') entries.push(record);
-    }
+
+    if (records.length >= boundedLimit || descriptorCursor >= descriptorsNewestFirst.length || entriesDecoded >= maxEntries) break;
+    // Not enough matches yet within this round's target — open a bigger
+    // one (section 四: "逐步擴大掃描", never straight to `maxEntries`).
+    cumulativeTarget = Math.min(maxEntries, cumulativeTarget * PROGRESSIVE_SCAN_GROWTH_FACTOR);
   }
-  return { entries, scannedKeyCount };
+
+  return { records, scannedKeyCount, entriesDecoded, v1KeysScanned, v2BatchKeysScanned };
 }
 
 /**
@@ -892,37 +1008,50 @@ export async function listPipelineTrace(kv, { limit = DEFAULT_LIST_LIMIT, source
   const boundedLimit = Math.max(1, Math.min(MAX_LIST_LIMIT, Number(limit) || DEFAULT_LIST_LIMIT));
   if (!kv) return { records: [], kvAvailable: false };
 
+  const startedAt = Date.now();
   try {
-    const v1Keys = await listTraceKeysForPrefix(kv, `${TRACE_KEY_PREFIX}:`);
-    const v2Keys = await listTraceKeysForPrefix(kv, `${TRACE_BATCH_KEY_PREFIX}:`);
+    // V1.9.4 — the two prefixes are independent kv.list() scans (cheap,
+    // key-enumeration only — never the bottleneck, see MAX_LIST_PAGES's
+    // own comment), so there is no reason to await them one after the
+    // other; running them concurrently costs nothing and the "V1 empty ->
+    // finishes fast" property (order section 六, item 4) holds for each
+    // independently either way.
+    const [v1List, v2List] = await Promise.all([
+      listTraceKeysForPrefix(kv, `${TRACE_KEY_PREFIX}:`),
+      listTraceKeysForPrefix(kv, `${TRACE_BATCH_KEY_PREFIX}:`),
+    ]);
 
     const descriptors = [
-      ...v1Keys.map((key) => ({ type: 'v1', key, sortKey: key.slice(TRACE_KEY_PREFIX.length + 1) })),
-      ...v2Keys.map((key) => ({ type: 'v2', key, sortKey: key.slice(TRACE_BATCH_KEY_PREFIX.length + 1) })),
+      ...v1List.keys.map((key) => ({ type: 'v1', key, sortKey: key.slice(TRACE_KEY_PREFIX.length + 1) })),
+      ...v2List.keys.map((key) => ({ type: 'v2', key, sortKey: key.slice(TRACE_BATCH_KEY_PREFIX.length + 1) })),
     ];
     // Newest first — see this function's own comment on why comparing
     // just the shared `<date>:<epochMs>:...` suffix is already correct
     // chronological order across both schemas.
     descriptors.sort((a, b) => (a.sortKey < b.sortKey ? 1 : a.sortKey > b.sortKey ? -1 : 0));
 
-    // V1.8.7.3's own MAX_ENTRIES_SCANNED bound, now applied to flattened
-    // ENTRIES rather than raw keys (see collectFlattenedTraceEntries) —
-    // a v2 batch can carry many entries per key, so bounding by entry
-    // count (not key count) is what actually keeps this cheap and
-    // predictable regardless of how many entries one Cron round wrote.
-    const { entries: scannedEntries, scannedKeyCount } = await collectFlattenedTraceEntries(kv, descriptors, MAX_ENTRIES_SCANNED);
+    // V1.9.4 — filters are applied AS EACH ENTRY IS DECODED (inside
+    // scanTraceEntriesProgressively), not in a second pass over an
+    // already-fully-scanned list — this is exactly what lets a filtered
+    // query stop scanning the instant it has enough matches, instead of
+    // always decoding MAX_ENTRIES_SCANNED first regardless of filters.
+    const matches = (record) => {
+      if (!record || typeof record !== 'object') return false;
+      if (source && record.identity?.source !== source) return false;
+      if (!roadFilterMatches(record.identity?.road, road)) return false;
+      if (rawId && record.identity?.rawId !== rawId) return false;
+      if (status && record.status !== status) return false;
+      if (!matchesFreeText(record, q)) return false;
+      return true;
+    };
 
-    const records = [];
-    for (const record of scannedEntries) {
-      if (records.length >= boundedLimit) break;
-      if (!record || typeof record !== 'object') continue;
-      if (source && record.identity?.source !== source) continue;
-      if (!roadFilterMatches(record.identity?.road, road)) continue;
-      if (rawId && record.identity?.rawId !== rawId) continue;
-      if (status && record.status !== status) continue;
-      if (!matchesFreeText(record, q)) continue;
-      records.push(record);
-    }
+    const { records, scannedKeyCount, entriesDecoded, v1KeysScanned, v2BatchKeysScanned } = await scanTraceEntriesProgressively(
+      kv,
+      descriptors,
+      boundedLimit,
+      MAX_ENTRIES_SCANNED,
+      matches
+    );
 
     // 2026-08-24 — a query only ever READS the newest MAX_ENTRIES_SCANNED
     // entries, so "no rows" can mean either "no such event" or "it is
@@ -936,7 +1065,24 @@ export async function listPipelineTrace(kv, { limit = DEFAULT_LIST_LIMIT, source
     // the view's decision, not this function's. See this project's "no
     // silent caps" discipline.
     const scanTruncated = descriptors.length > scannedKeyCount;
-    return { records, kvAvailable: true, scannedKeyCount, totalKeyCount: descriptors.length, scanTruncated };
+    return {
+      records,
+      kvAvailable: true,
+      scannedKeyCount,
+      totalKeyCount: descriptors.length,
+      scanTruncated,
+      // V1.9.4 (order section 八 — observability, no new KV schema/writes,
+      // read straight off numbers this function already computes):
+      kvListCalls: v1List.listCalls + v2List.listCalls,
+      kvGetCalls: scannedKeyCount, // same number as scannedKeyCount, named to match the order's own vocabulary
+      v1KeysScanned,
+      v2BatchKeysScanned,
+      v1KeyCount: v1List.keys.length,
+      v2BatchKeyCount: v2List.keys.length,
+      entriesDecoded,
+      entriesMatched: records.length,
+      readDurationMs: Date.now() - startedAt,
+    };
   } catch (err) {
     return { records: [], kvAvailable: false, error: safeErrorMessage(err) };
   }
@@ -1103,7 +1249,23 @@ export function buildTraceAnomalies(trace) {
  */
 export async function handlePipelineTrace(env, request) {
   const url = new URL(request.url);
-  const { records, kvAvailable, error } = await listPipelineTrace(env.TRAFFIC_KV, {
+  const {
+    records,
+    kvAvailable,
+    error,
+    scannedKeyCount,
+    totalKeyCount,
+    scanTruncated,
+    kvListCalls,
+    kvGetCalls,
+    v1KeysScanned,
+    v2BatchKeysScanned,
+    v1KeyCount,
+    v2BatchKeyCount,
+    entriesDecoded,
+    entriesMatched,
+    readDurationMs,
+  } = await listPipelineTrace(env.TRAFFIC_KV, {
     limit: url.searchParams.get('limit'),
     source: url.searchParams.get('source') || undefined,
     road: url.searchParams.get('road') || undefined,
@@ -1111,8 +1273,33 @@ export async function handlePipelineTrace(env, request) {
     status: url.searchParams.get('status') || undefined,
   });
 
+  // V1.9.4 (order section 八) — scannedKeyCount/totalKeyCount/
+  // scanTruncated were always computed by listPipelineTrace but never
+  // reached this JSON response before this round; the rest are the
+  // "additionally suggested, if addable without a KV schema/write change"
+  // fields — all read straight off numbers already computed above, no new
+  // KV call of any kind. Deliberately nothing beyond these plain counters
+  // and a duration — no secrets/tokens/raw CCTV URLs, same discipline as
+  // every other field this module already returns.
   return Response.json(
-    { kvAvailable, count: records.length, records, ...(error ? { error } : {}) },
+    {
+      kvAvailable,
+      count: records.length,
+      records,
+      scannedKeyCount,
+      totalKeyCount,
+      scanTruncated,
+      kvListCalls,
+      kvGetCalls,
+      v1KeysScanned,
+      v2BatchKeysScanned,
+      v1KeyCount,
+      v2BatchKeyCount,
+      entriesDecoded,
+      entriesMatched,
+      readDurationMs,
+      ...(error ? { error } : {}),
+    },
     { headers: { 'Cache-Control': 'no-store' } }
   );
 }
