@@ -137,7 +137,7 @@
     "PROTOTYPE_MERGED_TO_MAIN": "NO",
     "WINDOWS_TO_CLOUDFLARE_PUSH": "NOT_STARTED",
     "PRODUCTION_INTEGRATION": "NOT_STARTED",
-    "CURRENT_PRODUCT_VERSION": "V1.9.3",
+    "CURRENT_PRODUCT_VERSION": "V1.9.5",
     "PRODUCT_VERSION_BUMP": "NO",
     "NEXT_PRODUCT_RELEASE": "尚未決定 — 這個 Prototype 本身不是 Product Version 事件；下一個 V1.9.x/V1.10.0 只會在真正改變 Production runtime 的下一輪施工令裡決定（V1.9.3 KV Write Optimization Phase 2 與此 Prototype 無關，未曾修改 Prototype 任何程式碼）",
     "localPaths": {
@@ -165,45 +165,60 @@
     "readerNote": "這是文件記錄，不是完工的 Production 功能。Prototype 程式碼已在 GitHub 的 feature branch（未 merge 進 main），下一個 Agent 讀到這裡：不要假設它已 merge 進 main，不要假設 Windows -> Cloudflare 傳輸已存在，不要因為看到這個記錄就開始 Phase C 以後的工作——那需要真人另行授權，也不要自行 merge 這個 feature branch。"
   },
   "taskSeal": {
-    "task": "PIPELINE_TRACE_READ_OPTIMIZATION_V1_9_4",
+    "task": "WINDOWS_CLOUDFLARE_DEBUG_PUSH_ENDPOINT_V1_9_5",
     "status": "SEALED",
     "sealedAt": "2026-08-27",
-    "sealedBy": "human directive (路況工程部 V1.9.4 正式施工令｜Pipeline Trace 讀取效能優化)",
-    "releaseVersion": "V1.9.4",
-    "fixCommit": "3075114",
-    "realWorldTrigger": "V1.9.3 上線後真人回報全站 ERR_CONNECTION_TIMED_OUT（另立查修令調查，結論：與程式碼無關，sandbox 無法連 Production 驗證）。隨後真人在 Production 實測出真正的效能問題：/≈0.8s／/version≈0.4s／/health≈0.75s，但 /admin/pipeline-trace 與 /admin/pipeline-trace-view TTFB 皆≈59.1s。",
-    "rootCause": "listPipelineTrace 的舊 collectFlattenedTraceEntries 一律循序（一次一個 await kv.get()）解碼到 MAX_ENTRIES_SCANNED(500) 筆，在分頁 limit（預設60）套用之前，不論有無篩選條件。一個完全沒篩選、只要「最新60筆」的頁面，每次都要付出500次循序 KV 往返。",
-    "fix": {
-      "earlyStop": "無篩選查詢一旦解碼滿 boundedLimit 筆就立刻停止（實測：500把key、limit 60 → 只做60次kv.get()，原本500次）。",
-      "progressiveScan": "有篩選時以「輪」為單位、累積目標逐輪翻倍：第一輪=boundedLimit+NO_FILTER_SCAN_BUFFER(20)，之後每輪×PROGRESSIVE_SCAN_GROWTH_FACTOR(2)，上限仍是MAX_ENTRIES_SCANNED，不再一開始就固定掃500。",
-      "boundedParallelReads": "同一輪內的kv.get()改為固定PARALLEL_GET_BATCH_SIZE(20)筆一批、以Promise.all並行送出，批與批之間循序，絕不把整輪一次性Promise.all。20為實測挑選（本專案原無既有KV/Workers併發上限可參考），落在施工令建議20-30區間中段。",
-      "v1v2Compatibility": "V1/V2兩種schema並存策略完全不變（V1舊制debug:pipeline-trace:v1:*仍不刪除不遷移、繼續靠既有24h TTL自然過期），僅兩個前綴各自的kv.list()列舉改為並行（Promise.all）而非循序。",
-      "observability": "新增kvListCalls/kvGetCalls/v1KeysScanned/v2BatchKeysScanned/v1KeyCount/v2BatchKeyCount/entriesDecoded/entriesMatched/readDurationMs，與原本就存在於函式回傳值、但先前從未進到JSON回應的scannedKeyCount/totalKeyCount/scanTruncated一起回傳。/admin/pipeline-trace-view頁面底部新增純數字診斷條。全部讀既有已算出的數字，未新增任何KV寫入。"
+    "sealedBy": "human directive (路況工程部 V1.9.5 正式施工令｜Windows → Cloudflare Debug-only Push Endpoint)",
+    "releaseVersion": "V1.9.5",
+    "fixCommit": "56b24d3",
+    "scopeStatement": "本輪只建立一個Debug-only接收端，證明Windows->Cloudflare的push機制可行：驗證身份、驗證資料格式、做冪等判斷、寫Workers Logs、回ACK。WINDOWS_PUSH_ENABLED=NO（Windows尚未真的發送任何真實事件）、PRODUCTION_PIPELINE_INTEGRATION=NO（未整合進正式Pipeline）、PBS_30_MIN_POLLING=PRESERVED（既有V1.9.3 PBS排程閘門完全不變）。",
+    "endpoint": {
+      "path": "/internal/pbs-debug-push",
+      "method": "POST only (405 for others)",
+      "authMethod": "Authorization: Bearer <PBS_DEBUG_PUSH_SECRET>（沿用traffic/sharedFeedHandler.js既有TRAFFIC_FEED_SECRET的header慣例），雜湊後常數時間比對（與security/adminAuth.js同技術）。missing secret=503 fail closed；wrong/absent token=401。",
+      "secretVariableName": "PBS_DEBUG_PUSH_SECRET",
+      "secretIndependence": "獨立Secret，測試證實不會回退到PBS_RELAY_TOKEN（既有、不相關的Cloudflare->Windows PULL憑證）、ADMIN_PASSWORD，或任何LINE/TDX secret。",
+      "payloadSchema": "必填：generatedAt/source(僅pbs)/eventId/lifecycle(NEW|UPDATED|CLEARED)/fingerprint/requestId。選填event（白名單讀取road/areaNm/direction/comment/longitude/latitude/sourceDetail，僅供log使用）。",
+      "bodySizeLimit": "16 KiB"
     },
+    "idempotency": {
+      "mode": "PBS_DEBUG_PUSH_IDEMPOTENCY_MODE = NOT_PERSISTENT",
+      "design": "per-isolate記憶體內fingerprint Map（10分鐘視窗，上限500筆），best-effort、非持久。依施工令自身明確指示未新增任何KV寫入。"
+    },
+    "debugOnlyBoundary": "結構性保證（非執行期旗標）：src/pbs/debugPush.js完全不import line/、cctv/、traffic/sharedFeed(Handler)?.js、traffic/incidentSuppression.js、traffic/notified.js、traffic/broadcastProvenance.js、traffic/pipelineTrace.js，或pbs/lifecycle.js|pipeline.js任何一個模組，也完全不觸碰env.TRAFFIC_KV（或任何其他binding）。測試以counting mock直接確認：0次fetch呼叫、0次KV get/put呼叫（NEW/UPDATED/CLEARED三種情境皆同）。",
     "testEvidence": {
-      "newTestFile": "test/pipelineTraceReadPerformance.test.js — 23項測試，涵蓋施工令CASE A-I決定性fixture（無篩選早停、篩選漸進式掃描、有界並行讀取+併發上限、V1-only/V2-only/V1+V2混合、時序正確性、全部既有篩選、預設60筆、新可觀測性欄位API+HTML、既有schema不變、KV寫入增量=0）。",
-      "measuredNumbers": "CASE C（500把key無篩選limit 60）：kvGetCalls=60（原本500）。CASE D（500把key source篩選）：kvGetCalls=180。CASE I（700把key超過安全上限）：scannedKeyCount=500(=MAX_ENTRIES_SCANNED)，scanTruncated=true。並行讀取實測maxInFlight=20（=PARALLEL_GET_BATCH_SIZE）。",
-      "fullRegression": "1352項測試／1319 pass／33 fail，失敗清單與變更前基線（1329/1296/33）逐項比對完全相同，NEW FAILURES=0。"
-    },
-    "productionVerification": {
-      "attempted": true,
-      "result": "NOT_OBSERVED — 本 sandbox session 對 Production Worker 網域（含 Cloudflare Dashboard）的 outbound HTTPS 一律被環境自身的 egress proxy 阻擋（前一輪查修令已用curl與WebFetch兩種獨立工具確認），無法對 /、/version、/health、/admin/pipeline-trace、/admin/pipeline-trace-view 做真實 Production 量測。未假報 PASS。",
-      "note": "本輪修復本身的正確性由上述決定性fixture（真實kv.get()呼叫次數/併發量測）獨立證實，不依賴Production量測；59.1s→實測60次kv.get()（原500次）已是量化的效能改善證據，但真實TTFB數字仍待真人或未來可連線的session實測補齊。"
+      "newTestFile": "test/pbsDebugPush.test.js — 33項測試，涵蓋施工令CASE A-R（正確secret x NEW/UPDATED/CLEARED、無secret、錯secret、GET方法、無效JSON、source!=pbs、無效lifecycle、缺eventId、缺fingerprint、過大body、確認不呼叫LINE/CCTV、確認不寫Shared Feed/notified-state/Pipeline Trace、確認零Production business KV寫入）加上auth防回退、secret不外洩、冪等行為、index.js routing整合測試。",
+      "fullRegression": "1385項測試／1352 pass／33 fail，失敗清單與變更前基線（1352/1319/33）逐項比對完全相同，NEW FAILURES=0。"
     },
     "notTouchedByThisRound": [
-      "Pipeline Trace 寫入路徑（persistPipelineTraceBatch/recordPipelineTrace/hasPipelineTraceRelevantChange）",
-      "V1.9.3 PBS 30分鐘排程閘門",
-      "Health Snapshot WRITE_ON_CHANGE",
-      "Windows Prototype",
-      "Windows→Cloudflare Push",
       "LINE",
       "CCTV",
+      "Shared Feed",
+      "正式Pipeline",
+      "正式KV business event state",
+      "Production PBS接管",
+      "V1.9.3 PBS 30分鐘輪詢閘門",
       "TDX",
-      "Cron頻率（仍每10分鐘）"
+      "Cron",
+      "Windows Prototype",
+      "feature/pbs-local-edge-filter-prototype分支（未merge，未讀取，未修改）"
     ],
-    "readerNote": "完成後 STOP，未自行開始 V1.9.5／Windows→Cloudflare Push／Prototype Merge／其他重構。"
+    "nextPhase": "Claude Browser對已部署的endpoint做唯讀/安全驗證（尚未執行，見production Verification）；之後才由GPT/Windows端新增Debug Push client——必須等Claude Browser驗證後才進行，且secret未曾發給Windows。",
+    "productionVerification": {
+      "attempted": true,
+      "result": "NOT_OBSERVED — sandbox對Production Worker網域（含Cloudflare Dashboard）的outbound HTTPS一律被環境自身的egress proxy阻擋（與V1.9.3/V1.9.4輪已確認的限制相同）。未假報PASS。"
+    },
+    "readerNote": "完成後STOP，未自行開始：Windows Debug Push client、LINE integration、PBS polling retirement、V1.9.6。"
   },
   "taskSealHistory": [
+    {
+      "task": "PIPELINE_TRACE_READ_OPTIMIZATION_V1_9_4",
+      "status": "SEALED",
+      "sealedAt": "2026-08-27",
+      "releaseVersion": "V1.9.4",
+      "fixCommit": "3075114",
+      "summary": "Pipeline Trace 讀取效能優化：真實Production TTFB 59.1秒，Root Cause為collectFlattenedTraceEntries循序解碼500把key才套用limit。修正為scanTraceEntriesProgressively（早停+漸進式掃描+有界並行讀取），實測500把key/limit60只需60次kv.get()（原500次）。KV寫入增量=0。NEW FAILURES=0（1352項）。Production真實TTFB因sandbox egress阻擋為NOT_OBSERVED。完整記錄見06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V1.9.4條目。"
+    },
     {
       "task": "KV_WRITE_OPTIMIZATION_V1_9_3_PHASE_2",
       "status": "SEALED",
