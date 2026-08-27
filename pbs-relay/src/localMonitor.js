@@ -3,9 +3,13 @@ import { dirname, resolve } from 'node:path';
 import { fetchPbsUpstream } from './upstreamClient.js';
 import { compareWithPreviousState, filterRelevantAccidents, parsePbsPayload } from './localPrototype.js';
 import { readLocalState, writeLocalState } from './localState.js';
+import { acquireMonitorLock, writeFailureLog, writeSuccessLog } from './localRuntime.js';
+import { dispatchDebugChanges, isDebugPushEnabled } from './localDebugPush.js';
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_STATE_PATH = resolve(moduleDirectory, '..', 'data', 'relevant-state.json');
+export const DEFAULT_LOCK_PATH = resolve(moduleDirectory, '..', 'data', 'local-monitor.lock');
+export const DEFAULT_LOG_DIRECTORY = resolve(moduleDirectory, '..', 'logs');
 
 export async function runLocalMonitor({
   fetchImpl = globalThis.fetch,
@@ -27,8 +31,10 @@ export async function runLocalMonitor({
     durationMs,
     rawCount: rawItems.length,
     relevantAccidentCount: relevantAccidents.length,
+    activeEventCount: relevantAccidents.filter((event) => !event.cleared).length,
     baseline: comparison.baseline,
     counts: Object.fromEntries(Object.entries(comparison.changes).map(([key, value]) => [key, value.length])),
+    pendingMissingEvents: comparison.changes.MISSING_PENDING_CLEAR.length,
     changes: comparison.changes,
     shouldPush: comparison.shouldPush,
   };
@@ -46,16 +52,34 @@ async function main() {
     throw new Error('PBS_LOCAL_INTERVAL_MS must be at least 10000 in watch mode');
   }
 
-  do {
-    try {
-      printSummary(await runLocalMonitor());
-    } catch (error) {
-      console.error(`[PBS local prototype] ${error.message}`);
-      console.log('SHOULD_PUSH=NO');
-      if (!watch) process.exitCode = 1;
-    }
-    if (watch) await new Promise((resolvePromise) => setTimeout(resolvePromise, intervalMs));
-  } while (watch);
+  const lockPath = process.env.PBS_LOCAL_LOCK_PATH || DEFAULT_LOCK_PATH;
+  const logDirectory = process.env.PBS_LOCAL_LOG_DIRECTORY || DEFAULT_LOG_DIRECTORY;
+  let lock;
+  try {
+    lock = await acquireMonitorLock(lockPath);
+    do {
+      const roundTime = new Date();
+      try {
+        const summary = await runLocalMonitor({ now: roundTime });
+        summary.debugPush = await dispatchDebugChanges(summary, {
+          enabled: isDebugPushEnabled(), logDirectory,
+        });
+        await writeSuccessLog(logDirectory, summary, roundTime);
+        printSummary(summary);
+      } catch (error) {
+        await writeFailureLog(logDirectory, error, roundTime);
+        console.error(`[PBS local prototype] ${error?.code || error?.name || 'unknown'}`);
+        console.log('SHOULD_PUSH=NO');
+        if (!watch) process.exitCode = 1;
+      }
+      if (watch) await new Promise((resolvePromise) => setTimeout(resolvePromise, intervalMs));
+    } while (watch);
+  } catch (error) {
+    console.error(`[PBS local prototype] ${error?.code || error?.name || 'startup-failed'}`);
+    process.exitCode = 1;
+  } finally {
+    if (lock) await lock.release();
+  }
 }
 
 const isMainModule = process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1]);

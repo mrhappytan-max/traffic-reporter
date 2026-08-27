@@ -62,7 +62,11 @@ KV, Cron, LINE, CCTV, TDX, and production path. It fetches the official PBS
 payload locally, keeps only accident records relevant to Hsinchu City,
 Hsinchu County, Zhubei, Zhunan, and Toufen, compares them with the prior
 local baseline, and prints `NEW`, `UPDATED`, `CLEARED`, `UNCHANGED`, plus
-`SHOULD_PUSH=YES|NO`. It never pushes anything.
+`SHOULD_PUSH=YES|NO`. With `PBS_DEBUG_PUSH_ENABLED=true`, confirmed changes
+are sent one event at a time to the Cloudflare debug-only endpoint after
+the local state write succeeds. The switch defaults to false; this path
+never calls LINE, CCTV, Shared Feed, Business KV, or the production business
+pipeline.
 
 ```powershell
 npm.cmd run prototype        # one fetch/compare/state-write cycle
@@ -74,3 +78,42 @@ written atomically to `data/relevant-state.json`; override it for testing
 with `PBS_LOCAL_STATE_PATH`. Watch interval can be overridden with
 `PBS_LOCAL_INTERVAL_MS` (minimum 10000 ms). A failed fetch does not alter
 state and always reports `SHOULD_PUSH=NO`.
+
+### Windows scheduled monitor
+
+`scripts/install-local-monitor-task.ps1` creates the user-logon task
+`TrafficReporter-PBS-LocalMonitor`. It runs Node directly with
+`src/localMonitor.js --watch`, keeps the existing three-minute interval,
+ignores duplicate Task Scheduler starts, and retries an abnormal exit up
+to five times at one-minute intervals. A one-minute Task Scheduler watchdog
+also attempts a start; `IgnoreNew` makes those attempts no-ops while the
+monitor is healthy, but restores it after a forced exit. This does not
+change the monitor's three-minute PBS fetch interval. The installer refuses
+to overwrite an existing task.
+
+The monitor also uses `data/local-monitor.lock` to reject a second manual
+or scheduled instance. A dead PID makes the lock stale and recoverable on
+the next start. Minimal JSONL operational records are written by Taipei
+date under `logs/`; only seven dates are retained. Logs never include
+tokens, Authorization values, credentials, or full event payloads.
+
+### Debug-only push
+
+`src/debugPushClient.js` reads `PBS_DEBUG_PUSH_SECRET` only at runtime and
+uses a five-second timeout with at most two total attempts. Only timeout,
+network errors, and eligible 5xx responses retry. Authentication failures
+fail closed. `src/localDebugPush.js` dispatches only `NEW`, `UPDATED`, and
+confirmed `CLEARED` events; baseline, `UNCHANGED`, and
+`MISSING_PENDING_CLEAR` never push. Request IDs are deterministic for the
+same event, lifecycle, and fingerprint.
+
+Manual debug fixtures remain available without connecting real events:
+
+```powershell
+npm.cmd run debug-push-test -- NEW
+npm.cmd run debug-push-test -- UPDATED
+npm.cmd run debug-push-test -- CLEARED
+npm.cmd run debug-push-test -- DUPLICATE
+```
+
+Secrets, runtime state, lock files, and `logs/` must never be committed.

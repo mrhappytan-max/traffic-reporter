@@ -1,2 +1,4 @@
 data/relevant-state.json
 data/*.tmp
+data/local-monitor.lock
+logs/

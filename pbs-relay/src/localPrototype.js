@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { isPbsEventHsinchuRelevant } from '../../src/pbs/hsinchuFilter.js';
+import { normalizePbsRoad } from '../../src/pbs/roadName.js';
 
 const ACCIDENT_PATTERNS = [/事故/, /擦撞/, /追撞/, /自撞/, /對撞/, /相撞/, /撞及/];
 const CLEARED_PATTERNS = [/已排除/, /排除/, /已解除/, /解除/];
@@ -9,15 +11,6 @@ const SERVICE_AREA_PATTERNS = [
   /竹南/,
   /頭份/,
 ];
-
-// Generous prototype-only envelope covering Hsinchu City/County plus
-// Zhunan/Toufen. Text matches remain visible in matchReason for calibration.
-const SERVICE_AREA_BOX = {
-  minLat: 24.45,
-  maxLat: 24.95,
-  minLon: 120.80,
-  maxLon: 121.35,
-};
 
 function text(value) {
   return value == null ? '' : String(value).trim();
@@ -52,15 +45,25 @@ export function getServiceAreaMatch(raw) {
 
   const longitude = numberOrNull(raw?.x1);
   const latitude = numberOrNull(raw?.y1);
-  if (
-    longitude != null &&
-    latitude != null &&
-    longitude >= SERVICE_AREA_BOX.minLon &&
-    longitude <= SERVICE_AREA_BOX.maxLon &&
-    latitude >= SERVICE_AREA_BOX.minLat &&
-    latitude <= SERVICE_AREA_BOX.maxLat
-  ) {
-    return 'coordinates:prototype-envelope';
+  const normalizedRoad = normalizePbsRoad(text(raw?.road), text(raw?.areaNm));
+  const productionEvent = {
+    source: 'pbs',
+    road: normalizedRoad,
+    description: text(raw?.comment),
+    location: text(raw?.areaNm),
+    longitude,
+    latitude,
+  };
+
+  // Reuse the exact PBS resolver trusted by Production. Coordinates are
+  // merely evidence supplied to that resolver; the removed prototype
+  // envelope can no longer grant admission on its own. On priority roads,
+  // parseable KM is authoritative (e.g. 國1 68.1K and 國3 55.8K fail
+  // closed); 台68 remains whole-route-in-scope per the canonical rules.
+  if (isPbsEventHsinchuRelevant(productionEvent)) {
+    return normalizedRoad
+      ? `production-service-area:road-km:${normalizedRoad}`
+      : 'production-service-area:coordinates';
   }
   return null;
 }
@@ -119,7 +122,8 @@ export function compareWithPreviousState(events, previousState, now = new Date()
   const active = events.filter((event) => !event.cleared);
   const explicitlyCleared = new Map(events.filter((event) => event.cleared).map((event) => [event.id, event]));
   const currentById = new Map(active.map((event) => [event.id, event]));
-  const changes = { NEW: [], UPDATED: [], CLEARED: [], UNCHANGED: [] };
+  const changes = { NEW: [], UPDATED: [], CLEARED: [], UNCHANGED: [], MISSING_PENDING_CLEAR: [] };
+  const nextEvents = {};
 
   for (const event of active) {
     const previous = priorEvents?.[event.id];
@@ -127,31 +131,66 @@ export function compareWithPreviousState(events, previousState, now = new Date()
     else if (!previous) changes.NEW.push(event);
     else if (previous.fingerprint !== event.fingerprint) changes.UPDATED.push(event);
     else changes.UNCHANGED.push(event);
+
+    // Seeing the UID again cancels any pending absence. Content equality is
+    // still decided only by the fingerprint, so a reappearance with no real
+    // content change stays UNCHANGED rather than becoming UPDATED.
+    nextEvents[event.id] = {
+      fingerprint: event.fingerprint,
+      event,
+      missingCount: 0,
+      lastSeenAt: now.toISOString(),
+      firstMissingAt: null,
+    };
   }
 
   if (!baseline) {
     for (const [id, previous] of Object.entries(priorEvents)) {
       if (currentById.has(id)) continue;
       const explicit = explicitlyCleared.get(id);
-      changes.CLEARED.push({
+      if (explicit) {
+        changes.CLEARED.push({
+          ...(previous.event || { id }),
+          id,
+          clearReason: 'explicit-clear-text',
+          currentComment: explicit.comment,
+        });
+        continue;
+      }
+
+      const missingCount = Number.isInteger(previous.missingCount) && previous.missingCount >= 0
+        ? previous.missingCount + 1
+        : 1;
+      if (missingCount >= 2) {
+        changes.CLEARED.push({
+          ...(previous.event || { id }),
+          id,
+          clearReason: 'confirmed-absence',
+          missingCount,
+        });
+        continue;
+      }
+
+      const pending = {
         ...(previous.event || { id }),
         id,
-        clearReason: explicit ? 'explicit-clear-text' : 'absent-from-current-feed',
-        ...(explicit ? { currentComment: explicit.comment } : {}),
-      });
+        clearReason: 'missing-pending-clear',
+        missingCount,
+      };
+      changes.MISSING_PENDING_CLEAR.push(pending);
+      nextEvents[id] = {
+        ...previous,
+        missingCount,
+        firstMissingAt: previous.firstMissingAt || now.toISOString(),
+      };
     }
   }
 
   const state = {
     schemaVersion: 1,
     updatedAt: now.toISOString(),
-    events: Object.fromEntries(active.map((event) => [event.id, {
-      fingerprint: event.fingerprint,
-      event,
-    }])),
+    events: nextEvents,
   };
   const shouldPush = !baseline && (changes.NEW.length + changes.UPDATED.length + changes.CLEARED.length > 0);
   return { baseline, changes, state, shouldPush };
 }
-
-export { SERVICE_AREA_BOX };
