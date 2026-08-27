@@ -39,7 +39,7 @@
     "openStructuralQuestion": "TWO trees currently hold the same canonical content: engineering-memory/ (what the mirror syncs) and meeting-room-export/ (what scripts/export-meeting-room.mjs generates). They are kept in step by hand today, which is exactly the drift risk this governance exists to prevent. Needs a human decision: either point the generator at engineering-memory/, or retire one tree. NOT decided unilaterally."
   },
   "git": {
-    "sourceMainHead": "2f820216b57e3acd7c257d040034301027fc5a90",
+    "sourceMainHead": "49fa03f398ea94b8c1ac37511532c1fa3f6ce908",
     "sourceMainHeadResolvedFrom": "origin/main",
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
     "sourceWorkingTree": "dirty (5 changed source file(s))",
@@ -165,123 +165,118 @@
     "readerNote": "這是文件記錄，不是完工的 Production 功能。Prototype 程式碼已在 GitHub 的 feature branch（未 merge 進 main），下一個 Agent 讀到這裡：不要假設它已 merge 進 main，不要假設 Windows -> Cloudflare 傳輸已存在，不要因為看到這個記錄就開始 Phase C 以後的工作——那需要真人另行授權，也不要自行 merge 這個 feature branch。"
   },
   "taskSeal": {
-    "task": "KV_WRITE_OPTIMIZATION_V1_9_3_PHASE_2",
+    "task": "PIPELINE_TRACE_READ_OPTIMIZATION_V1_9_4",
     "status": "SEALED",
-    "sealedAt": "2026-08-26",
-    "sealedBy": "human directive (路況工程部 V1.9.3 正式施工令｜KV Write 第二階段止血)",
-    "releaseVersion": "V1.9.3",
-    "fixCommit": "93efec3",
-    "realWorldTrigger": "延續 V1.9.2 的真實 Cloudflare 帳號寫入壓力：V1.9.2 已處理最大的三個來源（Shared Feed／Incident Suppression WRITE_ON_CHANGE、Pipeline Trace 批次化、TDX Usage Summary 退休），本輪針對施工令指定的第二階段三個剩餘來源正式止血——不是新的告警事件，是同一輪治理的延續。",
-    "scope": {
-      "healthSnapshotWriteOnChange": {
-        "change": "health:snapshot:v1 改為 WRITE_ON_CHANGE。比較時排除：generatedAt、tdx/pbs.lastFetchedAt、line.lastLinePushAt（V1.9.2 同批已知的純時間欄位），另新排除：tdx/pbs.scheduledThisRun/sleeping、整個 broadcast 區塊（皆為即時計數/排程旗標，不影響 computeStatus）。",
-        "whyTheExtraExclusions": "本輪自己的決定性 fixture（kvWriteQuantificationV193.test.js）跑滿一天 144 tick 後，量測到安靜 PBS_ONLY 日仍寫 63 次（非預期 1～2 次）。逐輪比對找到：scheduledThisRun/sleeping 是布林版的『這輪又跑一次』；broadcast 五個欄位隨 PBS 是否恰好本輪抓取而規律翻轉，非真內容變化。施工中、部署前即發現並修正。",
-        "pbsCarryForward": "buildHealthSnapshot 新增 pbsScheduleState/previousPbs，pbs 區塊比照既有 tdx 做 schedule-skip 沿用不變——PBS 略過的一輪絕不誤讀為故障。",
-        "persistHealthSnapshotChange": "persistHealthSnapshot 新增第三參數 previousSnapshot，內容相同回傳 {committed:true, written:false} 跳過寫入；沿用 scheduled.js 本就已讀取的上一份快照，無額外 KV get。"
-      },
-      "pbsFetchScheduleGate": {
-        "change": "新檔 pbsSchedule.js：PBS 抓取由每 10 分鐘改每 30 分鐘、僅 07:00–22:00 Asia/Taipei。Cron 本身不變（每 10 分鐘）。",
-        "safetyAnalysisBeforeWriting": "施工前核對 PBS_STALE_THRESHOLD_MS(2h)／PBS_ABSENCE_GRACE_PERIOD_MS(24h)（pbsConfig.js）皆為 wall-clock 判斷，非 tick 計數，遠大於本輪日間 30 分鐘／夜間約 9 小時空窗；LINE Push 已限定 08:00–21:59:59，07:00 PBS 恢復到 08:00 有一小時緩衝。未發現需 STOP 的既有安全依賴。",
-        "skippedTickShape": "scheduled.js 新增 buildSkippedPbsSummary()：略過時不呼叫 runPbsPipelineAndCommit，回傳最小占位摘要（pbsOk:null，計數皆 0），下游沿用既有『PBS 這輪沒東西』的安全路徑，不誤判為 0 起活躍事件。",
-        "lifecycleTransitionCounts": "lifecycle.js 的 commitPbsLifecycleState 額外回傳 transitions:{newCount,updatedCount,newlyClearedCount}（就地從既有比對算出，非第二套邏輯），pipeline.js 透傳為 pbsNewCount/pbsUpdatedCount/pbsNewlyClearedCount，供 NO_RELEVANT_CHANGE 使用。",
-        "observabilityLog": "新增 [cron][pbs-schedule] log：state/pbsFetchPerformed/pbsFetchSkippedSchedule，僅 Workers Logs，無新 KV key。",
-        "healthPageAddition": "GET /health PBS 卡片新增『本輪執行狀態』／『最近一次擷取時間』，比照既有 TDX 顯示（pbs.ok=null 時顯示『尚無資料』非異常）。"
-      },
-      "pipelineTraceNoRelevantChange": {
-        "change": "pipelineTrace.js 新增 hasPipelineTraceRelevantChange：無新增/更新 TDX 或 PBS 事件、無 TDX 重複/PBS 閘門排除、無 LINE 推播嘗試時，scheduled.js 完全跳過呼叫 persistPipelineTraceBatch（非傳空陣列），本輪 0 KV 寫入。",
-        "whyDuplicateAndGatedStillCount": "TDX 重複／PBS 閘門排除仍計入『有意義』——保留既有 V1.8.6.7『為何未播報』查修保證（pipelineTraceIntegration.test.js 既有測試未改行為即通過）。PBS_ONLY 部署下兩者恆為 0，不影響本輪省下的量；僅 TRAFFIC_SOURCE_MODE=ALL 才實際生效，且屆時仍正確。",
-        "whyLinePushSuccessAlsoCounts": "用 lineSummary.pushAttempted（非僅 partialPushFailures），正確涵蓋『冷啟動』：dedupe.js 把全新 KV 首筆事件分類為 baseline-seed 而非 new，但仍真的推播——只看 newEventsCount 會漏掉這筆真實 LINE 推播。"
-      }
+    "sealedAt": "2026-08-27",
+    "sealedBy": "human directive (路況工程部 V1.9.4 正式施工令｜Pipeline Trace 讀取效能優化)",
+    "releaseVersion": "V1.9.4",
+    "fixCommit": "3075114",
+    "realWorldTrigger": "V1.9.3 上線後真人回報全站 ERR_CONNECTION_TIMED_OUT（另立查修令調查，結論：與程式碼無關，sandbox 無法連 Production 驗證）。隨後真人在 Production 實測出真正的效能問題：/≈0.8s／/version≈0.4s／/health≈0.75s，但 /admin/pipeline-trace 與 /admin/pipeline-trace-view TTFB 皆≈59.1s。",
+    "rootCause": "listPipelineTrace 的舊 collectFlattenedTraceEntries 一律循序（一次一個 await kv.get()）解碼到 MAX_ENTRIES_SCANNED(500) 筆，在分頁 limit（預設60）套用之前，不論有無篩選條件。一個完全沒篩選、只要「最新60筆」的頁面，每次都要付出500次循序 KV 往返。",
+    "fix": {
+      "earlyStop": "無篩選查詢一旦解碼滿 boundedLimit 筆就立刻停止（實測：500把key、limit 60 → 只做60次kv.get()，原本500次）。",
+      "progressiveScan": "有篩選時以「輪」為單位、累積目標逐輪翻倍：第一輪=boundedLimit+NO_FILTER_SCAN_BUFFER(20)，之後每輪×PROGRESSIVE_SCAN_GROWTH_FACTOR(2)，上限仍是MAX_ENTRIES_SCANNED，不再一開始就固定掃500。",
+      "boundedParallelReads": "同一輪內的kv.get()改為固定PARALLEL_GET_BATCH_SIZE(20)筆一批、以Promise.all並行送出，批與批之間循序，絕不把整輪一次性Promise.all。20為實測挑選（本專案原無既有KV/Workers併發上限可參考），落在施工令建議20-30區間中段。",
+      "v1v2Compatibility": "V1/V2兩種schema並存策略完全不變（V1舊制debug:pipeline-trace:v1:*仍不刪除不遷移、繼續靠既有24h TTL自然過期），僅兩個前綴各自的kv.list()列舉改為並行（Promise.all）而非循序。",
+      "observability": "新增kvListCalls/kvGetCalls/v1KeysScanned/v2BatchKeysScanned/v1KeyCount/v2BatchKeyCount/entriesDecoded/entriesMatched/readDurationMs，與原本就存在於函式回傳值、但先前從未進到JSON回應的scannedKeyCount/totalKeyCount/scanTruncated一起回傳。/admin/pipeline-trace-view頁面底部新增純數字診斷條。全部讀既有已算出的數字，未新增任何KV寫入。"
     },
-    "quantifiedKvWriteEstimate": {
-      "methodology": "改用 kvWriteQuantificationV193.test.js 的決定性 fixture：PBS_ONLY，真跑滿一天 144 次 runScheduledTdxSync，依 KV key 前綴分類計數真實 kv.put() 呼叫——非估算，是測試檔實際輸出。",
-      "quietDay": "PBS 全天無回報、0 推播 → TOTAL=5 writes/day。遠低於 ≤150 目標。",
-      "normalDay": "一起事故新增→不變→解除 → TOTAL=21 writes/day。在 100–300 目標低端——fixture 僅單一事故，真實數字待下一帳務日 [kv-write-budget] 樣本核實。",
-      "highEventDay": "五起事故各自新增/更新/解除 → TOTAL=27 writes/day。遠低於 <500 目標。",
-      "comparisonToV192": "V1.9.2 是文字估算的每輪 writes 範圍（quiet 1～4、medium/high 4～8），本輪是實測 writes/day 總數，單位不同不能直接相減；但健康快照這項由『每輪固定 1』降到 PBS_ONLY 安靜日全天僅 2 次，是本輪相對 V1.9.2 的具體邊際改善。",
-      "remainingLargestSource": "healthSnapshot／incidentSuppression 是 NORMAL/HIGH 情境最大類別——狀態確實真的在變化（PBS ok 首次轉換、抑制邏輯每次真抓取都重新評估），如實列出，未移除任何安全功能換取好看數字。"
+    "testEvidence": {
+      "newTestFile": "test/pipelineTraceReadPerformance.test.js — 23項測試，涵蓋施工令CASE A-I決定性fixture（無篩選早停、篩選漸進式掃描、有界並行讀取+併發上限、V1-only/V2-only/V1+V2混合、時序正確性、全部既有篩選、預設60筆、新可觀測性欄位API+HTML、既有schema不變、KV寫入增量=0）。",
+      "measuredNumbers": "CASE C（500把key無篩選limit 60）：kvGetCalls=60（原本500）。CASE D（500把key source篩選）：kvGetCalls=180。CASE I（700把key超過安全上限）：scannedKeyCount=500(=MAX_ENTRIES_SCANNED)，scanTruncated=true。並行讀取實測maxInFlight=20（=PARALLEL_GET_BATCH_SIZE）。",
+      "fullRegression": "1352項測試／1319 pass／33 fail，失敗清單與變更前基線（1329/1296/33）逐項比對完全相同，NEW FAILURES=0。"
     },
-    "productionVerificationNote": "本輪三個數字皆為 fixture 沙盒真實執行測得，非帳號今日累計量；建議下一 Asia/Taipei 帳務日重置後蒐集真實 Production [kv-write-budget] 樣本核實。",
-    "testResult": "npm test 共 1339 項（1322 + 本輪新增 17 項：pbsSchedule.test.js 12 項、healthSnapshot.test.js 新增 9 項精簡後淨增與既有合併、pipelineTraceNoRelevantChange.test.js 13 項、kvWriteQuantificationV193.test.js 3 項、tdxQuotaPbsOnlyMode.test.js 新增 1 項）；NEW FAILURES = 0（同一輪 git stash -u 對照乾淨 checkout，35 項既有失敗完全相同、無新增、無被本輪意外掩蓋）。既有測試僅在其前提被本輪『PBS 不再每輪固定抓取』這個行為改變本身弄過期時才更新（tdxUsageReduction.test.js／pbsOnlyCrossSourceDedup.test.js／v572TdxGatedFreewayBroadcast.test.js／tdxQuotaPbsOnlyMode.test.js，皆改成落在真正的 PBS 排程時刻，或誠實更新斷言反映新行為，例如深夜與 07:50 現在正確地是『兩者皆略過』而非『PBS 仍照跑』），從未為了讓測試通過而動任何一行程式邏輯。",
-    "canonicalVersionSource": "src/version.js 的 APP_VERSION 已 bump 為 V1.9.3（patch release，三段式版本治理，同一個 commit）。",
-    "githubSeal": "PASS",
-    "githubEngineeringMemory": "SEALED",
-    "claudeDriveUpload": "NO",
-    "doNotMisread": [
-      "不要把 PBS 30 分鐘排程誤讀為『PBS 功能被削弱』——PBS 抓取邏輯、生命週期、跨來源比對、廣播資格判斷全部未動，只有『多久抓一次』改變。",
-      "不要把 Pipeline Trace 的 NO_RELEVANT_CHANGE 誤讀為『降低查修證據涵蓋範圍』——NEW/UPDATED/CLEARED、TDX 重複、PBS 閘門排除、LINE 推播成功/失敗全部仍會被追蹤，只有『同一筆持續不變的事件每輪重寫』被去除。",
-      "不要以為 health:snapshot:v1 的 scheduledThisRun/sleeping 永遠即時——WRITE_ON_CHANGE 之下，這兩個純粹描述『這輪排程位置』的欄位可能落後到下一次真正的內容變化才更新；Workers Logs 的 [cron] 系列 log 才是『這一輪到底做了什麼』的即時真相來源。",
-      "不要把本輪 QUIET/NORMAL/HIGH 三個數字當成 Production 真實流量預測——它們是決定性 fixture 在單一模擬事故情境下的真實測得值，用來證明優化邏輯本身正確運作、且遠低於目標上限，不是對真實服務區交通流量的預測。",
-      "不要對 Google Drive 做任何寫入——Claude 唯讀，GitHub 是唯一正式寫入來源。"
+    "productionVerification": {
+      "attempted": true,
+      "result": "NOT_OBSERVED — 本 sandbox session 對 Production Worker 網域（含 Cloudflare Dashboard）的 outbound HTTPS 一律被環境自身的 egress proxy 阻擋（前一輪查修令已用curl與WebFetch兩種獨立工具確認），無法對 /、/version、/health、/admin/pipeline-trace、/admin/pipeline-trace-view 做真實 Production 量測。未假報 PASS。",
+      "note": "本輪修復本身的正確性由上述決定性fixture（真實kv.get()呼叫次數/併發量測）獨立證實，不依賴Production量測；59.1s→實測60次kv.get()（原500次）已是量化的效能改善證據，但真實TTFB數字仍待真人或未來可連線的session實測補齊。"
+    },
+    "notTouchedByThisRound": [
+      "Pipeline Trace 寫入路徑（persistPipelineTraceBatch/recordPipelineTrace/hasPipelineTraceRelevantChange）",
+      "V1.9.3 PBS 30分鐘排程閘門",
+      "Health Snapshot WRITE_ON_CHANGE",
+      "Windows Prototype",
+      "Windows→Cloudflare Push",
+      "LINE",
+      "CCTV",
+      "TDX",
+      "Cron頻率（仍每10分鐘）"
     ],
-    "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
+    "readerNote": "完成後 STOP，未自行開始 V1.9.5／Windows→Cloudflare Push／Prototype Merge／其他重構。"
   },
   "taskSealHistory": [
     {
-    "task": "KV_WRITE_OPTIMIZATION_V1_9_2",
-    "status": "SEALED",
-    "sealedAt": "2026-08-26",
-    "sealedBy": "human directive (路況工程部 V1.9.2 正式施工令｜Cloudflare KV Write Optimization + V1.9.2 補充施工令｜TDX 用量摘要正式退休)",
-    "releaseVersion": "V1.9.2",
-    "fixCommit": "f45cd5e",
-    "realWorldTrigger": "真實 Cloudflare 帳號用量警示：Reads 1,935/100,000、Writes 749/1,000（traffic-reporter-kv = 733，佔帳號總寫入量 97.9%）、Lists 163/1,000、Deletes 0。同日先完成一輪唯讀鑑識（不修改任何程式/Cron/KV/Production），確認 TOP 寫入來源與可優化項目後，才進入本輪正式施工。",
-    "scope": {
-      "writeOnChange": [
-        "traffic:shared-feed（sharedFeed.js#runSharedFeedPersist）— 比較真實內容（events 陣列，含每筆自己的 fingerprint/imageUrl/updatedAt 等，因 buildSharedFeedEvents 本身就會凍結未變動項目的 updatedAt），忽略最外層的 updatedAt。只在『從未寫過』或『內容真的不同』才寫入。",
-        "line:incident-suppression-state（incidentSuppression.js#persistIncidentSuppressionState）— 比較真實內容 incidentsByGroup（含每筆 record 的 lastSeenAt——這是真正的功能性狀態，每次同一事故被重新偵測到就會推進，不是可忽略的產生時間戳），忽略最外層的 updatedAt。抑制/升級/TTL 邏輯完全未動，只改變『何時寫入』。"
+      "task": "KV_WRITE_OPTIMIZATION_V1_9_3_PHASE_2",
+      "status": "SEALED",
+      "sealedAt": "2026-08-26",
+      "releaseVersion": "V1.9.3",
+      "fixCommit": "93efec3",
+      "summary": "KV Write Optimization Phase 2：health:snapshot:v1 WRITE_ON_CHANGE、PBS 抓取每30分鐘僅07:00-22:00、Pipeline Trace NO_RELEVANT_CHANGE。決定性 fixture 實測 QUIET/NORMAL/HIGH writes/day=5/21/27。NEW FAILURES=0（1339 項）。完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md 的 V1.9.3 條目。"
+    },
+    {
+      "task": "KV_WRITE_OPTIMIZATION_V1_9_2",
+      "status": "SEALED",
+      "sealedAt": "2026-08-26",
+      "sealedBy": "human directive (路況工程部 V1.9.2 正式施工令｜Cloudflare KV Write Optimization + V1.9.2 補充施工令｜TDX 用量摘要正式退休)",
+      "releaseVersion": "V1.9.2",
+      "fixCommit": "f45cd5e",
+      "realWorldTrigger": "真實 Cloudflare 帳號用量警示：Reads 1,935/100,000、Writes 749/1,000（traffic-reporter-kv = 733，佔帳號總寫入量 97.9%）、Lists 163/1,000、Deletes 0。同日先完成一輪唯讀鑑識（不修改任何程式/Cron/KV/Production），確認 TOP 寫入來源與可優化項目後，才進入本輪正式施工。",
+      "scope": {
+        "writeOnChange": [
+          "traffic:shared-feed（sharedFeed.js#runSharedFeedPersist）— 比較真實內容（events 陣列，含每筆自己的 fingerprint/imageUrl/updatedAt 等，因 buildSharedFeedEvents 本身就會凍結未變動項目的 updatedAt），忽略最外層的 updatedAt。只在『從未寫過』或『內容真的不同』才寫入。",
+          "line:incident-suppression-state（incidentSuppression.js#persistIncidentSuppressionState）— 比較真實內容 incidentsByGroup（含每筆 record 的 lastSeenAt——這是真正的功能性狀態，每次同一事故被重新偵測到就會推進，不是可忽略的產生時間戳），忽略最外層的 updatedAt。抑制/升級/TTL 邏輯完全未動，只改變『何時寫入』。"
+        ],
+        "pipelineTraceBatch": "pipelineTrace.js 新增 persistPipelineTraceBatch：一輪 Cron 只寫「一把」debug:pipeline-trace-batch:v2:<date>:<epochMs>:<part>:<opaqueId> 金鑰（{schemaVersion:2, generatedAt, entries:[...]}），取代舊制『一筆事件一把 KV key』。舊制 debug:pipeline-trace:v1:* 完全不刪除、不遷移，靠原本 24h TTL 自然過期。listPipelineTrace 改為同時讀取 v1 與 v2 兩種схема並正確合併排序（見 pipelineTrace.js 對 MAX_ENTRIES_SCANNED/MAX_LIST_PAGES 的說明），/admin/pipeline-trace、/admin/pipeline-trace-view 兩個既有 handler 完全未改一行程式碼即自動支援新舊資料。新增 MAX_TRACE_ENTRIES_PER_BATCH(500)/MAX_TRACE_BATCH_BYTES(2MiB) 安全上限，只在真的超量時才 deterministic 分批（chunkEntriesForTraceBatch）。",
+        "kvWriteBudgetLog": "scheduled.js 新增 [kv-write-budget] Cron console.log（僅 Workers Logs，未新增任何 KV key）：每輪回報 attemptedWrites/performedWrites/skippedUnchangedWrites，依 8 個具名分類（tdxUsageSummary/tdxUsageEntry/healthSnapshot/tdxEventCache/sharedFeed/incidentSuppression/notifiedState/pipelineTraceBatch）分別列出，另加 traceEntryCount/traceBatchCount。",
+        "tdxUsageSummaryRetirement": {
+          "decision": "TDX_USAGE_SUMMARY = RETIRED（正式退休，不是 WRITE_ON_CHANGE 優化）。人類決策：TDX 額度／用量改由真人直接查看 TDX 官方後台，路況播報員不再自行維護重複的用量摘要。",
+          "dependencyCheckPerformed": "先搜尋全 repo 對 tdx:usage:summary:v1／TDX Usage Summary／persistCompactedSummary／compactTdxUsageSummaryRecentDays／USAGE_ENTRY_KEY_PREFIX 的每一個讀寫點，確認：(1) 唯一寫入路徑是 scheduled.js 每輪呼叫 compactTdxUsageSummaryRecentDays；(2) 唯一讀取路徑是 health.js 的『TDX 用量』儀表板；(3) 沒有任何 admin dashboard／Production safety logic／source-mode switching／quota protection 依賴這把 key 或底層 tdx:usage:entry:v1:* 原始帳本；(4) 底層帳本除了餵給這個已退休的摘要以外沒有任何其他讀者（recordTdxDataCall/recordTdxOAuthCall 本身只是純記憶體 push，沒有 KV 寫入）。",
+          "tdxUsageLedgerCanRetire": "YES — 理由：tdx:usage:entry:v1:* 唯一存在目的就是餵給已退休的 tdx:usage:summary:v1 compaction／health 儀表板，找不到第二個讀者。",
+          "removedCallSites": [
+            "scheduled.js（production-cron，每輪）",
+            "debugStatus.js（debug-status）",
+            "tdx/debug.js（debug-tdx）",
+            "tdx/cctvProbe.js（admin-cctv，3 處）",
+            "tdx/hsinchuCctvProbe.js（admin-cctv，3 處）"
+          ],
+          "healthPageChange": "health.js 移除整個「TDX 用量對帳」儀表板（今日/本月/剩餘額度/月底預估/來源拆解/每日對帳/進階資訊），改為一張小卡片：『TDX API 額度／用量請直接查看 TDX 官方後台，本頁不再重複維護用量摘要。』不留空白欄位、不留錯誤欄位、不讀取已不存在的 key、不顯示假資料或過期資料——刻意誠實地說明『這裡已經沒有東西可讀』，而不是假裝功能還在運作。",
+          "preservedUntouched": [
+            "TDX API client／OAuth Token 取得與快取邏輯",
+            "TDX RoadEvent（國道/省道）擷取能力",
+            "TDX CCTV metadata 擷取能力",
+            "TDX event cache（tdxEventCache.js）",
+            "TDX source mode／TRAFFIC_SOURCE_MODE 判斷",
+            "9/1 TDX 額度恢復路徑（純環境變數開關，與用量帳本完全無關）",
+            "PBS、CCTV、LINE、Shared Feed、Pipeline Trace 各自的既有邏輯",
+            "Cron 10 分鐘頻率"
+          ],
+          "usageLedgerCodeStatus": "src/tdx/usageLedger.js 的既有函式（含本輪稍早已加上 WRITE_ON_CHANGE 的 persistCompactedSummary）程式碼保留、匯出保留、原有直接單元測試（test/tdxUsageLedger.test.js）保留並全數通過——只是不再被任何正式 Cron/Debug/Admin 路徑呼叫。這是刻意選擇：保留可讀性與未來若需要重新啟用時的可回溯性，同時滿足『0 writes/day』的驗收要求。"
+        }
+      },
+      "quantifiedKvWriteEstimate": {
+        "before": "依前一輪唯讀鑑識，一般營運中的一輪 Cron 約 11～21 KV writes（隨這輪 Pipeline Trace 追蹤到的事件數線性成長：追蹤到的每一筆事件都各自佔一把 KV key）。",
+        "afterQuiet": "健康快照(1) + TDX 事件快取（僅 TDX 排程輪次寫，1或0） + Shared Feed（內容不變時 0，改變時 1） + Incident Suppression（內容不變時 0，改變時 1） + LINE notified-state（0，本輪無成功推播） + Pipeline Trace Batch（0，本輪無追蹤事件）≈ 1～4 writes/round。",
+        "afterMedium10Entries": "同上但 Pipeline Trace Batch 固定為 1（不論這輪追蹤到幾筆事件都只有 1 把 key）+ notified-state（依實際成功推播數，與本輪優化無關）≈ 4～8 writes/round，較 BEFORE 明顯下降，且 Pipeline Trace 這一項不再隨事件數線性成長。",
+        "afterHigh20Entries": "與 MEDIUM 幾乎相同（≈4～8 writes/round）——這正是批次寫入的重點：Pipeline Trace 這一類別的寫入量從『O(事件數)』變成『O(1)』，20 筆事件的一輪不再是 20 把 key，而是同樣 1 把。",
+        "tdxUsageSummaryRetirementSaving": "每輪固定省下 2 次寫入（tdx:usage:summary:v1 + 至少 1 把 tdx:usage:entry:v1:* 原始帳本項目）——一天 144 輪，理論上限約 288 writes/day，實際依 TDX 排程頻率（每 20 分鐘才擷取一次）略低。",
+        "sharedFeedAndIncidentSuppressionSaving": "兩把 key 在『這輪內容與上一輪完全相同』時各省 1 次寫入；依業務型態（大部分時段沒有新事故／Shared Feed 沒有新事件）估計可省下相當比例的每日寫入量，實際占比需以 Production 真實 [kv-write-budget] 樣本確認（見下）。",
+        "pipelineTraceBatchSaving": "每輪由『追蹤到的事件數』把 key 降為固定 1 把（極少數超量情況下才會是 2 把以上）——這是本輪對『每輪 KV writes』波動幅度影響最大的一項改變。",
+        "distanceToFreeQuota": "Cloudflare Workers KV 免費額度為 1,000 writes/day；本輪完成後，即使沿用鑑識當天最壞情境估算（每輪皆為高流量、TDX 每輪皆擷取），144 輪/日 x (4~8 writes/round 上限) 遠低於 1,000，安全空間顯著擴大；確切每日總量仍需在下一個 Asia/Taipei 帳務日重置後，以真實 Production [kv-write-budget] 樣本核實（見下方 productionVerificationNote）。"
+      },
+      "productionVerificationNote": "今日帳號層級的累計總量已被 V1.9.2 部署前的用量污染，無法單獨反映本次優化的真實效果；真正的每日效果只有在下一個 Asia/Taipei 帳務日重置之後才看得出來。本輪改以蒐集真實 Production [kv-write-budget] Cron log 樣本（至少 3 筆）作為驗證依據，取代『今日總量』這個會失真的指標。",
+      "testResult": "npm test 共 1300 項（1292 + 本輪新增 test/kvWriteOptimization.test.js 38 項）；NEW FAILURES = 0（同一輪 git stash -u 對照乾淨 checkout，35 項既有失敗完全相同、無新增、無被本輪意外掩蓋）。新增測試涵蓋：WRITE_ON_CHANGE 的 skip/write 正確性（含一個真實抓到的別名（aliasing）bug：resolveIncidentNotifications 會就地修改比對用的舊狀態物件，導致比較永遠『相等』——已在 broadcastPipeline.js 用 structuredClone 在呼叫前先拍快照修正）、批次寫入的 chunking/splitting、v1/v2 混合資料的合併排序與所有既有 filter、退休後 0 KV 寫入的直接證明、[kv-write-budget] log 格式、quiet/medium/high 三種情境的批次寫入計數。同步更新既有測試：pipeline.test.js／debugStatusLine.test.js（usage-ledger entry 計數改為 0）、tdxUsageLedger.test.js（/debug/tdx、Hsinchu admin CCTV probe 兩個 handler 改為斷言 0 筆 usage-ledger 寫入；GET /health 斷言退休卡片文字）、pipelineTraceIntegration.test.js（直接掃 KV key 前綴改為透過 listPipelineTrace 讀取，兼容新的 batch схема）、pipelineTrace.test.js（MAX_LIST_PAGES 安全上限測試改為允許 v1+v2 兩個前綴各自的上限）。刪除兩個已測試『已退休功能』本身的檔案：test/healthQuotaDashboard.test.js、test/healthCctvSourceBreakdown.test.js（測的正是被移除的 UI，不是迴歸）。",
+      "canonicalVersionSource": "src/version.js 的 APP_VERSION 已 bump 為 V1.9.2（patch release，三段式版本治理，同一個 commit）。",
+      "githubSeal": "PASS",
+      "githubEngineeringMemory": "SEALED",
+      "claudeDriveUpload": "NO",
+      "doNotMisread": [
+        "不要把 tdx:usage:summary:v1／tdx:usage:entry:v1:* 的退休誤讀為『刪除程式碼』——src/tdx/usageLedger.js 的函式完全保留、完全可測試，只是不再被任何正式路徑呼叫。",
+        "不要誤以為 WRITE_ON_CHANGE 改變了 Shared Feed／Incident Suppression 的內容決策邏輯——兩者都只改變『何時寫入 KV』，資料本身的產生規則完全未動。",
+        "不要以為 Pipeline Trace 的舊版 v1 per-entry key 被刪除或遷移了——它們完全沒被動過，只是靠原本的 24h TTL 自然過期；新資料一律走 v2 batch。",
+        "不要把 [kv-write-budget] log 誤讀為某種新的 KV 儲存機制——它只是 console.log，Workers Logs 可見，沒有建立任何新的 KV key。",
+        "不要因為帳號層級今日總量看起來還很高就誤判本輪優化沒有效果——今日總量含有部署前的舊用量，必須等下一個 Asia/Taipei 帳務日重置後看真實 Production [kv-write-budget] 樣本才準。",
+        "不要對 Google Drive 做任何寫入——Claude 唯讀，GitHub 是唯一正式寫入來源。"
       ],
-      "pipelineTraceBatch": "pipelineTrace.js 新增 persistPipelineTraceBatch：一輪 Cron 只寫「一把」debug:pipeline-trace-batch:v2:<date>:<epochMs>:<part>:<opaqueId> 金鑰（{schemaVersion:2, generatedAt, entries:[...]}），取代舊制『一筆事件一把 KV key』。舊制 debug:pipeline-trace:v1:* 完全不刪除、不遷移，靠原本 24h TTL 自然過期。listPipelineTrace 改為同時讀取 v1 與 v2 兩種схема並正確合併排序（見 pipelineTrace.js 對 MAX_ENTRIES_SCANNED/MAX_LIST_PAGES 的說明），/admin/pipeline-trace、/admin/pipeline-trace-view 兩個既有 handler 完全未改一行程式碼即自動支援新舊資料。新增 MAX_TRACE_ENTRIES_PER_BATCH(500)/MAX_TRACE_BATCH_BYTES(2MiB) 安全上限，只在真的超量時才 deterministic 分批（chunkEntriesForTraceBatch）。",
-      "kvWriteBudgetLog": "scheduled.js 新增 [kv-write-budget] Cron console.log（僅 Workers Logs，未新增任何 KV key）：每輪回報 attemptedWrites/performedWrites/skippedUnchangedWrites，依 8 個具名分類（tdxUsageSummary/tdxUsageEntry/healthSnapshot/tdxEventCache/sharedFeed/incidentSuppression/notifiedState/pipelineTraceBatch）分別列出，另加 traceEntryCount/traceBatchCount。",
-      "tdxUsageSummaryRetirement": {
-        "decision": "TDX_USAGE_SUMMARY = RETIRED（正式退休，不是 WRITE_ON_CHANGE 優化）。人類決策：TDX 額度／用量改由真人直接查看 TDX 官方後台，路況播報員不再自行維護重複的用量摘要。",
-        "dependencyCheckPerformed": "先搜尋全 repo 對 tdx:usage:summary:v1／TDX Usage Summary／persistCompactedSummary／compactTdxUsageSummaryRecentDays／USAGE_ENTRY_KEY_PREFIX 的每一個讀寫點，確認：(1) 唯一寫入路徑是 scheduled.js 每輪呼叫 compactTdxUsageSummaryRecentDays；(2) 唯一讀取路徑是 health.js 的『TDX 用量』儀表板；(3) 沒有任何 admin dashboard／Production safety logic／source-mode switching／quota protection 依賴這把 key 或底層 tdx:usage:entry:v1:* 原始帳本；(4) 底層帳本除了餵給這個已退休的摘要以外沒有任何其他讀者（recordTdxDataCall/recordTdxOAuthCall 本身只是純記憶體 push，沒有 KV 寫入）。",
-        "tdxUsageLedgerCanRetire": "YES — 理由：tdx:usage:entry:v1:* 唯一存在目的就是餵給已退休的 tdx:usage:summary:v1 compaction／health 儀表板，找不到第二個讀者。",
-        "removedCallSites": [
-          "scheduled.js（production-cron，每輪）",
-          "debugStatus.js（debug-status）",
-          "tdx/debug.js（debug-tdx）",
-          "tdx/cctvProbe.js（admin-cctv，3 處）",
-          "tdx/hsinchuCctvProbe.js（admin-cctv，3 處）"
-        ],
-        "healthPageChange": "health.js 移除整個「TDX 用量對帳」儀表板（今日/本月/剩餘額度/月底預估/來源拆解/每日對帳/進階資訊），改為一張小卡片：『TDX API 額度／用量請直接查看 TDX 官方後台，本頁不再重複維護用量摘要。』不留空白欄位、不留錯誤欄位、不讀取已不存在的 key、不顯示假資料或過期資料——刻意誠實地說明『這裡已經沒有東西可讀』，而不是假裝功能還在運作。",
-        "preservedUntouched": [
-          "TDX API client／OAuth Token 取得與快取邏輯",
-          "TDX RoadEvent（國道/省道）擷取能力",
-          "TDX CCTV metadata 擷取能力",
-          "TDX event cache（tdxEventCache.js）",
-          "TDX source mode／TRAFFIC_SOURCE_MODE 判斷",
-          "9/1 TDX 額度恢復路徑（純環境變數開關，與用量帳本完全無關）",
-          "PBS、CCTV、LINE、Shared Feed、Pipeline Trace 各自的既有邏輯",
-          "Cron 10 分鐘頻率"
-        ],
-        "usageLedgerCodeStatus": "src/tdx/usageLedger.js 的既有函式（含本輪稍早已加上 WRITE_ON_CHANGE 的 persistCompactedSummary）程式碼保留、匯出保留、原有直接單元測試（test/tdxUsageLedger.test.js）保留並全數通過——只是不再被任何正式 Cron/Debug/Admin 路徑呼叫。這是刻意選擇：保留可讀性與未來若需要重新啟用時的可回溯性，同時滿足『0 writes/day』的驗收要求。"
-      }
-    },
-    "quantifiedKvWriteEstimate": {
-      "before": "依前一輪唯讀鑑識，一般營運中的一輪 Cron 約 11～21 KV writes（隨這輪 Pipeline Trace 追蹤到的事件數線性成長：追蹤到的每一筆事件都各自佔一把 KV key）。",
-      "afterQuiet": "健康快照(1) + TDX 事件快取（僅 TDX 排程輪次寫，1或0） + Shared Feed（內容不變時 0，改變時 1） + Incident Suppression（內容不變時 0，改變時 1） + LINE notified-state（0，本輪無成功推播） + Pipeline Trace Batch（0，本輪無追蹤事件）≈ 1～4 writes/round。",
-      "afterMedium10Entries": "同上但 Pipeline Trace Batch 固定為 1（不論這輪追蹤到幾筆事件都只有 1 把 key）+ notified-state（依實際成功推播數，與本輪優化無關）≈ 4～8 writes/round，較 BEFORE 明顯下降，且 Pipeline Trace 這一項不再隨事件數線性成長。",
-      "afterHigh20Entries": "與 MEDIUM 幾乎相同（≈4～8 writes/round）——這正是批次寫入的重點：Pipeline Trace 這一類別的寫入量從『O(事件數)』變成『O(1)』，20 筆事件的一輪不再是 20 把 key，而是同樣 1 把。",
-      "tdxUsageSummaryRetirementSaving": "每輪固定省下 2 次寫入（tdx:usage:summary:v1 + 至少 1 把 tdx:usage:entry:v1:* 原始帳本項目）——一天 144 輪，理論上限約 288 writes/day，實際依 TDX 排程頻率（每 20 分鐘才擷取一次）略低。",
-      "sharedFeedAndIncidentSuppressionSaving": "兩把 key 在『這輪內容與上一輪完全相同』時各省 1 次寫入；依業務型態（大部分時段沒有新事故／Shared Feed 沒有新事件）估計可省下相當比例的每日寫入量，實際占比需以 Production 真實 [kv-write-budget] 樣本確認（見下）。",
-      "pipelineTraceBatchSaving": "每輪由『追蹤到的事件數』把 key 降為固定 1 把（極少數超量情況下才會是 2 把以上）——這是本輪對『每輪 KV writes』波動幅度影響最大的一項改變。",
-      "distanceToFreeQuota": "Cloudflare Workers KV 免費額度為 1,000 writes/day；本輪完成後，即使沿用鑑識當天最壞情境估算（每輪皆為高流量、TDX 每輪皆擷取），144 輪/日 x (4~8 writes/round 上限) 遠低於 1,000，安全空間顯著擴大；確切每日總量仍需在下一個 Asia/Taipei 帳務日重置後，以真實 Production [kv-write-budget] 樣本核實（見下方 productionVerificationNote）。"
-    },
-    "productionVerificationNote": "今日帳號層級的累計總量已被 V1.9.2 部署前的用量污染，無法單獨反映本次優化的真實效果；真正的每日效果只有在下一個 Asia/Taipei 帳務日重置之後才看得出來。本輪改以蒐集真實 Production [kv-write-budget] Cron log 樣本（至少 3 筆）作為驗證依據，取代『今日總量』這個會失真的指標。",
-    "testResult": "npm test 共 1300 項（1292 + 本輪新增 test/kvWriteOptimization.test.js 38 項）；NEW FAILURES = 0（同一輪 git stash -u 對照乾淨 checkout，35 項既有失敗完全相同、無新增、無被本輪意外掩蓋）。新增測試涵蓋：WRITE_ON_CHANGE 的 skip/write 正確性（含一個真實抓到的別名（aliasing）bug：resolveIncidentNotifications 會就地修改比對用的舊狀態物件，導致比較永遠『相等』——已在 broadcastPipeline.js 用 structuredClone 在呼叫前先拍快照修正）、批次寫入的 chunking/splitting、v1/v2 混合資料的合併排序與所有既有 filter、退休後 0 KV 寫入的直接證明、[kv-write-budget] log 格式、quiet/medium/high 三種情境的批次寫入計數。同步更新既有測試：pipeline.test.js／debugStatusLine.test.js（usage-ledger entry 計數改為 0）、tdxUsageLedger.test.js（/debug/tdx、Hsinchu admin CCTV probe 兩個 handler 改為斷言 0 筆 usage-ledger 寫入；GET /health 斷言退休卡片文字）、pipelineTraceIntegration.test.js（直接掃 KV key 前綴改為透過 listPipelineTrace 讀取，兼容新的 batch схема）、pipelineTrace.test.js（MAX_LIST_PAGES 安全上限測試改為允許 v1+v2 兩個前綴各自的上限）。刪除兩個已測試『已退休功能』本身的檔案：test/healthQuotaDashboard.test.js、test/healthCctvSourceBreakdown.test.js（測的正是被移除的 UI，不是迴歸）。",
-    "canonicalVersionSource": "src/version.js 的 APP_VERSION 已 bump 為 V1.9.2（patch release，三段式版本治理，同一個 commit）。",
-    "githubSeal": "PASS",
-    "githubEngineeringMemory": "SEALED",
-    "claudeDriveUpload": "NO",
-    "doNotMisread": [
-      "不要把 tdx:usage:summary:v1／tdx:usage:entry:v1:* 的退休誤讀為『刪除程式碼』——src/tdx/usageLedger.js 的函式完全保留、完全可測試，只是不再被任何正式路徑呼叫。",
-      "不要誤以為 WRITE_ON_CHANGE 改變了 Shared Feed／Incident Suppression 的內容決策邏輯——兩者都只改變『何時寫入 KV』，資料本身的產生規則完全未動。",
-      "不要以為 Pipeline Trace 的舊版 v1 per-entry key 被刪除或遷移了——它們完全沒被動過，只是靠原本的 24h TTL 自然過期；新資料一律走 v2 batch。",
-      "不要把 [kv-write-budget] log 誤讀為某種新的 KV 儲存機制——它只是 console.log，Workers Logs 可見，沒有建立任何新的 KV key。",
-      "不要因為帳號層級今日總量看起來還很高就誤判本輪優化沒有效果——今日總量含有部署前的舊用量，必須等下一個 Asia/Taipei 帳務日重置後看真實 Production [kv-write-budget] 樣本才準。",
-      "不要對 Google Drive 做任何寫入——Claude 唯讀，GitHub 是唯一正式寫入來源。"
-    ],
-    "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
+      "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
     },
     {
       "task": "PIPELINE_TRACE_FILTER_ROOT_CAUSE_V1_9_1",
@@ -447,100 +442,54 @@
       "task": "DRIVE_SYNC_GOVERNANCE_V2",
       "status": "SEALED",
       "sealedAt": "2026-08-25",
-      "sealedBy": "human directive (路況工程部 版本治理規則正式更新＋封版令)",
-      "whatChanged": "Governance only. Claude is now READ-ONLY on Google Drive; GitHub becomes the sole formal write source for code and Engineering Memory alike; GitHub → Drive Sync is the only formal path into the cloud mirror. Recorded in cloudSyncGovernance above and in 01_FOUR_DEPARTMENT_GOVERNANCE.md sections 17-23.",
-      "whatDidNotChange": "No product code, no tests, no PBS/TDX/CCTV/LINE policy, no Cron/KV/R2, no Production deploy, no Consumer, no 雙鐵. The GitHub → Drive automation itself was NOT built — that is a separate future task and was explicitly out of scope.",
-      "githubSeal": "PASS",
-      "githubEngineeringMemory": "SEALED",
-      "githubToDriveSync": "PASS",
-      "claudeDriveUpload": "NO",
-      "honestState": "Verified by read-only observation, not assumed: after the push, all 10 canonical files in the Drive folder were modified at 2026-08-25T07:44 and every byte size matches the local engineering-memory/ copy exactly. The mirror is current with GitHub.",
-      "doNotMisread": [
-        "Do NOT upload, update, archive, move or delete anything on Google Drive — read only.",
-        "Do NOT report GITHUB_TO_DRIVE_SYNC as PASS until a real GitHub-side sync has actually run.",
-        "Do NOT rebuild the GitHub → Drive automation — it already exists on main and is working. Read scripts/syncEngineeringMemory.mjs before touching anything in that area.",
-        "Do NOT rewrite past LEGACY_CLAUDE_CONNECTOR_SYNC records as failures; they really did complete.",
-        "Do NOT start a new task before the current one is SEALED and Current Task is none."
-      ],
-      "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending.",
-      "correctionNote": "This entry first recorded GITHUB_TO_DRIVE_SYNC = PENDING, which was true when written — the automation had not yet been observed. It was corrected to PASS only after the byte-level check above. The rule cuts both ways: never report PENDING as PASS, and never leave a stale PENDING standing once PASS is demonstrable."
+      "summary": "Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源；GitHub Actions 自動鏡像至 Drive，已實測 PASS。完整規則見 07_KNOWN_ISSUES.md「治理變更紀錄｜DRIVE_SYNC_GOVERNANCE_V2」。"
     },
     {
       "task": "PBS_ACCIDENT_CCTV_ENRICHMENT_FIX",
       "status": "SEALED",
       "sealedAt": "2026-08-25",
-      "sealedBy": "human directive (路況工程部 高優先 Production Bug 修正令)",
-      "workComplete": "code, tests, push to main, Cloudflare Workers Builds deploy, Engineering Memory and the Google Drive delta sync are all done. Nothing about this task is outstanding.",
-      "testResult": "1081 total / 1063 pass / stable 18 fail; NEW FAILURES = 0 and SILENTLY FIXED = 0 against a clean checkout measured in the same session. 20 new tests in test/pbsAccidentCctvEnrichment.test.js, all passing.",
-      "productionVerificationNote": "push to main triggered the Workers Builds deploy. verify:production reported PASS_NETWORK_VERIFICATION_BLOCKED (sandbox egress 403). Per the standing human ruling this is NOT a blocker and does not affect the seal.",
-      "doNotMisread": [
-        "Do NOT re-enable TDX — this round changed CCTV eligibility, not the TDX pause.",
-        "Do NOT add unverified provincial-road CCTV RoadIDs — 國道1號/國道3號 are the only confirmed ones.",
-        "Do NOT loosen the service-area or location-quality gates — CCTV runs after them, never instead of them.",
-        "Do NOT reintroduce a source===freeway check anywhere in the CCTV path.",
-        "Do NOT run a Full Audit or a Google Drive Full Verify — delta sync is the normal path."
-      ],
-      "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
+      "summary": "CCTV 資格改依「道路＋KM 可信度」，不再要求 source==='freeway'（國3 96K+700 事件）。完整記錄見 07_KNOWN_ISSUES.md。"
     },
     {
       "task": "PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX",
       "status": "SEALED",
       "sealedAt": "2026-08-24",
-      "sealedBy": "human directive (路況工程部 最終封版＋Google Drive 工程記憶同步令)",
-      "finalMainHead": "979182b2a83a5237d71fc0c6076dfde7036a284b",
-      "workComplete": "code, tests, push to main, Cloudflare Workers Builds deploy, Engineering Memory and the Google Drive delta sync are all done. Nothing about this task is outstanding.",
-      "testResult": "1060 total / 1043 pass / 17 fail; NEW FAILURES = 0 and SILENTLY FIXED = 0 against a clean checkout. The 17 are the pre-existing baseline failures listed in 07_KNOWN_ISSUES.md.",
-      "productionVerificationNote": "push to main triggered the Workers Builds deploy. verify:production reported PASS_NETWORK_VERIFICATION_BLOCKED because this sandbox has no outbound HTTPS to the Production domain (egress proxy 403). Per the standing human ruling this is NOT a blocker and does not affect the seal.",
-      "doNotMisread": [
-        "Do NOT keep working on location quality — the gate shipped and is sealed.",
-        "Do NOT re-enable TDX — it stays OFF until a human confirms the quota returned; then follow RESTORE TDX.",
-        "Do NOT run a Full Audit or a Google Drive Full Verify — delta sync is the normal path.",
-        "Do NOT redeploy Production — it is already deployed at the final main HEAD above.",
-        "Do NOT re-run the export just to be safe — that only moves generatedAt and manufactures a fake delta."
-      ],
-      "openFollowUpsIfAny": "One, and it is conditional, not a task: if the raw PBS record for the 2026-08-24 台68 event ever surfaces, re-check locationQualityHonestLimit (whether that record carried coordinates) and serviceAreaHonestLimit. Nothing to do until then.",
-      "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
+      "summary": "播報追溯斷點修復＋位置精確度閘門（台68 事件）：已推播事件必定可在 Pipeline Trace 查到。完整記錄見 07_KNOWN_ISSUES.md。"
     },
     {
       "task": "TDX_QUOTA_PROTECTION_PBS_ONLY",
       "status": "SEALED",
       "sealedAt": "2026-08-23",
-      "sealedBy": "human directive (路況工程部 最終封存令)",
-      "workComplete": "code, tests, push to main, Cloudflare Workers Builds deploy, and Google Drive engineering-memory delta sync are all done",
-      "productionHealthCheckPerformed": false,
-      "productionHealthCheckIsBlocker": false,
-      "productionVerificationNote": "The sandbox session that shipped this had no outbound HTTPS to the Production domain (environment egress proxy returns 403), so verify:production reported PASS_NETWORK_VERIFICATION_BLOCKED and no human /health check was run. The human explicitly ruled this is NOT a blocker and does NOT affect the seal. Absence of evidence, not contrary evidence: if a future /health ever shows trafficSourceMode is not PBS_ONLY, treat that as a NEW incident, not as unfinished work from this task.",
-      "restoreProcedure": "07_KNOWN_ISSUES.md -> RESTORE TDX (existing procedure; no new version or redesign needed when TDX quota returns)",
-      "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
+      "summary": "TDX 額度用盡，TRAFFIC_SOURCE_MODE=PBS_ONLY 關閉 Cron 路徑上所有 TDX 呼叫，未刪除任何 TDX 程式碼。還原程序見 07_KNOWN_ISSUES.md「TDX 還原程序」。"
     }
   ],
   "version": {
     "packageJsonVersion": "0.1.0",
-    "latestCompleted": "V1.9.3",
+    "latestCompleted": "V1.9.4",
     "canonicalSource": "src/version.js 的 APP_VERSION — 唯一權威。packageJsonVersion 是 npm 套件版本（0.1.0），與產品版本線無關，不要混用。"
   },
   "production": {
     "status": "DEPLOYED",
-    "verification": "Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why)",
+    "verification": "V1.9.4 fix verified via deterministic fixture (test/pipelineTraceReadPerformance.test.js) only — real Production TTFB NOT_OBSERVED (sandbox egress blocked, see 07_KNOWN_ISSUES.md)",
     "deployMethod": "push to main -> Cloudflare Workers Builds auto-deploy",
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
-  "currentPhase": "Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留",
+  "currentPhase": "Production maintenance — V1.9.4 SEALED（無施工中項目）",
   "currentTask": "none（無進行中工作）。Latest completed task = KV_WRITE_OPTIMIZATION_V1_9_2，status = SEALED（前序 PIPELINE_TRACE_FILTER_ROOT_CAUSE_V1_9_1、CCTV_QUAD_PREPARE_TIMEOUT_OBSERVABILITY_V1_9_0、THREE_PART_VERSIONING_TRANSITION、PRODUCTION_VERSION_LINEAGE_RECONCILIATION 亦為 SEALED）。CURRENT_OFFICIAL_VERSION = V1.9.2。本輪：(1) traffic:shared-feed／line:incident-suppression-state 改為 WRITE_ON_CHANGE（內容不變則跳過寫入，只更新 updatedAt/lastSeenAt 真的改變時才寫）；(2) Pipeline Trace 改為每輪一把 batch key（debug:pipeline-trace-batch:v2:*），舊版 v1 per-entry key 不刪除不遷移、靠 24h TTL 自然過期，listPipelineTrace 已能正確合併新舊兩種схема；(3) TDX Usage Summary 正式退休（tdx:usage:summary:v1 與底層 tdx:usage:entry:v1:* 帳本皆為 0 writes/day，/health 的用量卡片改為指向 TDX 官方後台的靜態提示，TDX 本身能力完全未動）；(4) 新增 [kv-write-budget] Cron console.log（僅 Workers Logs，無新 KV key）。雲端同步治理維持 V2：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源。**下一件事若要開工，建議處理約 33 項過期斷言**（見 07_KNOWN_ISSUES.md，與本輪無關的既有項目）。",
-  "knownBlocker": "無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md",
+  "knownBlocker": "無程式碼層級 blocker。本 sandbox session 對 Production Worker 網域（含 Cloudflare Dashboard）的 outbound HTTPS 一律被環境自身的 egress proxy 阻擋，故本輪 Production 真實 TTFB 驗證為 NOT_OBSERVED，非本輪修復本身的問題——修復正確性已由決定性 fixture（test/pipelineTraceReadPerformance.test.js，真實 kv.get()呼叫次數/併發量測）獨立證實。",
   "realWorldConfirmation": {
     "status": "REAL_WORLD_CONFIRMATION_PENDING",
     "subject": "V1.8.7.7 CCTV gray broken image fix"
   },
-  "nextAction": "無待辦。下一個真實 Asia/Taipei 帳務日重置後，可蒐集 ≥3 筆 Production [kv-write-budget] log 樣本核實 V1.9.3 實際效果（比對 healthSnapshot/pbsFetch/pipelineTraceBatch 分類數字）。PBS Prototype feature branch 仍在 GitHub 但尚未 merge main；merge、Windows → Cloudflare 實際傳輸，皆需真人另行明確授權，不自行開始。若要開工，建議處理約 33 項過期斷言（見 07_KNOWN_ISSUES.md，既有技術債，與本輪無關）。",
+  "nextAction": "無待辦。若下次有可連線 Production 的 session/人類，可補測 /admin/pipeline-trace 與 /admin/pipeline-trace-view 的真實 TTFB（no-filter／source 篩選／road 篩選三種），與本輪 fixture 量測的 kv.get() 次數對照。",
   "authorityLevels": {
     "levelA_selfServiceReadOnly": "own repo git log, own Worker/KV/test results only",
     "levelB_requiresHumanApproval": "interactive login/OAuth, private dashboards, real KV content, any other department's resources (read or write)",
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-08-26T16:49:51.577Z",
-    "sourceMainHead": "2f820216b57e3acd7c257d040034301027fc5a90",
+    "generatedAt": "2026-08-27T02:59:21.275Z",
+    "sourceMainHead": "49fa03f398ea94b8c1ac37511532c1fa3f6ce908",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
     "historyDir": "_history"

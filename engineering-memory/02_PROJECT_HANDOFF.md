@@ -17,11 +17,11 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | 2f820216b57e3acd7c257d040034301027fc5a90 |
-| Snapshot generated at | 2026-08-26T16:49:51.577Z |
+| Source main HEAD | 49fa03f398ea94b8c1ac37511532c1fa3f6ce908 |
+| Snapshot generated at | 2026-08-27T02:59:21.275Z |
 | Source working tree | dirty (5 changed source file(s)) |
-| Current version | V1.9.3 |
-| Current phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
+| Current version | V1.9.4 |
+| Current phase | Production maintenance — V1.9.4 SEALED（無施工中項目） |
 
 `Source main HEAD` 是這份快照所描述的正式 main commit（取自 `origin/main`），**不是**包含本檔案自己的那個 commit——兩者刻意分開，避免 Git 自我參照循環。詳見 `SYSTEM_STATE.json` 的 `sourceMainHead` / `exportArtifactCommit`。
 
@@ -98,16 +98,16 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 | 欄位 | 值 |
 |---|---|
-| Latest completed | V1.9.3 |
+| Latest completed | V1.9.4 |
 | package.json version | 0.1.0 |
 | Production status | DEPLOYED |
-| Production verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
+| Production verification | V1.9.4 fix verified via deterministic fixture (test/pipelineTraceReadPerformance.test.js) only — real Production TTFB NOT_OBSERVED (sandbox egress blocked, see 07_KNOWN_ISSUES.md) |
 
 版本線（哪些版本仍具架構意義）→ `06_VERSION_HISTORY.md`。
 
 ## Current known issues
 
-- **Known blocker**：無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md
+- **Known blocker**：無程式碼層級 blocker。本 sandbox session 對 Production Worker 網域（含 Cloudflare Dashboard）的 outbound HTTPS 一律被環境自身的 egress proxy 阻擋，故本輪 Production 真實 TTFB 驗證為 NOT_OBSERVED，非本輪修復本身的問題——修復正確性已由決定性 fixture（test/pipelineTraceReadPerformance.test.js，真實 kv.get()呼叫次數/併發量測）獨立證實。
 - **Real-world confirmation**：REAL_WORLD_CONFIRMATION_PENDING
 - **既有測試失敗基準線**：`npm test` 共 1272 項，其中穩定 38 項為已知失敗（2 項 `pbs-relay/tests/*` 缺 `pbs-relay/src/cache.js`；**33 項過期斷言**——動態路肩推播關閉、PBS 成為 CCTV 可信來源之後未同步更新的測試，是目前最大的一筆技術債，待獨立施工令；3 項 wall-clock 相依的 `healthQuotaDashboard`，會隨日期自然增加）。**注意：舊版文件宣稱那 13 項是「Workers-only `.wasm` codec 在沙盒無法載入」，這是錯的 Root Cause——真正原因是沙盒 `node_modules` 不完整、`@jsquash/jpeg` 沒安裝；裝了之後那些檔案全部可以執行，並揭露上述 33 項過期斷言。**出現這 18 項以外的新失敗才算真正回歸，且**判斷回歸一律以同一輪 `git stash -u` 對照為準**；逐項清單、`deploymentPolicyAndVerify` 第 12 項的「尚未 push 必失敗」現象，以及 `deploymentStatus` 那項只在全套執行時偶發的雜訊，都見 `07_KNOWN_ISSUES.md`。
 - **Dashboard-only 事實永遠無法從程式驗證**：Production branch 指向、真實 Cron 排程、Secret 值是否正確、Build 歷史——只能由真人開 Dashboard 確認。
@@ -165,7 +165,7 @@ PBS 官方 -> localMonitor.js -> localPrototype.js
 `c34b52c045cd05eb4be01b91debe5ba002c73cb6`，**尚未 merge 進 main**）。
 `WINDOWS_TO_CLOUDFLARE_PUSH = NOT_STARTED`。`PRODUCTION_INTEGRATION =
 NOT_STARTED`。`PRODUCT_VERSION_BUMP = NO`（此 Prototype 本身不是 Release；Production
-版本照自己節奏推進，與此無關，目前為 V1.9.3）。
+版本照自己節奏推進，與此無關，目前為 V1.9.4）。
 
 真人回報 pbs-relay 68/68 通過；本 Cloud Session 另對同一 commit 做了一次獨立
 唯讀驗證（`git worktree` 乾淨簽出）：Prototype 自己新增的兩個測試檔（共 12 項）
@@ -184,7 +184,7 @@ Production 已完成的功能。**
 
 ## Next action
 
-無待辦。下一個真實 Asia/Taipei 帳務日重置後，可蒐集 ≥3 筆 Production [kv-write-budget] log 樣本核實 V1.9.3 實際效果（比對 healthSnapshot/pbsFetch/pipelineTraceBatch 分類數字）。PBS Prototype feature branch 仍在 GitHub 但尚未 merge main；merge、Windows → Cloudflare 實際傳輸，皆需真人另行明確授權，不自行開始。若要開工，建議處理約 33 項過期斷言（見 07_KNOWN_ISSUES.md，既有技術債，與本輪無關）。
+無待辦。若下次有可連線 Production 的 session/人類，可補測 /admin/pipeline-trace 與 /admin/pipeline-trace-view 的真實 TTFB（no-filter／source 篩選／road 篩選三種），與本輪 fixture 量測的 kv.get() 次數對照。
 
 ## Full history location
 
