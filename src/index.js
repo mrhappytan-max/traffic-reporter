@@ -15,6 +15,7 @@ import { handlePipelineTrace } from './traffic/pipelineTrace.js';
 import { handlePipelineTraceView } from './traffic/pipelineTraceView.js';
 import { handleDeploymentStatus, handleVersion } from './traffic/deploymentStatus.js';
 import { handleDeploymentStatusView } from './traffic/deploymentStatusView.js';
+import { handlePbsDebugPush, PBS_DEBUG_PUSH_PATH } from './pbs/debugPush.js';
 
 // V1.6.3 — Admin Protection: every human-facing admin/debug page requires
 // HTTP Basic Auth (see security/adminAuth.js). Centralized here on
@@ -196,6 +197,21 @@ export default {
     // a caller that tries to write.
     if (url.pathname === '/internal/shared-feed') {
       return handleSharedFeed(request, env);
+    }
+
+    // V1.9.5 — POST /internal/pbs-debug-push: Windows PBS Local Monitor →
+    // Cloudflare, DEBUG-ONLY receiving end (see pbs/debugPush.js's own
+    // module comment for the full picture — auth, validation,
+    // idempotency, and the hard structural boundary against LINE/CCTV/
+    // Shared Feed/Pipeline Trace/business KV writes). Same
+    // machine-to-machine shape as /internal/shared-feed just above: its
+    // own bearer secret (PBS_DEBUG_PUSH_SECRET), NOT Admin Basic Auth,
+    // NOT in ADMIN_PATHS. Matched on pathname alone (method handling —
+    // 405 for non-POST — lives inside the handler itself) for the same
+    // reason: the contract has to be visible to a caller that uses the
+    // wrong verb, not hidden behind a 404.
+    if (url.pathname === PBS_DEBUG_PUSH_PATH) {
+      return handlePbsDebugPush(request, env);
     }
 
     if (url.pathname === '/webhook' && request.method === 'POST') {

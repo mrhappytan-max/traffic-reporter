@@ -279,7 +279,63 @@
 // deterministic fixture and 23-item regression suite, and
 // 07_KNOWN_ISSUES.md for the quantified before/after read-cost figures.
 
-export const APP_VERSION = 'V1.9.4';
+// V1.9.5 (2026-08-27) — Windows → Cloudflare Debug-only Push Endpoint.
+// New POST /internal/pbs-debug-push (src/pbs/debugPush.js +
+// src/pbs/debugPushAuth.js). Proves ONE thing end to end, nothing more:
+// Windows PBS Local Monitor -> sends a minimal event payload -> Cloudflare
+// authenticates it -> validates its shape -> makes a best-effort
+// idempotency judgment -> logs it to Workers Logs -> ACKs. This round
+// does NOT wire Windows to actually send anything yet
+// (WINDOWS_PUSH_ENABLED = NO) and does NOT integrate this endpoint into
+// the real broadcast pipeline in any way.
+//
+// AUTH — its own dedicated Cloudflare Secret, PBS_DEBUG_PUSH_SECRET
+// (`Authorization: Bearer <secret>`, same header shape as the existing
+// TRAFFIC_FEED_SECRET convention), verified with the same hashed
+// constant-time comparison technique security/adminAuth.js already uses.
+// Deliberately never falls back to PBS_RELAY_TOKEN (the existing,
+// unrelated Cloudflare->Windows PULL credential), any LINE/TDX secret, or
+// ADMIN_PASSWORD — confirmed by dedicated tests. Missing secret
+// configuration fails closed (503); wrong/absent token is 401.
+//
+// SCHEMA — required: generatedAt, source ('pbs' only), eventId,
+// lifecycle (NEW|UPDATED|CLEARED only), fingerprint, requestId. `event`
+// is optional and whitelist-read (road/areaNm/direction/comment/
+// longitude/latitude/sourceDetail) for the Workers Logs line only — never
+// the raw upstream PBS record, never the whole ~1000-record feed. Body
+// capped at 16 KiB (a generous ceiling for one event, nowhere near a raw
+// feed dump).
+//
+// IDEMPOTENCY — Cloudflare Workers isolates cannot reliably dedupe across
+// requests without a KV write, and this round deliberately adds ZERO new
+// KV writes (its own explicit instruction: never add a KV write just for
+// a debug-only endpoint's idempotency). Implemented as a best-effort,
+// per-isolate, in-memory fingerprint Map instead, honestly reported as
+// PBS_DEBUG_PUSH_IDEMPOTENCY_MODE = 'NOT_PERSISTENT' rather than implying
+// a cross-isolate guarantee this design cannot make.
+//
+// STRUCTURAL DEBUG-ONLY BOUNDARY — src/pbs/debugPush.js imports NOTHING
+// from line/, cctv/, traffic/sharedFeed(Handler)?.js,
+// traffic/incidentSuppression.js, traffic/notified.js,
+// traffic/broadcastProvenance.js, traffic/pipelineTrace.js, or pbs/
+// lifecycle.js|pipeline.js, and never touches env.TRAFFIC_KV (or any
+// other binding) — there is no import path to LINE/CCTV/Shared Feed/
+// Pipeline Trace/business KV writes, structurally, not by a runtime flag
+// that could be forgotten. Confirmed by test/pbsDebugPush.test.js (33
+// tests): 0 fetch calls, 0 KV get/put calls of any kind, across NEW/
+// UPDATED/CLEARED.
+//
+// NOT touched by this round (explicit prohibition, verified): LINE, CCTV,
+// Shared Feed, the real Pipeline, real KV event state, Production PBS
+// takeover, the existing PBS 30-minute polling gate (V1.9.3, unchanged),
+// TDX, Cron, the Windows Prototype, and the feature/pbs-local-edge-
+// filter-prototype branch (not merged, not touched).
+//
+// See test/pbsDebugPush.test.js for the full CASE A-R acceptance suite
+// plus auth/schema/idempotency/boundary edge cases, and 07_KNOWN_ISSUES.md
+// for the full record.
+
+export const APP_VERSION = 'V1.9.5';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,
