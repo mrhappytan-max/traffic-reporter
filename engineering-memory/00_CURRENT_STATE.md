@@ -9,21 +9,30 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V1.9.8（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | 29bf1d2fb6a1efdd4e8859faf824f94dcf1c94d8 |
+| Current Version | V1.9.9（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | 7acb82abecfdf4784a027e1253738925d3f39af1 |
 | Source main HEAD resolved from | origin/main |
 | Source working tree | dirty (14 changed source file(s)) |
-| Production | DEPLOYED（程式碼已合main，Production實際部署狀態本sandbox無法連線驗證，NOT_OBSERVED） |
-| Production Verification | NOT_OBSERVED — sandbox egress封鎖Production網域與Cloudflare Dashboard，依施工令第十一節以確定性測試+部署狀態(commit/version.js)作為封版依據 |
-| Current Phase | V1.9.8 SEALED — Windows PBS Production Ingress + PBS Polling Retirement |
-| Current Task | none（無進行中工作）。Latest completed = WINDOWS_PBS_PRODUCTION_INGRESS_AND_POLLING_RETIREMENT_V1_9_8, status=SEALED. CURRENT_OFFICIAL_VERSION=V1.9.8. |
-| Latest Completed Version | V1.9.8 |
+| Production | DEPLOYED — Cloudflare Worker Version ID `defc1da4-6328-47ce-82c6-81082519bc2`；Windows `TrafficReporter-PBS-LocalMonitor` 已重啟為 Running |
+| Production Verification | Wrangler deploy PASS；Windows 實際工作夾 PBS tests 121/121 PASS |
+| Current Phase | V1.9.9 PHASE 1 SEALED — WINDOWS_SERVICE_AREA_HSINCHU_ONLY |
+| Current Task | none（無進行中工作）。Latest completed = WINDOWS_SERVICE_AREA_HSINCHU_ONLY, status=SEALED. CURRENT_OFFICIAL_VERSION=V1.9.9. |
+| Latest Completed Version | V1.9.9 |
 | Known Blocker | none |
 | Real-world Confirmation | N/A — 本輪為確定性測試驅動封版，未等待/未人工製造真實PBS事件 |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 等待下一個正式施工令。若要主動開工，可處理07_KNOWN_ISSUES.md既有約33項過期斷言（與V1.9.8無關）。 |
+| Next Action | STOP；等待新的正式施工令。不得自行開始 V1.9.9 Phase 2。 |
 | Export Generated At | 2026-08-28T04:10:38.492Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
+
+## V1.9.9 Phase 1 封版（2026-08-28）
+
+- `V1.9.9_PHASE_1 = WINDOWS_SERVICE_AREA_HSINCHU_ONLY`
+- `AI_INTEGRATION = NOT_STARTED`
+- `LINE_POLICY = UNCHANGED`
+- Windows PBS Local Edge Filter 僅納入新竹市、新竹縣；竹南、頭份、苗栗市及其他苗栗縣區域一律排除。
+- 跨縣市道路依實際新竹路段納入；舊 broad bounding box 不再能單獨讓苗栗事件通過。
+- `NEW`／`UPDATED`／`MISSING_PENDING_CLEAR`／`CLEARED` lifecycle 行為未修改。
 
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
 

@@ -1062,3 +1062,7 @@ Secret或Task Scheduler。
 
 - `git branch -r --no-merged main` 對以 cherry-pick 方式收編的分支會誤判為未合併（比對 commit SHA 祖先關係，不比對內容）——V1.8.7.3 分支即為實例。
 - `ENGINEERING_STATUS.md` 的「main HEAD」欄位歷史上曾經長時間未同步更新（曾停留在 V1.8.6.8 時代的 SHA，直到 V1.8.7.7 封版時才發現並更正）——此欄位理想上應由 script 自動產生，而不是每輪手動記，這正是本 export 系統 `SYSTEM_STATE.json` 存在的原因之一。
+
+## 修正紀錄｜V1.9.9 Phase 1 — Windows Service Area Hsinchu Only（2026-08-28）
+
+`V1.9.9_PHASE_1 = WINDOWS_SERVICE_AREA_HSINCHU_ONLY`。Windows PBS Local Edge Filter 原先以竹南／頭份文字直接納入，且國1／國3公里上限與座標 bounding box 過寬，可能把苗栗事件送入正式 Business Pipeline。本輪只修改已定位的 `pbs-relay/src/localPrototype.js`，重用既有 `src/pbs/hsinchuFilter.js` 與 `src/pbs/roadName.js`：新竹市、新竹縣、竹北、湖口、新豐、關西納入；竹南、頭份、苗栗市與其他苗栗縣區域排除；同一道路只納入新竹段；座標不得再單獨授予服務區資格。`NEW`／`UPDATED`／`MISSING_PENDING_CLEAR`／`CLEARED` lifecycle 完全未改。`AI_INTEGRATION = NOT_STARTED`；`LINE_POLICY = UNCHANGED`。Targeted tests 12/12、root invariants 73/73、Windows PBS full suite 121/121 PASS，NEW FAILURES=0。Fix commit `7acb82a`；Cloudflare Worker Version ID `defc1da4-6328-47ce-82c6-81082519bc2`，Windows `TrafficReporter-PBS-LocalMonitor` 已重啟為 Running。Phase 1 SEALED；不得自行開始 Phase 2。

@@ -6,6 +6,7 @@
 
 | 版本 | commit（短 SHA） | 主題 |
 |---|---|---|
+| **V1.9.9** | `7acb82a` | **Windows Service Area Hsinchu Only（Phase 1，2026-08-28）** — Windows PBS Local Edge Filter 僅納入新竹市與新竹縣；明確排除竹南、頭份、苗栗市與其他苗栗縣區域。國1／國3使用 Windows 專用新竹公里範圍，舊 broad bounding box 不再能單獨納入苗栗事件；跨縣市道路只保留新竹段。重用既有 canonical road/service-area resolver，未建立第二套業務 service-area logic。`NEW`／`UPDATED`／`MISSING_PENDING_CLEAR`／`CLEARED` lifecycle 未修改；AI integration 未開始；LINE policy 未修改。Targeted 12/12、root invariants 73/73、PBS full 121/121 PASS，NEW FAILURES=0。Cloudflare Worker 已部署；Windows Local Monitor 已套用並重啟。 |
 | V1.8.6.5 | `76a4113`→`07253f9` | KM Location Resolver（公里數 → 司機看得懂的位置 + 地圖），含官方道路位置資料整合 |
 | V1.8.6.6 | `d0012e1`, `0e8349f` | Production forensic audit：非碰撞異常事件不應被誤判為事故 |
 | Pipeline Trace | `3858e0a` | V1.8.6.7：24h Pipeline Trace + 人工查修頁（本專案最重要的可觀測性基礎設施） |

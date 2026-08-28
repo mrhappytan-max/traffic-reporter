@@ -558,23 +558,26 @@
   ],
   "version": {
     "packageJsonVersion": "0.1.0",
-    "latestCompleted": "V1.9.8",
+    "latestCompleted": "V1.9.9",
     "canonicalSource": "src/version.js 的 APP_VERSION — 唯一權威。packageJsonVersion 是 npm 套件版本（0.1.0），與產品版本線無關，不要混用。"
   },
   "production": {
-    "status": "DEPLOYED（程式碼已合main，Production實際部署狀態本sandbox無法連線驗證，NOT_OBSERVED）",
-    "verification": "NOT_OBSERVED — sandbox egress封鎖Production網域與Cloudflare Dashboard，依施工令第十一節以確定性測試+部署狀態(commit/version.js)作為封版依據",
-    "deployMethod": "push to main -> Cloudflare Workers Builds auto-deploy",
+    "status": "DEPLOYED",
+    "verification": "Wrangler deploy PASS；Cloudflare Worker Version ID defc1da4-6328-47ce-82c6-81082519bc2；Windows PBS Local Monitor tests 121/121 PASS and scheduled task Running",
+    "deployMethod": "wrangler deploy plus Windows Local Monitor file deployment and scheduled-task restart",
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
-  "currentPhase": "V1.9.8 SEALED — Windows PBS Production Ingress + PBS Polling Retirement",
-  "currentTask": "none（無進行中工作）。Latest completed task = WINDOWS_PBS_PRODUCTION_INGRESS_AND_POLLING_RETIREMENT_V1_9_8，status = SEALED。CURRENT_OFFICIAL_VERSION = V1.9.8。本輪：(1) src/pbs/debugPush.js 升級為正式 Windows PBS Production Ingress，重用既有canonical runLineBroadcast()/runSharedFeedPersist()；(2) Cloudflare自身PBS 30分鐘輪詢正式退休（pbsConfig.js#PBS_30_MIN_POLLING_ENABLED=false，程式碼完整保留可rollback）；(3) LINE/Shared Feed/CCTV整合透過重用canonical pipeline自動生效，0份重複業務邏輯；(4) LINE Push Policy（MAJOR_ACCIDENT_ONLY）完全未變動。下一件事若要開工：見07_KNOWN_ISSUES.md既有約33項過期斷言（與本輪無關），或等待新的正式施工令。",
+  "V1.9.9_PHASE_1": "WINDOWS_SERVICE_AREA_HSINCHU_ONLY",
+  "AI_INTEGRATION": "NOT_STARTED",
+  "LINE_POLICY": "UNCHANGED",
+  "currentPhase": "V1.9.9 PHASE 1 SEALED — WINDOWS_SERVICE_AREA_HSINCHU_ONLY",
+  "currentTask": "none（無進行中工作）。Latest completed task = WINDOWS_SERVICE_AREA_HSINCHU_ONLY，status = SEALED。CURRENT_OFFICIAL_VERSION = V1.9.9。Windows PBS Local Edge Filter只納入新竹市與新竹縣；竹南、頭份、苗栗市及其他苗栗縣區域排除；lifecycle不變；AI integration未開始；LINE policy未變。",
   "knownBlocker": "none",
   "realWorldConfirmation": {
     "status": "N/A — 本輪為確定性測試驅動封版，未等待/未人工製造真實PBS事件",
     "subject": "V1.8.7.7 CCTV gray broken image fix"
   },
-  "nextAction": "等待下一個正式施工令。若要主動開工，可處理07_KNOWN_ISSUES.md既有約33項過期斷言（與V1.9.8無關）。",
+  "nextAction": "STOP；等待新的正式施工令。不得自行開始 V1.9.9 Phase 2。",
   "authorityLevels": {
     "levelA_selfServiceReadOnly": "own repo git log, own Worker/KV/test results only",
     "levelB_requiresHumanApproval": "interactive login/OAuth, private dashboards, real KV content, any other department's resources (read or write)",
