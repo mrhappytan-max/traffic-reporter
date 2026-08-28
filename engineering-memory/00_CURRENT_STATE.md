@@ -9,20 +9,20 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V2.0.1（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | 7d5ed36edbf8217f9063be92835348dc33e383e4 |
+| Current Version | V2.0.2（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | fbc50329f8333114d7bfa4485ecc46a14f86c3a2 |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty (8 changed source file(s)) |
+| Source working tree | dirty (9 changed source file(s)) |
 | Production | DEPLOYED |
-| Production Verification | V2.0.1 sealed (observability/diagnostic UI only, no AI semantic authority change). NOT_OBSERVED independently by this session (sandbox network policy blocks Production domain and Cloudflare Dashboard). |
-| Current Phase | V2.0.1 SEALED — AI Decision Observatory 查修頁已上線，READ ONLY OBSERVABILITY，0次額外Workers AI呼叫。FIRST_REAL_AI_EVENT仍為WAITING（非本輪範圍） |
-| Current Task | none（無進行中工作）。Latest completed task = AI_DECISION_OBSERVATORY_V2_0_1，status = SEALED。詳見 SYSTEM_STATE.json 的 taskSeal 與 03_ARCHITECTURE.md/02_PROJECT_HANDOFF.md/07_KNOWN_ISSUES.md。 |
-| Latest Completed Version | V2.0.1 |
-| Known Blocker | 無 repo-side blocker。FIRST_REAL_AI_EVENT=WAITING（下一個observational milestone，非封版blocker，非程式缺陷） |
+| Production Verification | V2.0.2 sealed (config correctness fix only). NOT_OBSERVED independently by this session (sandbox network policy blocks Production domain and Cloudflare Dashboard). |
+| Current Phase | V2.0.2 SEALED — Config Drift Hotfix，PBS_AI_DECISION_ENABLED 已正式宣告於 wrangler.jsonc（canonical，非Dashboard）。FIRST_REAL_AI_EVENT仍為WAITING |
+| Current Task | none（無進行中工作）。Latest completed task = CONFIG_DRIFT_HOTFIX_V2_0_2，status = SEALED。詳見 SYSTEM_STATE.json 的 taskSeal 與 03_ARCHITECTURE.md/02_PROJECT_HANDOFF.md/07_KNOWN_ISSUES.md。 |
+| Latest Completed Version | V2.0.2 |
+| Known Blocker | 無 repo-side blocker。FIRST_REAL_AI_EVENT=WAITING（下一個observational milestone，非封版blocker）；另記已知問題PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER（本輪不修） |
 | Real-world Confirmation | NOT_OBSERVED — FIRST_REAL_AI_EVENT not yet confirmed by this session |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 等待真實Production PBS事件走完Windows→Cloudflare→Workers AI→LINE完整路徑的觀察證據（FIRST_REAL_AI_EVENT）；可透過新增的 GET /admin/pbs-ai-observatory-view 直接查看；下一個Agent不得開始hourly reminder、不得實作driverSummary、不得修改AI Prompt、不得擴大服務區域 |
-| Export Generated At | 2026-08-28T09:48:13.154Z |
+| Next Action | 等待GPT Work確認Production端wrangler.jsonc canonical設定已透過deploy生效；等待真實Production PBS事件走完完整AI判讀路徑的觀察證據 |
+| Export Generated At | 2026-08-28T11:57:52.387Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## V1.9.9 Phase 1 封版（2026-08-28，另一個 session 完成，本 Cloud Session 未參與，port 進本模板僅為維持 template↔engineering-memory 一致）
@@ -143,8 +143,43 @@ authority**。新 Admin 頁 `GET /admin/pbs-ai-observatory-view`
   `AI_DRIVER_SUMMARY = FUTURE_CANDIDATE`（僅記錄產品候選方向，未實作、
   未修改 Prompt、未新增 schema）。
 - 詳見 `03_ARCHITECTURE.md`／`02_PROJECT_HANDOFF.md`／`07_KNOWN_ISSUES.md`。
-  **下一個 Agent：不得開始 hourly reminder；不得實作 driverSummary；
-  不得修改 AI Prompt；不得擴大服務區域。**
+
+## V2.0.2 封版（2026-08-29）— Config Drift Hotfix
+
+PATCH，Production configuration correctness fix，**不改 AI semantic
+behavior**。
+
+**CONFIG_DRIFT_INCIDENT**：`PBS_AI_DECISION_ENABLED` 從 V1.9.9 Phase 3D
+到 V2.0.1 只存在於 Cloudflare Dashboard 手動設定，每次 GitHub main →
+Workers Builds → wrangler deploy 都把 `wrangler.jsonc` 視為權威來源，
+悄悄移除／覆寫 Dashboard-only 的值（與 `TRAFFIC_SOURCE_MODE` 既有機制
+相同）。GPT Work 手動設定的 `"true"` 因此被後續一次部署移除，AI 決策
+悄悄退回程式碼預設值 `false`。17:49 台68事件發生時 AI switch 已被移除，
+**該筆不算真實 AI 判讀事件**（legacy 路徑決定，非 Workers AI）。
+
+- `PBS_AI_DECISION_ENABLED_SOURCE = WRANGLER_CANONICAL_VAR`
+- `DASHBOARD_ONLY_AI_SWITCH = RETIRED`
+- `KEEP_VARS = NOT_USED`（會讓 Dashboard-only 設定繼續漂移，與本輪
+  「repo config authoritative」目標相反）
+- 修正：`wrangler.jsonc` 的 `vars` 正式宣告
+  `"PBS_AI_DECISION_ENABLED": "true"`（字串形式）
+- 新增 regression guard：`scripts/check-deployment-policy.mjs` 的
+  `checkPbsAiDecisionEnabledVar()`，`npm run check:deployment-policy`
+  會在未來有人刪掉這個 var 時立即失敗
+- `APP_VERSION` 從 `V2.0.1` 升為 `V2.0.2`
+- 新增 10 項測試，全量迴歸 1549/1516/33，NEW FAILURES=0（僅跑一次）
+- 本輪**未觸碰**：AI Prompt、AI model、`aiDecisionEngine.js`、
+  `aiConfig.js` resolver 語意、Windows PBS filter、service area、
+  lifecycle、message formatter、driverSummary、LINE policy、
+  Shared Feed、CCTV、hourly reminder；未新增任何 Secret
+- `FIRST_REAL_AI_EVENT = WAITING`（不變）
+- 另記已知問題（本輪不修）：
+  `PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER`——LINE 訊息
+  格式化目前不會把 PBS comment 原文中的精確交流道／匝道文字（例如
+  「近竹科匝道」）帶出來顯示
+- 詳見 `03_ARCHITECTURE.md`／`02_PROJECT_HANDOFF.md`／`07_KNOWN_ISSUES.md`。
+  **下一個 Agent：不得開始 formatter 修正；不得實作 driverSummary；
+  不得開始 hourly reminder。**
 
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
 

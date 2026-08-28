@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "project": "traffic-reporter",
-  "verifiedFromRepoAt": "2026-08-28T09:48:13.154Z",
-  "verifiedFromCommit": "7d5ed36edbf8217f9063be92835348dc33e383e4",
+  "verifiedFromRepoAt": "2026-08-28T11:57:52.387Z",
+  "verifiedFromCommit": "fbc50329f8333114d7bfa4485ecc46a14f86c3a2",
   "note": "Everything in this file is derived from wrangler.jsonc/src/index.js in THIS repo checkout, verifiable by any future reader by re-running the export script. Fields the repo cannot itself verify (real Cloudflare Dashboard state) are explicitly marked unverified, never guessed.",
   "worker": {
     "name": "traffic-reporter",
@@ -25,14 +25,15 @@
       { "binding": "PBS_RELAY_WINDOWS", "serviceId": "01a008ab-4cc4-7c22-a747-4e27cdcc83c8", "source": "wrangler.jsonc" }
     ],
     "ai": [
-      { "binding": "AI", "source": "wrangler.jsonc", "note": "V1.9.9 Phase 3B: declared in wrangler.jsonc for @cf/zai-org/glm-4.7-flash driver-impact decisions (src/pbs/aiDecisionEngine.js). Declaring this binding does NOT activate AI decisions -- the real gate is the code-level kill switch src/pbs/aiConfig.js#PBS_AI_DECISION_ENABLED (default false). GPT Work confirmed the Dashboard-side binding is ACTIVE. V1.9.9 Phase 3D hotfix: resolvePbsAiDecisionEnabled() previously only accepted a real boolean; Cloudflare Dashboard/CLI Variables inject this kind of runtime flag as a STRING, so a Dashboard value of \"true\" silently stayed disabled. Fixed to also accept the string forms 'true'/'false' (case-insensitive, trimmed), still failing safe to false for anything else. V2.0.0 MILESTONE: GPT Work reports AI_DECISION=ACTIVE (PBS_AI_DECISION_ENABLED=\"true\" in Production) -- see v200MilestoneProductionLineage below; this repo checkout has not independently confirmed it." }
+      { "binding": "AI", "source": "wrangler.jsonc", "note": "V1.9.9 Phase 3B: declared in wrangler.jsonc for @cf/zai-org/glm-4.7-flash driver-impact decisions (src/pbs/aiDecisionEngine.js). Declaring this binding does NOT activate AI decisions -- the real gate is the code-level kill switch src/pbs/aiConfig.js#PBS_AI_DECISION_ENABLED (default false). GPT Work confirmed the Dashboard-side binding is ACTIVE. V1.9.9 Phase 3D hotfix: resolvePbsAiDecisionEnabled() previously only accepted a real boolean; Cloudflare Dashboard/CLI Variables inject this kind of runtime flag as a STRING, so a Dashboard value of \"true\" silently stayed disabled. Fixed to also accept the string forms 'true'/'false' (case-insensitive, trimmed), still failing safe to false for anything else. V2.0.0 MILESTONE: GPT Work reports AI_DECISION=ACTIVE (PBS_AI_DECISION_ENABLED=\"true\" in Production) -- see v200MilestoneProductionLineage below; this repo checkout has not independently confirmed it. V2.0.2 Config Drift Hotfix: the Dashboard-side \"true\" GPT Work set was silently removed by a later Workers Builds deploy (wrangler.jsonc is authoritative on every deploy, same mechanism as TRAFFIC_SOURCE_MODE's own var) -- PBS_AI_DECISION_ENABLED is now declared canonically in wrangler.jsonc's vars block (see vars.PBS_AI_DECISION_ENABLED below), and the Dashboard is no longer used to set it long-term." }
     ],
     "vars": {
       "PUBLIC_BASE_URL": "https://traffic-reporter.mr-happytan.workers.dev",
       "TRAFFIC_SOURCE_MODE": "PBS_ONLY",
-      "LINE_PUSH_POLICY": "MAJOR_ACCIDENT_ONLY"
+      "LINE_PUSH_POLICY": "MAJOR_ACCIDENT_ONLY",
+      "PBS_AI_DECISION_ENABLED": "true"
     },
-    "varsNote": "These are the runtime flags that decide what Production actually does, so they belong in the manifest rather than only in wrangler.jsonc. TRAFFIC_SOURCE_MODE=PBS_ONLY stops every TDX API call; LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY narrows proactive LINE push to accidents. Both are substituted from wrangler.jsonc by the export script, never hardcoded here.",
+    "varsNote": "These are the runtime flags that decide what Production actually does, so they belong in the manifest rather than only in wrangler.jsonc. TRAFFIC_SOURCE_MODE=PBS_ONLY stops every TDX API call; LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY narrows proactive LINE push to accidents; PBS_AI_DECISION_ENABLED gates Windows PBS AI driver-impact decisions (must be the string 'true' to activate, never a bare JSON boolean -- Cloudflare injects Workers Variables as strings). All three are substituted from wrangler.jsonc by the export script, never hardcoded here. V2.0.2: PBS_AI_DECISION_ENABLED's canonical source moved from a Dashboard-only Variable (silently dropped by every Workers Builds deploy) to this wrangler.jsonc declaration -- see PRODUCT_DECISIONS.md / 07_KNOWN_ISSUES.md for the Config Drift Hotfix history.",
     "secretsDeclaredExternally": [
       "TDX_CLIENT_ID",
       "TDX_CLIENT_SECRET",
@@ -68,6 +69,13 @@
     "method": "push to main -> Cloudflare Workers Builds auto-deploy",
     "verificationScripts": ["npm run check:deployment-policy (local, 0 network)", "npm run verify:production (calls GET /version)"],
     "buildMetadataSource": "scripts/generateBuildMetadata.mjs, run via package.json predeploy hook"
+  },
+  "v202ConfigDriftHotfix": {
+    "note": "V2.0.2 (2026-08-29). Root cause: PBS_AI_DECISION_ENABLED lived ONLY as a Cloudflare Dashboard Variable from V1.9.9 Phase 3D through V2.0.1, never in wrangler.jsonc. Workers Builds treats wrangler.jsonc as authoritative on every deploy (same mechanism as TRAFFIC_SOURCE_MODE's own long-standing var), so GPT Work's manually-set \"true\" was silently dropped by a later deployment and AI decisions fell back to the code-level default (false) without anyone changing the switch on purpose.",
+    "fix": "wrangler.jsonc's vars block now canonically declares PBS_AI_DECISION_ENABLED as the string \"true\". PBS_AI_DECISION_ENABLED_SOURCE=WRANGLER_CANONICAL_VAR, DASHBOARD_ONLY_AI_SWITCH=RETIRED, KEEP_VARS=NOT_USED.",
+    "regressionGuard": "scripts/check-deployment-policy.mjs#checkPbsAiDecisionEnabledVar() now fails loudly if this var is ever removed from wrangler.jsonc.",
+    "firstRealAiEventNote": "A 台68 event observed at 17:49 during the config-drift window is NOT counted as a genuine AI decision -- PBS_AI_DECISION_ENABLED had already been dropped back to false by that point, so that event was decided by the legacy path, not Workers AI. FIRST_REAL_AI_EVENT remains WAITING.",
+    "knownIssueRecordedNotFixed": "PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER -- the LINE message formatter does not yet surface a PBS comment's own precise interchange/ramp text (e.g. 近竹科匝道) even when present in the source comment. Unrelated to this round's config fix, deliberately not addressed here."
   },
   "v200MilestoneProductionLineage": {
     "note": "V2.0.0 (2026-08-28) is an architecture-generation milestone (Windows PBS Local Edge -> Cloudflare ingress -> Workers AI -> AI driver-impact decision -> existing LINE infrastructure), not a runtime-logic change in this round. The fields below are what GPT Work reported for the Cloudflare Dashboard side; this repo checkout cannot independently verify any of them (sandbox network egress blocks the Production domain and Dashboard) -- recorded as human-reported, never claimed as self-verified.",

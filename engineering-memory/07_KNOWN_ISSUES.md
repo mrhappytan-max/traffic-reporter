@@ -689,6 +689,45 @@ commit `7acb82a`；Cloudflare Worker Version ID `defc1da4-6328-47ce-82c6-
 81082519bc2`，Windows `TrafficReporter-PBS-LocalMonitor`已重啟為Running
 （人類回報，本Session未獨立驗證）。
 
+## 修正紀錄｜V2.0.2 Config Drift Hotfix — PBS_AI_DECISION_ENABLED canonical deployment（2026-08-29）
+
+**CONFIG_DRIFT_INCIDENT**：GPT Work 在 Cloudflare Dashboard 手動設定
+`PBS_AI_DECISION_ENABLED="true"` 後，被後續一次 GitHub main → Workers
+Builds → wrangler deploy 悄悄移除／覆寫——根因與 `TRAFFIC_SOURCE_MODE`
+既有註解記載的機制完全相同：Workers Builds 每次部署都把 `wrangler.jsonc`
+視為權威來源，Dashboard-only 的值撐不過下一次 deploy。`AI switch` 只存在
+於 Dashboard、不在 repo canonical configuration，因此每次 repo
+deployment 都可能把 AI 悄悄關掉，而沒有任何人真的改過這個開關。17:49
+台68事件發生時 AI switch 已被 deployment 移除，**該筆不算真實 AI 判讀
+事件**（由legacy路徑決定，非Workers AI）。
+
+**修正**：`wrangler.jsonc` 的 `vars` 區塊正式宣告
+`"PBS_AI_DECISION_ENABLED": "true"`（必須是字串，Cloudflare 一律以字串
+注入 Variable，`resolvePbsAiDecisionEnabled()` 自 V1.9.9 Phase 3D 起已
+支援此形式）。**正式決策**：`PBS_AI_DECISION_ENABLED_SOURCE =
+WRANGLER_CANONICAL_VAR`，`DASHBOARD_ONLY_AI_SWITCH = RETIRED`——Dashboard
+不再作為此 Variable 的長期權威來源。**未新增** `keep_vars`（會讓
+Dashboard-only 設定繼續漂移，與本輪目標「repo config authoritative」
+相反）。新增 regression guard：`scripts/check-deployment-policy.mjs` 的
+`checkPbsAiDecisionEnabledVar()`（`npm run check:deployment-policy` 現在
+會在有人未來不小心刪掉這個 var 時立即失敗，而非讓 Production AI 默默
+退回 FALSE）。
+
+本輪**未觸碰**：AI Prompt、AI model、`aiDecisionEngine.js`、
+`aiConfig.js` resolver 語意、Windows PBS filter、service area、
+lifecycle、message formatter、driverSummary、LINE policy、Shared Feed、
+CCTV、hourly reminder。未新增任何 Secret 至 `wrangler.jsonc` vars（測試
+直接斷言）。`APP_VERSION` 從 `V2.0.1` 升為 `V2.0.2`（PATCH，config
+correctness fix，不改 AI semantic behavior）。新增 10 項測試
+（`test/pbsAiConfigDriftHotfixV202.test.js`），全部首次執行即 PASS；
+全量迴歸 1549/1516/33，NEW FAILURES=0（僅跑一次）。
+
+**另記已知問題（本輪不修）**：
+`PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER` —— LINE
+訊息格式化目前不會把 PBS comment 原文中的精確交流道／匝道文字（例如
+「近竹科匝道」）帶出來顯示，即使來源 comment 已經包含這個資訊。與本輪
+config drift 修正無關，刻意不在本輪處理，避免同時改動兩個不相關問題。
+
 ## 修正紀錄｜V2.0.1 — AI Decision Observatory（2026-08-29）
 
 PATCH，Production observability/diagnostic UI 修正，不改 AI semantic authority。
@@ -776,108 +815,31 @@ Dashboard端`PBS_AI_DECISION_ENABLED`目前仍是GPT Work rollback後的
 `FALSE`，尚未重新設回`"true"`重試。是否／何時重試由GPT Work決定，
 不在本輪範圍。
 
-## 修正紀錄｜V1.9.9 Phase 3B — Workers AI Driver Impact Decision Integration（2026-08-28）
+## 修正紀錄｜V1.9.9 Phase 3B — Workers AI Driver Impact Decision Integration（2026-08-28，壓縮摘要）
 
-Phase 2預留的AI candidate／cache key設計，本輪正式接上真實Workers AI呼叫。
-固定model `@cf/zai-org/glm-4.7-flash`，透過`env.AI.run(...)`（binding名稱
-`AI`，已在`wrangler.jsonc`新增`"ai":{"binding":"AI"}`區塊）；不使用任何其他
-AI provider或AI Gateway。
-
-**模組**：新增`src/pbs/aiConfig.js`（`PBS_AI_DECISION_ENABLED_DEFAULT=false`、
-`resolvePbsAiDecisionEnabled(env)`，與`pbsConfig.js#resolvePbsPollingEnabled`
-同一env-override寫法——這是本輪的kill switch，預設關閉）；新增
-`src/pbs/aiDecisionCache.js`（`AI_DECISION_CACHE_TTL_SECONDS=48小時`，
-`readAiDecisionCache`/`persistAiDecisionCache`皆fail-open、絕不throw，
-corrupt JSON視為miss，KV outage視為miss/commit失敗但不中斷流程）；新增
-`src/pbs/aiDecisionEngine.js`（固定繁中prompt，明確只判斷「是否無法正常
-通行／需要繞路／明顯延誤／封路封閉車道交流道橋梁隧道／長時間重大管制／
-影響接送或營運動線」，明確要求不得因事件類型名稱是事故／施工／管制就
-直接決定；`validateAiDecisionResponse()`為純函式，嚴格schema檢查
-`{notify:boolean, impact:'HIGH'|'LOW', reason:string≤80字, confidence:0-1}`，
-任何欄位缺失／型別錯誤／超出範圍即回傳`AI_DECISION_INVALID`，絕不到達
-LINE；`resolveAiDecision()`為唯一orchestrator：cache lookup → miss才呼叫
-`env.AI.run` → 驗證 → 驗證通過才寫入cache，驗證失敗絕不快取）；新增
-`src/traffic/aiApprovedPbsBroadcast.js`（`runAiApprovedPbsBroadcast()`，
-施工令建議的新scoped函式，重用既有`subscriptions.js`/`notified.js`/
-`incidentSuppression.js`（事故類型限定）/`messageFormat.js`/
-`dynamicCollage.js`（事故類型限定，CCTV失敗絕不擋文字推播）/
-`pushMessage.js`，唯一仍執行的檢查是`broadcastHours.js`執行安全閘門；
-明確絕不呼叫`getBroadcastEligibility`／`getLinePushPolicyDecision`／
-`resolveLocationQuality`——這三個正是本輪要退休的內容判讀硬規則，AI
-verdict是Windows PBS語意權威；也絕不重新呼叫service area（Phase 2的
-`isWindowsPbsAiCandidateEligible`已在candidate建立階段把關）。
-
-**cache key**：直接重用Phase 2預留的`computeAiDecisionCacheKeyHash({eventId,
-fingerprint})`（SHA-256）與`AI_DECISION_CACHE_KV_PREFIX`，儲存於
-`TRAFFIC_KV`，與transport idempotency／LINE notified-state／incident
-suppression prefix完全獨立，TTL 48小時。相同eventId+fingerprint =
-cache hit，不再呼叫AI；fingerprint改變=新AI呼叫；無任何NLP語意diff。
-
-**順序（`src/pbs/debugPush.js`）**：auth → payload驗證 → 既有persistent
-transport idempotency → 建立AI candidate（`event=AI_CANDIDATE_CREATED`）→
-`resolvePbsAiDecisionEnabled(env)`為分支點——關閉時走**完全未修改**的
-legacy `runLineBroadcast()`+`runSharedFeedPersist()`（V1.9.8行為原封不動）；
-開啟時走新的`runAiDecisionPath()`：cache lookup（`AI_CACHE_HIT`/
-`AI_CACHE_MISS`）→ miss才呼叫`env.AI.run`（`AI_CALL_STARTED`）→ 驗證
-（`AI_DECISION_VALID`/`AI_DECISION_INVALID`）→ `AI_NOTIFY_TRUE`時呼叫
-`runAiApprovedPbsBroadcast()`再呼叫`runSharedFeedPersist()`，`AI_NOTIFY_FALSE`
-時只記audit trace（eventId/model/notify=false/impact/reason/confidence/
-cache命中與否），不產生新LINE/CCTV/proactive broadcast，也不額外寫大量
-新KV。**關鍵架構決策**：AI啟用時legacy call整段跳過，兩者對同一事件
-互斥、絕不同時執行——避免舊硬規則與AI同時核准同一事件造成LINE重複推播
-（施工令本身只說結果「AI verdict是唯一權威」，機制由本輪設計補齊）。
-Exact transport duplicate（idempotency命中）與AI cache hit皆是0次AI呼叫。
-
-**AI失敗策略**：429／5xx／network／runtime error／invalid response／
-binding missing，一律0 LINE、trace失敗原因（`AI_CALL_FAILED`或
-`AI_DECISION_INVALID`），絕不fallback回`MAJOR_ACCIDENT_ONLY`或任何舊硬
-規則決策（避免同一事件出現兩個判官）。**未加入重試**：檢視現有程式庫
-後沒有找到可直接重用、風格相符的既有retry helper，且施工令本身要求
-「第一版保持簡單、不做複雜retry queue」，因此`callWorkersAi()`只呼叫
-一次，失敗即回報`AI_CALL_FAILED`，交由下一次Windows PBS推送（若
-fingerprint不變、cache仍是miss）自然重試，未實作額外bounded retry
-機制。CLEARED事件不呼叫AI、不產生AI相關LINE推播、不觸發hourly reminder
-（hourly reminder僅為方向性設計，未實作）。
-
-**Kill switch**：`PBS_AI_DECISION_ENABLED`，預設`false`
-（`PBS_AI_DECISION_ENABLED_DEFAULT`）。理由：Claude push程式碼後
-Cloudflare會自動部署，但GPT Work尚未在Dashboard建立並驗證真正的AI
-binding；若AI決策預設開啟，正式LINE推播可能在人類決定啟用AI之前、
-單純因為程式碼部署就壞掉。安全rollout順序：程式碼部署 → AI決策關閉 →
-GPT Work建立AI Binding → GPT Work驗證binding → 另外明確指令才開啟AI
-決策。
-
-**Observability**：最低trace詞彙`AI_CANDIDATE_CREATED`/`AI_CACHE_HIT`/
-`AI_CACHE_MISS`/`AI_CALL_STARTED`/`AI_DECISION_VALID`/
-`AI_DECISION_INVALID`/`AI_CALL_FAILED`/`AI_NOTIFY_TRUE`/`AI_NOTIFY_FALSE`/
-`AI_LINE_ATTEMPTED`/`AI_LINE_SENT`/`AI_LINE_FAILED`全部帶eventId/
-fingerprint/model/confidence/reason/durationMs（依適用情境）；若Workers
-AI回應內含真實`usage`則原樣記錄，絕不捏造neuron/token數字；Secrets
-絕不進log。未實作複雜quota引擎——GPT Work已確認免費10,000 neurons/day，
-100事件/day估計約457-914 neurons/day已足夠，本輪只做可觀察的AI呼叫
-counter（透過trace log），env.AI回傳429時走上述AI失敗策略，非另建
-付費層機制。
-
-**測試**：新增5個測試檔共57項——`test/aiConfig.test.js`4項、
-`test/aiDecisionCache.test.js`9項、`test/aiDecisionEngine.test.js`18項、
-`test/aiApprovedPbsBroadcast.test.js`9項、`test/pbsAiDecisionScenarios.test.js`
-17項（施工令A-P共16個mocked-AI-adapter情境＋2個kill switch測試）全部
-第一次執行即PASS，零fix iteration；完整regression 1509/1476/33，
-NEW FAILURES=0（與V1.9.8/Phase 1/Phase 2的33項既有無關失敗完全相同，
-diff確認過）。APP_VERSION維持`V1.9.9`（施工令明確要求本輪不得升
-V1.9.9.10）。
-
-**Production驗收**：本輪未嘗試開啟Cloudflare Dashboard、未新增/驗證AI
-Binding、未檢查Neurons Dashboard——依施工令本身分工，這些是GPT Work的
-工作範圍。狀態誠實記錄為`AI_INTEGRATION=CODE_READY`、
-`AI_BINDING=PENDING_BROWSER_SETUP`、`AI_DECISION=DISABLED`、
-`LINE_AI_DECISION=NOT_ACTIVE`，絕不寫ACTIVE。
-
-**不要誤讀**：本輪程式碼已完整實作並通過測試，但AI決策在正式環境仍是
-**關閉**狀態（kill switch預設false）——即使Cloudflare部署了這次的
-commit，Windows PBS事件仍走V1.9.8既有的`runLineBroadcast()`legacy
-路徑，行為對Production LINE推播沒有任何改變，直到GPT Work完成AI
-Binding設定且另有明確指令開啟`PBS_AI_DECISION_ENABLED`為止。
+Phase 2預留的AI candidate／cache key設計正式接上真實Workers AI呼叫。固定
+model `@cf/zai-org/glm-4.7-flash`，透過`env.AI.run(...)`。新模組：
+`src/pbs/aiConfig.js`（kill switch `PBS_AI_DECISION_ENABLED`，預設false，
+理由：避免Claude push程式碼後、GPT Work尚未建立AI binding前就因部署本身
+壞掉Production LINE推播）、`src/pbs/aiDecisionCache.js`（48h TTL，
+fail-open）、`src/pbs/aiDecisionEngine.js`（固定繁中prompt只判斷駕駛通行
+影響非事件類型，`validateAiDecisionResponse()`嚴格schema，不合格即
+`AI_DECISION_INVALID`絕不到LINE）、`src/traffic/aiApprovedPbsBroadcast.js`
+（`runAiApprovedPbsBroadcast()`，重用既有subscriptions/notified/
+incidentSuppression/messageFormat/CCTV/pushMessage，明確不呼叫
+`getBroadcastEligibility`/`getLinePushPolicyDecision`/`resolveLocationQuality`
+這三個要退休的內容判讀硬規則）。`debugPush.js`關鍵架構決策：AI開啟時與
+legacy `runLineBroadcast()`路徑互斥，同一事件絕不同時執行兩者，避免雙重
+判官造成LINE重複推播。cache key重用`computeAiDecisionCacheKeyHash
+({eventId,fingerprint})`（SHA-256），transport duplicate與cache hit皆0次
+AI呼叫。AI失敗（429/5xx/invalid response/binding missing）一律0 LINE、
+絕不fallback舊硬規則；未加retry（無可重用helper，施工令要求第一版簡單）。
+新增5個測試檔共57項全部首次PASS，1509/1476/33，NEW FAILURES=0。當時
+Production狀態AI_INTEGRATION=CODE_READY/AI_BINDING=PENDING_BROWSER_SETUP/
+AI_DECISION=DISABLED，尚未寫ACTIVE。**此輪記錄的Production狀態已被
+V2.0.0/V2.0.1/V2.0.2取代——最新狀態見SYSTEM_STATE.json的taskSeal與
+下方對應版本記錄，特別是V2.0.2 Config Drift Hotfix修正了kill switch
+Dashboard-only設定被deploy覆寫的根因問題。**
 
 ## 修正紀錄｜V1.9.9 Phase 2 — AI-ready Business Pipeline Simplification（2026-08-28，壓縮摘要）
 

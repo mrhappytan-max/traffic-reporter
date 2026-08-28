@@ -74,16 +74,22 @@ AI 呼叫。見下方「PBS Windows Local Edge Debug Push Integration」一節�
 Settings/Bindings → Workers AI → Variable name = `AI`。完整操作位置見
 `02_PROJECT_HANDOFF.md`「Cloudflare Dashboard 設定手冊」。
 
-**14. AI 開關 Variable 是什麼？** `PBS_AI_DECISION_ENABLED`（Cloudflare Dashboard/CLI
-Variable）。
+**14. AI 開關 Variable 是什麼？** `PBS_AI_DECISION_ENABLED`。**V2.0.2 起**
+canonical 來源是 `wrangler.jsonc` 的 `vars`（GitHub main），**不再是**
+Cloudflare Dashboard 手動設定——Dashboard-only 設定會在下一次 deploy
+時被 `wrangler.jsonc` 覆寫／移除（V2.0.2 的 Config Drift Hotfix 修正的
+正是這個問題，見下方「V2.0.2」段落）。
 
-**15. true 為什麼是字串？** Cloudflare Dashboard/CLI Variables 一律以字串注入 Worker，
-從不是真正的 boolean——V1.9.9 Phase 3D 曾因此讓 `PBS_AI_DECISION_ENABLED="true"`
-被 resolver 誤判為 false，Dashboard 操作手冊見 `02_PROJECT_HANDOFF.md`，程式修正細節見
-`07_KNOWN_ISSUES.md` 的 Phase 3D Hotfix 記錄。
+**15. true 為什麼是字串？** Cloudflare 一律以字串注入 Worker Variable，
+從不是真正的 boolean——V1.9.9 Phase 3D 曾因此讓字串 `"true"` 被
+resolver 誤判為 false（已修正，resolver 現在同時接受 boolean 與字串
+形式），程式修正細節見 `07_KNOWN_ISSUES.md` 的 Phase 3D Hotfix 記錄。
 
-**16. 如何 rollback？** Cloudflare Dashboard 把 `PBS_AI_DECISION_ENABLED` 設回 `false`
-並 Deploy 即可，AI Binding 不用刪除。完整 Runbook 見 `02_PROJECT_HANDOFF.md`
+**16. 如何 rollback？** **V2.0.2 起**：修改 `wrangler.jsonc` 的
+`PBS_AI_DECISION_ENABLED` 為 `"false"` 並 push 到 main（觸發 Workers
+Builds 自動部署）——這是唯一撐得過下一次 deploy 的方式；單純在
+Dashboard 上改值只是暫時的，下次 deploy 會被 `wrangler.jsonc` 的值蓋掉。
+AI Binding 不用刪除。完整 Runbook 見 `02_PROJECT_HANDOFF.md`
 「Rollback Runbook」。
 
 **17. AI notify=true 後去哪裡？** `src/traffic/aiApprovedPbsBroadcast.js#
@@ -161,6 +167,41 @@ listAiObservatoryEntries()（KV list+get，同 broadcastProvenance.js 慣例）
 `AI_DECISION_INVALID`／`SERVICE_AREA_EXCLUDED`／legacy-path 完全無持久記錄——因此
 無法做到 0 額外 KV 寫入，thin index 是能同時回答全部 outcome 的最小方案。重複事件
 維持 0 額外寫入（transport idempotency 已攔截前一步）。
+
+詳見 `07_KNOWN_ISSUES.md`／`02_PROJECT_HANDOFF.md` 的完整記錄。
+
+## V2.0.2 — Config Drift Hotfix：PBS_AI_DECISION_ENABLED canonical deployment（本輪，2026-08-29）
+
+**根因**：`PBS_AI_DECISION_ENABLED` 從 V1.9.9 Phase 3D 到 V2.0.1 只存在
+於 Cloudflare Dashboard 手動設定，從未進入 `wrangler.jsonc`。Workers
+Builds 每次部署都把 `wrangler.jsonc` 視為權威來源（與 `TRAFFIC_SOURCE_MODE`
+既有機制完全相同——見該 var 自己在 `wrangler.jsonc` 裡的既有註解），
+因此 Dashboard-only 的值撐不過下一次 GitHub main → deploy，AI 決策悄悄
+退回程式碼預設值 `false`。
+
+```
+GPT Work 在 Dashboard 手動設定 PBS_AI_DECISION_ENABLED="true"
+    ↓（暫時生效）
+下一次 GitHub main push → Workers Builds → wrangler deploy
+    ↓
+wrangler.jsonc 未宣告此 var → Dashboard-only 值被覆寫／移除
+    ↓
+resolvePbsAiDecisionEnabled(env) 讀不到值 → fail-safe 回 false
+    ↓
+AI 決策悄悄停用，沒有人真的改過這個開關
+```
+
+**修正**：`wrangler.jsonc` 的 `vars` 正式宣告
+`"PBS_AI_DECISION_ENABLED": "true"`（字串形式，resolver 語意本身未改）。
+`PBS_AI_DECISION_ENABLED_SOURCE = WRANGLER_CANONICAL_VAR`，
+`DASHBOARD_ONLY_AI_SWITCH = RETIRED`，`KEEP_VARS = NOT_USED`。新增
+regression guard `scripts/check-deployment-policy.mjs#
+checkPbsAiDecisionEnabledVar()`，與既有 `checkRequiredBindings()` 同一
+模式，防止未來再次靜默漂移。
+
+**不要誤讀**：17:49 台68事件發生時 AI switch 已被 deployment 移除，
+該筆是 legacy 路徑（非 Workers AI）判讀的結果，不算真實 AI 判讀事件。
+`FIRST_REAL_AI_EVENT` 仍為 `WAITING`。
 
 詳見 `07_KNOWN_ISSUES.md`／`02_PROJECT_HANDOFF.md` 的完整記錄。
 

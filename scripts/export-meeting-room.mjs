@@ -429,6 +429,22 @@ function readTrafficSourceMode() {
   }
 }
 
+// V2.0.2 (Config Drift Hotfix) — same read-the-deployed-config approach
+// as readTrafficSourceMode/readLinePushPolicy above: this var's own
+// V2.0.2 history (a Dashboard-only value silently dropped by the next
+// deploy) is exactly why the Engineering Memory must describe what
+// wrangler.jsonc ACTUALLY declares, never a hardcoded guess that could
+// itself drift out of sync with the canonical source.
+function readPbsAiDecisionEnabled() {
+  try {
+    const raw = readFileSync(join(ROOT, 'wrangler.jsonc'), 'utf8');
+    const m = raw.match(/"PBS_AI_DECISION_ENABLED"\s*:\s*"([^"]*)"/);
+    return m ? m[1].trim().toLowerCase() : '(not declared in wrangler.jsonc)';
+  } catch {
+    return '(not declared in wrangler.jsonc)';
+  }
+}
+
 function main() {
   console.log('=== export-meeting-room ===');
 
@@ -586,6 +602,7 @@ function main() {
     SOURCE_WORKING_TREE: sourceWorkingTree,
     TRAFFIC_SOURCE_MODE: trafficSourceMode,
     LINE_PUSH_POLICY: readLinePushPolicy(),
+    PBS_AI_DECISION_ENABLED: readPbsAiDecisionEnabled(),
   };
 
   function substitute(text) {

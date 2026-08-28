@@ -143,8 +143,43 @@ authority**。新 Admin 頁 `GET /admin/pbs-ai-observatory-view`
   `AI_DRIVER_SUMMARY = FUTURE_CANDIDATE`（僅記錄產品候選方向，未實作、
   未修改 Prompt、未新增 schema）。
 - 詳見 `03_ARCHITECTURE.md`／`02_PROJECT_HANDOFF.md`／`07_KNOWN_ISSUES.md`。
-  **下一個 Agent：不得開始 hourly reminder；不得實作 driverSummary；
-  不得修改 AI Prompt；不得擴大服務區域。**
+
+## V2.0.2 封版（2026-08-29）— Config Drift Hotfix
+
+PATCH，Production configuration correctness fix，**不改 AI semantic
+behavior**。
+
+**CONFIG_DRIFT_INCIDENT**：`PBS_AI_DECISION_ENABLED` 從 V1.9.9 Phase 3D
+到 V2.0.1 只存在於 Cloudflare Dashboard 手動設定，每次 GitHub main →
+Workers Builds → wrangler deploy 都把 `wrangler.jsonc` 視為權威來源，
+悄悄移除／覆寫 Dashboard-only 的值（與 `TRAFFIC_SOURCE_MODE` 既有機制
+相同）。GPT Work 手動設定的 `"true"` 因此被後續一次部署移除，AI 決策
+悄悄退回程式碼預設值 `false`。17:49 台68事件發生時 AI switch 已被移除，
+**該筆不算真實 AI 判讀事件**（legacy 路徑決定，非 Workers AI）。
+
+- `PBS_AI_DECISION_ENABLED_SOURCE = WRANGLER_CANONICAL_VAR`
+- `DASHBOARD_ONLY_AI_SWITCH = RETIRED`
+- `KEEP_VARS = NOT_USED`（會讓 Dashboard-only 設定繼續漂移，與本輪
+  「repo config authoritative」目標相反）
+- 修正：`wrangler.jsonc` 的 `vars` 正式宣告
+  `"PBS_AI_DECISION_ENABLED": "true"`（字串形式）
+- 新增 regression guard：`scripts/check-deployment-policy.mjs` 的
+  `checkPbsAiDecisionEnabledVar()`，`npm run check:deployment-policy`
+  會在未來有人刪掉這個 var 時立即失敗
+- `APP_VERSION` 從 `V2.0.1` 升為 `V2.0.2`
+- 新增 10 項測試，全量迴歸 1549/1516/33，NEW FAILURES=0（僅跑一次）
+- 本輪**未觸碰**：AI Prompt、AI model、`aiDecisionEngine.js`、
+  `aiConfig.js` resolver 語意、Windows PBS filter、service area、
+  lifecycle、message formatter、driverSummary、LINE policy、
+  Shared Feed、CCTV、hourly reminder；未新增任何 Secret
+- `FIRST_REAL_AI_EVENT = WAITING`（不變）
+- 另記已知問題（本輪不修）：
+  `PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER`——LINE 訊息
+  格式化目前不會把 PBS comment 原文中的精確交流道／匝道文字（例如
+  「近竹科匝道」）帶出來顯示
+- 詳見 `03_ARCHITECTURE.md`／`02_PROJECT_HANDOFF.md`／`07_KNOWN_ISSUES.md`。
+  **下一個 Agent：不得開始 formatter 修正；不得實作 driverSummary；
+  不得開始 hourly reminder。**
 
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
 

@@ -323,7 +323,7 @@ Rollback／Troubleshooting／Commit lineage）。
 | Windows PBS project path | `C:\Users\mrhap\traffic-reporter\pbs-relay`（repo 內 `pbs-relay/`，V1.9.9 Phase 1 起在 main） |
 | Production ingress route | `POST /internal/pbs-debug-push`（`src/pbs/debugPush.js`，V1.9.5 命名沿用，V1.9.8 起是正式 business path） |
 | Workers AI Binding name | `AI` |
-| AI kill switch Variable | `PBS_AI_DECISION_ENABLED`（Cloudflare 以字串注入，非 boolean——見下方） |
+| AI kill switch Variable | `PBS_AI_DECISION_ENABLED`（Cloudflare 以字串注入，非 boolean；V2.0.2 起 canonical 來源是 `wrangler.jsonc`，非 Dashboard——見下方） |
 | AI model | `@cf/zai-org/glm-4.7-flash` |
 | KV namespace | `TRAFFIC_KV` |
 | Transport idempotency prefix | `debug:pbs-push-idempotency:v1:*`（48h TTL） |
@@ -343,31 +343,45 @@ Rollback／Troubleshooting／Commit lineage）。
 - **Workers AI Binding**：該 Worker → Settings → Bindings → 新增/確認 Workers AI
   binding，Variable name 必須是 `AI`（`wrangler.jsonc` 的 `"ai":{"binding":"AI"}`
   對應這個名稱，改名會讓 `env.AI` 變成 `undefined`，AI 呼叫直接 fail-closed）。
-- **AI kill switch**：同一個 Worker → Settings → Variables → `PBS_AI_DECISION_ENABLED`。
-  Production 啟用值必須是字串 `"true"`（Cloudflare Dashboard/CLI Variables 一律以
-  字串注入 Worker，不是真正的 boolean——`src/pbs/aiConfig.js#
-  resolvePbsAiDecisionEnabled()` 自 V1.9.9 Phase 3D Hotfix 起已同時接受
-  boolean 與 `'true'`/`'false'` 字串形式，大小寫不拘、可有前後空白）。停用改回
-  `"false"`。
-- 每次改動 Variable 後必須點 **Deploy** 才會生效。
+- **AI kill switch**：`PBS_AI_DECISION_ENABLED`。**V2.0.2 起 canonical
+  來源是 `wrangler.jsonc` 的 `vars`（GitHub main），不是 Dashboard**——
+  在 Dashboard 上改這個 Variable 只是暫時的，下一次 repo push 觸發的
+  deploy 會用 `wrangler.jsonc` 的值覆寫掉（V2.0.2 Config Drift Hotfix
+  修正的正是這個問題：GPT Work 手動在 Dashboard 設定 `"true"` 後被後續
+  部署悄悄移除）。要長期改變這個開關，改 `wrangler.jsonc` 並 push，
+  而不是只在 Dashboard 上點。值必須是字串 `"true"`／`"false"`
+  （Cloudflare Variables 一律以字串注入 Worker，不是真正的 boolean——
+  `src/pbs/aiConfig.js#resolvePbsAiDecisionEnabled()` 自 V1.9.9 Phase 3D
+  Hotfix 起已同時接受 boolean 與字串形式，大小寫不拘、可有前後空白）。
+- 每次改動 `wrangler.jsonc` 後 push 到 main 才會觸發真正的 canonical
+  deploy；若在 Dashboard 上手動改 Variable 並點 Deploy，僅在下一次 repo
+  push 之前有效。
 - Production browser 端驗證（AI Binding 是否真的 Active、Neurons Dashboard、
   Active Production Version 是否更新）**由 GPT Work 負責，Claude 不需要進
   Dashboard**。
 
 ### Rollback Runbook（AI 緊急停用）
 
-1. Cloudflare Dashboard → `traffic-reporter` → Settings → Variables。
-2. 把 `PBS_AI_DECISION_ENABLED` 改為 `false`。
-3. 點 Deploy。
-4. 確認 Active Production = 100% 指向新 deployment；`AI_DECISION` 效果上變回
-   `DISABLED`（即使 Dashboard 上的舊值字面未清除，resolver 遇到 `"false"` 一律
-   fail-safe 為停用）。
-5. **AI Binding 不用刪除**——Binding 本身不是判斷 AI 是否啟用的依據，kill switch
-   才是。
-6. **不要**用以下方式作為第一級 rollback：刪除 AI Binding、刪除程式碼、改
+**V2.0.2 起，canonical 停用方式是修改 repo，不是 Dashboard**——
+`PBS_AI_DECISION_ENABLED` 的權威來源已從 Dashboard 移到 `wrangler.jsonc`
+（見 `03_ARCHITECTURE.md`「V2.0.2」段落的 Config Drift Hotfix 記錄），
+Dashboard-only 的改動只撐到下一次 deploy 就會被覆寫回 repo 的值。
+
+1. **正式停用（撐得過下一次 deploy）**：修改 `wrangler.jsonc` 的
+   `"PBS_AI_DECISION_ENABLED"` 為 `"false"`，commit，push 到 `main`
+   （觸發 Workers Builds 自動部署）。
+2. **緊急暫時停用（等 repo 修正部署期間的過渡手段，不是長期方案）**：
+   Cloudflare Dashboard → `traffic-reporter` → Settings → Variables →
+   把 `PBS_AI_DECISION_ENABLED` 改為 `false` → 點 Deploy——**這只在下一次
+   repo push 前有效**，之後仍需完成步驟 1 才是真正的 canonical 停用。
+3. 確認 Active Production = 100% 指向新 deployment；`AI_DECISION` 效果上
+   變回 `DISABLED`（resolver 遇到 `"false"` 字串一律 fail-safe 為停用）。
+4. **AI Binding 不用刪除**——Binding 本身不是判斷 AI 是否啟用的依據，
+   kill switch 才是。
+5. **不要**用以下方式作為第一級 rollback：刪除 AI Binding、刪除程式碼、改
    Prompt、改 Model——kill switch 才是正式 rollback authority，其餘手段風險更高
    且無必要。
-7. 若需要暫時完全恢復 Cloudflare 自身 30 分鐘 PBS 輪詢（極端情況，Windows Local
+6. 若需要暫時完全恢復 Cloudflare 自身 30 分鐘 PBS 輪詢（極端情況，Windows Local
    Edge 完全失聯時的備援）：把 `src/pbs/pbsConfig.js` 的
    `PBS_30_MIN_POLLING_ENABLED` 改回 `true` 並重新部署——程式碼完整保留未刪除。
 
@@ -410,6 +424,8 @@ Rollback／Troubleshooting／Commit lineage）。
 | V2.0.0 release (docs) | 見本檔案所在的 docs commit（`git log` 為準——一個 commit 無法在自己的內容裡預先寫入自己的 SHA） |
 | V2.0.1 release (fix) | `7b7bd05` |
 | V2.0.1 release (docs) | 見本檔案所在的 docs commit（同上，`git log` 為準） |
+| V2.0.2 release (fix) | `{{V202_FIX_COMMIT}}` |
+| V2.0.2 release (docs) | 見本檔案所在的 docs commit（同上，`git log` 為準） |
 
 ### 目前 Production 狀態（人類／GPT Work 回報，本 Session 未獨立驗證）
 
@@ -473,9 +489,66 @@ LINE quota policy、CCTV policy、Shared Feed product policy。
 22 項測試，全量迴歸 1539/1506/33，NEW FAILURES=0（僅跑一次）。
 
 完整設計理由 → `07_KNOWN_ISSUES.md`／`03_ARCHITECTURE.md`；機器可讀狀態 →
-`SYSTEM_STATE.json` 的 `taskSeal`。**下一個 Agent：不得開始 hourly
-reminder；不得實作 driverSummary；不得修改 AI Prompt；不得擴大服務
-區域。**
+`SYSTEM_STATE.json` 的 `taskSeal`。（V2.0.1 當時的現行禁令已由下方 V2.0.2
+段落取代——見該段落結尾。）
+
+## V2.0.2 — Config Drift Hotfix（本輪，2026-08-29）
+
+PATCH，Production configuration correctness fix，**不改 AI semantic
+behavior**。
+
+**CONFIG_DRIFT_INCIDENT**：`PBS_AI_DECISION_ENABLED` 從 V1.9.9 Phase 3D
+到 V2.0.1 只存在於 Cloudflare Dashboard 手動設定，從未進入 repo canonical
+configuration。每次 GitHub main → Workers Builds → wrangler deploy 都把
+`wrangler.jsonc` 視為權威來源，這是與 `TRAFFIC_SOURCE_MODE` 既有註解
+（「它放這裡而不放 Dashboard，因為 Workers Builds 會在下次 build 時把
+Dashboard-only var 覆寫掉」）完全相同的機制——只是這次真正撞上了：
+GPT Work 在 Dashboard 手動設定 `PBS_AI_DECISION_ENABLED="true"` 後，
+被後續一次 deploy 悄悄移除，AI 決策悄悄退回程式碼預設值 `false`，
+沒有任何人真的改過這個開關。17:49 台68事件發生時 AI switch 已被
+deployment 移除，**該筆不算真實 AI 判讀事件**（legacy 路徑決定的，
+非 Workers AI 判讀）。
+
+**修正**：`wrangler.jsonc` 的 `vars` 區塊正式宣告
+`"PBS_AI_DECISION_ENABLED": "true"`（必須是字串——Cloudflare 一律以字串
+注入 Workers Variable，`resolvePbsAiDecisionEnabled()` 自 V1.9.9
+Phase 3D 起已支援此形式，本輪未修改 resolver 語意本身）。**正式決策**：
+`PBS_AI_DECISION_ENABLED_SOURCE = WRANGLER_CANONICAL_VAR`——
+`wrangler.jsonc`／GitHub main 是這個開關唯一的 canonical 來源，
+`DASHBOARD_ONLY_AI_SWITCH = RETIRED`，Dashboard 不再作為長期權威。
+**未新增** `keep_vars`（`KEEP_VARS = NOT_USED`）——`keep_vars` 會讓
+Dashboard-only 設定繼續漂移，正是本輪要退休的失敗模式，不是要保留的
+東西。
+
+**新增 regression guard**：`scripts/check-deployment-policy.mjs` 新增
+`checkPbsAiDecisionEnabledVar()`（與既有 `checkRequiredBindings()`
+完全同一種模式），`npm run check:deployment-policy` 現在會在未來有人
+不小心從 `wrangler.jsonc` 刪掉這個 var 時立即失敗，而不是讓 Production
+AI 默默退回 FALSE 而沒人發現。
+
+**Secret boundary**：`PBS_AI_DECISION_ENABLED` 不是 secret，可以安全放
+`vars`；本輪新增測試直接斷言 `wrangler.jsonc` 的 vars 區塊未包含
+`PBS_DEBUG_PUSH_SECRET`／LINE token／TDX credentials／password／
+secret keys 等任何 Secret 名稱。
+
+本輪**未觸碰**：AI Prompt、AI model、`src/pbs/aiDecisionEngine.js`、
+`src/pbs/aiConfig.js` resolver 語意、Windows PBS filter、service area、
+lifecycle、message formatter、driverSummary、LINE policy、Shared Feed、
+CCTV、hourly reminder。`APP_VERSION` 從 `V2.0.1` 升為 `V2.0.2`。新增
+10 項測試（`test/pbsAiConfigDriftHotfixV202.test.js`），全部首次執行即
+PASS；全量迴歸 1549/1516/33，NEW FAILURES=0（僅跑一次）。
+
+**另記已知問題（本輪誠實記錄，不修）**：
+`PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER`——LINE 訊息
+格式化目前不會把 PBS comment 原文中的精確交流道／匝道文字（例如
+「近竹科匝道」）帶出來顯示，即使來源 comment 已經包含這個資訊。與本輪
+config drift 修正無關，刻意不同時處理兩個不相關問題。
+
+**現狀旗標**：`FIRST_REAL_AI_EVENT = WAITING`（不變）。
+
+完整設計理由 → `07_KNOWN_ISSUES.md`／`03_ARCHITECTURE.md`；機器可讀狀態 →
+`SYSTEM_STATE.json` 的 `taskSeal`。**下一個 Agent：不得開始 formatter
+修正；不得實作 driverSummary；不得開始 hourly reminder。**
 
 ## PBS Windows Local Edge Debug Push Integration（V1.9.6＋V1.9.7，2026-08-28，歷史記錄——已由上方 V1.9.8／V1.9.9 取代為 Production 主線）
 
