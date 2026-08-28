@@ -25,7 +25,7 @@ import { runTdxPipelineAndCommit } from './pipeline.js';
 import { runLineBroadcast } from './broadcastPipeline.js';
 import { runPbsPipelineAndCommit } from '../pbs/pipeline.js';
 import { mergeForBroadcast } from '../pbs/crossSourceDedup.js';
-import { PBS_BROADCAST_ENABLED } from '../pbs/pbsConfig.js';
+import { PBS_BROADCAST_ENABLED, resolvePbsPollingEnabled } from '../pbs/pbsConfig.js';
 import { buildHealthSnapshot, persistHealthSnapshot, readHealthSnapshot } from './healthSnapshot.js';
 import { getTdxScheduleState } from './tdxSchedule.js';
 import { getPbsScheduleState } from './pbsSchedule.js';
@@ -226,8 +226,19 @@ export async function runScheduledTdxSync(env, now = new Date()) {
   // affect is wall-clock-based, not tick-based, and comfortably larger
   // than the gap this introduces). Cron itself still runs every 10
   // minutes unchanged.
+  // V1.9.8 — RETIRED (order section 八): resolvePbsPollingEnabled(env)
+  // defaults to false, meaning this tick NEVER performs the PBS fetch
+  // itself in real Production, regardless of what pbsScheduleState would
+  // otherwise say — PBS's production main line is now the Windows ingress
+  // (see pbs/debugPush.js / pbsConfig.js's own comment on this flag).
+  // getPbsScheduleState(now) is still computed unchanged (so
+  // healthSnapshot.js's existing night-sleep/skipped-by-schedule/scheduled
+  // carry-forward logic needs no change at all — see that module) — only
+  // whether this tick ACTS on it is now gated. Rollback is either an env
+  // var (env.PBS_30_MIN_POLLING_ENABLED=true) or, permanently, flipping
+  // pbsConfig.js's own PBS_30_MIN_POLLING_ENABLED constant back to true.
   const pbsScheduleState = getPbsScheduleState(now);
-  const pbsFetchPerformed = pbsScheduleState === 'scheduled';
+  const pbsFetchPerformed = resolvePbsPollingEnabled(env) && pbsScheduleState === 'scheduled';
 
   // PBS runs BEFORE the LINE broadcast now (V1.4: PBS+TDX merge, Alpha),
   // so its cross-source dedup result can be folded into what actually

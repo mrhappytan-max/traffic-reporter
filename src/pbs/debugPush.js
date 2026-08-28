@@ -1,30 +1,55 @@
-// V1.9.5 — POST /internal/pbs-debug-push
+// V1.9.5/V1.9.7/V1.9.8 — POST /internal/pbs-debug-push
 //
-// Windows PBS Local Monitor → Cloudflare, DEBUG-ONLY receiving end. This
-// endpoint proves exactly one thing, end to end: Windows can send a
-// minimal event payload, Cloudflare can authenticate it, validate its
-// shape, make a durable idempotency judgment, log it, and ACK — nothing
-// more.
+// Windows PBS Local Monitor → Cloudflare. V1.9.5 proved the channel itself
+// (auth, shape validation, a durable idempotency judgment, log, ACK).
+// V1.9.7 made that idempotency judgment durable across isolates/restarts.
 //
-// HARD BOUNDARY (the whole point of this module, UNCHANGED by V1.9.7):
-// this file imports NOTHING from line/, cctv/, traffic/sharedFeed
-// (Handler)?.js, traffic/incidentSuppression.js, traffic/notified.js,
-// traffic/broadcastProvenance.js, traffic/pipelineTrace.js, or pbs/
-// lifecycle.js|pipeline.js — there is no import path to LINE, CCTV,
-// Shared Feed, Incident Suppression, notified-state, Broadcast
-// Provenance, or Pipeline Trace, even by accident, and no R2/fetch call
-// anywhere in this file. This is the module-level guarantee the order's
-// "Debug-only 邊界" section asks for, enforced structurally rather than
-// by a runtime flag that could be forgotten or flipped.
+// V1.9.8 (order section 三/四) — this is now the FORMAL Windows PBS
+// PRODUCTION INGRESS, upgraded in place rather than duplicated into a
+// second endpoint (the order's own "選擇改動最小、重複程式碼最少的方案").
+// The old "HARD BOUNDARY: 0 imports from line/, cctv/, ... 0 business KV
+// writes" claim from V1.9.5/V1.9.7 is DELIBERATELY LIFTED for a genuinely
+// accepted (non-duplicate) NEW/UPDATED event: auth -> validation ->
+// persistent idempotency (UNCHANGED from V1.9.7, see below) -> a
+// first-time-valid event is normalized into the SAME unified-event shape
+// pbs/normalize.js's normalizePbsEvent() has always produced, then handed
+// to the SAME canonical Business Pipeline entry point traffic/
+// scheduled.js's Cron path has always used — traffic/broadcastPipeline.js's
+// runLineBroadcast() — followed by the SAME traffic/sharedFeed.js
+// runSharedFeedPersist() call scheduled.js makes right after it. This file
+// never re-implements accident/service-area/location-quality policy,
+// eligibility, dedupe, CCTV, or Shared Feed logic — see buildRawPbsRecordFromPush()
+// below and its call site for the ONE place a Windows payload becomes a
+// canonical event; every judgment past that point is made by the exact
+// same function the retiring PBS-polling path always called (order
+// section 四: "同一事件不論來源...正式判斷結果應由同一套函式產生").
 //
-// V1.9.7 — this module NOW touches `env.TRAFFIC_KV`, but ONLY under its
-// own dedicated debug-only prefix (IDEMPOTENCY_KV_PREFIX below,
-// `debug:pbs-push-idempotency:v1:*`) — never a business key
-// (`traffic:shared-feed`, `line:notified-state`,
-// `line:incident-suppression-state`, `debug:pipeline-trace*`,
-// `pbs:lifecycle-state`, etc). See the IDEMPOTENCY section below for why,
-// and test/pbsDebugPush.test.js's "KV prefix isolation" tests for the
-// direct proof.
+// A CLEARED lifecycle is the one deliberate exception: it is ACKNOWLEDGED
+// and logged, exactly like NEW/UPDATED, but NEVER routed into
+// runLineBroadcast — this mirrors pbs/pipeline.js's own long-standing
+// behavior, where classifyPbsLifecycle()'s `clearedEvents` never reach
+// crossSourceDedup/broadcastEvents either (see pbs/pipeline.js — only
+// `activeEvents` ever gets there). See "CLEARED lifecycle" below.
+//
+// LINE Push Policy is completely untouched by this round: MAJOR_ACCIDENT_ONLY
+// and every existing eligibility/service-area/location-quality gate inside
+// runLineBroadcast apply to a Windows-sourced event exactly as they already
+// do to a TDX/polling-PBS-sourced one — this file makes zero policy
+// decisions of its own.
+//
+// V1.9.7's own idempotency/KV-prefix-isolation guarantee is UNCHANGED by
+// this round: this module still touches `env.TRAFFIC_KV` directly for
+// ONLY its own dedicated debug-only prefix (IDEMPOTENCY_KV_PREFIX below,
+// `debug:pbs-push-idempotency:v1:*`) — every OTHER KV key this file's
+// business-pipeline call now reaches (`line:notified-state`,
+// `line:incident-suppression-state`, `debug:broadcast-provenance:v1:*`,
+// `traffic:shared-feed`) is written exclusively BY runLineBroadcast/
+// runSharedFeedPersist themselves, the SAME functions/keys the polling
+// path already used — never a second, parallel key this file invents.
+// See test/pbsDebugPush.test.js's V1.9.8 section for the updated,
+// honest boundary tests (a genuinely accepted NEW/UPDATED event DOES now
+// reach those keys through the canonical pipeline; a duplicate or a
+// CLEARED push still touches NONE of them).
 //
 // AUTH: same convention as traffic/sharedFeedHandler.js's own
 // TRAFFIC_FEED_SECRET — `Authorization: Bearer <secret>`, its OWN
@@ -79,6 +104,10 @@
 // for the exported, honestly-reported status of this design.
 
 import { verifyDebugPushToken } from './debugPushAuth.js';
+import { normalizePbsEvent } from './normalize.js';
+import { runLineBroadcast } from '../traffic/broadcastPipeline.js';
+import { runSharedFeedPersist } from '../traffic/sharedFeed.js';
+import { toTaipeiParts } from '../traffic/broadcastHours.js';
 
 export const PBS_DEBUG_PUSH_PATH = '/internal/pbs-debug-push';
 
@@ -139,6 +168,12 @@ export const IDEMPOTENCY_TTL_SECONDS = 48 * 60 * 60;
 export const PBS_DEBUG_PUSH_IDEMPOTENCY_MODE = 'PERSISTENT_KV_PARTIAL';
 export const PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY = 'PARTIAL';
 export const KV_ONLY_ATOMICITY = 'NOT_SUFFICIENT';
+
+// V1.9.8 — self-describing status constants, same convention as the three
+// above: exported so the final report and any future reader/test cite the
+// SAME literal this module itself asserts, never a second hand-typed copy.
+export const WINDOWS_PBS_PRODUCTION_INGRESS = 'ACTIVE';
+export const PRODUCTION_BUSINESS_PIPELINE_INTEGRATION = 'ACTIVE';
 
 let recentIdempotencyKeys = new Map(); // idempotencyKeyHash -> lastSeenAtEpochMs
 
@@ -266,6 +301,74 @@ function extractLoggableEventFields(event) {
 
 function shortFingerprint(fingerprint) {
   return typeof fingerprint === 'string' ? fingerprint.slice(0, 16) : '';
+}
+
+/**
+ * V1.9.8 — Asia/Taipei is a fixed UTC+8 offset (no DST), so converting an
+ * ISO instant to Taipei "YYYY-MM-DD"/"HH:MM:SS" parts and handing them to
+ * pbs/normalize.js's own parseHappenedAt/parsePbsDateTime (which interpret
+ * those same two shapes as Taipei local time) round-trips to the EXACT
+ * same instant — this is a precise reconstruction, not an approximation.
+ */
+function taipeiDateTimeStringsFromIso(iso) {
+  const { year, month, day, hour, minute, second } = toTaipeiParts(new Date(iso));
+  const pad = (n) => String(n).padStart(2, '0');
+  const happendate = `${year}-${pad(month)}-${pad(day)}`;
+  const happentime = `${pad(hour)}:${pad(minute)}:${pad(second)}`;
+  return { happendate, happentime, modDttm: `${happendate} ${happentime}` };
+}
+
+/**
+ * The ONE place a Windows push payload becomes a raw-PBS-shaped record —
+ * see pbs/normalize.js's normalizePbsEvent() for the exact fields it reads
+ * (UID/road/areaNm/direction/roadtype/comment/happendate/happentime/
+ * modDttm/x1/y1/srcdetail). Never touches classification/eligibility/
+ * formatting itself — normalizePbsEvent (unchanged) does that, identically
+ * to how it always has for a polled PBS record.
+ *
+ * Field-by-field provenance, honestly:
+ *   - UID/road/areaNm/direction/comment/x1(longitude)/y1(latitude)/
+ *     srcdetail: taken directly from the Windows payload's `event` object
+ *     (EVENT_LOG_FIELDS) / top-level `eventId` — exactly what Windows sent.
+ *   - happendate/happentime/modDttm: derived from the payload's own
+ *     `generatedAt` (see taipeiDateTimeStringsFromIso above) — a PRECISE
+ *     reconstruction of that instant, not a guess. Using the SAME instant
+ *     for both "happened at" and "last updated" is correct here (not an
+ *     approximation with a hidden cost) because Windows only ever forwards
+ *     a genuine NEW/UPDATED transition it just detected (V1.9.6 local
+ *     edge filter) — `generatedAt` IS the moment this transition became
+ *     known, for both purposes, exactly the same relationship a polled
+ *     PBS record's own happendate/modDttm would have on the tick that
+ *     first observed it.
+ *   - roadtype: deliberately left '' — the Windows payload never carried
+ *     PBS's own roadtype bucket (EVENT_LOG_FIELDS has no such field, and
+ *     never has). classifyPbsEvent() reads `roadtype+comment` as one
+ *     combined text, and Windows's own local filter (V1.9.6) only ever
+ *     forwards a NEW/UPDATED event whose comment already matches the SAME
+ *     accident-keyword patterns classify.js itself uses — so comment
+ *     alone is sufficient for a faithful classification here. This field
+ *     is only ever read for NEW/UPDATED (a CLEARED payload never reaches
+ *     normalizePbsEvent at all — see handlePbsDebugPush below), so the gap
+ *     never affects the one lifecycle where a bare "已排除"-style comment
+ *     would otherwise risk a wrong classification.
+ */
+function buildRawPbsRecordFromPush({ eventId, generatedAt, event }) {
+  const e = event && typeof event === 'object' ? event : {};
+  const { happendate, happentime, modDttm } = taipeiDateTimeStringsFromIso(generatedAt);
+  return {
+    UID: eventId,
+    road: e.road || '',
+    areaNm: e.areaNm || '',
+    direction: e.direction || '',
+    roadtype: '',
+    comment: e.comment || '',
+    happendate,
+    happentime,
+    modDttm,
+    x1: e.longitude,
+    y1: e.latitude,
+    srcdetail: e.sourceDetail || '',
+  };
 }
 
 /**
@@ -407,6 +510,67 @@ export async function handlePbsDebugPush(request, env, now = new Date()) {
   if (loggableEvent.areaNm) logFields.push(`areaNm=${loggableEvent.areaNm}`);
   console.log(`[pbs-debug-push] ${logFields.join(' ')}`);
 
+  // V1.9.8 (order section 三/四/七) — Business Pipeline integration. Only a
+  // GENUINELY ACCEPTED (non-duplicate) NEW/UPDATED event ever reaches this;
+  // a duplicate stops here (0 second Business Pipeline pass, 0 second LINE
+  // push, 0 second Shared Feed side effect — order section 六), and CLEARED
+  // is acknowledged/logged above but deliberately never routed into
+  // runLineBroadcast (mirrors pbs/pipeline.js's own clearedEvents-never-
+  // broadcast behavior — see this module's own header comment).
+  //
+  // Failure isolation (order section 九): this whole block is wrapped so a
+  // Business Pipeline exception can NEVER crash this endpoint or the ACK
+  // back to Windows — logged only. Windows will naturally re-detect and
+  // re-push the same transition on its own next ~3-minute poll if the
+  // underlying PBS event is still present; no separate fallback-polling
+  // mechanism is introduced for this.
+  if (!duplicate && lifecycle !== 'CLEARED') {
+    try {
+      const rawRecord = buildRawPbsRecordFromPush({ eventId, generatedAt, event });
+      const normalizedEvent = normalizePbsEvent(rawRecord);
+      // Reuses the EXACT SAME canonical Business Pipeline entry point
+      // traffic/scheduled.js's Cron path calls for every polled TDX/PBS
+      // event — see this module's own header comment. Every eligibility/
+      // service-area/location-quality/dedupe/incident-suppression/CCTV/
+      // LINE-push-policy/notified-state decision below is made by that
+      // SAME function, never a second copy.
+      const lineSummary = await runLineBroadcast(env, {
+        allEvents: [normalizedEvent],
+        dedupeAvailable: true,
+        now,
+        dryRun: false,
+      });
+      // Same reuse principle for the Shared Traffic Feed — the exact call
+      // traffic/scheduled.js makes immediately after its own
+      // runLineBroadcast, using the SAME lineSummary.completedProducts
+      // shape, so a Windows-originated PBS event keeps appearing in the
+      // Shared Feed after Cloudflare's own PBS polling retires (order
+      // section 八) exactly as it did before.
+      let sharedFeedCommitted = false;
+      try {
+        const sharedFeedSummary = await runSharedFeedPersist(env, { completedProducts: lineSummary.completedProducts, now });
+        sharedFeedCommitted = Boolean(sharedFeedSummary.committed);
+      } catch (err) {
+        console.error(`[pbs-debug-push][shared-feed] eventId=${eventId} failed: ${err && err.message}`);
+      }
+      console.log(
+        `[pbs-debug-push][business-pipeline] eventId=${eventId} lifecycle=${lifecycle} ` +
+          `lineReady=${lineSummary.lineReady} broadcastRelevant=${lineSummary.broadcastRelevantCount} ` +
+          `pendingTargets=${lineSummary.pendingTargetCount} pushAttempted=${lineSummary.pushAttempted} ` +
+          `pushSucceeded=${lineSummary.pushSucceeded} sharedFeedCommitted=${sharedFeedCommitted}`
+      );
+    } catch (err) {
+      console.error(`[pbs-debug-push][business-pipeline] eventId=${eventId} lifecycle=${lifecycle} failed: ${err && err.message}`);
+    }
+  } else if (!duplicate && lifecycle === 'CLEARED') {
+    console.log(`[pbs-debug-push][business-pipeline] eventId=${eventId} lifecycle=CLEARED acknowledged=true routedToBroadcast=false`);
+  }
+
+  // Response schema deliberately UNCHANGED from V1.9.5/V1.9.7 (Windows
+  // client contract stability — see test/pbsDebugPush.test.js's own
+  // "response schema unchanged" test) — Business Pipeline outcome is
+  // observable only via the `[pbs-debug-push][business-pipeline]` log
+  // line above, never via this response body.
   if (duplicate) {
     return jsonResponse({ ok: true, accepted: false, duplicate: true, requestId, eventId, lifecycle });
   }

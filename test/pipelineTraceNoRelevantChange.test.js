@@ -140,6 +140,7 @@ test('end-to-end: a genuinely quiet round (no TDX events, no PBS events, no LINE
   const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV, CCTV_IMAGES: { async put() {}, async get() { return null; }, async delete() {} } };
   // No TDX_CLIENT_ID -> TDX sits out entirely; PBS relay returns nothing.
   env.PBS_RELAY_TOKEN = 'relay-token';
+  env.PBS_30_MIN_POLLING_ENABLED = true; // V1.9.8: this file exercises the (unchanged) PBS pipeline via the polling entry point on purpose
   env.PBS_RELAY_WINDOWS = { fetch: async () => new Response(JSON.stringify([]), { status: 200 }) };
   priorFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
@@ -163,6 +164,7 @@ test('end-to-end: the SAME quiet round shape, but a real NEW PBS accident this t
   await setUserEnabled(TRAFFIC_KV, 'U1', true, new Date('2026-08-01T00:00:00+08:00'));
   const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV, CCTV_IMAGES: { async put() {}, async get() { return null; }, async delete() {} } };
   env.PBS_RELAY_TOKEN = 'relay-token';
+  env.PBS_30_MIN_POLLING_ENABLED = true; // V1.9.8: this file exercises the (unchanged) PBS pipeline via the polling entry point on purpose
   env.PBS_RELAY_WINDOWS = {
     fetch: async () => new Response(JSON.stringify([{
       UID: 'PBS-QUIET-1', road: '國道一號', direction: '北向', areaNm: '國道一號北向', roadtype: '事故',

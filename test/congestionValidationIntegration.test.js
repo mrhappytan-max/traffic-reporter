@@ -194,6 +194,7 @@ test('VD endpoint failure -> still 0 LINE messages, does not crash the Cron run'
 test('PBS + TDX both report the SAME congestion -> still 0 LINE messages (not 2, not 1 — zero)', async () => {
   const env = await baseEnv();
   env.PBS_RELAY_TOKEN = 'relay-token';
+  env.PBS_30_MIN_POLLING_ENABLED = true; // V1.9.8: this file exercises the (unchanged) PBS pipeline via the polling entry point on purpose
   env.PBS_RELAY_WINDOWS = {
     fetch: async () =>
       new Response(

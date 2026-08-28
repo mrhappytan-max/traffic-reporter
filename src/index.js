@@ -199,17 +199,21 @@ export default {
       return handleSharedFeed(request, env);
     }
 
-    // V1.9.5 — POST /internal/pbs-debug-push: Windows PBS Local Monitor →
-    // Cloudflare, DEBUG-ONLY receiving end (see pbs/debugPush.js's own
-    // module comment for the full picture — auth, validation,
-    // idempotency, and the hard structural boundary against LINE/CCTV/
-    // Shared Feed/Pipeline Trace/business KV writes). Same
-    // machine-to-machine shape as /internal/shared-feed just above: its
-    // own bearer secret (PBS_DEBUG_PUSH_SECRET), NOT Admin Basic Auth,
-    // NOT in ADMIN_PATHS. Matched on pathname alone (method handling —
-    // 405 for non-POST — lives inside the handler itself) for the same
-    // reason: the contract has to be visible to a caller that uses the
-    // wrong verb, not hidden behind a 404.
+    // V1.9.5/V1.9.8 — POST /internal/pbs-debug-push: Windows PBS Local
+    // Monitor → Cloudflare. V1.9.5 built the channel (auth/validation/
+    // idempotency); V1.9.8 upgraded this SAME endpoint in place into the
+    // formal Windows PBS Production ingress — a genuinely accepted NEW/
+    // UPDATED event now reaches the canonical Business Pipeline (LINE/
+    // Shared Feed), reusing the exact same functions the (now-retired)
+    // PBS polling path always used — see pbs/debugPush.js's own module
+    // comment for the full picture. Path/route/auth/method handling are
+    // UNCHANGED from V1.9.5. Same machine-to-machine shape as
+    // /internal/shared-feed just above: its own bearer secret
+    // (PBS_DEBUG_PUSH_SECRET), NOT Admin Basic Auth, NOT in ADMIN_PATHS.
+    // Matched on pathname alone (method handling — 405 for non-POST —
+    // lives inside the handler itself) for the same reason: the contract
+    // has to be visible to a caller that uses the wrong verb, not hidden
+    // behind a 404.
     if (url.pathname === PBS_DEBUG_PUSH_PATH) {
       return handlePbsDebugPush(request, env);
     }

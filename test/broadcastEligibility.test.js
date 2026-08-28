@@ -183,6 +183,7 @@ test('6. congestion + accident describing the SAME incident -> exactly 1 LINE me
 test('7. PBS + TDX report the SAME accident -> exactly 1 LINE message (cross-source dedup unaffected)', async () => {
   const env = await baseEnv();
   env.PBS_RELAY_TOKEN = 'relay-token';
+  env.PBS_30_MIN_POLLING_ENABLED = true; // V1.9.8: this file exercises the (unchanged) PBS pipeline via the polling entry point on purpose
   env.PBS_RELAY_WINDOWS = {
     fetch: async () =>
       new Response(

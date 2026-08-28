@@ -1,14 +1,20 @@
-// V1.9.5/V1.9.7 — POST /internal/pbs-debug-push (Windows PBS Local
-// Monitor → Cloudflare, DEBUG-ONLY receiving end). Covers the V1.9.5
-// order's CASE A-R plus the V1.9.7 order's persistent-idempotency test
-// list (20 items): auth (missing/wrong/unconfigured secret, no fallback
-// to PBS_RELAY_TOKEN), schema validation (each required field, invalid
-// source/lifecycle/generatedAt, oversized body), method restriction,
-// persistent cross-isolate/cross-restart idempotency (L1 memory + L2 KV,
-// stable key composition, TTL, KV writes counted exactly), the
-// debug-only structural boundary (0 fetch calls, 0 business KV writes —
-// the NEW debug:pbs-push-idempotency:v1:* prefix is the one deliberate
-// exception), and secret non-leakage in logs/responses.
+// V1.9.5/V1.9.7/V1.9.8 — POST /internal/pbs-debug-push (Windows PBS Local
+// Monitor → Cloudflare). Covers the V1.9.5 order's CASE A-R, the V1.9.7
+// order's persistent-idempotency test list (20 items), and the V1.9.8
+// order's 15-item Business Pipeline integration list (section 十): auth
+// (missing/wrong/unconfigured secret, no fallback to PBS_RELAY_TOKEN),
+// schema validation (each required field, invalid source/lifecycle/
+// generatedAt, oversized body), method restriction, persistent
+// cross-isolate/cross-restart idempotency (L1 memory + L2 KV, stable key
+// composition, TTL, KV writes counted exactly), secret non-leakage in
+// logs/responses, and — new in V1.9.8 — a genuinely accepted (non-
+// duplicate) NEW/UPDATED event now reaching the SAME canonical Business
+// Pipeline (runLineBroadcast/Shared Feed) the polling path always used,
+// while a duplicate or a CLEARED push still touches NONE of it. The old
+// V1.9.5/V1.9.7 "0 business KV writes, 0 fetch calls, EVER" claim is
+// updated accordingly below — see the "V1.9.8 Business Pipeline
+// integration" section near the bottom of this file for the honest,
+// current boundary.
 
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,8 +27,11 @@ import {
   KV_ONLY_ATOMICITY,
   IDEMPOTENCY_KV_PREFIX,
   IDEMPOTENCY_TTL_SECONDS,
+  WINDOWS_PBS_PRODUCTION_INGRESS,
+  PRODUCTION_BUSINESS_PIPELINE_INTEGRATION,
   resetPbsDebugPushIdempotencyState,
 } from '../src/pbs/debugPush.js';
+import { setUserEnabled } from '../src/traffic/subscriptions.js';
 
 const SECRET = 'real-debug-secret-value';
 const NOW = new Date('2026-08-27T10:00:00+08:00');
@@ -239,45 +248,80 @@ test('CASE L: oversized body -> rejected (400)', async () => {
   assert.equal((await res.json()).error, 'payload_too_large');
 });
 
-// --- CASE M/N: no LINE / CCTV calls -------------------------------------------
+// --- CASE M/N: no LINE / CCTV calls for an INELIGIBLE event -------------------
+//
+// V1.9.8: the DEFAULT payload's event.comment ('測試事件') carries no
+// accident/impact keyword, so it's classified type:'other' and rejected by
+// broadcastRules.js's V1.5 whitelist before ever reaching a push target or
+// CCTV attempt — even though the Business Pipeline itself IS now invoked
+// (see the CASE O/R2 tests above). "0 fetch calls" is therefore still the
+// correct, meaningful assertion for THIS fixture. See the dedicated V1.9.8
+// section below for a fixture that DOES become eligible and DOES push.
 
-test('CASE M/N: never calls fetch (no LINE push, no CCTV enrichment) — global fetch throws if invoked', async () => {
+test('CASE M/N: an ineligible default-payload event never calls fetch (no LINE push, no CCTV enrichment) — global fetch throws if invoked', async () => {
   const res = await handlePbsDebugPush(pushRequest(), baseEnv(), NOW);
   assert.equal(res.status, 200); // if fetch had been called, the patched mock above would have thrown
 });
 
-// --- CASE O/P/Q/R: no business KV writes of any kind --------------------------
+// --- CASE O/P/Q/R (V1.9.5/V1.9.7 baseline, UPDATED for V1.9.8) ----------------
+//
+// V1.9.8 deliberately LIFTS the old "0 business KV writes, ever" claim for a
+// genuinely accepted (non-duplicate) NEW/UPDATED event — see this file's own
+// "V1.9.8 Business Pipeline integration" section further down for the tests
+// that prove the NEW, correct boundary. CASE O/P/Q/R below are kept using
+// the DEFAULT payload (event.comment='測試事件' — no accident/impact keyword,
+// so it never becomes broadcast-ELIGIBLE at all: classifyPbsEvent gives it
+// type:'other' with no matching anomaly keyword, so broadcastRules.js's V1.5
+// whitelist rejects it before any push target/CCTV/notified-state work is
+// even attempted) specifically so they can still assert "0 fetch calls" and
+// "0 notified-state/Pipeline-Trace writes" meaningfully — those two
+// invariants hold REGARDLESS of eligibility, because they only ever fire
+// after/for a REAL push attempt, which a rejected-at-the-gate event never
+// reaches.
 
-test('CASE O: never writes traffic:shared-feed', async () => {
+test('CASE O (UPDATED V1.9.8): an INELIGIBLE default-payload NEW push still writes traffic:shared-feed once (Shared Feed reuse establishes/updates the key even for a 0-product run) — see the dedicated V1.9.8 Shared Feed test below for a REAL product', async () => {
   const kv = countingKV();
   await handlePbsDebugPush(pushRequest(), baseEnv({ TRAFFIC_KV: kv }), NOW);
-  assert.ok(![...kv.store.keys()].some((k) => k.startsWith('traffic:shared-feed')));
+  // V1.9.8: runSharedFeedPersist is now reached (order section 四's Shared
+  // Feed reuse) even for a 0-eligible-event push — it establishes the key
+  // with an empty event list, same first-write behavior scheduled.js's own
+  // Cron path always had on its very first-ever tick.
+  assert.ok([...kv.store.keys()].some((k) => k.startsWith('traffic:shared-feed')), 'expected the canonical Shared Feed reuse to have run');
 });
 
-test('CASE P: never writes line:notified-state', async () => {
+test('CASE P: an INELIGIBLE default-payload push still writes 0 line:notified-state (only a REAL successful push ever writes this key)', async () => {
   const kv = countingKV();
   await handlePbsDebugPush(pushRequest(), baseEnv({ TRAFFIC_KV: kv }), NOW);
   assert.ok(![...kv.store.keys()].some((k) => k.startsWith('line:notified-state')));
 });
 
-test('CASE Q: never writes Pipeline Trace (v1 or v2 batch keys)', async () => {
+test('CASE Q: never writes Pipeline Trace (v1 or v2 batch keys) — deliberately out of scope for V1.9.8, this endpoint never calls persistPipelineTraceBatch', async () => {
   const kv = countingKV();
   await handlePbsDebugPush(pushRequest(), baseEnv({ TRAFFIC_KV: kv }), NOW);
   assert.ok(![...kv.store.keys()].some((k) => k.startsWith('debug:pipeline-trace')));
 });
 
-test('CASE R (V1.9.7): no BUSINESS KV writes across NEW/UPDATED/CLEARED — the new debug idempotency prefix is the one deliberate exception', async () => {
+test('CASE R (V1.9.7, UNCHANGED by V1.9.8): a DUPLICATE request never touches ANY business-prefixed KV key beyond what the original accepted request already wrote', async () => {
   const kv = countingKV();
   const env = baseEnv({ TRAFFIC_KV: kv });
-  await handlePbsDebugPush(pushRequest({ body: validPayload({ lifecycle: 'NEW' }) }), env, NOW);
-  await handlePbsDebugPush(pushRequest({ body: validPayload({ lifecycle: 'UPDATED', fingerprint: 'fp-x' }) }), env, NOW);
-  await handlePbsDebugPush(pushRequest({ body: validPayload({ lifecycle: 'CLEARED', fingerprint: 'fp-y' }) }), env, NOW);
+  const payload = validPayload({ lifecycle: 'NEW', fingerprint: 'fp-r-dup' });
+  await handlePbsDebugPush(pushRequest({ body: payload }), env, NOW);
+  const keysAfterFirst = new Set(kv.store.keys());
+  await handlePbsDebugPush(pushRequest({ body: { ...payload, requestId: 'req-r-dup-2' } }), env, new Date(NOW.getTime() + 1000));
+  const keysAfterDuplicate = new Set(kv.store.keys());
+  assert.deepEqual(keysAfterDuplicate, keysAfterFirst, 'a duplicate must add ZERO new KV keys of any kind — 0 second Business Pipeline pass');
+});
+
+test('CASE R2 (V1.9.8): a CLEARED push still writes ONLY the debug idempotency prefix — never reaches the Business Pipeline at all', async () => {
+  const kv = countingKV();
+  const env = baseEnv({ TRAFFIC_KV: kv });
+  await handlePbsDebugPush(pushRequest({ body: validPayload({ lifecycle: 'CLEARED', fingerprint: 'fp-cleared-boundary' }) }), env, NOW);
   const businessPrefixes = ['traffic:shared-feed', 'line:notified-state', 'line:incident-suppression-state', 'debug:pipeline-trace', 'pbs:lifecycle-state'];
   const keys = [...kv.store.keys()];
-  assert.ok(keys.length > 0, 'expected the new debug idempotency prefix to have written something');
+  assert.ok(keys.length > 0, 'expected the debug idempotency prefix to have written something');
   for (const key of keys) {
-    assert.ok(key.startsWith(IDEMPOTENCY_KV_PREFIX), `unexpected non-debug-prefix key written: ${key}`);
-    assert.ok(!businessPrefixes.some((p) => key.startsWith(p)), `a business-prefixed key was written: ${key}`);
+    assert.ok(key.startsWith(IDEMPOTENCY_KV_PREFIX), `unexpected non-debug-prefix key written for a CLEARED push: ${key}`);
+    assert.ok(!businessPrefixes.some((p) => key.startsWith(p)), `a business-prefixed key was written for a CLEARED push: ${key}`);
   }
 });
 
@@ -399,23 +443,23 @@ test('10: invalid payload -> 0 KV write (and 0 KV read — idempotency is comput
   assert.equal(kv.putCalls, 0);
 });
 
-test('11: a duplicate request adds 0 additional KV writes', async () => {
+test('11: a duplicate request adds 0 additional KV writes (V1.9.8: compared against whatever the first accepted request — idempotency + Business Pipeline — already wrote, not a hardcoded 1)', async () => {
   const kv = countingKV();
   const env = baseEnv({ TRAFFIC_KV: kv });
   const payload = validPayload({ fingerprint: 'fp-dup-write-check' });
   await handlePbsDebugPush(pushRequest({ body: payload }), env, NOW);
-  assert.equal(kv.putCalls, 1);
+  const putsAfterFirst = kv.putCalls;
+  assert.ok(putsAfterFirst >= 1);
   resetPbsDebugPushIdempotencyState(); // force the second request through the L2 KV path, not the L1 shortcut
   await handlePbsDebugPush(pushRequest({ body: { ...payload, requestId: 'req-dup' } }), env, new Date(NOW.getTime() + 1000));
-  assert.equal(kv.putCalls, 1, 'a genuine duplicate must never add a second KV write');
+  assert.equal(kv.putCalls, putsAfterFirst, 'a genuine duplicate must never add a second KV write of any kind');
 });
 
-test('12: a genuinely accepted event writes exactly 1 idempotency record, under the debug-only prefix', async () => {
+test('12: a genuinely accepted event writes exactly 1 idempotency record, under the debug-only prefix (V1.9.8: other business-prefixed writes may ALSO occur — this only counts the idempotency prefix)', async () => {
   const kv = countingKV();
   await handlePbsDebugPush(pushRequest({ body: validPayload({ fingerprint: 'fp-exactly-one' }) }), baseEnv({ TRAFFIC_KV: kv }), NOW);
-  assert.equal(kv.putCalls, 1);
-  const [key] = [...kv.store.keys()];
-  assert.ok(key.startsWith(`${IDEMPOTENCY_KV_PREFIX}:`));
+  const idempotencyKeys = [...kv.store.keys()].filter((k) => k.startsWith(`${IDEMPOTENCY_KV_PREFIX}:`));
+  assert.equal(idempotencyKeys.length, 1);
 });
 
 // 13/14/15/16 (LINE/CCTV/Shared-Feed/Business-KV zero side effects) are
@@ -429,20 +473,23 @@ test('17: secret is never logged even on a persistent-idempotency-path request',
   assert.ok(!combined.includes(SECRET));
 });
 
-test('18: TTL is set on every idempotency KV write, equal to the exported IDEMPOTENCY_TTL_SECONDS', async () => {
-  let capturedOptions = null;
+test('18: TTL is set on every idempotency KV write, equal to the exported IDEMPOTENCY_TTL_SECONDS (V1.9.8: captured by KEY prefix, since other business writes may also occur and must not carry this TTL)', async () => {
+  const capturedOptionsByKey = new Map();
   const kv = {
     store: new Map(),
     async get(key) {
       return this.store.has(key) ? this.store.get(key) : null;
     },
     async put(key, value, options) {
-      capturedOptions = options;
+      capturedOptionsByKey.set(key, options);
       this.store.set(key, value);
     },
   };
   await handlePbsDebugPush(pushRequest({ body: validPayload({ fingerprint: 'fp-ttl-check' }) }), baseEnv({ TRAFFIC_KV: kv }), NOW);
-  assert.ok(capturedOptions, 'expected kv.put to have been called with options');
+  const idempotencyKey = [...capturedOptionsByKey.keys()].find((k) => k.startsWith(`${IDEMPOTENCY_KV_PREFIX}:`));
+  assert.ok(idempotencyKey, 'expected the idempotency-prefixed key to have been put');
+  const capturedOptions = capturedOptionsByKey.get(idempotencyKey);
+  assert.ok(capturedOptions, 'expected kv.put to have been called with options for the idempotency key');
   assert.equal(capturedOptions.expirationTtl, IDEMPOTENCY_TTL_SECONDS);
   assert.equal(IDEMPOTENCY_TTL_SECONDS, 48 * 60 * 60);
 });
@@ -570,13 +617,33 @@ test('routing: a similar-but-different path still 404s (no accidental prefix mat
   assert.equal(res.status, 404);
 });
 
-// --- V1.9.7 KV cost quantification (order section 十) --------------------------
+// --- V1.9.7/V1.9.8 KV cost quantification (order section 十/十一) --------------
 //
 // Real measured counts against a real counting mock, never hand-estimates
 // — same discipline as this project's other KV-quantification fixtures
 // (see test/kvWriteQuantificationV193.test.js). The final report's own
 // "10/30/100 events/day" cost table is built directly from this file's
 // own console.log output.
+//
+// V1.9.8 CHANGES THIS PROFILE, honestly: V1.9.7's "1 accepted event = at
+// most 1 write" was true only while this endpoint was debug-only. Now a
+// genuinely accepted event ALSO invokes the real canonical Business
+// Pipeline (runLineBroadcast + runSharedFeedPersist) — reading
+// subscriptions/notified-state/incident-suppression-state/shared-feed (4
+// gets) every time, and — for a run of otherwise-identical/ineligible
+// events, as this fixture deliberately uses (matching CASE M/N/O/P's own
+// "0-broadcast-relevant" default payload) — writing
+// line:incident-suppression-state and traffic:shared-feed EXACTLY ONCE
+// each for the WHOLE run (both are WRITE_ON_CHANGE: content stabilizes to
+// "empty" after the very first event establishes the key, so every
+// following event's own write attempt is skipped). Measured exactly via
+// this same mock, not guessed:
+//   N accepted events -> gets = 5*N, puts = N + 2 (idempotency=N, plus
+//   ONE incident-suppression-state write and ONE shared-feed write for
+//   the whole run). A run with real, broadcast-ELIGIBLE events (not this
+//   fixture) would additionally write line:notified-state and
+//   debug:broadcast-provenance:v1:* per successful push — see the
+//   dedicated V1.9.8 (9)/(12) tests below for that shape.
 
 function distinctPayloadForIndex(i) {
   return validPayload({ eventId: `PBS-COST-${i}`, fingerprint: `fp-cost-${i}`, requestId: `req-cost-${i}` });
@@ -590,22 +657,242 @@ for (const eventsPerDay of [10, 30, 100]) {
       const res = await handlePbsDebugPush(pushRequest({ body: distinctPayloadForIndex(i) }), env, NOW);
       assert.equal((await res.json()).accepted, true);
     }
-    REAL_CONSOLE_LOG(`[V1.9.7 KV cost] eventsPerDay=${eventsPerDay} kvGetCalls=${kv.getCalls} kvPutCalls=${kv.putCalls}`);
-    assert.equal(kv.putCalls, eventsPerDay, '1 accepted event = at most 1 write (order section 四)');
-    assert.equal(kv.getCalls, eventsPerDay); // one get ("not yet seen") before each distinct accept
+    REAL_CONSOLE_LOG(`[V1.9.8 KV cost] eventsPerDay=${eventsPerDay} kvGetCalls=${kv.getCalls} kvPutCalls=${kv.putCalls}`);
+    // V1.9.8 measured shape (0-broadcast-relevant fixture, see comment above):
+    assert.equal(kv.putCalls, eventsPerDay + 2, 'N idempotency writes + 1 incident-suppression-state + 1 shared-feed (both WRITE_ON_CHANGE, once per run)');
+    assert.equal(kv.getCalls, eventsPerDay * 5, 'N idempotency reads + 4*N Business Pipeline reads (subscriptions/notified-state/incident-suppression/shared-feed)');
   });
 }
+
+// ============================================================================
+// V1.9.8 — Business Pipeline integration (order section 十, the 15-item
+// minimum targeted test list). Fixtures below reuse validPayload()'s own
+// road/areaNm/direction/coordinates (國道一號, 24.8/121.0 — already inside
+// HSINCHU_BOUNDING_BOX per traffic/hsinchuConfig.js, confirmed via
+// isPbsEventHsinchuRelevant's coordinate fallback) and only vary `comment`
+// (drives classifyPbsEvent's type) and event.longitude/latitude (drives
+// service-area eligibility) between fixtures.
+// ============================================================================
+
+const ENROLLED_AT = new Date('2026-08-01T00:00:00+08:00'); // well before NOW, clears the enabledAt backfill guard
+
+/** [{type:'text','image'}, ...] LINE push body captor — same convention as
+ * test/broadcastPipeline.test.js's own mockLinePushFetch(). */
+function mockLinePushFetch() {
+  const calls = [];
+  const fn = async (url, init) => {
+    calls.push({ url: String(url), body: JSON.parse(init.body) });
+    return new Response('{}', { status: 200 });
+  };
+  fn.calls = calls;
+  return fn;
+}
+
+function accidentComment() {
+  return '國道一號北向94公里處發生追撞事故，車道回堵'; // matches ACCIDENT_PATTERNS (追撞) + an impact keyword (回堵) — type:'accident'
+}
+
+function controlOnlyComment() {
+  return '國道一號北向94公里處實施交通管制'; // matches CONTROL_PATTERNS (交通管制) but not any ACCIDENT_PATTERNS — type:'control'
+}
+
+// V1.9.8 — validPayload()'s own top-level spread REPLACES `event` wholesale
+// on override (it is not a deep merge), so every fixture below that needs a
+// specific comment/coordinates while staying inside the service area must
+// restate the FULL event object, not just the field it's varying. This
+// helper is the one place that full default shape lives.
+function fullEventFields(overrides = {}) {
+  return {
+    road: '國道一號',
+    areaNm: '國道一號北向',
+    direction: '北向',
+    comment: accidentComment(),
+    longitude: 121.0,
+    latitude: 24.8,
+    sourceDetail: 'test',
+    ...overrides,
+  };
+}
+
+const OUT_OF_AREA_COORDS = { longitude: 121.71801, latitude: 25.10288 }; // 八堵 (基隆) — outside HSINCHU_BOUNDING_BOX (lat > 24.85)
+
+test('V1.9.8 (1): valid Windows NEW -> Business Pipeline is invoked (log line present)', async () => {
+  const env = baseEnv();
+  await handlePbsDebugPush(pushRequest({ body: validPayload({ lifecycle: 'NEW', fingerprint: 'fp-v198-1' }) }), env, NOW);
+  assert.ok(logLines.some((l) => l.includes('[pbs-debug-push][business-pipeline]') && l.includes('lifecycle=NEW')));
+});
+
+test('V1.9.8 (2): valid Windows UPDATED -> Business Pipeline is invoked (log line present)', async () => {
+  const env = baseEnv();
+  await handlePbsDebugPush(pushRequest({ body: validPayload({ lifecycle: 'UPDATED', fingerprint: 'fp-v198-2' }) }), env, NOW);
+  assert.ok(logLines.some((l) => l.includes('[pbs-debug-push][business-pipeline]') && l.includes('lifecycle=UPDATED')));
+});
+
+test('V1.9.8 (3): valid confirmed CLEARED -> acknowledged, but NEVER routed to the Business Pipeline/broadcast', async () => {
+  const env = baseEnv();
+  await handlePbsDebugPush(
+    pushRequest({ body: validPayload({ lifecycle: 'CLEARED', fingerprint: 'fp-v198-3', event: { comment: '北向93公里處已排除' } }) }),
+    env,
+    NOW
+  );
+  const line = logLines.find((l) => l.includes('[pbs-debug-push][business-pipeline]') && l.includes('lifecycle=CLEARED'));
+  assert.ok(line, 'expected a CLEARED acknowledgement log line');
+  assert.ok(line.includes('routedToBroadcast=false'));
+});
+
+test('V1.9.8 (4): a duplicate request never invokes the Business Pipeline a second time (0 second log line)', async () => {
+  const env = baseEnv();
+  const payload = validPayload({ lifecycle: 'NEW', fingerprint: 'fp-v198-4' });
+  await handlePbsDebugPush(pushRequest({ body: payload }), env, NOW);
+  logLines.length = 0; // reset capture — only care about the SECOND (duplicate) request now
+  await handlePbsDebugPush(pushRequest({ body: { ...payload, requestId: 'req-v198-4-dup' } }), env, new Date(NOW.getTime() + 1000));
+  assert.ok(!logLines.some((l) => l.includes('[pbs-debug-push][business-pipeline]')), 'a duplicate must not invoke the Business Pipeline at all');
+});
+
+// (5) invalid auth -> reject: see CASE D/E above. (6) invalid payload ->
+// reject: see CASE G/H/I/J/K above. Both already prove 0 KV touches at all
+// (tests 9/10 in the V1.9.7 section), which also means 0 Business Pipeline
+// invocation — confirmed directly here too:
+test('V1.9.8 (5/6): invalid auth / invalid payload never invoke the Business Pipeline', async () => {
+  await handlePbsDebugPush(pushRequest({ token: null }), baseEnv(), NOW);
+  await handlePbsDebugPush(pushRequest({ body: validPayload({ lifecycle: 'NOT_A_LIFECYCLE' }) }), baseEnv(), NOW);
+  assert.ok(!logLines.some((l) => l.includes('[pbs-debug-push][business-pipeline]')));
+});
+
+test('V1.9.8 (7): out-of-service-area event -> Business Pipeline runs, but 0 LINE push (service area gate, same canonical gate as polling)', async () => {
+  const kv = countingKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  const env = baseEnv({ TRAFFIC_KV: kv });
+  const res = await handlePbsDebugPush(
+    pushRequest({ body: validPayload({ lifecycle: 'NEW', fingerprint: 'fp-v198-7', event: fullEventFields(OUT_OF_AREA_COORDS) }) }),
+    env,
+    NOW
+  );
+  assert.equal(res.status, 200); // fetch mock still throws-on-call (beforeEach default) — 0 fetch calls proves 0 push
+  const line = logLines.find((l) => l.includes('[pbs-debug-push][business-pipeline]'));
+  assert.ok(line);
+  assert.ok(line.includes('pushSucceeded=0'));
+});
+
+test('V1.9.8 (8): meets the V1.5 whitelist but not the formal MAJOR_ACCIDENT_ONLY LINE policy (type:control, not accident) -> 0 LINE', async () => {
+  const kv = countingKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  const env = baseEnv({ TRAFFIC_KV: kv });
+  const res = await handlePbsDebugPush(
+    pushRequest({ body: validPayload({ lifecycle: 'NEW', fingerprint: 'fp-v198-8', event: fullEventFields({ comment: controlOnlyComment() }) }) }),
+    env,
+    NOW
+  );
+  assert.equal(res.status, 200); // fetch mock still throws-on-call — 0 fetch calls proves 0 push
+  const line = logLines.find((l) => l.includes('[pbs-debug-push][business-pipeline]'));
+  assert.ok(line);
+  assert.ok(line.includes('pushSucceeded=0'));
+});
+
+test('V1.9.8 (9): meets the formal LINE policy (real accident, subscribed target, within broadcast hours) -> LINE exactly once', async () => {
+  const kv = countingKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  const env = baseEnv({ TRAFFIC_KV: kv });
+  const mockFetch = mockLinePushFetch();
+  globalThis.fetch = mockFetch;
+  const res = await handlePbsDebugPush(
+    pushRequest({ body: validPayload({ eventId: 'PBS-UID-1', lifecycle: 'NEW', fingerprint: 'fp-v198-9', event: fullEventFields() }) }),
+    env,
+    NOW
+  );
+  assert.equal(res.status, 200);
+  assert.equal(mockFetch.calls.length, 1, 'expected exactly 1 LINE push API call');
+  assert.equal(mockFetch.calls[0].url, 'https://api.line.me/v2/bot/message/push');
+  const line = logLines.find((l) => l.includes('[pbs-debug-push][business-pipeline]'));
+  assert.ok(line.includes('pushSucceeded=1'));
+});
+
+test('V1.9.8 (10): a duplicate of an already-pushed accident adds ZERO additional LINE pushes', async () => {
+  const kv = countingKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  const env = baseEnv({ TRAFFIC_KV: kv });
+  const mockFetch = mockLinePushFetch();
+  globalThis.fetch = mockFetch;
+  const payload = validPayload({ eventId: 'PBS-UID-DUP', lifecycle: 'NEW', fingerprint: 'fp-v198-10', event: fullEventFields() });
+  await handlePbsDebugPush(pushRequest({ body: payload }), env, NOW);
+  assert.equal(mockFetch.calls.length, 1);
+  await handlePbsDebugPush(pushRequest({ body: { ...payload, requestId: 'req-v198-10-dup' } }), env, new Date(NOW.getTime() + 1000));
+  assert.equal(mockFetch.calls.length, 1, 'a duplicate Windows push must add 0 additional LINE pushes');
+});
+
+test('V1.9.8 (11): the Business Pipeline reuses the CANONICAL notified-state key scheme (source:rawId), never a Windows-specific parallel key', async () => {
+  const kv = countingKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  const env = baseEnv({ TRAFFIC_KV: kv });
+  globalThis.fetch = mockLinePushFetch();
+  await handlePbsDebugPush(
+    pushRequest({ body: validPayload({ eventId: 'PBS-UID-CANON', lifecycle: 'NEW', fingerprint: 'fp-v198-11', event: fullEventFields() }) }),
+    env,
+    NOW
+  );
+  const raw = kv.store.get('line:notified-state');
+  assert.ok(raw, 'expected notified.js\'s own canonical KV key to have been written by the SAME function polling used');
+  const parsed = JSON.parse(raw);
+  const notifiedKeys = Object.keys(parsed.notified || parsed.events || parsed);
+  assert.ok(notifiedKeys.some((k) => k === 'pbs:PBS-UID-CANON'), `expected the canonical "pbs:<rawId>" key scheme, got: ${notifiedKeys.join(',')}`);
+});
+
+test('V1.9.8 (12): Shared Feed behavior normal — a real accepted accident appears in traffic:shared-feed via the SAME runSharedFeedPersist reuse', async () => {
+  const kv = countingKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  const env = baseEnv({ TRAFFIC_KV: kv });
+  globalThis.fetch = mockLinePushFetch();
+  await handlePbsDebugPush(
+    pushRequest({ body: validPayload({ eventId: 'PBS-UID-FEED', lifecycle: 'NEW', fingerprint: 'fp-v198-12', event: fullEventFields() }) }),
+    env,
+    NOW
+  );
+  const raw = kv.store.get('traffic:shared-feed');
+  assert.ok(raw);
+  const parsed = JSON.parse(raw);
+  const events = parsed.events || parsed;
+  assert.equal(events.length, 1);
+  assert.equal(events[0].eventId, 'pbs:PBS-UID-FEED');
+});
+
+test('V1.9.8 (13): CCTV eligibility still uses the canonical (fail-safe) gate — no CCTV metadata cache seeded -> push still succeeds text-only, no crash', async () => {
+  const kv = countingKV(); // no freeway CCTV metadata cache key seeded at all
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  const env = baseEnv({ TRAFFIC_KV: kv });
+  const mockFetch = mockLinePushFetch();
+  globalThis.fetch = mockFetch;
+  const res = await handlePbsDebugPush(
+    pushRequest({ body: validPayload({ eventId: 'PBS-UID-CCTV', lifecycle: 'NEW', fingerprint: 'fp-v198-13', event: fullEventFields() }) }),
+    env,
+    NOW
+  );
+  assert.equal(res.status, 200);
+  assert.equal(mockFetch.calls.length, 1);
+  assert.equal(mockFetch.calls[0].body.messages.length, 1, 'no CCTV metadata cache available -> text-only, same canonical fail-safe behavior as the polling path');
+  assert.equal(mockFetch.calls[0].body.messages[0].type, 'text');
+});
+
+// (14) retired PBS polling no longer fetches PBS, and (15) non-PBS Cron
+// functionality stays normal: see the dedicated
+// test/pbsPollingRetirementV198.test.js file — kept separate because it
+// exercises traffic/scheduled.js's runScheduledTdxSync, not this endpoint.
+
+test('V1.9.8: WINDOWS_PBS_PRODUCTION_INGRESS / PRODUCTION_BUSINESS_PIPELINE_INTEGRATION status constants are honestly reported', () => {
+  assert.equal(WINDOWS_PBS_PRODUCTION_INGRESS, 'ACTIVE');
+  assert.equal(PRODUCTION_BUSINESS_PIPELINE_INTEGRATION, 'ACTIVE');
+});
 
 test('KV cost quantification: duplicates (including repeated retries) never add extra writes', async () => {
   const kv = countingKV();
   const env = baseEnv({ TRAFFIC_KV: kv });
   const payload = validPayload({ fingerprint: 'fp-cost-retry' });
   await handlePbsDebugPush(pushRequest({ body: payload }), env, NOW);
+  const putsAfterFirst = kv.putCalls; // V1.9.8: idempotency(1) + incident-suppression-state(1) + shared-feed(1) = 3, for this 0-relevant fixture
   for (let i = 0; i < 5; i += 1) {
     resetPbsDebugPushIdempotencyState(); // force each retry through the L2 KV path, not the L1 shortcut
     await handlePbsDebugPush(pushRequest({ body: { ...payload, requestId: `req-retry-${i}` } }), env, new Date(NOW.getTime() + (i + 1) * 1000));
   }
-  REAL_CONSOLE_LOG(`[V1.9.7 KV cost] scenario=retries retries=5 kvGetCalls=${kv.getCalls} kvPutCalls=${kv.putCalls}`);
-  assert.equal(kv.putCalls, 1, 'no number of retries for the same event may add a second write');
-  assert.equal(kv.getCalls, 6); // 1 initial get (miss) + 1 get per retry (all hits)
+  REAL_CONSOLE_LOG(`[V1.9.8 KV cost] scenario=retries retries=5 kvGetCalls=${kv.getCalls} kvPutCalls=${kv.putCalls}`);
+  assert.equal(kv.putCalls, putsAfterFirst, 'no number of retries for the same event may add ANY additional write — 0 second Business Pipeline pass');
+  assert.equal(kv.getCalls, 5 + 5, '1 first-accept scan (idempotency get + 4 Business Pipeline reads) + 1 idempotency get per duplicate retry (a duplicate never re-reads business state)');
 });

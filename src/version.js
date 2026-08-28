@@ -444,7 +444,61 @@
 // See test/pbsDebugPush.test.js (52 tests) and 07_KNOWN_ISSUES.md for the
 // full design, the race-condition analysis, and the KV cost table.
 
-export const APP_VERSION = 'V1.9.7';
+// V1.9.8 (2026-08-28) — Windows PBS Push -> Production Business Pipeline,
+// and RETIREMENT of Cloudflare's own 30-minute PBS polling. New production
+// main line: PBS official source -> Windows local fetch (~3 min) -> local
+// service-area filter -> NEW/UPDATED/CLEARED lifecycle -> POST
+// /internal/pbs-debug-push -> V1.9.7 Persistent Idempotency -> (this round)
+// the SAME canonical Business Pipeline (LINE/Shared Feed) the polling path
+// always used -> formal broadcast eligibility -> LINE.
+//
+// INGRESS — upgraded src/pbs/debugPush.js IN PLACE (order's own "least
+// change, least duplicated code" instruction: Option A, not a second
+// endpoint). A genuinely accepted (non-duplicate) NEW/UPDATED event is
+// normalized via pbs/normalize.js's UNCHANGED normalizePbsEvent() (see
+// debugPush.js's new buildRawPbsRecordFromPush() for the one place a
+// Windows payload becomes a raw-PBS-shaped record — happendate/happentime/
+// modDttm are a PRECISE Asia/Taipei reconstruction of the payload's own
+// generatedAt, not a guess; roadtype is left '' since Windows's own local
+// filter already guarantees a forwarded NEW/UPDATED event's comment
+// carries an accident keyword, so comment-only classification is
+// faithful), then handed to traffic/broadcastPipeline.js's UNCHANGED
+// runLineBroadcast() — the EXACT function traffic/scheduled.js's Cron path
+// has always called — followed by the EXACT traffic/sharedFeed.js
+// runSharedFeedPersist() call scheduled.js makes right after it. Zero
+// second copies of accident/service-area/location-quality/eligibility/
+// dedupe/CCTV/Shared-Feed logic exist in debugPush.js.
+//
+// CLEARED — acknowledged/logged, but deliberately NEVER routed into
+// runLineBroadcast, mirroring pbs/pipeline.js's own long-standing
+// behavior (clearedEvents never reach broadcastEvents either).
+//
+// LINE POLICY — completely untouched: MAJOR_ACCIDENT_ONLY and every
+// existing eligibility/service-area/location-quality gate inside
+// runLineBroadcast apply identically regardless of source.
+//
+// RETIREMENT (order section 八) — pbs/pbsConfig.js's new
+// PBS_30_MIN_POLLING_ENABLED=false (resolvePbsPollingEnabled(env), env-
+// overridable — same idiom as TRAFFIC_SOURCE_MODE/LINE_PUSH_POLICY, used
+// ONLY by this repo's own pre-existing PBS/CCTV test suite, never set by
+// Production) makes traffic/scheduled.js's pbsFetchPerformed permanently
+// false. pbsSchedule.js's getPbsScheduleState(), pbs/pipeline.js, and
+// pbs/lifecycle.js are all left completely intact, untouched, and fully
+// rollback-ready (flip the flag back) — no code deleted. The rest of the
+// same Cron tick (TDX, health snapshot, Shared Feed, Pipeline Trace) is
+// unaffected. Known accepted side effect: pbs:lifecycle-state stops being
+// updated (Windows tracks PBS lifecycle independently); GET /health's
+// `pbs` block freezes at its last pre-retirement value.
+//
+// Windows = fast detector/edge filter. Cloudflare = Traffic Producer /
+// Business Authority — the final LINE-or-not decision is still made
+// entirely by Cloudflare's own existing, unmodified rules.
+//
+// See test/pbsDebugPush.test.js's V1.9.8 section (15-item targeted list,
+// order section 十) and test/pbsPollingRetirementV198.test.js (retirement
+// items 14/15), and 07_KNOWN_ISSUES.md for the full record.
+
+export const APP_VERSION = 'V1.9.8';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

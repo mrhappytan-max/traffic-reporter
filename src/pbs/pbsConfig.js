@@ -57,3 +57,52 @@ export const CROSS_SOURCE_MAX_KM_DIFF = 2; // km
 // (TDX events, now merged with matching/unique active PBS events). No
 // subscription/target logic changes anywhere else.
 export const PBS_BROADCAST_ENABLED = true;
+
+// V1.9.8 — RETIREMENT of Cloudflare's own 30-minute PBS active fetch (order
+// section 八). The production main line for PBS is now: Windows local edge
+// monitor (fetches PBS every ~3 min, filters, classifies lifecycle) -> POST
+// /internal/pbs-debug-push -> pbs/debugPush.js's own call into the SAME
+// canonical runLineBroadcast() this file's `PBS_BROADCAST_ENABLED` merge
+// path always used — see debugPush.js's module comment. Cloudflare no
+// longer needs to fetch PBS itself at all.
+//
+// This is the module-level DEFAULT scheduled.js reads (see
+// resolvePbsPollingEnabled() below) — flipping it back to `true` is the
+// entire Production rollback: pbsSchedule.js's getPbsScheduleState(),
+// pbs/pipeline.js's runPbsPipelineAndCommit(), and pbs/lifecycle.js's KV
+// state machine are all left completely intact and untouched by this
+// round, exactly as the order requires ("不要大量刪除可回復程式碼...只關閉
+// runtime schedule/path"). Cron itself, TDX fetching, health snapshot,
+// Shared Feed, and Pipeline Trace are entirely unaffected by this flag —
+// only the PBS HTTP fetch branch of the existing 10-minute Cron tick
+// stops firing.
+//
+// `env.PBS_30_MIN_POLLING_ENABLED` may override this default — same
+// established idiom this project already uses for TRAFFIC_SOURCE_MODE/
+// LINE_PUSH_POLICY (env-level override, code-level safe default). This
+// exists SOLELY so this repo's own large pre-existing PBS/CCTV/dedup test
+// suite (which exercises that still-completely-unchanged logic via
+// runScheduledTdxSync's PBS-fetch entry point, for real fixture data, not
+// because it tests the 30-minute schedule itself) can keep asserting on
+// that unchanged logic without being rewritten wholesale — it is NOT a
+// Production escape hatch: no Production env var sets it, so real
+// deployed behavior is unconditionally `false` (retired) unless a human
+// deliberately adds that var to wrangler.jsonc/the Cloudflare dashboard
+// for an actual rollback.
+//
+// Known accepted side effect of retirement (documented, not a bug): with
+// this false, `pbs:lifecycle-state` (pbs/lifecycle.js) simply stops being
+// updated — Windows tracks PBS lifecycle (NEW/UPDATED/CLEARED, including
+// its own 2-consecutive-miss CLEARED debounce) independently on the
+// Windows machine, so nothing downstream depended on this KV key being
+// live once the Windows ingress became the real source of truth. Likewise
+// GET /health's `pbs` block freezes at whatever it last reported before
+// retirement (healthSnapshot.js's own carry-forward logic, unchanged) —
+// see 07_KNOWN_ISSUES.md's V1.9.8 record.
+export const PBS_30_MIN_POLLING_ENABLED = false;
+
+/** See PBS_30_MIN_POLLING_ENABLED's own comment above for the override rule. */
+export function resolvePbsPollingEnabled(env) {
+  if (env && typeof env.PBS_30_MIN_POLLING_ENABLED === 'boolean') return env.PBS_30_MIN_POLLING_ENABLED;
+  return PBS_30_MIN_POLLING_ENABLED;
+}

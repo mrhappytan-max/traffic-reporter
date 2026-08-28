@@ -218,6 +218,7 @@ test('4: an already-notified accident with no material change -> suppressionResu
 test('5: an unmatched 國道 PBS event -> standalone trace entry with gatingResult gated-freeway-no-tdx-match, status gated', async () => {
   const { env } = await envWithSubscriber();
   env.PBS_RELAY_TOKEN = 'relay-token';
+  env.PBS_30_MIN_POLLING_ENABLED = true; // V1.9.8: this file exercises the (unchanged) PBS pipeline via the polling entry point on purpose
   env.PBS_RELAY_WINDOWS = {
     fetch: async () => new Response(JSON.stringify([{
       UID: 'PBS-1', road: '國道一號', direction: '北向', areaNm: '國道一號北向', roadtype: '事故',

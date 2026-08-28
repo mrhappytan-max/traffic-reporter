@@ -103,7 +103,7 @@ async function envFor(mode, pbsCalls, items = []) {
     TDX_CLIENT_SECRET: 'secret',
     LINE_CHANNEL_ACCESS_TOKEN: 'line-token',
     TRAFFIC_KV,
-    PBS_RELAY_TOKEN: 'relay-token',
+    PBS_RELAY_TOKEN: 'relay-token', PBS_30_MIN_POLLING_ENABLED: true /* V1.9.8: exercise the unchanged PBS pipeline directly */,
     PBS_RELAY_WINDOWS: pbsRelay(pbsCalls, items),
   };
   if (mode !== null) env.TRAFFIC_SOURCE_MODE = mode;

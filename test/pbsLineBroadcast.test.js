@@ -183,7 +183,7 @@ test('1. PBS only (no TDX events): one unique active PBS event -> exactly 1 mess
   await setUserEnabled(TRAFFIC_KV, 'U1', true, new Date('2026-08-01T00:00:00+08:00'));
   const env = {
     TDX_CLIENT_ID: 'id', TDX_CLIENT_SECRET: 'secret', LINE_CHANNEL_ACCESS_TOKEN: 'line-token', TRAFFIC_KV,
-    PBS_RELAY_TOKEN: 'relay-token', PBS_RELAY_WINDOWS: pbsRelay([pbsUniqueAccidentRaw()]),
+    PBS_RELAY_TOKEN: 'relay-token', PBS_30_MIN_POLLING_ENABLED: true /* V1.9.8: exercise the unchanged PBS pipeline directly */, PBS_RELAY_WINDOWS: pbsRelay([pbsUniqueAccidentRaw()]),
   };
 
   const { pushed, result } = await withPushCapture(mockTdxFetch([]), () => runScheduledTdxSync(env, NOW));
@@ -198,7 +198,7 @@ test('2. TDX only (no PBS match, PBS relay empty): one TDX event -> exactly 1 me
   await setUserEnabled(TRAFFIC_KV, 'U1', true, new Date('2026-08-01T00:00:00+08:00'));
   const env = {
     TDX_CLIENT_ID: 'id', TDX_CLIENT_SECRET: 'secret', LINE_CHANNEL_ACCESS_TOKEN: 'line-token', TRAFFIC_KV,
-    PBS_RELAY_TOKEN: 'relay-token', PBS_RELAY_WINDOWS: pbsRelay([]),
+    PBS_RELAY_TOKEN: 'relay-token', PBS_30_MIN_POLLING_ENABLED: true /* V1.9.8: exercise the unchanged PBS pipeline directly */, PBS_RELAY_WINDOWS: pbsRelay([]),
   };
 
   const { pushed, result } = await withPushCapture(mockTdxFetch([freewayAccidentRaw()]), () => runScheduledTdxSync(env, NOW));
@@ -213,7 +213,7 @@ test('3. PBS + TDX describe the SAME incident -> exactly 1 message (canonical me
   await setUserEnabled(TRAFFIC_KV, 'U1', true, new Date('2026-08-01T00:00:00+08:00'));
   const env = {
     TDX_CLIENT_ID: 'id', TDX_CLIENT_SECRET: 'secret', LINE_CHANNEL_ACCESS_TOKEN: 'line-token', TRAFFIC_KV,
-    PBS_RELAY_TOKEN: 'relay-token', PBS_RELAY_WINDOWS: pbsRelay([pbsMatchingAccidentRaw()]),
+    PBS_RELAY_TOKEN: 'relay-token', PBS_30_MIN_POLLING_ENABLED: true /* V1.9.8: exercise the unchanged PBS pipeline directly */, PBS_RELAY_WINDOWS: pbsRelay([pbsMatchingAccidentRaw()]),
   };
 
   const { pushed, result } = await withPushCapture(mockTdxFetch([freewayAccidentRaw()]), () => runScheduledTdxSync(env, NOW));
@@ -232,7 +232,7 @@ test('4. PBS + TDX describe DIFFERENT incidents -> exactly 2 messages', async ()
   await setUserEnabled(TRAFFIC_KV, 'U1', true, new Date('2026-08-01T00:00:00+08:00'));
   const env = {
     TDX_CLIENT_ID: 'id', TDX_CLIENT_SECRET: 'secret', LINE_CHANNEL_ACCESS_TOKEN: 'line-token', TRAFFIC_KV,
-    PBS_RELAY_TOKEN: 'relay-token', PBS_RELAY_WINDOWS: pbsRelay([pbsUniqueAccidentRaw()]),
+    PBS_RELAY_TOKEN: 'relay-token', PBS_30_MIN_POLLING_ENABLED: true /* V1.9.8: exercise the unchanged PBS pipeline directly */, PBS_RELAY_WINDOWS: pbsRelay([pbsUniqueAccidentRaw()]),
   };
 
   const { pushed, result } = await withPushCapture(mockTdxFetch([freewayAccidentRaw()]), () => runScheduledTdxSync(env, NOW));
@@ -247,7 +247,7 @@ test('5. cleared PBS event ("已排除") -> 0 messages, never treated as a new e
   await setUserEnabled(TRAFFIC_KV, 'U1', true, new Date('2026-08-01T00:00:00+08:00'));
   const env = {
     TDX_CLIENT_ID: 'id', TDX_CLIENT_SECRET: 'secret', LINE_CHANNEL_ACCESS_TOKEN: 'line-token', TRAFFIC_KV,
-    PBS_RELAY_TOKEN: 'relay-token', PBS_RELAY_WINDOWS: pbsRelay([pbsClearedRaw()]),
+    PBS_RELAY_TOKEN: 'relay-token', PBS_30_MIN_POLLING_ENABLED: true /* V1.9.8: exercise the unchanged PBS pipeline directly */, PBS_RELAY_WINDOWS: pbsRelay([pbsClearedRaw()]),
   };
 
   const { pushed, result } = await withPushCapture(mockTdxFetch([]), () => runScheduledTdxSync(env, NOW));
@@ -262,7 +262,7 @@ test('6. stale PBS event (>2h old, not cleared) -> 0 messages', async () => {
   await setUserEnabled(TRAFFIC_KV, 'U1', true, new Date('2026-08-01T00:00:00+08:00'));
   const env = {
     TDX_CLIENT_ID: 'id', TDX_CLIENT_SECRET: 'secret', LINE_CHANNEL_ACCESS_TOKEN: 'line-token', TRAFFIC_KV,
-    PBS_RELAY_TOKEN: 'relay-token', PBS_RELAY_WINDOWS: pbsRelay([pbsStaleRaw()]),
+    PBS_RELAY_TOKEN: 'relay-token', PBS_30_MIN_POLLING_ENABLED: true /* V1.9.8: exercise the unchanged PBS pipeline directly */, PBS_RELAY_WINDOWS: pbsRelay([pbsStaleRaw()]),
   };
 
   const { pushed, result } = await withPushCapture(mockTdxFetch([]), () => runScheduledTdxSync(env, NOW));
@@ -277,7 +277,7 @@ test('7a. PBS relay throws -> TDX still broadcasts normally', async () => {
   await setUserEnabled(TRAFFIC_KV, 'U1', true, new Date('2026-08-01T00:00:00+08:00'));
   const env = {
     TDX_CLIENT_ID: 'id', TDX_CLIENT_SECRET: 'secret', LINE_CHANNEL_ACCESS_TOKEN: 'line-token', TRAFFIC_KV,
-    PBS_RELAY_TOKEN: 'relay-token', PBS_RELAY_WINDOWS: throwingPbsRelay(),
+    PBS_RELAY_TOKEN: 'relay-token', PBS_30_MIN_POLLING_ENABLED: true /* V1.9.8: exercise the unchanged PBS pipeline directly */, PBS_RELAY_WINDOWS: throwingPbsRelay(),
   };
 
   const { pushed, result } = await withPushCapture(mockTdxFetch([freewayAccidentRaw()]), () => runScheduledTdxSync(env, NOW));
@@ -294,7 +294,7 @@ test('7b. TDX has no data this run (token missing) -> PBS still broadcasts norma
     // No TDX_CLIENT_ID/TDX_CLIENT_SECRET at all -> every TDX source fails
     // closed with 0 events, but TRAFFIC_KV itself is fine.
     LINE_CHANNEL_ACCESS_TOKEN: 'line-token', TRAFFIC_KV,
-    PBS_RELAY_TOKEN: 'relay-token', PBS_RELAY_WINDOWS: pbsRelay([pbsUniqueAccidentRaw()]),
+    PBS_RELAY_TOKEN: 'relay-token', PBS_30_MIN_POLLING_ENABLED: true /* V1.9.8: exercise the unchanged PBS pipeline directly */, PBS_RELAY_WINDOWS: pbsRelay([pbsUniqueAccidentRaw()]),
   };
 
   const { pushed, result } = await withPushCapture(mockTdxFetch([]), () => runScheduledTdxSync(env, NOW));

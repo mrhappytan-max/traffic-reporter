@@ -167,7 +167,7 @@ afterEach(() => resetTdxTokenCache());
 
 test('CASE 1: PBS-only 國道 accident, no TDX at all -> 0 push, 0 Shared Feed, no incident-suppression record, no notified-state, 0 CCTV', async () => {
   const TRAFFIC_KV = kv();
-  const env = { ...(await envWithSubscriber(TRAFFIC_KV)), PBS_RELAY_TOKEN: 'relay-token', PBS_RELAY_WINDOWS: pbsRelay([pbsFreewayOnlyRaw()]) };
+  const env = { ...(await envWithSubscriber(TRAFFIC_KV)), PBS_RELAY_TOKEN: 'relay-token', PBS_30_MIN_POLLING_ENABLED: true, PBS_RELAY_WINDOWS: pbsRelay([pbsFreewayOnlyRaw()]) };
 
   const { pushed, result } = await withPushCapture(mockTdxFetch([]), () => runScheduledTdxSync(env, T0));
 
@@ -202,6 +202,7 @@ test('CASE 2: PBS reports first (no TDX yet), TDX reports the same incident next
 
   // Tick 1 (08:00): PBS-only, unmatched (no TDX events this run at all).
   env.PBS_RELAY_TOKEN = 'relay-token';
+  env.PBS_30_MIN_POLLING_ENABLED = true; // V1.9.8: this file exercises the (unchanged) PBS pipeline via the polling entry point on purpose
   env.PBS_RELAY_WINDOWS = pbsRelay([pbsMatchingFreewayRaw()]);
   const first = await withPushCapture(mockTdxFetch([]), () => runScheduledTdxSync(env, T0));
   assert.equal(first.pushed.length, 0);
@@ -234,6 +235,7 @@ test('CASE 3: PBS reports it, TDX never does, across many ticks -> still 0 exter
   const TRAFFIC_KV = kv();
   const env = await envWithSubscriber(TRAFFIC_KV);
   env.PBS_RELAY_TOKEN = 'relay-token';
+  env.PBS_30_MIN_POLLING_ENABLED = true; // V1.9.8: this file exercises the (unchanged) PBS pipeline via the polling entry point on purpose
   env.PBS_RELAY_WINDOWS = pbsRelay([pbsFreewayOnlyRaw()]);
 
   // V1.9.3: every tick here must be a genuine PBS-scheduled minute (see
@@ -255,7 +257,7 @@ test('CASE 3: PBS reports it, TDX never does, across many ticks -> still 0 exter
 
 test('CASE 5: PBS non-freeway (省道) accident, no TDX match -> broadcasts exactly as before V57.2, unaffected by the gate', async () => {
   const TRAFFIC_KV = kv();
-  const env = { ...(await envWithSubscriber(TRAFFIC_KV)), PBS_RELAY_TOKEN: 'relay-token', PBS_RELAY_WINDOWS: pbsRelay([pbsHighwayOnlyRaw()]) };
+  const env = { ...(await envWithSubscriber(TRAFFIC_KV)), PBS_RELAY_TOKEN: 'relay-token', PBS_30_MIN_POLLING_ENABLED: true, PBS_RELAY_WINDOWS: pbsRelay([pbsHighwayOnlyRaw()]) };
 
   const { pushed, result } = await withPushCapture(mockTdxFetch([]), () => runScheduledTdxSync(env, T0));
 
@@ -277,6 +279,7 @@ test('CASE 6: after a gated PBS 國道 sighting, a later TDX freeway event at th
   // Tick 1: PBS reports 國道一號 北向 ~92K (same location TDX will report
   // next tick), gated (no TDX match this run).
   env.PBS_RELAY_TOKEN = 'relay-token';
+  env.PBS_30_MIN_POLLING_ENABLED = true; // V1.9.8: this file exercises the (unchanged) PBS pipeline via the polling entry point on purpose
   env.PBS_RELAY_WINDOWS = pbsRelay([pbsMatchingFreewayRaw()]);
   const first = await withPushCapture(mockTdxFetch([]), () => runScheduledTdxSync(env, T0));
   assert.equal(first.pushed.length, 0);
@@ -311,6 +314,7 @@ test('CASE 7: Shared Feed only ever receives the TDX product for a 國道 incide
   const env = await envWithSubscriber(TRAFFIC_KV);
 
   env.PBS_RELAY_TOKEN = 'relay-token';
+  env.PBS_30_MIN_POLLING_ENABLED = true; // V1.9.8: this file exercises the (unchanged) PBS pipeline via the polling entry point on purpose
   env.PBS_RELAY_WINDOWS = pbsRelay([pbsFreewayOnlyRaw()]);
   const pbsOnly = await withPushCapture(mockTdxFetch([]), () => runScheduledTdxSync(env, T0));
   assert.equal(pbsOnly.result.sharedFeed.eventCount, 0);

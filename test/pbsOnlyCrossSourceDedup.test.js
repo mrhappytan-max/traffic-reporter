@@ -130,6 +130,7 @@ test('E. 08:00 TDX sees the accident; 08:10 PBS reports the SAME accident -> not
   const hits08_00 = [];
   const first = await withPushCapture(trackingTdxFetch(hits08_00, { freewayEvents: [freewayAccidentRaw()] }), () => {
     env.PBS_RELAY_TOKEN = 'relay-token';
+  env.PBS_30_MIN_POLLING_ENABLED = true; // V1.9.8: this file exercises the (unchanged) PBS pipeline via the polling entry point on purpose
     env.PBS_RELAY_WINDOWS = pbsRelay(pbsCalls, []); // no PBS match yet at 08:00
     return runScheduledTdxSync(env, taipei('2026-08-18T08:00:00+08:00'));
   });
@@ -156,6 +157,7 @@ test('F. a >30-min-old cached TDX event is ignored -> a 國道 PBS event is NOT 
   const env = await envWithSubscriber();
   const pbsCalls = [];
   env.PBS_RELAY_TOKEN = 'relay-token';
+  env.PBS_30_MIN_POLLING_ENABLED = true; // V1.9.8: this file exercises the (unchanged) PBS pipeline via the polling entry point on purpose
   env.PBS_RELAY_WINDOWS = pbsRelay(pbsCalls, [pbsMatchingAccidentRaw()]);
 
   // Seed a cache entry directly, 40 minutes before the tick under test —
@@ -194,6 +196,7 @@ test('G. a PBS-only tick with a cache match never produces a TDX new/updated eve
   const hitsFirst = [];
   await withPushCapture(trackingTdxFetch(hitsFirst, { freewayEvents: [freewayAccidentRaw()] }), () => {
     env.PBS_RELAY_TOKEN = 'relay-token';
+  env.PBS_30_MIN_POLLING_ENABLED = true; // V1.9.8: this file exercises the (unchanged) PBS pipeline via the polling entry point on purpose
     env.PBS_RELAY_WINDOWS = pbsRelay(pbsCalls, []);
     return runScheduledTdxSync(env, taipei('2026-08-18T08:00:00+08:00'));
   });
@@ -217,6 +220,7 @@ test('H. night-sleep tick -> BOTH TDX and PBS make 0 calls (V1.9.3: PBS is no lo
   const env = await envWithSubscriber();
   const pbsCalls = [];
   env.PBS_RELAY_TOKEN = 'relay-token';
+  env.PBS_30_MIN_POLLING_ENABLED = true; // V1.9.8: this file exercises the (unchanged) PBS pipeline via the polling entry point on purpose
   env.PBS_RELAY_WINDOWS = pbsRelay(pbsCalls, []);
 
   const hits = [];
