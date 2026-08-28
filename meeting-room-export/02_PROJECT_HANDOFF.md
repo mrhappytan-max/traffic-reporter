@@ -17,11 +17,11 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | 27223abd71fbcc415215ff6f94eadb98221e33c8 |
-| Snapshot generated at | 2026-08-28T07:41:12.556Z |
-| Source working tree | dirty (7 changed source file(s)) |
-| Current version | V1.9.9 |
-| Current phase | V1.9.9 Phase 3D Hotfix SEALED — Cloudflare 字串布林解析已修正，AI_BINDING=ACTIVE，AI_DECISION 仍為 DISABLED_PENDING_GPT_WORK_RETRY（GPT Work rollback尚未重試） |
+| Source main HEAD | dfcc29d717bd4a4429f96b8ab782d22b01e691ea |
+| Snapshot generated at | 2026-08-28T08:42:08.217Z |
+| Source working tree | dirty (16 changed source file(s)) |
+| Current version | V2.0.0 |
+| Current phase | V2.0.0 MILESTONE SEALED — Windows PBS + Cloudflare Workers AI Production Architecture 完整記錄封版，架構世代更換，非新功能開發。AI_DECISION=ACTIVE（GPT Work回報，本Session未獨立驗證），FIRST_REAL_AI_EVENT=WAITING（非封版blocker） |
 
 `Source main HEAD` 是這份快照所描述的正式 main commit（取自 `origin/main`），**不是**包含本檔案自己的那個 commit——兩者刻意分開，避免 Git 自我參照循環。詳見 `SYSTEM_STATE.json` 的 `sourceMainHead` / `exportArtifactCommit`。
 
@@ -98,17 +98,17 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 | 欄位 | 值 |
 |---|---|
-| Latest completed | V1.9.9 |
+| Latest completed | V2.0.0 |
 | package.json version | 0.1.0 |
 | Production status | DEPLOYED |
-| Production verification | V1.9.9 Phase 3D hotfix deployed; AI decision still DISABLED_PENDING_GPT_WORK_RETRY; NOT_OBSERVED for Production AI activation (GPT Work's responsibility per this round's order) |
+| Production verification | V2.0.0 MILESTONE sealed (docs/version only, no runtime logic change). AI_BINDING/AI_DECISION/LINE_AI_DECISION=ACTIVE per GPT Work report; NOT_OBSERVED independently by this session (sandbox network policy blocks Production domain and Cloudflare Dashboard). FIRST_REAL_AI_EVENT=WAITING. |
 
 版本線（哪些版本仍具架構意義）→ `06_VERSION_HISTORY.md`。
 
 ## Current known issues
 
-- **Known blocker**：無 repo-side blocker。AI_DECISION = DISABLED_PENDING_GPT_WORK_RETRY（Dashboard 端重試時機由 GPT Work 決定，非本專案程式碼缺陷）
-- **Real-world confirmation**：NOT_OBSERVED — AI decision path not yet re-activated in Production this round
+- **Known blocker**：無 repo-side blocker。FIRST_REAL_AI_EVENT=WAITING（下一個observational milestone，非V2.0.0封版blocker，非程式缺陷）
+- **Real-world confirmation**：NOT_OBSERVED — FIRST_REAL_AI_EVENT (a real Production PBS event through Workers AI to LINE) not yet confirmed by this session; GPT Work's Dashboard-side status reports are recorded as human-reported, not independently verified
 - **既有測試失敗基準線**：`npm test` 共 1272 項，其中穩定 38 項為已知失敗（2 項 `pbs-relay/tests/*` 缺 `pbs-relay/src/cache.js`；**33 項過期斷言**——動態路肩推播關閉、PBS 成為 CCTV 可信來源之後未同步更新的測試，是目前最大的一筆技術債，待獨立施工令；3 項 wall-clock 相依的 `healthQuotaDashboard`，會隨日期自然增加）。**注意：舊版文件宣稱那 13 項是「Workers-only `.wasm` codec 在沙盒無法載入」，這是錯的 Root Cause——真正原因是沙盒 `node_modules` 不完整、`@jsquash/jpeg` 沒安裝；裝了之後那些檔案全部可以執行，並揭露上述 33 項過期斷言。**出現這 18 項以外的新失敗才算真正回歸，且**判斷回歸一律以同一輪 `git stash -u` 對照為準**；逐項清單、`deploymentPolicyAndVerify` 第 12 項的「尚未 push 必失敗」現象，以及 `deploymentStatus` 那項只在全套執行時偶發的雜訊，都見 `07_KNOWN_ISSUES.md`。
 - **Dashboard-only 事實永遠無法從程式驗證**：Production branch 指向、真實 Cron 排程、Secret 值是否正確、Build 歷史——只能由真人開 Dashboard 確認。
 - **沙盒無 Production 網路**：這類 session 對 Production 網域的 outbound HTTPS 一律被 egress proxy 擋（403）。需要即時 Production 證據的任務只能誠實標記「無法證明」，不得用推測補齊。
@@ -293,8 +293,136 @@ monitor——單點 config parsing hotfix。APP_VERSION 維持 `V1.9.9`。
 端 `PBS_AI_DECISION_ENABLED` 目前仍是 GPT Work rollback 後的 `FALSE`，
 尚未重新設回 `"true"` 重試。是否／何時重試由 GPT Work 決定，不在本輪
 範圍。完整設計理由 → `07_KNOWN_ISSUES.md`／`03_ARCHITECTURE.md`；機器
-可讀狀態 → `SYSTEM_STATE.json` 的 `taskSeal`。**下一個 Agent：不得自行
-開啟 Production AI；不得開始 Phase 4；不得升 V1.9.10。**
+可讀狀態 → `SYSTEM_STATE.json` 的 `taskSeal`。（Phase 3D 當時的現行禁令已由下方
+V2.0.0 里程碑段落取代——見該段落結尾。）
+
+## V2.0.0 MILESTONE — Windows PBS + Cloudflare Workers AI Production Architecture（2026-08-28）
+
+**這不是新功能開發，是重大架構里程碑封版。** APP_VERSION 從 `V1.9.9` 升為
+`V2.0.0`：V1.9.5～V1.9.9 Phase 3D 逐輪建立的 Windows PBS 本機邊緣過濾 + Cloudflare
+Workers AI 判讀，是一次完整的 Production ingestion／semantic decision 架構世代
+更換（舊：Cloudflare PBS polling → content hard rules → LINE；新：PBS official
+source → Windows Local Edge → Hsinchu-only filter → lifecycle → Cloudflare
+production ingress → persistent duplicate protection → AI decision cache →
+Cloudflare Workers AI → AI driver-impact decision → 既有 LINE 執行基礎設施），
+依 `00_CURRENT_STATE.md` 版本規則屬於「明顯新功能／架構階段 → minor」以上等級的
+不相容變更，故以 major 版本號標記這個新的 canonical milestone。**不得改寫 V1.x
+歷史**——所有 V1.x 版本記錄原樣保留於 `06_VERSION_HISTORY.md`。
+
+完整 26 題接手地圖（PBS 從哪來、Windows 在哪、lifecycle 怎麼判斷、AI candidate/
+cache/model 在哪、如何 rollback、如何排查等）已整理於 `03_ARCHITECTURE.md`
+開頭的「V2.0.0 接手地圖」一節，本節只放**操作型**內容（Dashboard 設定手冊／
+Rollback／Troubleshooting／Commit lineage）。
+
+### 永久接手復原資訊（Canonical Facts Checklist）
+
+| 項目 | 值 |
+|---|---|
+| Repo | `mrhappytan-max/traffic-reporter` |
+| Cloudflare Worker name | `traffic-reporter` |
+| Windows PBS project path | `C:\Users\mrhap\traffic-reporter\pbs-relay`（repo 內 `pbs-relay/`，V1.9.9 Phase 1 起在 main） |
+| Production ingress route | `POST /internal/pbs-debug-push`（`src/pbs/debugPush.js`，V1.9.5 命名沿用，V1.9.8 起是正式 business path） |
+| Workers AI Binding name | `AI` |
+| AI kill switch Variable | `PBS_AI_DECISION_ENABLED`（Cloudflare 以字串注入，非 boolean——見下方） |
+| AI model | `@cf/zai-org/glm-4.7-flash` |
+| KV namespace | `TRAFFIC_KV` |
+| Transport idempotency prefix | `debug:pbs-push-idempotency:v1:*`（48h TTL） |
+| AI decision cache prefix | `debug:pbs-ai-decision-cache:v1:*`（48h TTL） |
+| 認證 Secret 名稱 | `PBS_DEBUG_PUSH_SECRET`（Bearer；**明文從不記入 Engineering Memory**，只記名稱/用途/設定位置） |
+| 目前 TRAFFIC_SOURCE_MODE | `PBS_ONLY`（`wrangler.jsonc`，TDX API 呼叫已停止，見 `07_KNOWN_ISSUES.md`） |
+| 目前服務區 | 新竹市、新竹縣（Windows local edge filter；竹南/頭份/苗栗市排除） |
+| Cloudflare PBS 30 分鐘輪詢 | `RETIRED`（`src/pbs/pbsConfig.js#PBS_30_MIN_POLLING_ENABLED=false`，程式碼保留可 rollback，見下方「十九」） |
+| GitHub→Drive sync governance | GitHub `main` → GitHub Actions（`sync-engineering-memory.yml`）→ Google Drive；Claude 對 Drive 唯讀 |
+| 重要 commits | 見下方「Commit Lineage」表 |
+| 已知限制 | `FIRST_REAL_AI_EVENT=WAITING`；transport idempotency `KV_ONLY_ATOMICITY=NOT_SUFFICIENT`（無 CAS，`PARTIAL` 保證，見 `07_KNOWN_ISSUES.md`） |
+| Next action | 等待 GPT Work 回報 `FIRST_REAL_AI_EVENT` 觀察證據；見「Next action」一節 |
+
+### Cloudflare Dashboard 設定手冊
+
+- **Worker**：Cloudflare Dashboard → Workers & Pages → `traffic-reporter`。
+- **Workers AI Binding**：該 Worker → Settings → Bindings → 新增/確認 Workers AI
+  binding，Variable name 必須是 `AI`（`wrangler.jsonc` 的 `"ai":{"binding":"AI"}`
+  對應這個名稱，改名會讓 `env.AI` 變成 `undefined`，AI 呼叫直接 fail-closed）。
+- **AI kill switch**：同一個 Worker → Settings → Variables → `PBS_AI_DECISION_ENABLED`。
+  Production 啟用值必須是字串 `"true"`（Cloudflare Dashboard/CLI Variables 一律以
+  字串注入 Worker，不是真正的 boolean——`src/pbs/aiConfig.js#
+  resolvePbsAiDecisionEnabled()` 自 V1.9.9 Phase 3D Hotfix 起已同時接受
+  boolean 與 `'true'`/`'false'` 字串形式，大小寫不拘、可有前後空白）。停用改回
+  `"false"`。
+- 每次改動 Variable 後必須點 **Deploy** 才會生效。
+- Production browser 端驗證（AI Binding 是否真的 Active、Neurons Dashboard、
+  Active Production Version 是否更新）**由 GPT Work 負責，Claude 不需要進
+  Dashboard**。
+
+### Rollback Runbook（AI 緊急停用）
+
+1. Cloudflare Dashboard → `traffic-reporter` → Settings → Variables。
+2. 把 `PBS_AI_DECISION_ENABLED` 改為 `false`。
+3. 點 Deploy。
+4. 確認 Active Production = 100% 指向新 deployment；`AI_DECISION` 效果上變回
+   `DISABLED`（即使 Dashboard 上的舊值字面未清除，resolver 遇到 `"false"` 一律
+   fail-safe 為停用）。
+5. **AI Binding 不用刪除**——Binding 本身不是判斷 AI 是否啟用的依據，kill switch
+   才是。
+6. **不要**用以下方式作為第一級 rollback：刪除 AI Binding、刪除程式碼、改
+   Prompt、改 Model——kill switch 才是正式 rollback authority，其餘手段風險更高
+   且無必要。
+7. 若需要暫時完全恢復 Cloudflare 自身 30 分鐘 PBS 輪詢（極端情況，Windows Local
+   Edge 完全失聯時的備援）：把 `src/pbs/pbsConfig.js` 的
+   `PBS_30_MIN_POLLING_ENABLED` 改回 `true` 並重新部署——程式碼完整保留未刪除。
+
+### Troubleshooting Runbook：Windows 有事件但 LINE 沒收到
+
+原則：**免費／最快／高機率優先 → 平台限制 → 流程定位 → 程式深查**，不要一開始
+就 Full Audit；找到 root cause 立即 STOP，不要繼續往下一步排查。
+
+1. Windows PBS 本機有沒有收到這筆事件？（`localMonitor.js` 執行 log／Task
+   Scheduler 是否常駐）
+2. Hsinchu local edge filter 有沒有放行？（是否誤判為苗栗/其他縣市而排除）
+3. lifecycle 判定是什麼？（`NEW`/`UPDATED`/`MISSING_PENDING_CLEAR`/`CLEARED`——
+   `MISSING_PENDING_CLEAR` 與 baseline 一律不 push，這是設計行為不是 bug）
+4. Cloudflare ingress（`POST /internal/pbs-debug-push`）有沒有收到 request？
+   （Windows 端 debugPushClient.js log／Cloudflare Workers Logs）
+5. 是否被 transport duplicate 擋下？（`debug:pbs-push-idempotency:v1:*`，同一
+   eventId+lifecycle+fingerprint 在 48h 內只接受一次）
+6. AI decision cache 是 hit 還是 miss？（hit 代表沿用之前已驗證的 decision，不會
+   有新的 AI trace）
+7. AI 有沒有被呼叫？（trace log `AI_CALL_STARTED`／`AI_CALL_FAILED`——binding
+   missing、429、5xx、network error 都會讓這裡 0 LINE 但不 fallback）
+8. AI verdict 是什麼？（trace log `AI_DECISION_VALID`/`AI_DECISION_INVALID`，以及
+   `AI_NOTIFY_TRUE`/`AI_NOTIFY_FALSE`——`notify=false` 是設計行為，不是漏推播）
+9. `notify=true` 後 LINE 有沒有被嘗試？（trace log `AI_LINE_ATTEMPTED`，以及
+   `runAiApprovedPbsBroadcast()` 內部的 `broadcastHours`/notified-state 去重是否
+   擋下——例如非播報時段、或這個 target 已經收過相同 fingerprint）
+10. LINE 實際發送成功嗎？（trace log `AI_LINE_SENT`/`AI_LINE_FAILED`，
+    `LINE_CHANNEL_ACCESS_TOKEN` 是否有效）
+
+### Commit Lineage（今日重要 lineage，不 rewrite history）
+
+| 里程碑 | Commit |
+|---|---|
+| V1.9.9 Phase 2 final | `18fe0f8` |
+| V1.9.9 Phase 3B code | `5d1f9fe` |
+| V1.9.9 Phase 3B docs | `27223ab` |
+| V1.9.9 Phase 3D Hotfix (fix) | `61795b1` |
+| V1.9.9 Phase 3D Hotfix (docs) | `dfcc29d` |
+| V2.0.0 release (fix) | `f1a05d0` |
+| V2.0.0 release (docs) | 見本檔案所在的 docs commit（`git log` 為準——一個 commit 無法在自己的內容裡預先寫入自己的 SHA） |
+
+### 目前 Production 狀態（人類／GPT Work 回報，本 Session 未獨立驗證）
+
+`ACTIVE_PRODUCTION_VERSION = a8e9454c-ab3f-4555-ab7e-0d8c39ecf73c`、Active
+Traffic = 100%、AI Binding = ACTIVE、`PBS_AI_DECISION_ENABLED = "true"`、
+Production Health = PASS、Worker Errors = 0、AI 429 = 0、AI invalid response = 0、
+`FIRST_REAL_AI_EVENT = WAITING`。這些數字全部來自 GPT Work 的 Dashboard 端回報，
+本 Session 因 sandbox 網路 egress 政策封鎖 Production 網域與 Cloudflare
+Dashboard，**無法獨立驗證**，按人類回報記錄，不冒充為本 Session 自行證實。V2.0.0
+封版建立後，若 repo push 觸發新的 Workers Builds deployment，請更新這裡的
+deployed commit／Version ID（同樣屬於 GPT Work 的驗證範圍）。
+
+完整設計理由 → `07_KNOWN_ISSUES.md`／`03_ARCHITECTURE.md`；機器可讀狀態 →
+`SYSTEM_STATE.json` 的 `taskSeal`。**下一個 Agent：不得開始 hourly reminder；不得
+修改 AI Prompt；不得擴大 service area；不得開始其他新功能。**
 
 ## PBS Windows Local Edge Debug Push Integration（V1.9.6＋V1.9.7，2026-08-28，歷史記錄——已由上方 V1.9.8／V1.9.9 取代為 Production 主線）
 
@@ -373,7 +501,7 @@ branch／不要退休輪詢／不要開始 V1.9.8」等禁令已被上方 V1.9.8
 
 ## Next action
 
-等待 GPT Work 在 Cloudflare Dashboard 重新設定 PBS_AI_DECISION_ENABLED 並回報結果；等待新的正式施工令才可開啟 Production AI 決策或開始 Phase 4
+等待GPT Work回報真實Production PBS事件走完Windows→Cloudflare→Workers AI→LINE完整路徑的觀察證據（FIRST_REAL_AI_EVENT）；下一個Agent不得開始hourly reminder、不得修改AI Prompt、不得擴大service area、不得開始其他新功能
 
 ## Full history location
 

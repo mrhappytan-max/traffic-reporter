@@ -79,7 +79,42 @@
 - 新增 8 項測試（`aiConfig.test.js` 6 項＋`pbsAiDecisionScenarios.test.js` 2 項 integration-level），全部通過；
   完整 regression 1517/1484/33，NEW FAILURES=0。
 - APP_VERSION 維持 `V1.9.9`（本輪不升版本號）。
-- 詳見 `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`。**下一個 Agent：不得自行開啟 Production AI；不得開始 Phase 4；不得升 V1.9.10。**
+- 詳見 `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`。
+
+## V2.0.0 MILESTONE 封版（2026-08-28）— Windows PBS + Cloudflare Workers AI Production Architecture
+
+**這是重大架構里程碑封版，不是新功能開發。** `APP_VERSION` 從 `V1.9.9` 升為
+`V2.0.0`：V1.9.5～V1.9.9 Phase 3D 逐輪建立的 Windows PBS 本機邊緣過濾 +
+Cloudflare Workers AI 判讀，是一次完整的架構世代更換（舊：Cloudflare PBS
+polling → content hard rules → LINE；新：PBS official source → Windows Local
+Edge → Hsinchu-only filter → lifecycle → Cloudflare production ingress →
+persistent duplicate protection → AI decision cache → Cloudflare Workers AI →
+AI driver-impact decision → 既有 LINE 執行基礎設施），依版本規則屬架構世代
+更換等級的不相容變更，以 major 版本號標記這個新的 canonical milestone。**不
+改寫 V1.x 歷史。**
+
+- `ARCHITECTURE = WINDOWS_PBS_LOCAL_EDGE → CLOUDFLARE_INGRESS → WORKERS_AI →
+  AI_DRIVER_IMPACT → LINE`
+- `WINDOWS_SERVICE_AREA = HSINCHU_CITY_AND_COUNTY_ONLY`
+- `CLOUDFLARE_PBS_30_MIN_POLLING = RETIRED`（程式碼保留可 rollback）
+- `WORKERS_AI = ACTIVE`、`WORKERS_AI_MODEL = @cf/zai-org/glm-4.7-flash`、
+  `AI_BINDING = AI`、`AI_KILL_SWITCH = PBS_AI_DECISION_ENABLED`
+- `AI_DECISION = ACTIVE`、`LINE_AI_DECISION = ACTIVE`（**GPT Work 回報，本
+  Session 未獨立驗證**——sandbox 網路政策封鎖 Production 網域與 Cloudflare
+  Dashboard）
+- `FIRST_REAL_AI_EVENT = WAITING`——真實 Production PBS 事件走完 Workers AI
+  判讀到 LINE 推播的完整驗證尚未觀察到，這是下一個 observational milestone，
+  **不是 V2.0.0 封版 blocker**
+- `HOURLY_REMINDER = NOT_STARTED`（方向性設計，本輪未偷做）
+- 完整 26 題接手地圖（PBS 從哪來、Windows 在哪、如何 rollback、如何排查「Windows
+  有事件但 LINE 沒收到」等）→ `03_ARCHITECTURE.md` 開頭「V2.0.0 接手地圖」；
+  Dashboard 設定手冊／Rollback Runbook／Troubleshooting Runbook／Commit
+  Lineage → `02_PROJECT_HANDOFF.md`「V2.0.0 MILESTONE」段落；產品決策理由 →
+  `PRODUCT_DECISIONS.md`。
+- 本輪只是文件/版本治理封版，未修改任何 runtime 決策邏輯本身。全量迴歸
+  1517/1484/33，NEW FAILURES=0（僅跑一次，與既有 baseline 對照）。
+- **下一個 Agent：不得開始 hourly reminder；不得修改 AI Prompt；不得擴大
+  service area；不得開始其他新功能。**
 
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
 

@@ -39,10 +39,10 @@
     "openStructuralQuestion": "TWO trees currently hold the same canonical content: engineering-memory/ (what the mirror syncs) and meeting-room-export/ (what scripts/export-meeting-room.mjs generates). They are kept in step by hand today, which is exactly the drift risk this governance exists to prevent. Needs a human decision: either point the generator at engineering-memory/, or retire one tree. NOT decided unilaterally."
   },
   "git": {
-    "sourceMainHead": "27223abd71fbcc415215ff6f94eadb98221e33c8",
+    "sourceMainHead": "dfcc29d717bd4a4429f96b8ab782d22b01e691ea",
     "sourceMainHeadResolvedFrom": "origin/main",
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
-    "sourceWorkingTree": "dirty (7 changed source file(s))",
+    "sourceWorkingTree": "dirty (16 changed source file(s))",
     "selfReferenceNote": "sourceMainHead is the official main commit this snapshot DESCRIBES; exportArtifactCommit is the commit that CONTAINS this artifact and is intentionally never equal to it. Requiring the two to match would create a Git self-reference loop (every export changes the file, which changes the commit, which invalidates the recorded head). sourceMainHead is read from origin/main and is therefore stable across re-runs and across whichever branch the export was generated on.",
     "checkoutNote": "The transient checkout (branch/HEAD/date) this export happened to run from is deliberately NOT recorded here. It changes on every commit and would make every release look like a content change, defeating delta sync; it also says nothing about the snapshot itself. The snapshot is identified by sourceMainHead alone. Local sync evidence in .engineering/ still records the checkout for auditing.",
     "workingTreeNote": "sourceWorkingTree excludes meeting-room-export/, which this generator dirties by definition; it answers 'is the source tree clean', not 'did the export just write files'."
@@ -232,27 +232,52 @@
     "AI_CANDIDATE_PIPELINE": "PREPARED_NOT_ACTIVE — V1.9.9 Phase 2: src/pbs/aiCandidate.js builds a minimal AI candidate for every accepted NEW/UPDATED Windows event, parallel to (never gating) the unchanged runLineBroadcast() call. Observability-only; no AI model called, no KV read/write for the reserved AI_DECISION_CACHE_KV_PREFIX yet."
   },
   "taskSeal": {
-    "task": "CLOUDFLARE_STRING_BOOLEAN_PARSING_FIX_V1_9_9_PHASE_3D_HOTFIX",
+    "task": "V2_0_0_MILESTONE_WINDOWS_PBS_CLOUDFLARE_WORKERS_AI_PRODUCTION_ARCHITECTURE",
     "status": "SEALED",
     "sealedAt": "2026-08-28",
-    "sealedBy": "human directive (路況工程部 V1.9.9 Phase 3D Hotfix 正式施工令｜修正 PBS_AI_DECISION_ENABLED 布林解析)",
-    "releaseVersion": "V1.9.9",
-    "fixCommit": "61795b1",
-    "rootCause": "Cloudflare Dashboard/CLI Variables 一律以字串注入 Worker，從不是真正的 boolean。GPT Work 在 Dashboard 設定 PBS_AI_DECISION_ENABLED=\"true\"，但 resolvePbsAiDecisionEnabled() 原本嚴格檢查 typeof==='boolean'，字串 'true' 永遠不符合，導致每次請求都悄悄落回安全預設值 false，AI決策始終未啟用。不是 Dashboard 操作錯誤，是 resolver 本身的 bug。",
-    "fix": "src/pbs/aiConfig.js#resolvePbsAiDecisionEnabled() 現在同時接受真正 boolean true/false，以及 Cloudflare runtime 字串形式 'true'/'false'（不分大小寫、trim前後空白）。undefined/null/空字串/其他真值拼法('1'/'yes'/'on')/任何非字串非boolean型別，一律 fail-safe 回 PBS_AI_DECISION_ENABLED_DEFAULT=false，刻意不做寬鬆truthy判斷。wrangler.jsonc 檢查後確認未宣告任何 PBS_AI_DECISION_ENABLED 值，Production 預設安全性不受影響。",
-    "scopeDiscipline": "單點 config parsing hotfix。AI prompt/model ID/AI candidate schema/AI cache/cache TTL/runAiApprovedPbsBroadcast/LINE policy/MAJOR_ACCIDENT_ONLY legacy path/service area/lifecycle/idempotency/CCTV/Shared Feed/hourly reminder/TDX/Windows monitor 全部未觸碰。",
+    "sealedBy": "human directive (路況工程部 V2.0.0 MILESTONE 正式封版施工令｜Windows PBS + Cloudflare Workers AI Production Architecture 完整工程記憶／接手手冊／版本里程碑)",
+    "releaseVersion": "V2.0.0",
+    "previousVersion": "V1.9.9",
+    "nature": "重大架構里程碑封版，非新功能開發。本輪未修改任何 runtime 決策邏輯本身，只 bump APP_VERSION 並完整記錄 Windows PBS + Cloudflare Workers AI 架構世代更換。",
+    "versionRationale": "V1.9.5～V1.9.9 Phase 3D 逐輪建立的 Windows PBS 本機邊緣過濾 + Cloudflare Workers AI 判讀，是一次完整的 Production ingestion/semantic decision 架構世代更換：舊世代（Cloudflare 30分鐘PBS輪詢→MAJOR_ACCIDENT_ONLY/V1.5 whitelist/location-quality hard-reject→LINE，對Windows PBS路徑已退休）→新世代（PBS官方來源→Windows PBS Relay新竹市/縣本機邊緣過濾→lifecycle→Cloudflare production ingress→持久transport冪等→AI candidate→AI decision cache→Cloudflare Workers AI→AI driver-impact decision→既有LINE執行基礎設施）。依版本規則屬架構世代更換等級的不相容變更，以major版本號標記。不改寫V1.x歷史。",
+    "architecture": "WINDOWS_PBS_LOCAL_EDGE -> CLOUDFLARE_INGRESS -> WORKERS_AI -> AI_DRIVER_IMPACT -> LINE",
+    "documentationScope": {
+      "onboardingMap": "03_ARCHITECTURE.md 開頭新增「V2.0.0 接手地圖」26題問答（PBS來源/Windows專案路徑/lifecycle/Cloudflare ingress/AI Binding/AI Model/kill switch/字串布林bug根因/rollback/troubleshooting等），逐一附可查證的程式碼/文件位置，另新增完整端對端決策流程圖與Workers AI帳號設定（context window/pricing/neurons額度）。",
+      "handoffRunbooks": "02_PROJECT_HANDOFF.md 新增 Canonical Facts Checklist、Cloudflare Dashboard 設定手冊、Rollback Runbook（AI緊急停用）、Troubleshooting Runbook（Windows有事件但LINE沒收到，十步驟診斷順序）、Commit Lineage表。",
+      "productDecision": "PRODUCT_DECISIONS.md 新增「V2.0.0 — Cloudflare Workers AI Driver-Impact Judgment Replaces Accident-Only as the Windows PBS Semantic Authority」章節，記錄為何用AI driver-impact判斷取代accident-only作為Windows PBS語意權威、為何scoped僅限Windows PBS路徑不動TDX、為何AI verdict是唯一權威不得與舊規則並存、為何保留impact欄位。",
+      "versionHistory": "06_VERSION_HISTORY.md 新增V2.0.0里程碑列，完整記錄架構世代更換。",
+      "knownIssues": "07_KNOWN_ISSUES.md 誠實保留FIRST_REAL_AI_EVENT=WAITING與persistent idempotency atomicity限制（KV_ONLY_ATOMICITY=NOT_SUFFICIENT），未在本輪解決，亦非V2.0.0封版blocker。"
+    },
     "testEvidence": {
-      "targetedTests": "test/aiConfig.test.js 擴充為完整 true/false/字串/大小寫/空白/未知值矩陣（新增6項，1項既有測試斷言依新預期行為反轉）。",
-      "integrationTest": "test/pbsAiDecisionScenarios.test.js 新增2項：透過真實 handlePbsDebugPush() 端對端證明字串 \"true\" 讓 mocked AI adapter 被呼叫、字串 \"false\" 維持0次AI呼叫。",
-      "fullRegression": "1517項／1484 pass／33 fail，以 failure 名稱集合對照 Phase 3B 基準確認 NEW FAILURES=0（唯一差異：先前 session 量到的一項環境敏感 git/build-metadata flaky 測試本輪未再出現）。"
+      "versionConfigTests": "test/versionLineage.test.js 官方版本序前綴斷言同步從'V1.9.'改為'V2.'（與APP_VERSION bump同一commit，該檔案自身標準做法）；test/aiConfig.test.js／test/aiDecisionEngine.test.js／test/pbsAiDecisionScenarios.test.js 全數重跑確認未因版本bump壞掉。",
+      "fullRegression": "1517項/1484 pass/33 fail，與V1.9.9 Phase 3D Hotfix基準以failure名稱集合對照確認NEW FAILURES=0，僅跑一次（本輪主要為milestone/version/docs，非release guard要求反覆執行全部無關測試）。"
     },
-    "productionVerification": {
+    "productionState": {
       "attempted": false,
-      "note": "本輪為repo-side程式碼修正，依施工令指示 Cloudflare Dashboard 重試由 GPT Work 負責，Claude 不需要進 Dashboard。",
-      "aiBindingStatus": "ACTIVE（GPT Work已確認）",
-      "aiDecisionStatus": "DISABLED_PENDING_GPT_WORK_RETRY"
+      "note": "本輪未嘗試連線Cloudflare Dashboard或Production網域驗證（sandbox網路egress政策封鎖）。以下數字全部為GPT Work回報，本Session未獨立驗證，不冒充為本Session自行證實：",
+      "reportedByGptWork": {
+        "activeProductionVersion": "a8e9454c-ab3f-4555-ab7e-0d8c39ecf73c",
+        "activeTraffic": "100%",
+        "aiBinding": "ACTIVE",
+        "pbsAiDecisionEnabled": "\"true\"",
+        "productionHealth": "PASS",
+        "workerErrors": 0,
+        "ai429Count": 0,
+        "aiInvalidResponseCount": 0
+      },
+      "firstRealAiEvent": "WAITING — 真實Production PBS事件走完Workers AI判讀到LINE推播的完整驗證尚未觀察到，下一個observational milestone，非V2.0.0封版blocker"
     },
-    "readerNote": "完成後STOP。不得自行開啟Production AI。不得開始Phase 4。不得升V1.9.10。"
+    "notTouchedByThisRound": [
+      "AI prompt（未修改）",
+      "AI model（未更換）",
+      "AI candidate schema（未修改）",
+      "AI decision cache 設計（未修改）",
+      "runAiApprovedPbsBroadcast（未修改）",
+      "service area（未擴大）",
+      "hourly reminder（未開始實作，僅方向性設計）",
+      "任何其他新功能"
+    ],
+    "readerNote": "完成後STOP。不得開始hourly reminder。不得修改AI Prompt。不得擴大service area。不得開始其他新功能。"
   },
   "taskSealHistory": [
     {
@@ -523,35 +548,44 @@
       "fixCommit": "5d1f9fe",
       "compressedSummary": "固定model @cf/zai-org/glm-4.7-flash透過env.AI.run()判斷駕駛通行影響（非事件類型）。新模組aiConfig.js(kill switch)/aiDecisionCache.js(48h TTL cache，重用Phase 2 cache key)/aiDecisionEngine.js(嚴格schema驗證，不合格即AI_DECISION_INVALID絕不到LINE)/aiApprovedPbsBroadcast.js(scoped LINE執行，不呼叫getBroadcastEligibility/getLinePushPolicyDecision/resolveLocationQuality)。debugPush.js新增與legacy runLineBroadcast()互斥的AI分支，同一事件絕不同時執行兩者。AI失敗0 LINE絕不fallback舊硬規則，未加retry。kill switch PBS_AI_DECISION_ENABLED預設false。新增57項測試全部首次PASS，1509/1476/33，NEW FAILURES=0。Production未嘗試（GPT Work工作範圍）。",
       "readerNote": "This task is CLOSED — superseded by V1.9.9 Phase 3D Hotfix (資料型別bug已修正，見下方). Do not re-open it."
+    },
+    {
+      "task": "CLOUDFLARE_STRING_BOOLEAN_PARSING_FIX_V1_9_9_PHASE_3D_HOTFIX",
+      "status": "SEALED",
+      "sealedAt": "2026-08-28",
+      "releaseVersion": "V1.9.9",
+      "fixCommit": "61795b1",
+      "compressedSummary": "根因：Cloudflare Dashboard/CLI Variables一律以字串注入Worker，非真正boolean。GPT Work設定PBS_AI_DECISION_ENABLED=\"true\"後，resolvePbsAiDecisionEnabled()原本嚴格檢查typeof==='boolean'，字串永遠不符合，悄悄落回false。修正：同時接受boolean與Cloudflare字串形式'true'/'false'（不分大小寫、trim），其餘一律fail-safe回false，不做寬鬆truthy判斷。單點config parsing hotfix，AI prompt/model/schema/cache/LINE policy等全部未觸碰。新增8項測試，1517/1484/33，NEW FAILURES=0。APP_VERSION維持V1.9.9。AI_BINDING=ACTIVE（GPT Work確認），AI_DECISION當時為DISABLED_PENDING_GPT_WORK_RETRY——V2.0.0里程碑taskSeal記錄GPT Work已完成重試回報。",
+      "readerNote": "This task is CLOSED — superseded by V2.0.0 MILESTONE. Do not re-open it."
     }
   ],
   "version": {
     "packageJsonVersion": "0.1.0",
-    "latestCompleted": "V1.9.9",
+    "latestCompleted": "V2.0.0",
     "canonicalSource": "src/version.js 的 APP_VERSION — 唯一權威。packageJsonVersion 是 npm 套件版本（0.1.0），與產品版本線無關，不要混用。"
   },
   "production": {
     "status": "DEPLOYED",
-    "verification": "V1.9.9 Phase 3D hotfix deployed; AI decision still DISABLED_PENDING_GPT_WORK_RETRY; NOT_OBSERVED for Production AI activation (GPT Work's responsibility per this round's order)",
+    "verification": "V2.0.0 MILESTONE sealed (docs/version only, no runtime logic change). AI_BINDING/AI_DECISION/LINE_AI_DECISION=ACTIVE per GPT Work report; NOT_OBSERVED independently by this session (sandbox network policy blocks Production domain and Cloudflare Dashboard). FIRST_REAL_AI_EVENT=WAITING.",
     "deployMethod": "push to main -> Cloudflare Workers Builds auto-deploy",
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
-  "currentPhase": "V1.9.9 Phase 3D Hotfix SEALED — Cloudflare 字串布林解析已修正，AI_BINDING=ACTIVE，AI_DECISION 仍為 DISABLED_PENDING_GPT_WORK_RETRY（GPT Work rollback尚未重試）",
-  "currentTask": "none（無進行中工作）。Latest completed task = CLOUDFLARE_STRING_BOOLEAN_PARSING_FIX_V1_9_9_PHASE_3D_HOTFIX，status = SEALED。CURRENT_OFFICIAL_VERSION = V1.9.9（同一版本線分階段施工，本輪未升版本號）。本輪：(1) 修正 src/pbs/aiConfig.js#resolvePbsAiDecisionEnabled()，使其同時接受真正 boolean 與 Cloudflare Dashboard/CLI Variables 注入的字串形式 'true'/'false'（根因：GPT Work 設定 PBS_AI_DECISION_ENABLED=\"true\" 後 AI 決策仍未啟用，因原本嚴格檢查 typeof==='boolean' 永遠不符合字串）；(2) 未知值/其他真值拼法一律 fail-safe 回 false，未做寬鬆 truthy 判斷；(3) wrangler.jsonc 檢查後確認無需修改。AI_BINDING = ACTIVE（GPT Work已確認），AI_DECISION = DISABLED_PENDING_GPT_WORK_RETRY（rollback仍在效，尚未重新以修正後的邏輯重試）。下一件事若要開工：等待 GPT Work 重新在 Dashboard 設定 PBS_AI_DECISION_ENABLED 並回報結果；或見 07_KNOWN_ISSUES.md 既有約33項過期斷言（與本輪無關）。",
-  "knownBlocker": "無 repo-side blocker。AI_DECISION = DISABLED_PENDING_GPT_WORK_RETRY（Dashboard 端重試時機由 GPT Work 決定，非本專案程式碼缺陷）",
+  "currentPhase": "V2.0.0 MILESTONE SEALED — Windows PBS + Cloudflare Workers AI Production Architecture 完整記錄封版，架構世代更換，非新功能開發。AI_DECISION=ACTIVE（GPT Work回報，本Session未獨立驗證），FIRST_REAL_AI_EVENT=WAITING（非封版blocker）",
+  "currentTask": "none（無進行中工作）。Latest completed task = V2_0_0_MILESTONE_WINDOWS_PBS_CLOUDFLARE_WORKERS_AI_PRODUCTION_ARCHITECTURE，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.0.0（架構世代更換里程碑，從V1.9.9 major bump，不改寫V1.x歷史）。本輪：(1) APP_VERSION從V1.9.9升為V2.0.0，記錄Windows PBS本機邊緣過濾+Cloudflare Workers AI判讀完整架構世代更換；(2) 03_ARCHITECTURE.md新增26題接手地圖與端對端決策流程圖；(3) 02_PROJECT_HANDOFF.md新增Dashboard設定手冊/Rollback Runbook/Troubleshooting Runbook/Commit Lineage；(4) PRODUCT_DECISIONS.md新增AI driver-impact取代accident-only的產品決策記錄；(5) 未修改任何runtime決策邏輯本身。AI_BINDING=ACTIVE、AI_DECISION=ACTIVE、LINE_AI_DECISION=ACTIVE為GPT Work回報，本Session未獨立驗證。FIRST_REAL_AI_EVENT=WAITING，非封版blocker。下一件事若要開工：等待GPT Work回報FIRST_REAL_AI_EVENT觀察證據；或見07_KNOWN_ISSUES.md既有約33項過期斷言（與本輪無關）。",
+  "knownBlocker": "無 repo-side blocker。FIRST_REAL_AI_EVENT=WAITING（下一個observational milestone，非V2.0.0封版blocker，非程式缺陷）",
   "realWorldConfirmation": {
-    "status": "NOT_OBSERVED — AI decision path not yet re-activated in Production this round",
+    "status": "NOT_OBSERVED — FIRST_REAL_AI_EVENT (a real Production PBS event through Workers AI to LINE) not yet confirmed by this session; GPT Work's Dashboard-side status reports are recorded as human-reported, not independently verified",
     "subject": "V1.8.7.7 CCTV gray broken image fix"
   },
-  "nextAction": "等待 GPT Work 在 Cloudflare Dashboard 重新設定 PBS_AI_DECISION_ENABLED 並回報結果；等待新的正式施工令才可開啟 Production AI 決策或開始 Phase 4",
+  "nextAction": "等待GPT Work回報真實Production PBS事件走完Windows→Cloudflare→Workers AI→LINE完整路徑的觀察證據（FIRST_REAL_AI_EVENT）；下一個Agent不得開始hourly reminder、不得修改AI Prompt、不得擴大service area、不得開始其他新功能",
   "authorityLevels": {
     "levelA_selfServiceReadOnly": "own repo git log, own Worker/KV/test results only",
     "levelB_requiresHumanApproval": "interactive login/OAuth, private dashboards, real KV content, any other department's resources (read or write)",
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-08-28T07:41:12.556Z",
-    "sourceMainHead": "27223abd71fbcc415215ff6f94eadb98221e33c8",
+    "generatedAt": "2026-08-28T08:42:08.217Z",
+    "sourceMainHead": "dfcc29d717bd4a4429f96b8ab782d22b01e691ea",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
     "historyDir": "_history"
@@ -559,12 +593,17 @@
   "V1.9.9_PHASE_1": "WINDOWS_SERVICE_AREA_HSINCHU_ONLY",
   "LINE_POLICY": "UNCHANGED",
   "V1.9.9_PHASE_2": "AI_READY_PIPELINE_PREPARATION",
-  "AI_INTEGRATION": "CODE_READY",
+  "AI_INTEGRATION": "ACTIVE",
   "AI_MODEL": "@cf/zai-org/glm-4.7-flash",
-  "LINE_AI_DECISION": "NOT_ACTIVE",
-  "PBS_AI_DECISION_MODE": "IMPLEMENTED_KILL_SWITCH_OFF",
+  "LINE_AI_DECISION": "ACTIVE",
+  "PBS_AI_DECISION_MODE": "ACTIVE_PER_GPT_WORK_REPORT_NOT_INDEPENDENTLY_VERIFIED",
   "V1.9.9_PHASE_3B": "CODE_READY",
   "AI_BINDING": "ACTIVE",
-  "AI_DECISION": "DISABLED_PENDING_GPT_WORK_RETRY",
-  "V1.9.9_PHASE_3D_HOTFIX": "CLOUDFLARE_STRING_BOOLEAN_PARSING_FIX"
+  "AI_DECISION": "ACTIVE",
+  "V1.9.9_PHASE_3D_HOTFIX": "CLOUDFLARE_STRING_BOOLEAN_PARSING_FIX",
+  "V2_0_0_MILESTONE": "SEALED",
+  "ARCHITECTURE": "WINDOWS_PBS_LOCAL_EDGE_CLOUDFLARE_INGRESS_WORKERS_AI_AI_DRIVER_IMPACT_LINE",
+  "FIRST_REAL_AI_EVENT": "WAITING",
+  "HOURLY_MAJOR_INCIDENT_REMINDER": "NOT_STARTED",
+  "CLOUDFLARE_PBS_30_MIN_POLLING": "RETIRED"
 }

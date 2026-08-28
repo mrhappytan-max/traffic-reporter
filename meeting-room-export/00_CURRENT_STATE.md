@@ -9,20 +9,20 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V1.9.9（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | 27223abd71fbcc415215ff6f94eadb98221e33c8 |
+| Current Version | V2.0.0（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | dfcc29d717bd4a4429f96b8ab782d22b01e691ea |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty (7 changed source file(s)) |
+| Source working tree | dirty (16 changed source file(s)) |
 | Production | DEPLOYED |
-| Production Verification | V1.9.9 Phase 3D hotfix deployed; AI decision still DISABLED_PENDING_GPT_WORK_RETRY; NOT_OBSERVED for Production AI activation (GPT Work's responsibility per this round's order) |
-| Current Phase | V1.9.9 Phase 3D Hotfix SEALED — Cloudflare 字串布林解析已修正，AI_BINDING=ACTIVE，AI_DECISION 仍為 DISABLED_PENDING_GPT_WORK_RETRY（GPT Work rollback尚未重試） |
-| Current Task | none（無進行中工作）。Latest completed task = CLOUDFLARE_STRING_BOOLEAN_PARSING_FIX_V1_9_9_PHASE_3D_HOTFIX，status = SEALED。詳見 SYSTEM_STATE.json 的 taskSeal 與 07_KNOWN_ISSUES.md。 |
-| Latest Completed Version | V1.9.9 |
-| Known Blocker | 無 repo-side blocker。AI_DECISION = DISABLED_PENDING_GPT_WORK_RETRY（Dashboard 端重試時機由 GPT Work 決定，非本專案程式碼缺陷） |
-| Real-world Confirmation | NOT_OBSERVED — AI decision path not yet re-activated in Production this round |
+| Production Verification | V2.0.0 MILESTONE sealed (docs/version only, no runtime logic change). AI_BINDING/AI_DECISION/LINE_AI_DECISION=ACTIVE per GPT Work report; NOT_OBSERVED independently by this session (sandbox network policy blocks Production domain and Cloudflare Dashboard). FIRST_REAL_AI_EVENT=WAITING. |
+| Current Phase | V2.0.0 MILESTONE SEALED — Windows PBS + Cloudflare Workers AI Production Architecture 完整記錄封版，架構世代更換，非新功能開發。AI_DECISION=ACTIVE（GPT Work回報，本Session未獨立驗證），FIRST_REAL_AI_EVENT=WAITING（非封版blocker） |
+| Current Task | none（無進行中工作）。Latest completed task = V2_0_0_MILESTONE_WINDOWS_PBS_CLOUDFLARE_WORKERS_AI_PRODUCTION_ARCHITECTURE，status = SEALED。詳見 SYSTEM_STATE.json 的 taskSeal 與 03_ARCHITECTURE.md/02_PROJECT_HANDOFF.md/PRODUCT_DECISIONS.md。 |
+| Latest Completed Version | V2.0.0 |
+| Known Blocker | 無 repo-side blocker。FIRST_REAL_AI_EVENT=WAITING（下一個observational milestone，非V2.0.0封版blocker，非程式缺陷） |
+| Real-world Confirmation | NOT_OBSERVED — FIRST_REAL_AI_EVENT (a real Production PBS event through Workers AI to LINE) not yet confirmed by this session; GPT Work's Dashboard-side status reports are recorded as human-reported, not independently verified |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 等待 GPT Work 在 Cloudflare Dashboard 重新設定 PBS_AI_DECISION_ENABLED 並回報結果；等待新的正式施工令才可開啟 Production AI 決策或開始 Phase 4 |
-| Export Generated At | 2026-08-28T07:41:12.556Z |
+| Next Action | 等待GPT Work回報真實Production PBS事件走完Windows→Cloudflare→Workers AI→LINE完整路徑的觀察證據（FIRST_REAL_AI_EVENT）；下一個Agent不得開始hourly reminder、不得修改AI Prompt、不得擴大service area、不得開始其他新功能 |
+| Export Generated At | 2026-08-28T08:42:08.217Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## V1.9.9 Phase 1 封版（2026-08-28，另一個 session 完成，本 Cloud Session 未參與，port 進本模板僅為維持 template↔engineering-memory 一致）
@@ -79,7 +79,42 @@
 - 新增 8 項測試（`aiConfig.test.js` 6 項＋`pbsAiDecisionScenarios.test.js` 2 項 integration-level），全部通過；
   完整 regression 1517/1484/33，NEW FAILURES=0。
 - APP_VERSION 維持 `V1.9.9`（本輪不升版本號）。
-- 詳見 `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`。**下一個 Agent：不得自行開啟 Production AI；不得開始 Phase 4；不得升 V1.9.10。**
+- 詳見 `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`。
+
+## V2.0.0 MILESTONE 封版（2026-08-28）— Windows PBS + Cloudflare Workers AI Production Architecture
+
+**這是重大架構里程碑封版，不是新功能開發。** `APP_VERSION` 從 `V1.9.9` 升為
+`V2.0.0`：V1.9.5～V1.9.9 Phase 3D 逐輪建立的 Windows PBS 本機邊緣過濾 +
+Cloudflare Workers AI 判讀，是一次完整的架構世代更換（舊：Cloudflare PBS
+polling → content hard rules → LINE；新：PBS official source → Windows Local
+Edge → Hsinchu-only filter → lifecycle → Cloudflare production ingress →
+persistent duplicate protection → AI decision cache → Cloudflare Workers AI →
+AI driver-impact decision → 既有 LINE 執行基礎設施），依版本規則屬架構世代
+更換等級的不相容變更，以 major 版本號標記這個新的 canonical milestone。**不
+改寫 V1.x 歷史。**
+
+- `ARCHITECTURE = WINDOWS_PBS_LOCAL_EDGE → CLOUDFLARE_INGRESS → WORKERS_AI →
+  AI_DRIVER_IMPACT → LINE`
+- `WINDOWS_SERVICE_AREA = HSINCHU_CITY_AND_COUNTY_ONLY`
+- `CLOUDFLARE_PBS_30_MIN_POLLING = RETIRED`（程式碼保留可 rollback）
+- `WORKERS_AI = ACTIVE`、`WORKERS_AI_MODEL = @cf/zai-org/glm-4.7-flash`、
+  `AI_BINDING = AI`、`AI_KILL_SWITCH = PBS_AI_DECISION_ENABLED`
+- `AI_DECISION = ACTIVE`、`LINE_AI_DECISION = ACTIVE`（**GPT Work 回報，本
+  Session 未獨立驗證**——sandbox 網路政策封鎖 Production 網域與 Cloudflare
+  Dashboard）
+- `FIRST_REAL_AI_EVENT = WAITING`——真實 Production PBS 事件走完 Workers AI
+  判讀到 LINE 推播的完整驗證尚未觀察到，這是下一個 observational milestone，
+  **不是 V2.0.0 封版 blocker**
+- `HOURLY_REMINDER = NOT_STARTED`（方向性設計，本輪未偷做）
+- 完整 26 題接手地圖（PBS 從哪來、Windows 在哪、如何 rollback、如何排查「Windows
+  有事件但 LINE 沒收到」等）→ `03_ARCHITECTURE.md` 開頭「V2.0.0 接手地圖」；
+  Dashboard 設定手冊／Rollback Runbook／Troubleshooting Runbook／Commit
+  Lineage → `02_PROJECT_HANDOFF.md`「V2.0.0 MILESTONE」段落；產品決策理由 →
+  `PRODUCT_DECISIONS.md`。
+- 本輪只是文件/版本治理封版，未修改任何 runtime 決策邏輯本身。全量迴歸
+  1517/1484/33，NEW FAILURES=0（僅跑一次，與既有 baseline 對照）。
+- **下一個 Agent：不得開始 hourly reminder；不得修改 AI Prompt；不得擴大
+  service area；不得開始其他新功能。**
 
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
 

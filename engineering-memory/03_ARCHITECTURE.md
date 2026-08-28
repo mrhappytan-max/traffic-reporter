@@ -4,6 +4,127 @@
 
 本檔案以 `src/` 實際模組結構整理，非憑記憶重寫。模組清單於 export 產生時由腳本重新掃描 `src/` 目錄核對（見本檔末尾「模組清單（自動掃描）」），若與下方敘述不符，以自動掃描結果與程式碼本身為準,並視為文件 Drift。
 
+## V2.0.0 接手地圖 — Windows PBS + Cloudflare Workers AI（2026-08-28）
+
+**里程碑背景**：V1.9.5～V1.9.9 Phase 3D 逐輪建立的 Windows PBS 本機邊緣過濾 + Cloudflare
+Workers AI 判讀，是一次完整的架構世代更換——不是同一套判斷邏輯的新版本，是兩個不同的
+判官：
+
+```
+舊世代（對 Windows PBS 路徑已退休，程式碼保留供 rollback）：
+  Cloudflare 30 分鐘 PBS 輪詢 → MAJOR_ACCIDENT_ONLY／V1.5 type whitelist／
+  location-quality hard-reject → LINE
+
+新世代（V2.0.0 canonical）：
+  PBS 官方來源 → Windows PBS Relay（新竹市/縣本機邊緣過濾，lifecycle
+  NEW/UPDATED/MISSING_PENDING_CLEAR/CLEARED）→ Cloudflare production ingress
+  → 持久 transport 冪等 → AI candidate → AI decision cache → Cloudflare
+  Workers AI（駕駛通行影響判讀，非事件類型判讀）→ 驗證通過的 notify:true
+  → 既有 LINE 執行基礎設施（原封不動重用）→ LINE
+```
+
+以下 26 題是新工程師／新會議室最常問的問題，逐一給出**答案＋可查證的程式碼/文件位置**，
+不要求先讀完全部歷史才能上手：
+
+**1. PBS 從哪裡來？** 交通部 PBS（省道即時交通事件）官方 feed，見下方「PBS Windows
+Local Edge Debug Push Integration」段落。
+
+**2. Windows 在哪台／哪個專案處理？** 真人的 Windows 機器，專案路徑
+`C:\Users\mrhap\traffic-reporter\pbs-relay`（GitHub repo 內同名目錄 `pbs-relay/`，
+V1.9.9 Phase 1 起已直接 commit 進 main，不再是未合併的 feature branch）。
+
+**3. Windows 每次做什麼？** `pbs-relay/src/localMonitor.js` 每 3 分鐘抓一次官方 PBS
+feed；`pbs-relay/src/localPrototype.js` 做新竹服務區篩選 + lifecycle 比較；
+`SHOULD_PUSH=YES` 的事件才呼叫 `POST /internal/pbs-debug-push`。
+
+**4. 哪些縣市會進入？** 只有新竹市、新竹縣。竹南、頭份、苗栗市與其他苗栗縣區域一律
+排除（V1.9.9 Phase 1 修正，見下方「V1.9.9 Phase 1」段落）。重用
+`src/pbs/hsinchuFilter.js`／`src/pbs/roadName.js`／`src/traffic/hsinchuFilter.js`／
+`src/traffic/hsinchuConfig.js` 的既有 canonical resolver，Windows 端未另建第二套
+service-area 邏輯。跨縣市道路只納入新竹段；座標 bounding box 不得單獨授予服務區資格。
+
+**5. lifecycle 怎麼判斷？** `NEW`/`UPDATED`/`MISSING_PENDING_CLEAR`/`CLEARED` 四態，
+規則詳見下方「PBS Windows Local Edge Debug Push Integration」一節的「CLEARED 防誤判治理」段落。
+
+**6. Cloudflare 收哪個 endpoint？** `POST /internal/pbs-debug-push`（`src/pbs/debugPush.js`
+的 `handlePbsDebugPush`）。名稱雖仍保留 V1.9.5 當時的 debug-push 歷史命名，**V1.9.8
+起已是正式 Production ingress／business path**，不得因名稱誤認為仍是 debug-only。
+
+**7. Authentication 怎麼做？** `PBS_DEBUG_PUSH_SECRET`，Bearer authentication。Secret
+本身不寫入 Engineering Memory，只記名稱/用途/設定位置（Cloudflare Worker Secret，
+`wrangler secret put PBS_DEBUG_PUSH_SECRET`，Dashboard 端由 GPT Work 管理）。
+
+**8. duplicate 在哪一層擋？** 持久 transport 冪等層（V1.9.7），`TRAFFIC_KV` 下
+`debug:pbs-push-idempotency:v1:*`，48h TTL，key = `SHA-256(source:eventId:lifecycle:
+fingerprint)`。完全相同的 transport duplicate 在 AI candidate 建立之前就停止，0 次
+AI 呼叫。見下方「PBS Windows Local Edge Debug Push Integration」一節的「Cloudflare 端持久冪等」段落。
+
+**9. AI candidate 在哪裡建立？** `src/pbs/aiCandidate.js#buildAiCandidate()`，在冪等層
+之後、AI decision 之前，見下方「V1.9.9 Phase 1（Windows 服務區收斂）＋ Phase 2」段落。
+
+**10. AI cache 在哪裡？** `src/pbs/aiDecisionCache.js`，`TRAFFIC_KV` 下
+`debug:pbs-ai-decision-cache:v1:*`，48h TTL，key = `SHA-256(eventId:fingerprint)`。見
+下方「V2.0.0 完整決策順序」流程圖與「V1.9.9 Phase 3B」段落。
+
+**11. AI model 是哪一個？** `@cf/zai-org/glm-4.7-flash`，固定，見下方「Cloudflare Workers AI 帳號設定」。
+
+**12. AI Binding 名稱是什麼？** `AI`（`wrangler.jsonc` 的 `"ai":{"binding":"AI"}`）。
+
+**13. Cloudflare Dashboard 哪裡設定？** Workers & Pages → `traffic-reporter` →
+Settings/Bindings → Workers AI → Variable name = `AI`。完整操作位置見
+`02_PROJECT_HANDOFF.md`「Cloudflare Dashboard 設定手冊」。
+
+**14. AI 開關 Variable 是什麼？** `PBS_AI_DECISION_ENABLED`（Cloudflare Dashboard/CLI
+Variable）。
+
+**15. true 為什麼是字串？** Cloudflare Dashboard/CLI Variables 一律以字串注入 Worker，
+從不是真正的 boolean——V1.9.9 Phase 3D 曾因此讓 `PBS_AI_DECISION_ENABLED="true"`
+被 resolver 誤判為 false，Dashboard 操作手冊見 `02_PROJECT_HANDOFF.md`，程式修正細節見
+`07_KNOWN_ISSUES.md` 的 Phase 3D Hotfix 記錄。
+
+**16. 如何 rollback？** Cloudflare Dashboard 把 `PBS_AI_DECISION_ENABLED` 設回 `false`
+並 Deploy 即可，AI Binding 不用刪除。完整 Runbook 見 `02_PROJECT_HANDOFF.md`
+「Rollback Runbook」。
+
+**17. AI notify=true 後去哪裡？** `src/traffic/aiApprovedPbsBroadcast.js#
+runAiApprovedPbsBroadcast()` → 既有 LINE 執行基礎設施 → `runSharedFeedPersist()`。見
+下方「V2.0.0 完整決策順序」流程圖。
+
+**18. 哪些舊 hard rules 已退出 Windows AI path？** `MAJOR_ACCIDENT_ONLY`、V1.5 type
+whitelist（`getBroadcastEligibility`）、`resolveLocationQuality` 的 hard-reject 用法。
+函式本身**未刪除**，TDX／其他 legacy 來源仍完整使用。見下方「V2.0.0 完整決策順序」流程圖末的「不得誤讀」段落。
+
+**19. 哪些安全 gate 仍保留？** service area（AI candidate 建立前）、LINE 執行時段
+（`broadcastHours.js`）、LINE 去重（notified-state）、quota/transport 安全、CCTV 安全、
+Shared Feed 執行安全、系統錯誤處理。見下方「V2.0.0 完整決策順序」流程圖與「AI failure policy」段落。
+
+**20. LINE 如何避免重複？** 沿用既有 `traffic/notified.js` 的 per-target notified-state
+去重機制，與 TDX/其他來源共用同一套邏輯，AI 開啟時與 legacy `runLineBroadcast()`
+路徑互斥（同一事件絕不同時執行兩者）。
+
+**21. CCTV / Shared Feed 在哪一層？** `runAiApprovedPbsBroadcast()` 內重用既有
+`cctv/dynamicCollage.js`（事故類型限定）；Shared Feed 由呼叫方 `debugPush.js` 在
+`runAiApprovedPbsBroadcast()` 之後呼叫既有 `runSharedFeedPersist()`。
+
+**22. AI failure 怎麼處理？** 429/5xx/network/binding missing/invalid JSON/invalid
+schema 一律 0 LINE、trace 記錄，絕不 fallback 回舊 hard rules。見下方「V2.0.0 完整決策順序」流程圖。
+
+**23. AI 免費額度是多少？** Cloudflare Free plan：10,000 neurons/day，00:00 UTC（台灣
+時間 08:00）重置。見下方「Cloudflare Workers AI 帳號設定」。
+
+**24. 如何看 AI Usage？** Cloudflare Dashboard 的 Workers AI Analytics（GPT Work
+負責查看，Claude 不需要進 Dashboard）；repo 端只有可觀察的 trace log（`AI_CALL_STARTED`
+等），不做複雜 quota 引擎。
+
+**25. 如何排查「Windows 有事件但 LINE 沒收到」？** 見 `02_PROJECT_HANDOFF.md`
+「Troubleshooting Runbook：Windows 有事件但 LINE 沒收到」十步驟診斷順序（免費/最快/
+高機率優先，非一開始就 Full Audit）。
+
+**26. 哪些功能仍未完成？** `FIRST_REAL_AI_EVENT = WAITING`（真實 Production PBS 事件
+走完 Workers AI 判讀到 LINE 推播的完整驗證尚未觀察到）；`HOURLY_MAJOR_INCIDENT_REMINDER
+= NOT_STARTED`（方向性設計，未實作，未來可重用 AI cached verdict，但不在 V2.0.0
+範圍）。見 `07_KNOWN_ISSUES.md` 與 `SYSTEM_STATE.json` 的 `taskSeal`。
+
 ## 主要資料流（Pipeline）
 
 ```
@@ -162,7 +283,7 @@ Phase 2 的 candidate／cache key 設計正式接上真實 Workers AI 呼叫，�
 candidate
     ↓
 resolvePbsAiDecisionEnabled(env)（kill switch，預設 false）
-    ├─ false（正式環境目前狀態）→ 完全未修改的 legacy
+    ├─ false → 完全未修改的 legacy
     │   runLineBroadcast() + runSharedFeedPersist()（V1.9.8 行為原封不動）
     │
     └─ true → runAiDecisionPath()：
@@ -215,7 +336,85 @@ Cloudflare 字串形式 `'true'`/`'false'`（不分大小寫、trim），其餘�
 （含 `'1'`/`'yes'`/`'on'`等常見「真值」拼法）仍 fail-safe 回預設值
 `false`。詳見 `07_KNOWN_ISSUES.md` 的完整記錄。
 
+**V2.0.0 里程碑現狀（2026-08-28，人類/GPT Work 回報，本 Session 未獨立驗證）**：
+GPT Work 回報 `PBS_AI_DECISION_ENABLED = "true"`、`AI_BINDING = ACTIVE`、
+`AI_DECISION = ACTIVE`、`LINE_AI_DECISION = ACTIVE`，Cloudflare Active Production
+Version 為 `a8e9454c-ab3f-4555-ab7e-0d8c39ecf73c`（Active Traffic 100%），Production
+Health = PASS、Worker Errors = 0、AI 429 = 0、AI invalid response = 0。**本 Session
+無法從 sandbox 連線 Cloudflare Dashboard 或 Production 網域獨立驗證這些數字**，
+按人類回報記錄，不冒充為本 Session 自行證實。`FIRST_REAL_AI_EVENT = WAITING`——
+真實 Production PBS 事件走完 Windows → Cloudflare → Workers AI → LINE 完整路徑的
+觀察證據尚未取得，這是誠實記錄的下一個 observational milestone，非 V2.0.0 封版
+blocker。
+
 詳見 `07_KNOWN_ISSUES.md` 的完整記錄。
+
+## V2.0.0 完整決策順序（PBS 官方來源 → LINE，端對端流程圖）
+
+```
+PBS 官方來源
+    ↓
+Windows Hsinchu Local Edge Filter（新竹市/縣，見下方「服務區治理修正」）
+    ↓
+Lifecycle（NEW/UPDATED/MISSING_PENDING_CLEAR/CLEARED，見下方「CLEARED 防誤判治理」）
+    ↓
+Cloudflare Auth（PBS_DEBUG_PUSH_SECRET Bearer）
+    ↓
+Payload Validation
+    ↓
+Persistent Transport Idempotency（TRAFFIC_KV，48h，見下方「Cloudflare 端持久冪等」）
+    ↓（首次接受的 NEW/UPDATED 才繼續；exact duplicate 到此為止，0 次 AI 呼叫）
+AI Candidate（src/pbs/aiCandidate.js#buildAiCandidate()，僅單事件必要欄位）
+    ↓
+AI Decision Cache（debug:pbs-ai-decision-cache:v1:*，48h TTL）
+    ├─ CACHE HIT → 直接重用已驗證的 AI decision，0 次 AI 呼叫 ──────┐
+    └─ CACHE MISS                                                  │
+        ↓                                                          │
+    Cloudflare Workers AI（env.AI.run，@cf/zai-org/glm-4.7-flash） │
+        ↓                                                          │
+    Validate AI Decision（嚴格 schema，不合格 = AI_DECISION_INVALID │
+        → 0 LINE，不快取，不 fallback 舊 hard rules，見下方        │
+        「AI failure policy」）                                    │
+        ↓                                                          │
+    Persist Decision（驗證通過才寫入 cache）←────────────────────────┘
+        ↓
+    notify=false → 只記 audit trace（eventId/model/impact/reason/confidence/
+        cache 命中與否）→ STOP（0 LINE/CCTV/Shared Feed）
+    notify=true
+        ↓
+    AI-approved PBS Broadcast（runAiApprovedPbsBroadcast()）
+        ↓
+    LINE 執行安全（broadcastHours、notified-state 去重）
+        ↓
+    optional CCTV enrichment（事故類型限定，失敗絕不擋文字推播）
+        ↓
+    Shared Feed（runSharedFeedPersist()，與 legacy 路徑相同）
+        ↓
+    LINE
+```
+
+**不得誤讀**：`MAJOR_ACCIDENT_ONLY`／`getBroadcastEligibility`／
+`resolveLocationQuality` 三個舊硬規則函式**都不在**這條 Windows AI 路徑上——它們
+只存在於 kill switch 關閉時走的 legacy `runLineBroadcast()` 分支，以及 TDX／其他
+來源仍在使用的既有路徑。不得以為它們仍在 Windows AI semantic decision 之前把關。
+
+## Cloudflare Workers AI 帳號設定（Model／額度／Context Window）
+
+- **Worker**：`traffic-reporter`；**Binding type**：Workers AI；**Variable name**：`AI`。
+- **Model**：`@cf/zai-org/glm-4.7-flash`，固定，透過 `env.AI.run(...)` 呼叫，不依賴
+  Anthropic API／OpenAI API／AI Gateway／任何外部付費 API。
+- **Context window**：131,072 tokens。
+- **計價（Cloudflare Free plan 額度計算基礎）**：Input 5,500 neurons/1M tokens；
+  Output 36,400 neurons/1M tokens。
+- **免費額度**：10,000 neurons/day，重置時間 00:00 UTC（台灣時間 08:00）。超過額度：
+  request 失敗／HTTP 429／帳號受限，**不會自動轉為付費**。
+- **估算**（非 Production 實測值）：100 candidate events/day ≈ 457–914 neurons/day
+  ≈ 免費額度的 4.57%–9.14%。
+- **AI Kill switch**：`PBS_AI_DECISION_ENABLED`（Cloudflare Dashboard/CLI Variable，
+  Production 啟用值為字串 `"true"`——見下方「V1.9.9 Phase 3D Hotfix」段落，Cloudflare
+  一律以字串注入 Variable，不是真正的 boolean，`resolvePbsAiDecisionEnabled()` 已
+  修正為同時接受兩種形式）。
+- **Dashboard 操作位置與 Rollback Runbook** → `02_PROJECT_HANDOFF.md`。
 
 ## PBS Windows Local Edge Debug Push Integration（V1.9.6/V1.9.7 建立的基礎，Windows 端不變）
 

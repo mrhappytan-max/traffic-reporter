@@ -214,99 +214,28 @@ CCTV 是**附加資訊，不是播報資格**。
 否則資料來源一旦停用，這類閘門就會從「延後」變成「永久否決」，而且**不會報錯**——
 它會安靜地讓事件消失。本專案已知只有 V57.2 這一處，修正時一併搜尋過。
 
-## 修正紀錄｜服務區域閘門（八堵事件）（2026-08-24）
+## 修正紀錄｜服務區域閘門（八堵事件）（2026-08-24，壓縮摘要）
 
-**一句話**：`PBS_ONLY` 不等於「全台 PBS 都能播」。地域資格永遠要檢查。
-
-### 現象（真實 Production 漏播案例）
-
-LINE 實際收到一筆不該播的事件：
-PBS、國道1號南向、八堵交流道－大華系統交流道約 3K、
-座標約 `25.10288 / 121.71801`（基隆），type=accident。
-該地點**不在服務區域內**，卻成功進入 LINE Push。
-
-### Root cause
-
-地域過濾**只存在於一個地方**：PBS 進料端
-（`pbs/pipeline.js` 的 `normalized.filter(isPbsEventHsinchuRelevant)`）。
-
-再往下，`broadcastPipeline.js` 只是在 JSDoc **寫著**
-「every currently Hsinchu-relevant … event」，
-**然後從來沒有真的檢查過**。
-
-**寫在註解裡的假設不是閘門。** 任何以其他路徑抵達播報層的事件，
-都會直接繼承一個它從未被授予的播報資格。
-
-而且這個風險在 2026-08-24 當天**變大了**：
-V57.2 的國道閘門在 PBS_ONLY 下被（正確地）略過，
-但 V57.2 原本會順手擋掉所有「無 TDX 對應的國道 PBS 事件」——不論地理位置。
-拿掉它的否決權，也一併拿掉了那張意外的安全網。
-
-### 誠實的限制（不要誤讀成已完全查明）
-
-**我無法用手上的資料重現進料端的漏洞。**
-以 八堵 的座標／道路／KM／描述，用各種可能的原始記錄形狀
-（有無座標、有無可解析 KM、lat/lng 對調）去跑
-`isPbsEventHsinchuRelevant`，**每一種都正確擋下**。
-
-所以本輪的修正**不是**修補一個已重現的洞，
-而是補上**Producer 播報邊界上本來就該有、卻不存在的那道強制檢查**——
-無論事件從哪條路徑抵達，都會被擋。
-
-未來若取得該事件的**原始 PBS 記錄**，仍值得回頭確認進料端是否另有缺口。
-
-### 修正方式
-
-新增 `src/traffic/serviceArea.js`，在既有 eligibility 迴圈**最前面**檢查，
-**所有 source mode 都適用**。
-
-- **重用既有 canonical 判定**：`pbs/hsinchuFilter.js` 與 `traffic/hsinchuFilter.js`。
-  **沒有**新的地理引擎、**沒有**新的 bounding box、
-  服務範圍**既未擴大也未縮小**。
-- 既有 canonical 範圍已涵蓋 新竹／竹北／竹南／頭份，並排除八堵——
-  以真實座標實測確認：
-  新竹市 24.804/120.965、竹北 24.839/121.013、
-  竹南 24.686/120.876、頭份 24.688/120.908 **皆在範圍內**；
-  八堵 25.103/121.718 **在範圍外**。
-
-### PBS 與 TDX 為何處理方式不同（這是刻意的，不是疏漏）
-
-| 來源 | 行為 | 理由 |
-|---|---|---|
-| PBS | **fail-closed**：無法定位就擋 | PBS 事件把地理資訊（座標／道路／描述）一路帶到播報層，本閘門能重跑**進料端用的同一個函式**，得到相同結論 |
-| TDX | **只在能明確判定「在區域外」時才擋**，無法定位則交還進料端 | `tdx/normalize.js` 保留 road/KM 但**不保留 raw `Positions`**；進料端是「座標 **或** road+KM」二擇一放行。若在此 fail-closed，一旦 KM 缺失就會**靜默丟掉正常的 TDX 事件**——那是比本 bug 更嚴重、而且**只會在 TDX 恢復後才浮現**的問題 |
-
-**這不是猜的**：fail-closed 版本讓 **35 項**既有測試失敗，
-全部是「有道路但沒有 KM」的 TDX fixture。
-
-兩層是互補的：
-```
-進料端      — fail-closed 准入，看得到全部證據
-本閘門      — 攔截任何「已抵達播報層且可明確判定在區域外」的事件（八堵形狀）
-```
-
-### 兩道閘門永久獨立
-
-```
-TDX_CORROBORATION_REQUIRED        = false （PBS_ONLY，因為 TDX 已停用）
-SERVICE_AREA_ELIGIBILITY_REQUIRED = true  （永遠，所有模式）
-```
-
-**「不再需要 TDX 佐證」永遠不可以變成「任何地方都能播」。**
-本模組就是把這條分界**寫下來並強制執行**，而不是假設它成立。
-
-### 可觀測性
-
-- `eligibilityReason` 會出現 `outside-service-area`。
-- Pipeline Trace 的 `decision` 新增 `serviceAreaEligible`（由同一個 reason 導出，不是第二次判斷），
-  讓「被地理擋下」與「被事故限定政策擋下」「因無 TDX 對應被 gated」一眼可分。
-
-### 給未來 Agent 的通則
-
-**只在一個地方做過濾，等於沒有保證。**
-如果某一層的正確性依賴「上游應該已經過濾過了」，
-那就要嘛在本層**真的檢查**，要嘛讓上游**在事件上留下可驗證的標記**——
-寫在註解裡的假設，遲早會被某條新路徑繞過，而且**不會報錯**。
+**一句話**：`PBS_ONLY` 不等於「全台 PBS 都能播」。地域資格永遠要檢查。真實漏播
+案例：PBS 國道1號南向八堵交流道（基隆，25.10288/121.71801，type=accident）
+不在服務區域內卻成功推播。Root cause：地域過濾只存在於 PBS 進料端
+（`pbs/pipeline.js` 的 `isPbsEventHsinchuRelevant` filter），`broadcastPipeline.js`
+只在 JSDoc 寫著假設「every currently Hsinchu-relevant … event」，從未真正檢查
+——寫在註解裡的假設不是閘門。無法用手上資料重現進料端本身的漏洞（各種原始記錄
+形狀跑 `isPbsEventHsinchuRelevant` 皆正確擋下），本輪修正的是「Producer 播報
+邊界上本來就該有、卻不存在的強制檢查」，非修補已重現的洞。修正：新增
+`src/traffic/serviceArea.js`，在既有 eligibility 迴圈最前面檢查，所有 source
+mode 都適用，重用既有 canonical 判定（`hsinchuFilter.js`），無新地理引擎、
+服務範圍未變。PBS 對此 fail-closed（無法定位就擋，因為地理資訊已一路帶到播報
+層，能重跑進料端同一函式）；TDX 只在能明確判定「在區域外」時才擋（因
+`tdx/normalize.js` 不保留原始 `Positions`，fail-closed 會靜默丟掉正常 TDX
+事件——實測讓 35 項既有測試失敗，故不採此法）。`SERVICE_AREA_ELIGIBILITY_
+REQUIRED = true` 永遠適用於所有模式，與 `TDX_CORROBORATION_REQUIRED` 永久
+獨立。可觀測性：`eligibilityReason` 新增 `outside-service-area`，Pipeline
+Trace 新增 `serviceAreaEligible`。**永久教訓**：只在一個地方做過濾等於沒有
+保證——某一層的正確性若依賴「上游應該已經過濾過了」，就要嘛在本層真的檢查，
+要嘛讓上游在事件上留下可驗證的標記；寫在註解裡的假設遲早會被某條新路徑繞過，
+而且不會報錯。
 
 ## 修正紀錄｜播報追溯斷點 ＋ 位置精確度閘門（台68 事件）（2026-08-24，壓縮摘要）
 
@@ -821,6 +750,24 @@ invariants 73/73、Windows PBS full suite 121/121 PASS，NEW FAILURES=0。Fix
 commit `7acb82a`；Cloudflare Worker Version ID `defc1da4-6328-47ce-82c6-
 81082519bc2`，Windows `TrafficReporter-PBS-LocalMonitor`已重啟為Running
 （人類回報，本Session未獨立驗證）。
+
+## 修正紀錄｜V2.0.0 MILESTONE — Windows PBS + Workers AI 架構封版（2026-08-28）
+
+重大架構里程碑封版，非新功能開發。APP_VERSION 從 `V1.9.9` bump 為 `V2.0.0`
+（架構世代更換等級的不相容變更，見 `06_VERSION_HISTORY.md`／
+`02_PROJECT_HANDOFF.md` 的完整記錄），本輪未修改任何 runtime 決策邏輯。誠實
+保留兩項既有已知限制，未在本輪解決：
+
+1. **`FIRST_REAL_AI_EVENT = WAITING`**——真實 Production PBS 事件走完 Windows →
+   Cloudflare → Workers AI → LINE 完整路徑的觀察證據尚未取得。這是下一個
+   observational milestone，不是 V2.0.0 封版 blocker，也不是程式缺陷；
+   `AI_BINDING=ACTIVE`／`AI_DECISION=ACTIVE` 為 GPT Work 回報，本 Session 未
+   獨立驗證（sandbox 網路政策封鎖 Production 網域與 Dashboard）。
+2. **Persistent idempotency atomicity 限制**（V1.9.7 既有已知限制，未變動）：
+   `KV_ONLY_ATOMICITY = NOT_SUFFICIENT`——KV 無 compare-and-swap，理論上仍存在
+   極窄 race window，`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY = PARTIAL`（非
+   atomic exactly-once 保證）。完整分析見下方「Persistent PBS Debug Push
+   Idempotency（V1.9.7）」記錄，含為何不引入 Durable Object 的理由。
 
 ## 修正紀錄｜V1.9.9 Phase 3D Hotfix — Cloudflare 字串布林解析（2026-08-28）
 

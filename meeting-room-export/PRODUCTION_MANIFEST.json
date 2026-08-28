@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "project": "traffic-reporter",
-  "verifiedFromRepoAt": "2026-08-28T07:41:12.556Z",
-  "verifiedFromCommit": "27223abd71fbcc415215ff6f94eadb98221e33c8",
+  "verifiedFromRepoAt": "2026-08-28T08:42:08.217Z",
+  "verifiedFromCommit": "dfcc29d717bd4a4429f96b8ab782d22b01e691ea",
   "note": "Everything in this file is derived from wrangler.jsonc/src/index.js in THIS repo checkout, verifiable by any future reader by re-running the export script. Fields the repo cannot itself verify (real Cloudflare Dashboard state) are explicitly marked unverified, never guessed.",
   "worker": {
     "name": "traffic-reporter",
@@ -25,7 +25,7 @@
       { "binding": "PBS_RELAY_WINDOWS", "serviceId": "01a008ab-4cc4-7c22-a747-4e27cdcc83c8", "source": "wrangler.jsonc" }
     ],
     "ai": [
-      { "binding": "AI", "source": "wrangler.jsonc", "note": "V1.9.9 Phase 3B: declared in wrangler.jsonc for @cf/zai-org/glm-4.7-flash driver-impact decisions (src/pbs/aiDecisionEngine.js). Declaring this binding does NOT activate AI decisions -- the real gate is the code-level kill switch src/pbs/aiConfig.js#PBS_AI_DECISION_ENABLED (default false). GPT Work confirmed the Dashboard-side binding is ACTIVE. V1.9.9 Phase 3D hotfix: resolvePbsAiDecisionEnabled() previously only accepted a real boolean; Cloudflare Dashboard/CLI Variables inject this kind of runtime flag as a STRING, so a Dashboard value of \"true\" silently stayed disabled. Fixed to also accept the string forms 'true'/'false' (case-insensitive, trimmed), still failing safe to false for anything else. AI_DECISION currently DISABLED_PENDING_GPT_WORK_RETRY -- GPT Work's earlier rollback (PBS_AI_DECISION_ENABLED=FALSE) is still in effect; not yet independently confirmed from this repo checkout whether a retry has occurred." }
+      { "binding": "AI", "source": "wrangler.jsonc", "note": "V1.9.9 Phase 3B: declared in wrangler.jsonc for @cf/zai-org/glm-4.7-flash driver-impact decisions (src/pbs/aiDecisionEngine.js). Declaring this binding does NOT activate AI decisions -- the real gate is the code-level kill switch src/pbs/aiConfig.js#PBS_AI_DECISION_ENABLED (default false). GPT Work confirmed the Dashboard-side binding is ACTIVE. V1.9.9 Phase 3D hotfix: resolvePbsAiDecisionEnabled() previously only accepted a real boolean; Cloudflare Dashboard/CLI Variables inject this kind of runtime flag as a STRING, so a Dashboard value of \"true\" silently stayed disabled. Fixed to also accept the string forms 'true'/'false' (case-insensitive, trimmed), still failing safe to false for anything else. V2.0.0 MILESTONE: GPT Work reports AI_DECISION=ACTIVE (PBS_AI_DECISION_ENABLED=\"true\" in Production) -- see v200MilestoneProductionLineage below; this repo checkout has not independently confirmed it." }
     ],
     "vars": {
       "PUBLIC_BASE_URL": "https://traffic-reporter.mr-happytan.workers.dev",
@@ -68,6 +68,21 @@
     "method": "push to main -> Cloudflare Workers Builds auto-deploy",
     "verificationScripts": ["npm run check:deployment-policy (local, 0 network)", "npm run verify:production (calls GET /version)"],
     "buildMetadataSource": "scripts/generateBuildMetadata.mjs, run via package.json predeploy hook"
+  },
+  "v200MilestoneProductionLineage": {
+    "note": "V2.0.0 (2026-08-28) is an architecture-generation milestone (Windows PBS Local Edge -> Cloudflare ingress -> Workers AI -> AI driver-impact decision -> existing LINE infrastructure), not a runtime-logic change in this round. The fields below are what GPT Work reported for the Cloudflare Dashboard side; this repo checkout cannot independently verify any of them (sandbox network egress blocks the Production domain and Dashboard) -- recorded as human-reported, never claimed as self-verified.",
+    "reportedByGptWork": {
+      "activeProductionVersionId": "a8e9454c-ab3f-4555-ab7e-0d8c39ecf73c",
+      "activeTrafficPercent": 100,
+      "aiBinding": "ACTIVE",
+      "pbsAiDecisionEnabledVariable": "\"true\"",
+      "productionHealth": "PASS",
+      "workerErrors": 0,
+      "ai429Count": 0,
+      "aiInvalidResponseCount": 0
+    },
+    "firstRealAiEvent": "WAITING -- a real Production PBS event flowing end-to-end through Workers AI to a LINE push has not yet been observed. Next observational milestone, not a V2.0.0 seal blocker.",
+    "instructionForNextAgent": "If a future repo push triggers a new Workers Builds deployment, update activeProductionVersionId here once GPT Work reports the new Version ID -- this is Dashboard-verification work, not something Claude should attempt from this sandbox."
   },
   "dashboardOnlyChecksNeverVerifiableFromRepo": [
     "Cloudflare Workers Builds 'Production branch' setting actually pointed at main",
