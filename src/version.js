@@ -498,7 +498,7 @@
 // order section 十) and test/pbsPollingRetirementV198.test.js (retirement
 // items 14/15), and 07_KNOWN_ISSUES.md for the full record.
 
-export const APP_VERSION = 'V1.9.8';
+export const APP_VERSION = 'V1.9.9';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

@@ -1,0 +1,22 @@
+# This file lives inside pbs-relay/ itself (self-contained: build/start
+# commands run relative to this directory). This repo also contains an
+# unrelated Cloudflare Worker at its root, so Render's automatic
+# Blueprint detection (which only scans the repo root) won't pick this
+# up on its own. Simplest path: create the Web Service manually in the
+# Render dashboard with "Root Directory" set to pbs-relay — see this
+# repo's PR/report for the exact fields. This file is kept as a
+# reference/optional Blueprint source, not a required deploy path.
+services:
+  - type: web
+    name: pbs-relay
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      # Set the real value in the Render dashboard, not here — this file
+      # is committed to git and must never carry a real secret.
+      - key: RELAY_TOKEN
+        sync: false
