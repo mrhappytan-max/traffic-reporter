@@ -631,8 +631,33 @@
 // per GPT Work's own report; this session has not independently verified
 // Production activation and does not claim to.
 // ============================================================================
+//
+// V2.0.1 (2026-08-29) — AI Decision Observatory. PATCH — observability/
+// diagnostic UI only, does not change AI semantic authority. New Admin
+// page GET /admin/pbs-ai-observatory-view (src/pbs/aiObservatoryView.js)
+// answers "what did PBS say -> what did the AI decide -> why -> what
+// finally happened" for a Windows PBS event, entirely from data already
+// produced at decision time — READ ONLY OBSERVABILITY, never a new
+// Workers AI call (opening/refreshing/searching the page always makes 0
+// AI calls). New thin index (src/pbs/aiObservatoryIndex.js,
+// debug:pbs-ai-observatory-index:v1:*, 48h TTL, +1 KV write per
+// genuinely accepted non-duplicate event, +0 additional reads) captures
+// the PBS original fields and final outcome for every event, including
+// the outcomes (AI_CALL_FAILED/AI_DECISION_INVALID/SERVICE_AREA_EXCLUDED/
+// legacy-path) nothing else persists today; the actual notify/impact/
+// reason/confidence is NEVER duplicated into it — the page reads that
+// straight from the EXISTING pbs/aiDecisionCache.js record at render
+// time, so a shown reason is always the exact one the AI produced,
+// never regenerated. Legacy TDX-oriented labels ("不符合播報資格") are
+// never used for a Windows PBS AI-path event — see the new page's own
+// OUTCOME_META vocabulary. AI prompt/model/notify semantics/impact
+// semantics/confidence semantics/service area/Windows PBS filter/
+// lifecycle/transport idempotency/LINE quota policy/CCTV policy/Shared
+// Feed product policy are all UNCHANGED this round. FIRST_REAL_AI_EVENT
+// remains WAITING; AI_DRIVER_SUMMARY remains a documented FUTURE
+// candidate only, not implemented.
 
-export const APP_VERSION = 'V2.0.0';
+export const APP_VERSION = 'V2.0.1';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

@@ -636,14 +636,21 @@ test('routing: a similar-but-different path still 404s (no accidental prefix mat
 // line:incident-suppression-state and traffic:shared-feed EXACTLY ONCE
 // each for the WHOLE run (both are WRITE_ON_CHANGE: content stabilizes to
 // "empty" after the very first event establishes the key, so every
-// following event's own write attempt is skipped). Measured exactly via
-// this same mock, not guessed:
-//   N accepted events -> gets = 5*N, puts = N + 2 (idempotency=N, plus
-//   ONE incident-suppression-state write and ONE shared-feed write for
-//   the whole run). A run with real, broadcast-ELIGIBLE events (not this
-//   fixture) would additionally write line:notified-state and
-//   debug:broadcast-provenance:v1:* per successful push — see the
-//   dedicated V1.9.8 (9)/(12) tests below for that shape.
+// following event's own write attempt is skipped).
+//
+// V2.0.1 (AI Decision Observatory, order section 四) adds exactly ONE
+// additional PUT per accepted event — the thin aiObservatoryIndex.js
+// record (see that module's own header comment for why this is the
+// minimum viable addition, not zero) — and ZERO additional GETs (a
+// straight put, never a read-modify-write). Measured exactly via this
+// same mock, not guessed:
+//   N accepted events -> gets = 5*N (unchanged), puts = 2*N + 2
+//   (idempotency=N + observatory=N, plus ONE incident-suppression-state
+//   write and ONE shared-feed write for the whole run). A run with real,
+//   broadcast-ELIGIBLE events (not this fixture) would additionally write
+//   line:notified-state and debug:broadcast-provenance:v1:* per
+//   successful push — see the dedicated V1.9.8 (9)/(12) tests below for
+//   that shape.
 
 function distinctPayloadForIndex(i) {
   return validPayload({ eventId: `PBS-COST-${i}`, fingerprint: `fp-cost-${i}`, requestId: `req-cost-${i}` });
@@ -657,10 +664,10 @@ for (const eventsPerDay of [10, 30, 100]) {
       const res = await handlePbsDebugPush(pushRequest({ body: distinctPayloadForIndex(i) }), env, NOW);
       assert.equal((await res.json()).accepted, true);
     }
-    REAL_CONSOLE_LOG(`[V1.9.8 KV cost] eventsPerDay=${eventsPerDay} kvGetCalls=${kv.getCalls} kvPutCalls=${kv.putCalls}`);
-    // V1.9.8 measured shape (0-broadcast-relevant fixture, see comment above):
-    assert.equal(kv.putCalls, eventsPerDay + 2, 'N idempotency writes + 1 incident-suppression-state + 1 shared-feed (both WRITE_ON_CHANGE, once per run)');
-    assert.equal(kv.getCalls, eventsPerDay * 5, 'N idempotency reads + 4*N Business Pipeline reads (subscriptions/notified-state/incident-suppression/shared-feed)');
+    REAL_CONSOLE_LOG(`[V2.0.1 KV cost] eventsPerDay=${eventsPerDay} kvGetCalls=${kv.getCalls} kvPutCalls=${kv.putCalls}`);
+    // V2.0.1 measured shape (0-broadcast-relevant fixture, see comment above):
+    assert.equal(kv.putCalls, eventsPerDay * 2 + 2, 'N idempotency writes + N AI-observatory-index writes + 1 incident-suppression-state + 1 shared-feed (both WRITE_ON_CHANGE, once per run)');
+    assert.equal(kv.getCalls, eventsPerDay * 5, 'N idempotency reads + 4*N Business Pipeline reads (subscriptions/notified-state/incident-suppression/shared-feed) — observatory write adds 0 reads');
   });
 }
 

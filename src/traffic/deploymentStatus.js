@@ -58,6 +58,8 @@ export const IMPORTANT_ROUTES = [
   '/admin/broadcast-provenance',
   '/admin/deployment-status',
   '/admin/deployment-status-view',
+  // V2.0.1 — AI Decision Observatory (src/pbs/aiObservatoryView.js).
+  '/admin/pbs-ai-observatory-view',
   '/version',
 ];
 

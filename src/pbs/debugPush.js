@@ -120,6 +120,8 @@ import { isWindowsPbsAiCandidateEligible, buildAiCandidate, PBS_AI_DECISION_MODE
 import { resolvePbsAiDecisionEnabled } from './aiConfig.js';
 import { resolveAiDecision, PBS_AI_MODEL_ID } from './aiDecisionEngine.js';
 import { runAiApprovedPbsBroadcast } from '../traffic/aiApprovedPbsBroadcast.js';
+import { taipeiDateString } from '../tdx/usageLedger.js';
+import { buildAiObservatoryRecord, recordAiObservatoryEntry, AI_OUTCOME } from './aiObservatoryIndex.js';
 
 export const PBS_DEBUG_PUSH_PATH = '/internal/pbs-debug-push';
 
@@ -397,11 +399,19 @@ function buildRawPbsRecordFromPush({ eventId, generatedAt, event }) {
  * (7) validate -> (8) persist (inside resolveAiDecision) -> (9) execute
  * notify/no-notify.
  */
+// V2.0.1 (order section 一/三) — returns a small outcome descriptor so
+// the caller can build ONE AI Decision Observatory index record after
+// this function fully completes (see aiObservatoryIndex.js). This is the
+// ONLY change this function makes for V2.0.1: every existing trace log
+// line, every existing branch, and the exact AI-call/cache/notify
+// semantics are UNCHANGED — the descriptor is built purely from values
+// this function already computed for its own console.log lines, never a
+// new decision or a second AI call.
 async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lifecycle, fingerprint, now }) {
   if (!candidate) {
     // Outside the service area — already logged by the caller
     // (candidate=false reason=outside-service-area). No AI call, no LINE.
-    return;
+    return { outcome: AI_OUTCOME.SERVICE_AREA_EXCLUDED };
   }
 
   // event=AI_CALL_STARTED is logged UNCONDITIONALLY here, before the cache
@@ -417,9 +427,10 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
     aiResult = await resolveAiDecision(env, candidate, { eventId, fingerprint }, now);
   } catch (err) {
     console.error(`[pbs-debug-push][ai-decision] event=AI_CALL_FAILED eventId=${eventId} lifecycle=${lifecycle} detail=${err && err.message}`);
-    return; // fail closed — no LINE, no fallback to the legacy hard-rule decision (order section 十二)
+    return { outcome: AI_OUTCOME.AI_CALL_FAILED, cacheStatus: 'MISS' }; // fail closed — no LINE, no fallback to the legacy hard-rule decision (order section 十二)
   }
 
+  const cacheStatus = aiResult.source === 'cache-hit' ? 'HIT' : 'MISS';
   console.log(
     `[pbs-debug-push][ai-decision] event=${aiResult.source === 'cache-hit' ? 'AI_CACHE_HIT' : 'AI_CACHE_MISS'} ` +
       `eventId=${eventId} lifecycle=${lifecycle} durationMs=${aiResult.durationMs}`
@@ -430,7 +441,9 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
       `[pbs-debug-push][ai-decision] event=${aiResult.reason} eventId=${eventId} lifecycle=${lifecycle} ` +
         `detail=${aiResult.detail || ''} durationMs=${aiResult.durationMs}`
     );
-    return; // AI_CALL_FAILED or AI_DECISION_INVALID -> 0 LINE, no fallback
+    // aiResult.reason is already 'AI_CALL_FAILED' or 'AI_DECISION_INVALID'
+    // — the SAME closed vocabulary AI_OUTCOME uses, never re-mapped.
+    return { outcome: aiResult.reason, cacheStatus }; // -> 0 LINE, no fallback
   }
 
   console.log(`[pbs-debug-push][ai-decision] event=AI_DECISION_VALID eventId=${eventId} lifecycle=${lifecycle}`);
@@ -443,7 +456,7 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
   );
 
   if (!decision.notify) {
-    return; // trace only — no LINE, no CCTV, no proactive broadcast (order section 九)
+    return { outcome: AI_OUTCOME.AI_NOTIFY_FALSE, cacheStatus }; // trace only — no LINE, no CCTV, no proactive broadcast (order section 九)
   }
 
   try {
@@ -454,8 +467,9 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
         `pendingTargets=${broadcastResult.pendingTargetCount} pushAttempted=${broadcastResult.pushAttempted} ` +
         `pushSucceeded=${broadcastResult.pushSucceeded}`
     );
+    const lineSent = broadcastResult.pushAttempted > 0 && broadcastResult.pushSucceeded === broadcastResult.pushAttempted;
     console.log(
-      `[pbs-debug-push][ai-decision] event=${broadcastResult.pushAttempted > 0 && broadcastResult.pushSucceeded === broadcastResult.pushAttempted ? 'AI_LINE_SENT' : broadcastResult.pushAttempted > 0 ? 'AI_LINE_FAILED' : 'AI_LINE_NOT_ATTEMPTED'} ` +
+      `[pbs-debug-push][ai-decision] event=${lineSent ? 'AI_LINE_SENT' : broadcastResult.pushAttempted > 0 ? 'AI_LINE_FAILED' : 'AI_LINE_NOT_ATTEMPTED'} ` +
         `eventId=${eventId} lifecycle=${lifecycle}`
     );
 
@@ -469,8 +483,18 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
     if (broadcastResult.lineErrors.length > 0) {
       console.error(`[pbs-debug-push][ai-decision] eventId=${eventId} lineErrors=${broadcastResult.lineErrors.join('; ')} sharedFeedCommitted=${sharedFeedCommitted}`);
     }
+    const firstProduct = broadcastResult.completedProducts && broadcastResult.completedProducts[0];
+    return {
+      outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+      cacheStatus,
+      lineAttempted: broadcastResult.pushAttempted > 0,
+      lineSent,
+      sharedFeedPersisted: sharedFeedCommitted,
+      imageUrlPresent: Boolean(firstProduct && firstProduct.imageUrl),
+    };
   } catch (err) {
     console.error(`[pbs-debug-push][ai-decision] event=AI_LINE_FAILED eventId=${eventId} lifecycle=${lifecycle} failed: ${err && err.message}`);
+    return { outcome: AI_OUTCOME.AI_NOTIFY_TRUE, cacheStatus, lineAttempted: true, lineSent: false };
   }
 }
 
@@ -666,8 +690,9 @@ export async function handlePbsDebugPush(request, env, now = new Date()) {
       // hard rules and the AI happened to approve the same event (order
       // section 十二's own "避免同一事件有兩套裁判" reasoning applies here
       // too, not just to AI-call failures).
+      let observatoryOutcome;
       if (resolvePbsAiDecisionEnabled(env)) {
-        await runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lifecycle, fingerprint, now });
+        observatoryOutcome = await runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lifecycle, fingerprint, now });
       } else {
         // Reuses the EXACT SAME canonical Business Pipeline entry point
         // traffic/scheduled.js's Cron path calls for every polled TDX/PBS
@@ -700,6 +725,40 @@ export async function handlePbsDebugPush(request, env, now = new Date()) {
             `pendingTargets=${lineSummary.pendingTargetCount} pushAttempted=${lineSummary.pushAttempted} ` +
             `pushSucceeded=${lineSummary.pushSucceeded} sharedFeedCommitted=${sharedFeedCommitted}`
         );
+        observatoryOutcome = {
+          outcome: AI_OUTCOME.AI_NOT_INVOKED_LEGACY_PATH,
+          lineAttempted: lineSummary.pushAttempted > 0,
+          lineSent: lineSummary.pushAttempted > 0 && lineSummary.pushSucceeded === lineSummary.pushAttempted,
+          sharedFeedPersisted: sharedFeedCommitted,
+        };
+      }
+
+      // V2.0.1 (order section 一/三/四) — ONE thin AI Decision Observatory
+      // index record, written AFTER the outcome above is fully known —
+      // never a second AI call, never a guess. See aiObservatoryIndex.js's
+      // own header comment for why this is the minimum viable addition
+      // (existing KV records cannot answer "what happened to this event"
+      // for every outcome). Best-effort, isolated — a write failure here
+      // must never affect the real AI/LINE/Shared-Feed outcome above,
+      // which has already fully completed.
+      if (observatoryOutcome) {
+        try {
+          const record = buildAiObservatoryRecord({
+            candidate,
+            eventId,
+            lifecycle,
+            fingerprint,
+            now,
+            ...observatoryOutcome,
+          });
+          await recordAiObservatoryEntry(env.TRAFFIC_KV, record, {
+            taipeiDate: taipeiDateString(now),
+            idempotencyKeyHash,
+            now,
+          });
+        } catch (err) {
+          console.error(`[pbs-debug-push][ai-observatory] eventId=${eventId} lifecycle=${lifecycle} failed: ${err && err.message}`);
+        }
       }
     } catch (err) {
       console.error(`[pbs-debug-push][business-pipeline] eventId=${eventId} lifecycle=${lifecycle} failed: ${err && err.message}`);

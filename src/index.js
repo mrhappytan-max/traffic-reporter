@@ -16,6 +16,7 @@ import { handlePipelineTraceView } from './traffic/pipelineTraceView.js';
 import { handleDeploymentStatus, handleVersion } from './traffic/deploymentStatus.js';
 import { handleDeploymentStatusView } from './traffic/deploymentStatusView.js';
 import { handlePbsDebugPush, PBS_DEBUG_PUSH_PATH } from './pbs/debugPush.js';
+import { handleAiObservatoryView } from './pbs/aiObservatoryView.js';
 
 // V1.6.3 — Admin Protection: every human-facing admin/debug page requires
 // HTTP Basic Auth (see security/adminAuth.js). Centralized here on
@@ -80,12 +81,20 @@ const PIPELINE_TRACE_VIEW_PATH = '/admin/pipeline-trace-view';
 const DEPLOYMENT_STATUS_PATH = '/admin/deployment-status';
 const DEPLOYMENT_STATUS_VIEW_PATH = '/admin/deployment-status-view';
 
+// V2.0.1 — /admin/pbs-ai-observatory-view (human-readable HTML). Same
+// GET-only-with-explicit-405 treatment as the paths above. See
+// pbs/aiObservatoryView.js for what this reports (PBS original fields ->
+// AI decision -> LINE/Shared-Feed outcome for Windows PBS events) — pure
+// KV reads, ZERO calls to Workers AI, ZERO KV writes.
+const AI_OBSERVATORY_VIEW_PATH = '/admin/pbs-ai-observatory-view';
+
 const METHOD_RESTRICTED_ADMIN_PATHS = new Set([
   BROADCAST_PROVENANCE_PATH,
   PIPELINE_TRACE_PATH,
   PIPELINE_TRACE_VIEW_PATH,
   DEPLOYMENT_STATUS_PATH,
   DEPLOYMENT_STATUS_VIEW_PATH,
+  AI_OBSERVATORY_VIEW_PATH,
 ]);
 
 const ADMIN_PATHS = new Set([
@@ -103,6 +112,7 @@ const ADMIN_PATHS = new Set([
   PIPELINE_TRACE_VIEW_PATH,
   DEPLOYMENT_STATUS_PATH,
   DEPLOYMENT_STATUS_VIEW_PATH,
+  AI_OBSERVATORY_VIEW_PATH,
   ...HSINCHU_FRAME_PATHS,
 ]);
 
@@ -133,6 +143,7 @@ function routeAdminGet(pathname, env, request) {
   if (pathname === PIPELINE_TRACE_VIEW_PATH) return handlePipelineTraceView(env, request);
   if (pathname === DEPLOYMENT_STATUS_PATH) return handleDeploymentStatus(env);
   if (pathname === DEPLOYMENT_STATUS_VIEW_PATH) return handleDeploymentStatusView(env);
+  if (pathname === AI_OBSERVATORY_VIEW_PATH) return handleAiObservatoryView(env, request);
   const frameIndex = HSINCHU_FRAME_PATHS.indexOf(pathname);
   if (frameIndex !== -1) return handleHsinchuCctvFrame(env, frameIndex);
   return new Response('Not Found', { status: 404 });
