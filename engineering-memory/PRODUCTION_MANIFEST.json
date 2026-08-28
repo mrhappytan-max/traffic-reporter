@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "project": "traffic-reporter",
-  "verifiedFromRepoAt": "2026-08-28T05:48:24.439Z",
-  "verifiedFromCommit": "179c94272e8f59c6dd1072a385240c0b10c2d70b",
+  "verifiedFromRepoAt": "2026-08-28T06:42:51.156Z",
+  "verifiedFromCommit": "18fe0f8c9297ad30c457505673c3091b74bfd910",
   "note": "Everything in this file is derived from wrangler.jsonc/src/index.js in THIS repo checkout, verifiable by any future reader by re-running the export script. Fields the repo cannot itself verify (real Cloudflare Dashboard state) are explicitly marked unverified, never guessed.",
   "worker": {
     "name": "traffic-reporter",
@@ -23,6 +23,9 @@
     ],
     "vpc_services": [
       { "binding": "PBS_RELAY_WINDOWS", "serviceId": "01a008ab-4cc4-7c22-a747-4e27cdcc83c8", "source": "wrangler.jsonc" }
+    ],
+    "ai": [
+      { "binding": "AI", "source": "wrangler.jsonc", "note": "V1.9.9 Phase 3B: declared in wrangler.jsonc for @cf/zai-org/glm-4.7-flash driver-impact decisions (src/pbs/aiDecisionEngine.js). Declaring this binding does NOT activate AI decisions -- the real gate is the code-level kill switch src/pbs/aiConfig.js#PBS_AI_DECISION_ENABLED (default false). Dashboard-side binding creation/verification is GPT Work's responsibility, not yet independently confirmed from this repo checkout." }
     ],
     "vars": {
       "PUBLIC_BASE_URL": "https://traffic-reporter.mr-happytan.workers.dev",
@@ -48,7 +51,7 @@
       { "path": "/health", "method": "GET", "auth": "admin-basic" },
       { "path": "/webhook", "method": "POST", "auth": "line-signature" },
       { "path": "/internal/shared-feed", "method": "GET", "auth": "bearer:TRAFFIC_FEED_SECRET", "note": "Shared Traffic Feed consumer read path" },
-      { "path": "/internal/pbs-debug-push", "method": "POST", "auth": "bearer:PBS_DEBUG_PUSH_SECRET", "note": "V1.9.8: Windows PBS Local Monitor -> formal Production ingress (src/pbs/debugPush.js) — an accepted NEW/UPDATED event reaches the canonical Business Pipeline (runLineBroadcast/Shared Feed); CLEARED is acknowledged but never broadcast; duplicates are idempotent via TRAFFIC_KV under debug:pbs-push-idempotency:v1:*" },
+      { "path": "/internal/pbs-debug-push", "method": "POST", "auth": "bearer:PBS_DEBUG_PUSH_SECRET", "note": "V1.9.8: Windows PBS Local Monitor -> formal Production ingress (src/pbs/debugPush.js) — an accepted NEW/UPDATED event reaches the canonical Business Pipeline (runLineBroadcast/Shared Feed); CLEARED is acknowledged but never broadcast; duplicates are idempotent via TRAFFIC_KV under debug:pbs-push-idempotency:v1:*. V1.9.9 Phase 3B: when the code-level kill switch PBS_AI_DECISION_ENABLED is true (Production default: false), this same endpoint instead routes the event through resolveAiDecision() (src/pbs/aiDecisionEngine.js) and, on a validated notify:true verdict, runAiApprovedPbsBroadcast() (src/traffic/aiApprovedPbsBroadcast.js) — mutually exclusive with the legacy runLineBroadcast() call for that same event, never both." },
       { "path": "/cctv/image/:id", "method": "GET", "auth": "none", "note": "opaque 128-bit id, 15-min TTL enforced in code" }
     ],
     "admin": [

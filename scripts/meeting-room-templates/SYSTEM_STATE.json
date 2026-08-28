@@ -232,38 +232,41 @@
     "AI_CANDIDATE_PIPELINE": "PREPARED_NOT_ACTIVE — V1.9.9 Phase 2: src/pbs/aiCandidate.js builds a minimal AI candidate for every accepted NEW/UPDATED Windows event, parallel to (never gating) the unchanged runLineBroadcast() call. Observability-only; no AI model called, no KV read/write for the reserved AI_DECISION_CACHE_KV_PREFIX yet."
   },
   "taskSeal": {
-    "task": "AI_READY_PIPELINE_PREPARATION_V1_9_9_PHASE_2",
-    "status": "SEALED",
+    "task": "WORKERS_AI_DRIVER_IMPACT_DECISION_INTEGRATION_V1_9_9_PHASE_3B",
+    "status": "CODE_READY",
     "sealedAt": "2026-08-28",
-    "sealedBy": "human directive (路況工程部 V1.9.9 Phase 2 正式施工令｜Retire Traffic Content Hard Rules from Primary Decision Path — AI-ready Business Pipeline Simplification)",
+    "sealedBy": "human directive (路況工程部 V1.9.9 Phase 3B 正式施工令｜Workers AI Driver Impact Decision Integration)",
     "releaseVersion": "V1.9.9",
-    "phase1BackfillNote": "V1.9.9 Phase 1（fix commit 7acb82a，另一個 session 完成，本 Cloud Session 未參與）：Windows PBS Local Edge Filter 服務區收斂為新竹市／新竹縣（竹南/頭份/苗栗市及其他苗栗縣區域排除），純 pbs-relay/（Windows端）變更，未觸碰 src/ Cloudflare runtime。詳見 SYSTEM_STATE.json 頂層 V1.9.9_PHASE_1 欄位（該輪自建，本輪保留未動）與 07_KNOWN_ISSUES.md。",
-    "phase2Design": {
-      "approach": "新模組 src/pbs/aiCandidate.js — 純函式、零I/O、零side effect。從 src/pbs/debugPush.js 既有的 normalizedEvent 建立最小 AI candidate 物件，與既有（完全未修改的）runLineBroadcast() 呼叫並行、完全獨立——不gate、不delay、不影響真實LINE決策。",
-      "gatesKept": "只保留 service area（重用既有 traffic/serviceArea.js#resolveServiceAreaEligibility，與 runLineBroadcast 自己用的同一個 resolver）與 idempotency/duplicate protection（沿用既有 V1.9.7 layer，duplicate 事件從不到達 candidate-building 呼叫點）。",
-      "gatesRetiredForCandidatePath": "MAJOR_ACCIDENT_ONLY policy、V1.5 type/keyword whitelist（getBroadcastEligibility）、location quality hard-reject——皆不套用在 candidate 建構上，但這些函式本身完全未修改，對真實 LINE 決策（runLineBroadcast 呼叫）仍是完整生效的『legacy policy』，直到 Phase 3 AI 真正接手。",
-      "locationQuality": "resolveLocationQuality() 唯讀重用，只作為 candidate 的 metadata 附加欄位，從未作為是否建立 candidate 的gate。僅scoped在這個新模組內，未改動 locationQuality.js 本身，不影響其他來源/既有路徑的用法。",
-      "safetyState": "PBS_AI_DECISION_MODE = PREPARED_NOT_ACTIVE（exported const）。candidate 只被 log，從未被使用於任何決策、從未觸及 LINE/CCTV/Shared Feed、從未呼叫任何AI模型。",
-      "aiCandidateSchema": "source/eventId/lifecycle/road/direction/areaNm/comment/longitude/latitude/generatedAt + 附加 displayKM/eventType/sourceDetail/locationQuality。刻意不含 notify/impact 欄位（Phase 3 AI的工作）。",
-      "aiDecisionCache": "computeAiDecisionCacheKeyHash({eventId,fingerprint}) — SHA-256(eventId:fingerprint)，重用Windows既有穩定fingerprint（非新NLP/semantic fingerprint）。AI_DECISION_CACHE_KV_PREFIX='debug:pbs-ai-decision-cache:v1'（獨立debug-only前綴，預留給Phase 3，本輪完全未做任何KV讀寫）。"
+    "fixCommit": "5d1f9fe",
+    "model": "@cf/zai-org/glm-4.7-flash",
+    "binding": "AI",
+    "design": {
+      "modules": "src/pbs/aiConfig.js（kill switch PBS_AI_DECISION_ENABLED，預設false）、src/pbs/aiDecisionCache.js（重用Phase 2 cache key設計，TRAFFIC_KV，48h TTL，fail-open讀寫）、src/pbs/aiDecisionEngine.js（固定繁中prompt只判斷駕駛通行影響、不依事件類型名稱決定；validateAiDecisionResponse()嚴格schema：notify boolean/impact HIGH|LOW/reason≤80字/confidence 0-1，任何不合格即AI_DECISION_INVALID絕不到達LINE；resolveAiDecision() orchestrator）、src/traffic/aiApprovedPbsBroadcast.js（runAiApprovedPbsBroadcast()，重用既有subscriptions/notified/incidentSuppression（事故限定）/messageFormat/CCTV（事故限定）/pushMessage，只保留broadcastHours執行安全閘門，明確不呼叫getBroadcastEligibility/getLinePushPolicyDecision/resolveLocationQuality，也不重新呼叫service area）。",
+      "ordering": "auth→payload驗證→既有persistent transport idempotency→建立AI candidate→resolvePbsAiDecisionEnabled(env)分支：關閉時走完全未修改的legacy runLineBroadcast()+runSharedFeedPersist()；開啟時走cache lookup→miss才呼叫env.AI.run→驗證→驗證通過才快取→notify=true才呼叫runAiApprovedPbsBroadcast()+runSharedFeedPersist()。",
+      "mutualExclusivity": "AI開啟時legacy runLineBroadcast()整段跳過，兩條路徑對同一事件絕不同時執行——避免舊硬規則與AI同時核准同一事件造成LINE重複推播。Exact transport duplicate與AI cache hit皆是0次AI呼叫。",
+      "aiFailurePolicy": "429/5xx/network/invalid response/binding missing一律0 LINE、trace記錄AI_CALL_FAILED，絕不fallback回MAJOR_ACCIDENT_ONLY或任何舊硬規則。未加入retry——無可直接重用的既有retry helper，且施工令要求第一版保持簡單、不做複雜retry queue。",
+      "killSwitch": "src/pbs/aiConfig.js#resolvePbsAiDecisionEnabled(env)，PBS_AI_DECISION_ENABLED預設false。理由：Claude push程式碼後Cloudflare會自動部署，但GPT Work尚未在Dashboard建立並驗證真正的AI binding；若AI決策預設開啟，正式LINE推播可能在人類決定啟用AI之前就因部署而壞掉。安全rollout：程式碼部署→AI決策關閉→GPT Work建立Binding→驗證→另有明確指令才開啟。"
     },
     "testEvidence": {
-      "newTests": "test/pbsAiCandidate.test.js（13項，純函式單元測試）+ test/pbsDebugPush.test.js 新增V1.9.9 Phase 2十五項最低清單（order section十）：非事故類型/交通管制/施工/事故/封閉類事件皆能成為candidate、位置品質不佳但在服務區內不hard-reject、服務區外仍不進candidate、無效auth/payload零candidate、duplicate零額外candidate、candidate schema正確、AI inactive狀態下0額外LINE推播、既有LINE安全/去重機制不受影響（真實符合資格事故仍恰好1次推播）、lifecycle(UPDATED)行為不變、CLEARED不進AI candidate路徑。",
-      "fullRegression": "1452項／1419 pass／33 fail，與變更前基線（1424/1391/33，V1.9.9 Phase 1後量測）逐項比對完全相同的33項失敗清單，NEW FAILURES=0（以git stash基線diff嚴格驗證）。"
+      "newTests": "5個新測試檔共57項：aiConfig.test.js(4)/aiDecisionCache.test.js(9)/aiDecisionEngine.test.js(18)/aiApprovedPbsBroadcast.test.js(9)/pbsAiDecisionScenarios.test.js(17，含施工令A-P十六個mocked-AI-adapter情境+2個kill switch測試)。全部第一次執行即PASS，零fix iteration。",
+      "fullRegression": "1509項／1476 pass／33 fail，與變更前基線（1452/1419/33）逐項比對完全相同的33項失敗清單，NEW FAILURES=0（以git stash基線diff嚴格驗證）。"
     },
     "productionVerification": {
       "attempted": false,
-      "note": "本輪為repo-side程式碼準備工作，依施工令本身指示（Browser/Cloudflare Dashboard驗證由GPT Work接手，Claude不需要耗額度進Dashboard），本Cloud Session未嘗試連線驗證。sandbox網路egress政策仍封鎖Production網域與Cloudflare Dashboard（與V1.9.8輪相同的既有限制），即使嘗試也無法連線。"
+      "note": "本輪為repo-side程式碼準備工作，依施工令本身指示（Cloudflare Dashboard/AI Binding建立/驗證是GPT Work工作範圍，Claude不需要進Dashboard），本Cloud Session未嘗試連線驗證。sandbox網路egress政策仍封鎖Production網域與Cloudflare Dashboard（與V1.9.8/Phase 2輪相同的既有限制）。",
+      "aiBindingStatus": "PENDING_BROWSER_SETUP",
+      "aiDecisionStatus": "DISABLED",
+      "lineAiDecisionStatus": "NOT_ACTIVE"
     },
     "notTouchedByThisRound": [
-      "真實LINE決策邏輯（runLineBroadcast/broadcastPolicy.js/broadcastRules.js/locationQuality.js 本身皆未修改一行）",
-      "Workers AI（未接入、未選model、未呼叫）",
-      "LINE policy擴大",
-      "CCTV/Shared Feed判斷邏輯",
-      "每小時重大事件提醒（僅Engineering Memory記錄設計方向，未實作）",
-      "Windows Secret/Task Scheduler"
+      "MAJOR_ACCIDENT_ONLY/getBroadcastEligibility/resolveLocationQuality函式本身（未刪除，只是Windows PBS AI開啟時不再被呼叫）",
+      "TDX或其他來源既有runLineBroadcast判斷路徑",
+      "LINE quota硬性gate（本輪未新增）",
+      "每小時重大事件提醒實作（僅方向性設計）",
+      "Windows Secret/Task Scheduler",
+      "Cloudflare Dashboard/AI Binding建立與驗證"
     ],
-    "readerNote": "完成後STOP。不得自行開始Phase 3。不得接Workers AI。不得修改Workers AI Dashboard。不得開始V1.9.10。"
+    "readerNote": "完成後STOP。不得自行開啟Production AI。不得自行進Cloudflare Dashboard。不得開始Phase 4。不得升V1.9.10。"
   },
   "taskSealHistory": [
     {
@@ -302,66 +305,10 @@
       "task": "KV_WRITE_OPTIMIZATION_V1_9_2",
       "status": "SEALED",
       "sealedAt": "2026-08-26",
-      "sealedBy": "human directive (路況工程部 V1.9.2 正式施工令｜Cloudflare KV Write Optimization + V1.9.2 補充施工令｜TDX 用量摘要正式退休)",
       "releaseVersion": "V1.9.2",
       "fixCommit": "f45cd5e",
-      "realWorldTrigger": "真實 Cloudflare 帳號用量警示：Reads 1,935/100,000、Writes 749/1,000（traffic-reporter-kv = 733，佔帳號總寫入量 97.9%）、Lists 163/1,000、Deletes 0。同日先完成一輪唯讀鑑識（不修改任何程式/Cron/KV/Production），確認 TOP 寫入來源與可優化項目後，才進入本輪正式施工。",
-      "scope": {
-        "writeOnChange": [
-          "traffic:shared-feed（sharedFeed.js#runSharedFeedPersist）— 比較真實內容（events 陣列，含每筆自己的 fingerprint/imageUrl/updatedAt 等，因 buildSharedFeedEvents 本身就會凍結未變動項目的 updatedAt），忽略最外層的 updatedAt。只在『從未寫過』或『內容真的不同』才寫入。",
-          "line:incident-suppression-state（incidentSuppression.js#persistIncidentSuppressionState）— 比較真實內容 incidentsByGroup（含每筆 record 的 lastSeenAt——這是真正的功能性狀態，每次同一事故被重新偵測到就會推進，不是可忽略的產生時間戳），忽略最外層的 updatedAt。抑制/升級/TTL 邏輯完全未動，只改變『何時寫入』。"
-        ],
-        "pipelineTraceBatch": "pipelineTrace.js 新增 persistPipelineTraceBatch：一輪 Cron 只寫「一把」debug:pipeline-trace-batch:v2:<date>:<epochMs>:<part>:<opaqueId> 金鑰（{schemaVersion:2, generatedAt, entries:[...]}），取代舊制『一筆事件一把 KV key』。舊制 debug:pipeline-trace:v1:* 完全不刪除、不遷移，靠原本 24h TTL 自然過期。listPipelineTrace 改為同時讀取 v1 與 v2 兩種схема並正確合併排序（見 pipelineTrace.js 對 MAX_ENTRIES_SCANNED/MAX_LIST_PAGES 的說明），/admin/pipeline-trace、/admin/pipeline-trace-view 兩個既有 handler 完全未改一行程式碼即自動支援新舊資料。新增 MAX_TRACE_ENTRIES_PER_BATCH(500)/MAX_TRACE_BATCH_BYTES(2MiB) 安全上限，只在真的超量時才 deterministic 分批（chunkEntriesForTraceBatch）。",
-        "kvWriteBudgetLog": "scheduled.js 新增 [kv-write-budget] Cron console.log（僅 Workers Logs，未新增任何 KV key）：每輪回報 attemptedWrites/performedWrites/skippedUnchangedWrites，依 8 個具名分類（tdxUsageSummary/tdxUsageEntry/healthSnapshot/tdxEventCache/sharedFeed/incidentSuppression/notifiedState/pipelineTraceBatch）分別列出，另加 traceEntryCount/traceBatchCount。",
-        "tdxUsageSummaryRetirement": {
-          "decision": "TDX_USAGE_SUMMARY = RETIRED（正式退休，不是 WRITE_ON_CHANGE 優化）。人類決策：TDX 額度／用量改由真人直接查看 TDX 官方後台，路況播報員不再自行維護重複的用量摘要。",
-          "dependencyCheckPerformed": "先搜尋全 repo 對 tdx:usage:summary:v1／TDX Usage Summary／persistCompactedSummary／compactTdxUsageSummaryRecentDays／USAGE_ENTRY_KEY_PREFIX 的每一個讀寫點，確認：(1) 唯一寫入路徑是 scheduled.js 每輪呼叫 compactTdxUsageSummaryRecentDays；(2) 唯一讀取路徑是 health.js 的『TDX 用量』儀表板；(3) 沒有任何 admin dashboard／Production safety logic／source-mode switching／quota protection 依賴這把 key 或底層 tdx:usage:entry:v1:* 原始帳本；(4) 底層帳本除了餵給這個已退休的摘要以外沒有任何其他讀者（recordTdxDataCall/recordTdxOAuthCall 本身只是純記憶體 push，沒有 KV 寫入）。",
-          "tdxUsageLedgerCanRetire": "YES — 理由：tdx:usage:entry:v1:* 唯一存在目的就是餵給已退休的 tdx:usage:summary:v1 compaction／health 儀表板，找不到第二個讀者。",
-          "removedCallSites": [
-            "scheduled.js（production-cron，每輪）",
-            "debugStatus.js（debug-status）",
-            "tdx/debug.js（debug-tdx）",
-            "tdx/cctvProbe.js（admin-cctv，3 處）",
-            "tdx/hsinchuCctvProbe.js（admin-cctv，3 處）"
-          ],
-          "healthPageChange": "health.js 移除整個「TDX 用量對帳」儀表板（今日/本月/剩餘額度/月底預估/來源拆解/每日對帳/進階資訊），改為一張小卡片：『TDX API 額度／用量請直接查看 TDX 官方後台，本頁不再重複維護用量摘要。』不留空白欄位、不留錯誤欄位、不讀取已不存在的 key、不顯示假資料或過期資料——刻意誠實地說明『這裡已經沒有東西可讀』，而不是假裝功能還在運作。",
-          "preservedUntouched": [
-            "TDX API client／OAuth Token 取得與快取邏輯",
-            "TDX RoadEvent（國道/省道）擷取能力",
-            "TDX CCTV metadata 擷取能力",
-            "TDX event cache（tdxEventCache.js）",
-            "TDX source mode／TRAFFIC_SOURCE_MODE 判斷",
-            "9/1 TDX 額度恢復路徑（純環境變數開關，與用量帳本完全無關）",
-            "PBS、CCTV、LINE、Shared Feed、Pipeline Trace 各自的既有邏輯",
-            "Cron 10 分鐘頻率"
-          ],
-          "usageLedgerCodeStatus": "src/tdx/usageLedger.js 的既有函式（含本輪稍早已加上 WRITE_ON_CHANGE 的 persistCompactedSummary）程式碼保留、匯出保留、原有直接單元測試（test/tdxUsageLedger.test.js）保留並全數通過——只是不再被任何正式 Cron/Debug/Admin 路徑呼叫。這是刻意選擇：保留可讀性與未來若需要重新啟用時的可回溯性，同時滿足『0 writes/day』的驗收要求。"
-        }
-      },
-      "quantifiedKvWriteEstimate": {
-        "before": "依前一輪唯讀鑑識，一般營運中的一輪 Cron 約 11～21 KV writes（隨這輪 Pipeline Trace 追蹤到的事件數線性成長：追蹤到的每一筆事件都各自佔一把 KV key）。",
-        "afterQuiet": "健康快照(1) + TDX 事件快取（僅 TDX 排程輪次寫，1或0） + Shared Feed（內容不變時 0，改變時 1） + Incident Suppression（內容不變時 0，改變時 1） + LINE notified-state（0，本輪無成功推播） + Pipeline Trace Batch（0，本輪無追蹤事件）≈ 1～4 writes/round。",
-        "afterMedium10Entries": "同上但 Pipeline Trace Batch 固定為 1（不論這輪追蹤到幾筆事件都只有 1 把 key）+ notified-state（依實際成功推播數，與本輪優化無關）≈ 4～8 writes/round，較 BEFORE 明顯下降，且 Pipeline Trace 這一項不再隨事件數線性成長。",
-        "afterHigh20Entries": "與 MEDIUM 幾乎相同（≈4～8 writes/round）——這正是批次寫入的重點：Pipeline Trace 這一類別的寫入量從『O(事件數)』變成『O(1)』，20 筆事件的一輪不再是 20 把 key，而是同樣 1 把。",
-        "tdxUsageSummaryRetirementSaving": "每輪固定省下 2 次寫入（tdx:usage:summary:v1 + 至少 1 把 tdx:usage:entry:v1:* 原始帳本項目）——一天 144 輪，理論上限約 288 writes/day，實際依 TDX 排程頻率（每 20 分鐘才擷取一次）略低。",
-        "sharedFeedAndIncidentSuppressionSaving": "兩把 key 在『這輪內容與上一輪完全相同』時各省 1 次寫入；依業務型態（大部分時段沒有新事故／Shared Feed 沒有新事件）估計可省下相當比例的每日寫入量，實際占比需以 Production 真實 [kv-write-budget] 樣本確認（見下）。",
-        "pipelineTraceBatchSaving": "每輪由『追蹤到的事件數』把 key 降為固定 1 把（極少數超量情況下才會是 2 把以上）——這是本輪對『每輪 KV writes』波動幅度影響最大的一項改變。",
-        "distanceToFreeQuota": "Cloudflare Workers KV 免費額度為 1,000 writes/day；本輪完成後，即使沿用鑑識當天最壞情境估算（每輪皆為高流量、TDX 每輪皆擷取），144 輪/日 x (4~8 writes/round 上限) 遠低於 1,000，安全空間顯著擴大；確切每日總量仍需在下一個 Asia/Taipei 帳務日重置後，以真實 Production [kv-write-budget] 樣本核實（見下方 productionVerificationNote）。"
-      },
-      "productionVerificationNote": "今日帳號層級的累計總量已被 V1.9.2 部署前的用量污染，無法單獨反映本次優化的真實效果；真正的每日效果只有在下一個 Asia/Taipei 帳務日重置之後才看得出來。本輪改以蒐集真實 Production [kv-write-budget] Cron log 樣本（至少 3 筆）作為驗證依據，取代『今日總量』這個會失真的指標。",
-      "testResult": "npm test 共 1300 項（1292 + 本輪新增 test/kvWriteOptimization.test.js 38 項）；NEW FAILURES = 0（同一輪 git stash -u 對照乾淨 checkout，35 項既有失敗完全相同、無新增、無被本輪意外掩蓋）。新增測試涵蓋：WRITE_ON_CHANGE 的 skip/write 正確性（含一個真實抓到的別名（aliasing）bug：resolveIncidentNotifications 會就地修改比對用的舊狀態物件，導致比較永遠『相等』——已在 broadcastPipeline.js 用 structuredClone 在呼叫前先拍快照修正）、批次寫入的 chunking/splitting、v1/v2 混合資料的合併排序與所有既有 filter、退休後 0 KV 寫入的直接證明、[kv-write-budget] log 格式、quiet/medium/high 三種情境的批次寫入計數。同步更新既有測試：pipeline.test.js／debugStatusLine.test.js（usage-ledger entry 計數改為 0）、tdxUsageLedger.test.js（/debug/tdx、Hsinchu admin CCTV probe 兩個 handler 改為斷言 0 筆 usage-ledger 寫入；GET /health 斷言退休卡片文字）、pipelineTraceIntegration.test.js（直接掃 KV key 前綴改為透過 listPipelineTrace 讀取，兼容新的 batch схема）、pipelineTrace.test.js（MAX_LIST_PAGES 安全上限測試改為允許 v1+v2 兩個前綴各自的上限）。刪除兩個已測試『已退休功能』本身的檔案：test/healthQuotaDashboard.test.js、test/healthCctvSourceBreakdown.test.js（測的正是被移除的 UI，不是迴歸）。",
-      "canonicalVersionSource": "src/version.js 的 APP_VERSION 已 bump 為 V1.9.2（patch release，三段式版本治理，同一個 commit）。",
-      "githubSeal": "PASS",
-      "githubEngineeringMemory": "SEALED",
-      "claudeDriveUpload": "NO",
-      "doNotMisread": [
-        "不要把 tdx:usage:summary:v1／tdx:usage:entry:v1:* 的退休誤讀為『刪除程式碼』——src/tdx/usageLedger.js 的函式完全保留、完全可測試，只是不再被任何正式路徑呼叫。",
-        "不要誤以為 WRITE_ON_CHANGE 改變了 Shared Feed／Incident Suppression 的內容決策邏輯——兩者都只改變『何時寫入 KV』，資料本身的產生規則完全未動。",
-        "不要以為 Pipeline Trace 的舊版 v1 per-entry key 被刪除或遷移了——它們完全沒被動過，只是靠原本的 24h TTL 自然過期；新資料一律走 v2 batch。",
-        "不要把 [kv-write-budget] log 誤讀為某種新的 KV 儲存機制——它只是 console.log，Workers Logs 可見，沒有建立任何新的 KV key。",
-        "不要因為帳號層級今日總量看起來還很高就誤判本輪優化沒有效果——今日總量含有部署前的舊用量，必須等下一個 Asia/Taipei 帳務日重置後看真實 Production [kv-write-budget] 樣本才準。",
-        "不要對 Google Drive 做任何寫入——Claude 唯讀，GitHub 是唯一正式寫入來源。"
-      ],
+      "compressedSummary": "真實 Cloudflare 用量警示（Writes 749/1,000，traffic-reporter-kv 佔 97.9%）觸發。WRITE_ON_CHANGE：Shared Feed／Incident Suppression 內容不變時不寫入（發現並修正 resolveIncidentNotifications 的別名 aliasing bug）。Pipeline Trace 改批次寫入（O(事件數)→O(1)），舊版 v1 key 保留靠 TTL 自然過期，listPipelineTrace 相容新舊 schema。TDX Usage Summary 正式退休（非優化，人類決策：TDX 額度改查官方後台），底層 usageLedger.js 程式碼保留未刪除、只是不再被任何正式路徑呼叫。新增 [kv-write-budget] Cron log（純 console.log，不建立新 KV key）。測試 1300 項（新增38），NEW FAILURES=0。單日 KV writes 從 11~21/round 降至 1~8/round，遠低於 1,000/day 免費額度。canonicalVersionSource=src/version.js APP_VERSION bump 至 V1.9.2。",
+      "doNotMisread": "TDX usageLedger.js 函式保留可測試，只是不再被呼叫；WRITE_ON_CHANGE 未改變 Shared Feed/Incident Suppression 的內容決策邏輯，只改變何時寫入；Pipeline Trace v1 per-entry key 未刪除/遷移，靠 24h TTL 自然過期；[kv-write-budget] 只是 log，非新 KV 機制。",
       "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
     },
     {
@@ -563,6 +510,24 @@
       "releaseVersion": "V1.9.8",
       "fixCommit": "6e8575d",
       "summary": "debugPush.js就地升級為正式Windows PBS Production Ingress，重用既有canonical runLineBroadcast()/runSharedFeedPersist()（與輪詢路徑同一函式，0份重複業務邏輯）。CLEARED只ACK/log不進broadcast。Cloudflare自身PBS 30分鐘輪詢正式退休（PBS_30_MIN_POLLING_ENABLED=false，程式碼完整保留可rollback）。LINE Push Policy完全未變動。1424/1391/33基線，NEW FAILURES=0。"
+    },
+    {
+      "task": "AI_READY_PIPELINE_PREPARATION_V1_9_9_PHASE_2",
+      "status": "SEALED",
+      "sealedAt": "2026-08-28",
+      "releaseVersion": "V1.9.9",
+      "fixCommit": "0f9a080",
+      "phase1BackfillNote": "V1.9.9 Phase 1（fix commit 7acb82a，另一個 session 完成，本 Cloud Session 未參與）：Windows PBS Local Edge Filter 服務區收斂為新竹市／新竹縣（竹南/頭份/苗栗市及其他苗栗縣區域排除），純 pbs-relay/（Windows端）變更，未觸碰 src/ Cloudflare runtime。詳見 SYSTEM_STATE.json 頂層 V1.9.9_PHASE_1 欄位（該輪自建，本輪保留未動）與 07_KNOWN_ISSUES.md。",
+      "compressedSummary": "新模組 src/pbs/aiCandidate.js（純函式/零I/O）：從既有 normalizedEvent 建立最小 AI candidate 物件（source/eventId/lifecycle/road/direction/areaNm/comment/longitude/latitude/generatedAt+displayKM/eventType/sourceDetail/locationQuality，刻意不含notify/impact），與完全未修改的 runLineBroadcast() 並行、純觀察用。只保留 service area + 既有冪等兩個 gate；MAJOR_ACCIDENT_ONLY/V1.5 whitelist/location quality hard-reject 三者對candidate建構不套用，但這些函式本身未修改，對真實LINE決策仍完整生效直到Phase 3。安全狀態 PBS_AI_DECISION_MODE=PREPARED_NOT_ACTIVE。預留 computeAiDecisionCacheKeyHash({eventId,fingerprint})=SHA-256、AI_DECISION_CACHE_KV_PREFIX='debug:pbs-ai-decision-cache:v1'，本輪無任何KV讀寫。新增28項測試（pbsAiCandidate 13 + pbsDebugPush十五項清單）。1452/1419/33，NEW FAILURES=0。Production未嘗試（sandbox網路政策封鎖）。V1.9.9 Phase 3B已將這裡的cache key設計正式接上真實Workers AI呼叫。",
+      "notTouchedByThisRound": [
+        "真實LINE決策邏輯（runLineBroadcast/broadcastPolicy.js/broadcastRules.js/locationQuality.js 本身皆未修改一行）",
+        "Workers AI（未接入、未選model、未呼叫）",
+        "LINE policy擴大",
+        "CCTV/Shared Feed判斷邏輯",
+        "每小時重大事件提醒（僅Engineering Memory記錄設計方向，未實作）",
+        "Windows Secret/Task Scheduler"
+      ],
+      "readerNote": "This task is CLOSED — superseded by V1.9.9 Phase 3B. Do not re-open it."
     }
   ],
   "version": {
@@ -577,7 +542,7 @@
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
   "currentPhase": "{{CURRENT_PHASE}}",
-  "currentTask": "none（無進行中工作）。Latest completed task = WINDOWS_PBS_PRODUCTION_INGRESS_AND_POLLING_RETIREMENT_V1_9_8，status = SEALED。CURRENT_OFFICIAL_VERSION = V1.9.8。本輪：(1) src/pbs/debugPush.js 升級為正式 Windows PBS Production Ingress，重用既有canonical runLineBroadcast()/runSharedFeedPersist()；(2) Cloudflare自身PBS 30分鐘輪詢正式退休（pbsConfig.js#PBS_30_MIN_POLLING_ENABLED=false，程式碼完整保留可rollback）；(3) LINE/Shared Feed/CCTV整合透過重用canonical pipeline自動生效，0份重複業務邏輯；(4) LINE Push Policy（MAJOR_ACCIDENT_ONLY）完全未變動。下一件事若要開工：見07_KNOWN_ISSUES.md既有約33項過期斷言（與本輪無關），或等待新的正式施工令。",
+  "currentTask": "none（無進行中工作）。Latest completed task = WORKERS_AI_DRIVER_IMPACT_DECISION_INTEGRATION_V1_9_9_PHASE_3B，status = CODE_READY。CURRENT_OFFICIAL_VERSION = V1.9.9（同一版本線分階段施工，本輪未升版本號）。本輪：(1) 新增 src/pbs/aiConfig.js／aiDecisionCache.js／aiDecisionEngine.js／traffic/aiApprovedPbsBroadcast.js，固定 model @cf/zai-org/glm-4.7-flash，透過 env.AI.run(...) 判斷駕駛通行影響；(2) src/pbs/debugPush.js 新增與 legacy runLineBroadcast() 互斥的 AI 決策分支；(3) kill switch PBS_AI_DECISION_ENABLED 預設 false，正式環境 AI 決策仍關閉，Windows PBS 事件目前仍走 V1.9.8 legacy 路徑；(4) AI Binding Dashboard 建立/驗證是 GPT Work 工作範圍，本輪未嘗試。下一件事若要開工：等待 GPT Work 完成 AI Binding 並回報後，等待新的正式施工令才可開啟 Production AI 或開始 Phase 4；或見 07_KNOWN_ISSUES.md 既有約33項過期斷言（與本輪無關）。",
   "knownBlocker": "{{KNOWN_BLOCKER}}",
   "realWorldConfirmation": {
     "status": "{{REAL_WORLD_CONFIRMATION}}",
@@ -599,8 +564,11 @@
   "V1.9.9_PHASE_1": "WINDOWS_SERVICE_AREA_HSINCHU_ONLY",
   "LINE_POLICY": "UNCHANGED",
   "V1.9.9_PHASE_2": "AI_READY_PIPELINE_PREPARATION",
-  "AI_INTEGRATION": "NOT_STARTED",
-  "AI_MODEL": "NOT_SELECTED_IN_RUNTIME",
+  "AI_INTEGRATION": "CODE_READY",
+  "AI_MODEL": "@cf/zai-org/glm-4.7-flash",
   "LINE_AI_DECISION": "NOT_ACTIVE",
-  "PBS_AI_DECISION_MODE": "PREPARED_NOT_ACTIVE"
+  "PBS_AI_DECISION_MODE": "IMPLEMENTED_KILL_SWITCH_OFF",
+  "V1.9.9_PHASE_3B": "CODE_READY",
+  "AI_BINDING": "PENDING_BROWSER_SETUP",
+  "AI_DECISION": "DISABLED"
 }

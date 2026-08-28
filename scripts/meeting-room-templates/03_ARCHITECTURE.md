@@ -152,6 +152,63 @@ quality hard-reject 這三個既有函式**完全未修改**，對真實 LINE �
 ({eventId, fingerprint})`，重用 Windows 既有穩定 fingerprint。詳見
 `07_KNOWN_ISSUES.md` 的完整記錄。
 
+## V1.9.9 Phase 3B — Workers AI Driver Impact Decision Integration（本輪，2026-08-28）
+
+Phase 2 的 candidate／cache key 設計正式接上真實 Workers AI 呼叫，並新增一條
+與 legacy `runLineBroadcast()` **互斥**的分支：
+
+```
+（承接上方 Phase 2 圖：buildAiCandidate() 之後）
+candidate
+    ↓
+resolvePbsAiDecisionEnabled(env)（kill switch，預設 false）
+    ├─ false（正式環境目前狀態）→ 完全未修改的 legacy
+    │   runLineBroadcast() + runSharedFeedPersist()（V1.9.8 行為原封不動）
+    │
+    └─ true → runAiDecisionPath()：
+        computeAiDecisionCacheKeyHash({eventId, fingerprint})
+            ↓
+        readAiDecisionCache()（TRAFFIC_KV，48h TTL，獨立 prefix）
+            ├─ hit（AI_CACHE_HIT）→ 直接用快取 decision，0 次 AI 呼叫
+            └─ miss（AI_CACHE_MISS）
+                ↓
+                callWorkersAi()：env.AI.run('@cf/zai-org/glm-4.7-flash', ...)
+                    ├─ 失敗（429/5xx/network/binding missing）
+                    │   → AI_CALL_FAILED，0 LINE，絕不 fallback 回舊硬規則
+                    └─ 成功 → rawText
+                        ↓
+                    validateAiDecisionResponse()（純函式，嚴格 schema）
+                        ├─ 不合格 → AI_DECISION_INVALID，0 LINE，絕不快取
+                        └─ 合格 → persistAiDecisionCache() → decision
+            ↓
+        decision.notify
+            ├─ false（AI_NOTIFY_FALSE）→ 只記 audit trace，0 LINE/CCTV/Shared Feed
+            └─ true（AI_NOTIFY_TRUE）
+                ↓
+            runAiApprovedPbsBroadcast()（新 scoped 函式，traffic/
+                aiApprovedPbsBroadcast.js）——重用 subscriptions/notified/
+                incidentSuppression（事故限定）/messageFormat/CCTV（事故限定）/
+                pushMessage；只保留 broadcastHours 執行安全閘門；明確不呼叫
+                getBroadcastEligibility／getLinePushPolicyDecision／
+                resolveLocationQuality（AI verdict 是 Windows PBS 語意權威）
+                ↓
+            runSharedFeedPersist()（與 legacy 路徑相同的既有函式）
+```
+
+**互斥設計**：AI 開啟時，legacy `runLineBroadcast()` 整段跳過，兩條路徑對
+同一事件絕不同時執行——避免舊硬規則與 AI 同時核准同一事件造成 LINE 重複
+推播。Exact transport duplicate（既有 idempotency 命中）與 AI cache hit 皆是
+0 次 AI 呼叫。CLEARED 事件不進入這條分支（沿用既有 CLEARED 只 ACK/log 的
+行為，不呼叫 AI）。
+
+**Kill switch**：`src/pbs/aiConfig.js#resolvePbsAiDecisionEnabled(env)`，
+`PBS_AI_DECISION_ENABLED` 預設 `false`。`wrangler.jsonc` 新增
+`"ai":{"binding":"AI"}` 宣告，但該宣告本身不會啟用 AI 決策——真正的閘門是
+上面這個 code-level kill switch，等 GPT Work 完成 Dashboard 端 AI Binding
+建立/驗證後，才由另一個明確指令開啟。
+
+詳見 `07_KNOWN_ISSUES.md` 的完整記錄。
+
 ## PBS Windows Local Edge Debug Push Integration（V1.9.6/V1.9.7 建立的基礎，Windows 端不變）
 
 以下段落描述 Windows 本機那一半（服務區篩選／CLEARED 治理／持久冪等），**V1.9.8

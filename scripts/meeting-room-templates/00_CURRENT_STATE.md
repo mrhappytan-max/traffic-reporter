@@ -44,7 +44,24 @@
   `MAJOR_ACCIDENT_ONLY`／V1.5 type whitelist／location quality hard-reject（那些函式本身完全未修改，對真實 LINE 決策仍完整生效）。
 - candidate 純粹 log 觀察用，從未觸及 LINE／CCTV／Shared Feed，從未呼叫任何 AI 模型。
 - 新增 AI decision cache key 設計（`computeAiDecisionCacheKeyHash`，eventId+既有穩定fingerprint）僅schema/helper，本輪無任何KV讀寫。
-- 詳見 `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`。**下一個 Agent：不得自行開始 Phase 3；不得接 Workers AI；不得修改 Workers AI Dashboard；不得開始 V1.9.10。**
+- 詳見 `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`。
+
+## V1.9.9 Phase 3B 封版（2026-08-28）— Workers AI Driver Impact Decision Integration
+
+- `V1.9.9_PHASE_3B = CODE_READY`（實作＋測試完成，正式環境 AI 決策仍關閉）
+- `WORKERS_AI_MODEL = @cf/zai-org/glm-4.7-flash`（固定，透過 `env.AI.run(...)`，binding 名稱 `AI`）
+- `AI_BINDING = PENDING_GPT_WORK`（`wrangler.jsonc` 已宣告 `ai` binding，但 Dashboard 端建立/驗證是 GPT Work 的工作）
+- `AI_DECISION = DISABLED`（kill switch `PBS_AI_DECISION_ENABLED` 預設 `false`）
+- `LINE_AI_DECISION = NOT_ACTIVE`
+- 新模組：`src/pbs/aiConfig.js`（kill switch）、`src/pbs/aiDecisionCache.js`（48h TTL KV cache，重用 Phase 2 的 cache key 設計）、
+  `src/pbs/aiDecisionEngine.js`（固定 prompt／strict schema 驗證／`resolveAiDecision()` orchestrator）、
+  `src/traffic/aiApprovedPbsBroadcast.js`（scoped LINE 執行路徑，重用既有 subscriptions/notified/incidentSuppression/messageFormat/CCTV/pushMessage，
+  明確不呼叫 `getBroadcastEligibility`／`getLinePushPolicyDecision`／`resolveLocationQuality`）。
+- `src/pbs/debugPush.js`：AI 開啟時與 legacy `runLineBroadcast()` 路徑**互斥**（同一事件絕不同時執行兩者），避免雙重判官造成 LINE 重複推播。
+- AI 失敗（429/5xx/network/invalid response/binding missing）一律 0 LINE、trace 記錄，絕不 fallback 回舊硬規則。未加入 retry（無可重用 helper，且施工令要求第一版簡單）。
+- 新增 57 項測試（5 個新測試檔），全部第一次執行即 PASS；完整 regression 1509/1476/33，NEW FAILURES=0。
+- APP_VERSION 維持 `V1.9.9`（本輪不升版本號）。
+- 詳見 `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`。**下一個 Agent：不得自行開啟 Production AI；不得自行進 Cloudflare Dashboard；不得開始 Phase 4；不得升 V1.9.10。**
 
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
 

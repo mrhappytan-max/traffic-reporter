@@ -218,8 +218,44 @@ schema/helper，本輪無任何 KV 讀寫。
 變更前基線（1424/1391/33）失敗清單逐項相同，NEW FAILURES = 0。
 
 完整設計理由 → `07_KNOWN_ISSUES.md`／`03_ARCHITECTURE.md`；機器可讀狀態 →
-`SYSTEM_STATE.json` 的 `taskSeal`。**下一個 Agent：不得自行開始 Phase 3；不得
-接 Workers AI；不得修改 Workers AI Dashboard；不得開始 V1.9.10。**
+`SYSTEM_STATE.json` 的 `taskSeal`。（Phase 2 當時「不得自行開始 Phase 3」已由
+下方 Phase 3B 段落取代——見該段落結尾現行禁令。）
+
+## V1.9.9 Phase 3B — Workers AI Driver Impact Decision Integration（本輪，2026-08-28）
+
+Phase 2 預留的 AI candidate／cache key 設計正式接上真實 Workers AI 呼叫。固定
+model `@cf/zai-org/glm-4.7-flash`，透過 `env.AI.run(...)`（binding 名稱 `AI`，
+`wrangler.jsonc` 已新增 `"ai":{"binding":"AI"}`）。新模組：`src/pbs/aiConfig.js`
+（kill switch `PBS_AI_DECISION_ENABLED`，預設 `false`）、
+`src/pbs/aiDecisionCache.js`（重用 Phase 2 cache key 設計，48h TTL，fail-open
+KV 讀寫）、`src/pbs/aiDecisionEngine.js`（固定繁中 prompt，只判斷駕駛通行影響、
+不依事件類型名稱決定；`validateAiDecisionResponse()` 嚴格 schema 檢查，任何
+不合格輸出即 `AI_DECISION_INVALID`，絕不到達 LINE）、
+`src/traffic/aiApprovedPbsBroadcast.js`（`runAiApprovedPbsBroadcast()`，重用
+既有 subscriptions/notified/incidentSuppression/messageFormat/CCTV/
+pushMessage，明確不呼叫 `getBroadcastEligibility`／`getLinePushPolicyDecision`／
+`resolveLocationQuality`——這三個正是本輪要退休的內容判讀硬規則）。
+
+`src/pbs/debugPush.js` 的分支點：AI 開啟時與 legacy `runLineBroadcast()` 路徑
+**互斥**，同一事件絕不同時執行兩者，避免雙重判官造成 LINE 重複推播。Exact
+transport duplicate 與 AI cache hit 皆是 0 次 AI 呼叫。AI 失敗（429/5xx/
+network/invalid response/binding missing）一律 0 LINE、trace 記錄，絕不
+fallback 回舊硬規則；未加入 retry（無可重用 helper，且施工令要求第一版簡單）。
+CLEARED 事件不呼叫 AI、不產生相關 LINE 推播。
+
+新增 5 個測試檔共 57 項測試（`aiConfig`4／`aiDecisionCache`9／
+`aiDecisionEngine`18／`aiApprovedPbsBroadcast`9／`pbsAiDecisionScenarios`17，
+含施工令 A-P 十六個 mocked-AI-adapter 情境），全部第一次執行即 PASS。完整
+迴歸 1509/1476/33，NEW FAILURES=0。APP_VERSION 維持 `V1.9.9`（本輪不升版本
+號）。
+
+**現狀旗標**：`V1.9.9_PHASE_3B = CODE_READY`、
+`AI_BINDING = PENDING_GPT_WORK`、`AI_DECISION = DISABLED`、
+`LINE_AI_DECISION = NOT_ACTIVE`。Production AI Binding 建立/驗證是 GPT Work
+的工作範圍，本輪未嘗試開啟 Cloudflare Dashboard、未驗證 Neurons Dashboard。
+完整設計理由 → `07_KNOWN_ISSUES.md`／`03_ARCHITECTURE.md`；機器可讀狀態 →
+`SYSTEM_STATE.json` 的 `taskSeal`。**下一個 Agent：不得自行開啟 Production
+AI；不得自行進 Cloudflare Dashboard；不得開始 Phase 4；不得升 V1.9.10。**
 
 ## PBS Windows Local Edge Debug Push Integration（V1.9.6＋V1.9.7，2026-08-28，歷史記錄——已由上方 V1.9.8／V1.9.9 取代為 Production 主線）
 

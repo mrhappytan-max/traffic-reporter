@@ -10,19 +10,19 @@
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
 | Current Version | V1.9.9（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | 179c94272e8f59c6dd1072a385240c0b10c2d70b |
+| Source main HEAD | 18fe0f8c9297ad30c457505673c3091b74bfd910 |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty (13 changed source file(s)) |
-| Production | DEPLOYED（Phase 1由另一session實際部署驗證；本輪Phase 2為repo-side準備工作，依施工令指示Dashboard驗證由GPT Work接手，本Session未嘗試連線） |
-| Production Verification | NOT_OBSERVED（本輪）— sandbox egress封鎖Production網域與Cloudflare Dashboard；施工令本身指示本輪不需要Dashboard驗證 |
-| Current Phase | V1.9.9 PHASE 2 SEALED — AI-ready Business Pipeline Simplification |
-| Current Task | none（無進行中工作）。Latest completed = AI_READY_PIPELINE_PREPARATION_V1_9_9_PHASE_2, status=SEALED. CURRENT_OFFICIAL_VERSION=V1.9.9. |
+| Source working tree | dirty (7 changed source file(s)) |
+| Production | DEPLOYED |
+| Production Verification | V1.9.9 Phase 3B code-ready, AI decision disabled by kill switch; NOT_OBSERVED for Production AI activation (GPT Work's responsibility per this round's order) |
+| Current Phase | V1.9.9 Phase 3B CODE_READY — Workers AI Driver Impact Decision Integration 已實作並通過測試，正式環境 AI 決策仍關閉（kill switch 預設 false），等待 GPT Work 完成 AI Binding Dashboard 設定 |
+| Current Task | none（無進行中工作）。Latest completed task = WORKERS_AI_DRIVER_IMPACT_DECISION_INTEGRATION_V1_9_9_PHASE_3B，status = CODE_READY。詳見 SYSTEM_STATE.json 的 taskSeal 與 07_KNOWN_ISSUES.md。 |
 | Latest Completed Version | V1.9.9 |
-| Known Blocker | none |
-| Real-world Confirmation | N/A — 本輪為確定性測試驅動的repo-side準備工作，未等待/未人工製造真實PBS事件 |
+| Known Blocker | 無 repo-side blocker。AI_BINDING = PENDING_BROWSER_SETUP（Cloudflare Dashboard 端由 GPT Work 負責建立/驗證，非本專案程式碼缺陷） |
+| Real-world Confirmation | NOT_OBSERVED — AI decision path never activated in Production this round (kill switch off by design) |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | STOP；等待新的正式施工令。不得自行開始 Phase 3。不得接 Workers AI。不得修改 Workers AI Dashboard。不得開始 V1.9.10。 |
-| Export Generated At | 2026-08-28T05:48:24.439Z |
+| Next Action | 等待 GPT Work 完成 AI Binding 建立與驗證並回報；等待新的正式施工令才可開啟 Production AI 決策（PBS_AI_DECISION_ENABLED）或開始 Phase 4 |
+| Export Generated At | 2026-08-28T06:42:51.156Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## V1.9.9 Phase 1 封版（2026-08-28，另一個 session 完成，本 Cloud Session 未參與，port 進本模板僅為維持 template↔engineering-memory 一致）
@@ -44,7 +44,24 @@
   `MAJOR_ACCIDENT_ONLY`／V1.5 type whitelist／location quality hard-reject（那些函式本身完全未修改，對真實 LINE 決策仍完整生效）。
 - candidate 純粹 log 觀察用，從未觸及 LINE／CCTV／Shared Feed，從未呼叫任何 AI 模型。
 - 新增 AI decision cache key 設計（`computeAiDecisionCacheKeyHash`，eventId+既有穩定fingerprint）僅schema/helper，本輪無任何KV讀寫。
-- 詳見 `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`。**下一個 Agent：不得自行開始 Phase 3；不得接 Workers AI；不得修改 Workers AI Dashboard；不得開始 V1.9.10。**
+- 詳見 `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`。
+
+## V1.9.9 Phase 3B 封版（2026-08-28）— Workers AI Driver Impact Decision Integration
+
+- `V1.9.9_PHASE_3B = CODE_READY`（實作＋測試完成，正式環境 AI 決策仍關閉）
+- `WORKERS_AI_MODEL = @cf/zai-org/glm-4.7-flash`（固定，透過 `env.AI.run(...)`，binding 名稱 `AI`）
+- `AI_BINDING = PENDING_GPT_WORK`（`wrangler.jsonc` 已宣告 `ai` binding，但 Dashboard 端建立/驗證是 GPT Work 的工作）
+- `AI_DECISION = DISABLED`（kill switch `PBS_AI_DECISION_ENABLED` 預設 `false`）
+- `LINE_AI_DECISION = NOT_ACTIVE`
+- 新模組：`src/pbs/aiConfig.js`（kill switch）、`src/pbs/aiDecisionCache.js`（48h TTL KV cache，重用 Phase 2 的 cache key 設計）、
+  `src/pbs/aiDecisionEngine.js`（固定 prompt／strict schema 驗證／`resolveAiDecision()` orchestrator）、
+  `src/traffic/aiApprovedPbsBroadcast.js`（scoped LINE 執行路徑，重用既有 subscriptions/notified/incidentSuppression/messageFormat/CCTV/pushMessage，
+  明確不呼叫 `getBroadcastEligibility`／`getLinePushPolicyDecision`／`resolveLocationQuality`）。
+- `src/pbs/debugPush.js`：AI 開啟時與 legacy `runLineBroadcast()` 路徑**互斥**（同一事件絕不同時執行兩者），避免雙重判官造成 LINE 重複推播。
+- AI 失敗（429/5xx/network/invalid response/binding missing）一律 0 LINE、trace 記錄，絕不 fallback 回舊硬規則。未加入 retry（無可重用 helper，且施工令要求第一版簡單）。
+- 新增 57 項測試（5 個新測試檔），全部第一次執行即 PASS；完整 regression 1509/1476/33，NEW FAILURES=0。
+- APP_VERSION 維持 `V1.9.9`（本輪不升版本號）。
+- 詳見 `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`。**下一個 Agent：不得自行開啟 Production AI；不得自行進 Cloudflare Dashboard；不得開始 Phase 4；不得升 V1.9.10。**
 
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
 
