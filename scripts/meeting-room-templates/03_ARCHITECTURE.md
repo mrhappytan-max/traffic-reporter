@@ -138,15 +138,44 @@ CLEARED；**單純從 feed 消失**（absence-only）→ 需要**連續兩輪成
 歸零。真人回報以真實案例（UID `11508260013-5`，國3 96.7K 寶山休息站）完成完整
 fixture regression 驗證。
 
+### Cloudflare 端持久冪等（V1.9.7，L1 記憶體 + L2 TRAFFIC_KV）
+
+V1.9.5 的冪等只有 per-isolate 記憶體 Map，isolate 回收／Worker 重啟／redeploy 都可能
+讓同一事件重新被 accept。V1.9.7（`src/pbs/debugPush.js`）新增持久 L2 層：
+
+```
+Windows Debug Push 抵達
+    ↓
+驗證 auth → 驗證 payload
+    ↓
+計算 stable idempotency key = SHA-256(source:eventId:lifecycle:fingerprint)
+    ↓
+L1 記憶體 Map 命中？
+    ── 是 → duplicate=true（memoryHit，不查 KV）
+    ── 否 ↓
+L2 TRAFFIC_KV get（debug:pbs-push-idempotency:v1:<hash>，獨立 debug-only 前綴）
+    ── 存在 → duplicate=true（persistentHit，不寫 KV）
+    ── 不存在 → KV put（48h TTL）→ accepted=true
+```
+
+L1 僅是快速路徑（同 isolate 內短時間重試可跳過 KV 讀取），**非唯一真相**——L1 miss
+一律再查 L2 才能決定是否 accept，故全新 isolate 的空 L1 仍能正確命中別的 isolate
+寫入的 L2 紀錄。`KV_ONLY_ATOMICITY = NOT_SUFFICIENT`（KV 無 compare-and-swap，理論
+極窄 race window仍存在），`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY = PARTIAL`（關閉了
+主要風險，非 atomic exactly-once 保證——見 `07_KNOWN_ISSUES.md` 的完整分析，含為何
+不引入 Durable Object）。KV outage 時 fail OPEN（事件仍 accepted）。duplicate 永遠
+0 次額外 KV 寫入；僅真正首次的 idempotency key 花 1 次寫入，10/30/100 筆/日實測分別
++10/30/100 writes/day，`KV_WRITE_PRESSURE = LOW`。
+
 ### 已知限制、路線圖、Secret 治理教訓、Emergency kill switch
 
 完整記錄於 `07_KNOWN_ISSUES.md`（機器可讀欄位 → `SYSTEM_STATE.json` 的
 `pbsLocalEdgeFilterPrototype`）：Windows 常駐模式（Task Scheduler／watchdog／log
-retention）、Cloudflare Secret binding 曾經歷的一次真實 503 事故與根因、
-per-isolate 冪等限制（`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY = PENDING_BEFORE_
-PRODUCTION`）、六階段路線圖（Phase 1 現行觀察 → … → Phase 6 才評估 Cloudflare PBS
-輪詢退休，不得提前）、緊急停用方法（Windows 端環境變數 `PBS_DEBUG_PUSH_ENABLED=false`
-+ 重啟本機排程即可，不需動 Cloudflare／不需動既有 PBS 輪詢）。
+retention）、Cloudflare Secret binding 曾經歷的一次真實 503 事故與根因、六階段
+路線圖（Phase 1 現行觀察 → Phase 2 持久冪等設計【V1.9.7 已完成】→ … → Phase 6 才
+評估 Cloudflare PBS 輪詢退休，不得提前）、緊急停用方法（Windows 端環境變數
+`PBS_DEBUG_PUSH_ENABLED=false` + 重啟本機排程即可，不需動 Cloudflare／不需動既有
+PBS 輪詢）。
 
 ## 模組清單（自動掃描）
 

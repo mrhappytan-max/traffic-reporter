@@ -54,37 +54,40 @@ bump 到 `V1.9.0`，同一個 commit 內完成。
 - 大型不相容版本 → major：`→ V2.0.0`
 - 純文件／治理／Engineering Memory／測試整理 → 不升 Product Version
 
-## PBS Windows Local Edge Debug Push Integration（V1.9.6，2026-08-27，ACTIVE／Debug-only）
+## PBS Windows Local Edge Debug Push Integration（V1.9.6 治理封版＋V1.9.7 持久冪等，2026-08-28，ACTIVE／Debug-only）
 
-真人的 Windows 機器（`C:\Users\mrhap\traffic-reporter\pbs-relay`）現在**真的在跑**一個
+真人的 Windows 機器（`C:\Users\mrhap\traffic-reporter\pbs-relay`）**真的在跑**一個
 常駐的 PBS 本機邊緣篩選＋Debug Push 整合：`localMonitor.js` 每 3 分鐘抓一次官方 PBS
-feed，經本機服務區篩選（**現已改為直接 import 並重用 Production 自己的
-`src/pbs/hsinchuFilter.js#isPbsEventHsinchuRelevant` 與 `src/pbs/roadName.js#normalizePbsRoad`**，
-不再是舊版那個會誤收鶯歌/楊梅的寬鬆矩形）與事件生命週期比較（NEW/UPDATED/CLEARED/
-UNCHANGED/MISSING_PENDING_CLEAR），只有 `SHOULD_PUSH=YES` 的事件才呼叫 V1.9.5 建立的
-Debug-only 接收端 `POST /internal/pbs-debug-push`。**程式碼已 push 進 GitHub feature
-branch**（`feature/pbs-local-edge-filter-prototype`，最新 commit
-`95ecdc4718f836ff36c974e829b549f262e6b936`，**尚未 merge 進 main**）——本 Cloud
-Session 已獨立唯讀驗證：`git fetch`＋`git merge-base --is-ancestor`（確認未合併）＋
-`git worktree` 乾淨簽出跑 `node --test`，**118 項全數通過，0 失敗**，與真人回報數字
-完全一致（先前輪次的 `cache.js` 缺口，此 commit 已補上）。
+feed，經本機服務區篩選（重用 Production 自己的
+`src/pbs/hsinchuFilter.js#isPbsEventHsinchuRelevant` 與 `src/pbs/roadName.js#normalizePbsRoad`）
+與事件生命週期比較（NEW/UPDATED/CLEARED/UNCHANGED/MISSING_PENDING_CLEAR），只有
+`SHOULD_PUSH=YES` 的事件才呼叫 Cloudflare Debug-only 接收端 `POST
+/internal/pbs-debug-push`。**程式碼已 push 進 GitHub feature branch**
+（`feature/pbs-local-edge-filter-prototype`，最新 commit
+`95ecdc4718f836ff36c974e829b549f262e6b936`，**尚未 merge 進 main**，本 Cloud Session
+已獨立驗證：118/118 測試通過，未合併 main）。**V1.9.6 首筆真實事件驗收成功**（台68
+西向5K：Windows早於 Cloudflare 既有 30 分鐘輪詢約 12.1 分鐘偵測到）。
 
-**現狀旗標**：`WINDOWS_LOCAL_EDGE_FILTER = ACTIVE`、`WINDOWS_REAL_DEBUG_PUSH = ACTIVE`
-（真人已設定 `PBS_DEBUG_PUSH_ENABLED=true`）、`CLOUDFLARE_DEBUG_RECEIVER = ACTIVE`
-（V1.9.5）、`WINDOWS_TO_CLOUDFLARE_DEBUG_CHANNEL = VERIFIED`、
+**V1.9.7（本輪，2026-08-28）**：關閉 V1.9.6 標記的持久冪等風險。
+`src/pbs/debugPush.js` 新增 TRAFFIC_KV 下獨立 debug-only 前綴
+（`debug:pbs-push-idempotency:v1:*`，48h TTL，key=SHA-256(source:eventId:lifecycle:
+fingerprint)）作為 L2 持久層，V1.9.5 既有記憶體 Map 保留為 L1 快取但非唯一真相。
+`KV_ONLY_ATOMICITY = NOT_SUFFICIENT`（KV 無 compare-and-swap），但此 endpoint 零
+business side effect，故不引入 Durable Object；`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY`
+誠實標記為 **`PARTIAL`**（關閉主要風險，非 atomic exactly-once）。**這次是真正的
+Cloudflare runtime 變更，`APP_VERSION` 因此 bump 到 `V1.9.7`**（V1.9.6 的 bump 才是
+純治理封版）。
+
+**現狀旗標**：`WINDOWS_LOCAL_EDGE_FILTER = ACTIVE`、`WINDOWS_REAL_DEBUG_PUSH = ACTIVE`、
+`CLOUDFLARE_DEBUG_RECEIVER = ACTIVE`、`WINDOWS_TO_CLOUDFLARE_DEBUG_CHANNEL = VERIFIED`、
 `WINDOWS_TO_PRODUCTION_BUSINESS_PIPELINE = NOT_STARTED`（不進 LINE／CCTV／Shared
-Feed／正式 KV）、`LINE_INTEGRATION = NOT_STARTED`、`PBS_30_MIN_POLLING = PRESERVED`
-（Cloudflare 既有 PBS 輪詢完全不受影響，仍是目前的正式路徑）、
-`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY = PENDING_BEFORE_PRODUCTION`（目前只有
-per-isolate 記憶體內判斷，**正式接上 LINE 前必須解決**）。**不影響本專案任何 Product
-Version 的 runtime 行為改變本身不是這個 Prototype 造成的**——`src/version.js` 這次的
-bump 是治理封版（把已完成的 Windows 端架構正式寫入 Engineering Memory），並非新的
-Cloudflare runtime 變更；Cloudflare Worker 端的實際程式碼仍是 V1.9.5 的
-`/internal/pbs-debug-push`。完整架構圖、服務區/CLEARED 治理修正、Secret 治理教訓、
-路線圖 → `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`；機器可讀狀態 →
-`SYSTEM_STATE.json` 的 `pbsLocalEdgeFilterPrototype`。**下一個 Agent：不要自行 merge
-這個 feature branch、不要自行開始 LINE/CCTV/Business KV 整合、不要修改 Windows
-Secret 或 Task Scheduler、不要碰本機 Prototype runtime、不要自行開始 V1.9.7。**
+Feed／正式 KV）、`LINE_INTEGRATION = NOT_STARTED`、`PBS_30_MIN_POLLING = PRESERVED`、
+`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY = PARTIAL`。完整架構圖、服務區/CLEARED 治理
+修正、Secret 治理教訓、KV 成本量化、race condition 分析、路線圖 →
+`03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`；機器可讀狀態 → `SYSTEM_STATE.json` 的
+`pbsLocalEdgeFilterPrototype`。**下一個 Agent：不要自行 merge 這個 feature branch、
+不要自行開始 LINE/CCTV/Business KV 整合、不要修改 Windows Secret 或 Task
+Scheduler、不要碰本機 Prototype runtime、不要自行開始 V1.9.8。**
 
 ## 我能改什麼／不能改什麼（一句話版）
 

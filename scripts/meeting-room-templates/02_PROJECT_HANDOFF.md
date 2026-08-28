@@ -139,7 +139,7 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 `GET /cctv/image/:id` 是另一個刻意公開的路由（LINE 伺服器要能抓圖），安全性靠 128-bit 不可猜 id + 程式強制的 15 分鐘到期檢查。
 
-## PBS Windows Local Edge Debug Push Integration（V1.9.6，2026-08-27，feature branch／未 merge，ACTIVE／Debug-only）
+## PBS Windows Local Edge Debug Push Integration（V1.9.6＋V1.9.7，2026-08-28，feature branch／未 merge，ACTIVE／Debug-only）
 
 真人在 Windows 本機（`C:\Users\mrhap\traffic-reporter\pbs-relay`）已把上一輪的邊緣篩選
 Prototype 接成一條**真的在跑、真的會呼叫 Cloudflare** 的 Debug-only 管線（與下面既有
@@ -168,9 +168,10 @@ Windows Debug Push Client（debugPushClient.js，5000ms timeout／最多2次嘗�
     ↓
 POST /internal/pbs-debug-push（Authorization header 帶 PBS_DEBUG_PUSH_SECRET）
     ↓
-Cloudflare V1.9.5 Debug-only Receiver（見 03_ARCHITECTURE.md／07_KNOWN_ISSUES.md）
+Cloudflare Debug-only Receiver（見 03_ARCHITECTURE.md／07_KNOWN_ISSUES.md）
     ↓
-驗證身份 → 驗證格式 → best-effort 冪等判斷 → Workers Logs → ACK
+驗證身份 → 驗證格式 → 冪等判斷（L1記憶體 + V1.9.7新增的L2 TRAFFIC_KV持久層，
+    見下方「V1.9.7」） → Workers Logs → ACK
 （明確不進：LINE／CCTV／R2／Shared Feed／正式 Business KV／正式 Broadcast Pipeline）
 ```
 
@@ -183,25 +184,36 @@ Cloudflare V1.9.5 Debug-only Receiver（見 03_ARCHITECTURE.md／07_KNOWN_ISSUES
 完全一致（前一輪回報的 `cache.js` 缺口，這個 commit 已經補上，`pbsHandler.test.js`／
 `server.test.js` 不再因此整檔失敗）。
 
-**現狀旗標**：`WINDOWS_LOCAL_EDGE_FILTER = ACTIVE`、`WINDOWS_REAL_DEBUG_PUSH = ACTIVE`
-（`PBS_DEBUG_PUSH_ENABLED=true`，真人已啟用）、`CLOUDFLARE_DEBUG_RECEIVER = ACTIVE`、
-`WINDOWS_TO_CLOUDFLARE_DEBUG_CHANNEL = VERIFIED`、
+**V1.9.6 首筆真實事件驗收成功**：台68西向5K，Windows Debug Push 08:48:30，Cloudflare
+既有30分鐘輪詢09:00:39才自己看到——Windows早發現約12.1分鐘，證明整條channel運作正常。
+
+**V1.9.7（本輪，2026-08-28）— 關閉持久冪等風險**：V1.9.6封版時標記的
+`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY = PENDING_BEFORE_PRODUCTION`（僅per-isolate
+記憶體冪等）本輪正式解決。`src/pbs/debugPush.js` 新增 TRAFFIC_KV 下獨立 debug-only
+前綴（`debug:pbs-push-idempotency:v1:*`，48h TTL）作為持久L2層，key由
+`source:eventId:lifecycle:fingerprint` 的SHA-256雜湊決定性產生（不用requestId）；
+既有記憶體Map保留為L1快取但非唯一真相，L1 miss一律再查L2才能accept。**這是真正的
+Cloudflare runtime變更**（V1.9.6只是治理封版，未動Cloudflare程式碼）。
+`KV_ONLY_ATOMICITY = NOT_SUFFICIENT`（KV無compare-and-swap），但此endpoint零
+business side effect，依施工令「不要過度設計」指示不引入Durable Object；
+`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY` 因此誠實標記為 **`PARTIAL`**。KV成本實測
+（`test/pbsDebugPush.test.js`）：10/30/100筆相異事件/日各花10/30/100次KV
+get+put，duplicate零額外寫入，加上既有基線約128/148/218 writes/day，遠低於1,000
+上限。
+
+**現狀旗標**：`WINDOWS_LOCAL_EDGE_FILTER = ACTIVE`、`WINDOWS_REAL_DEBUG_PUSH = ACTIVE`、
+`CLOUDFLARE_DEBUG_RECEIVER = ACTIVE`、`WINDOWS_TO_CLOUDFLARE_DEBUG_CHANNEL = VERIFIED`、
 `WINDOWS_TO_PRODUCTION_BUSINESS_PIPELINE = NOT_STARTED`、`LINE_INTEGRATION =
 NOT_STARTED`、`CCTV_INTEGRATION = NOT_STARTED`、`PBS_CLOUDFLARE_POLLING_RETIREMENT =
-NOT_STARTED`（Cloudflare 既有 30 分鐘 PBS 輪詢完全保留，仍是目前正式路徑）、
-`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY = PENDING_BEFORE_PRODUCTION`。
-`PRODUCT_VERSION_BUMP = YES`（這是這一輪 V1.9.5→V1.9.6 升版的理由——不是純文件，
-是把已完成的 Windows 端架構正式併入 Product 版本線；Cloudflare Worker 端的實際
-runtime 程式碼仍是 V1.9.5 的 `/internal/pbs-debug-push`，這次沒有新增 Cloudflare 端
-程式變更）。
+NOT_STARTED`、`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY = PARTIAL`。
 
 服務區誤收修正、CLEARED 二輪確認治理、Windows 常駐/Secret 治理教訓（含一次真實
-503 事故與根因）、冪等限制、Emergency kill switch、六階段路線圖 → 完整記錄於
-`07_KNOWN_ISSUES.md`；機器可讀欄位於 `SYSTEM_STATE.json` 的
+503 事故與根因）、race condition 分析、KV 成本量化、Emergency kill switch、六階段
+路線圖 → 完整記錄於 `07_KNOWN_ISSUES.md`；機器可讀欄位於 `SYSTEM_STATE.json` 的
 `pbsLocalEdgeFilterPrototype`。**下一個 Agent／新工程師讀到這裡：這個 feature
 branch 已在 GitHub 但尚未 merge 進 main，不要自行 merge；不要開始 LINE／CCTV／
 Business KV 整合；不要退休 Cloudflare 既有 PBS 輪詢；不要修改 Windows Secret 或
-Task Scheduler；不要碰本機 Prototype runtime；不要自行開始 V1.9.7。**
+Task Scheduler；不要碰本機 Prototype runtime；不要自行開始 V1.9.8。**
 
 ## Next action
 

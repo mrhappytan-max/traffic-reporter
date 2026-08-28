@@ -9,20 +9,20 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V1.9.6（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | d07ba0e666230a4c1c38af562920f44c8f07352c |
+| Current Version | V1.9.7（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | 8634269722510267cd316924d3f204356a4b7043 |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty (13 changed source file(s)) |
+| Source working tree | dirty (6 changed source file(s)) |
 | Production | DEPLOYED |
-| Production Verification | V1.9.6 is a governance/documentation seal — no new Cloudflare runtime code this round (Debug Receiver remains V1.9.5 code, already verified in that round). Windows-side runtime facts (Task Scheduler, real Secret promotion, Claude Browser mock verification) are human-reported and explicitly marked as such, not independently verified by this sandbox (no network access to the Windows machine or Cloudflare Dashboard). |
-| Current Phase | Production maintenance — V1.9.6 SEALED（治理封版，無施工中項目） |
-| Current Task | none（無進行中工作）。Latest completed task = PBS_WINDOWS_LOCAL_EDGE_DEBUG_PUSH_INTEGRATION_V1_9_6，status = SEALED（前序 WINDOWS_CLOUDFLARE_DEBUG_PUSH_ENDPOINT_V1_9_5、PIPELINE_TRACE_READ_OPTIMIZATION_V1_9_4 亦為 SEALED）。CURRENT_OFFICIAL_VERSION = V1.9.6。本輪為治理封版令：把 2026-08-26～27 完成的 Windows 本機邊緣篩選＋Cloudflare Debug Push 架構正式寫入 Engineering Memory，本輪未 merge feature branch、未新增 Cloudflare runtime 變更、未整合 LINE/CCTV/Business KV、未退休既有 PBS 輪詢。WINDOWS_REAL_DEBUG_PUSH=ACTIVE（真人已啟用），WINDOWS_TO_CLOUDFLARE_DEBUG_CHANNEL=VERIFIED，PBS_30_MIN_POLLING=PRESERVED，PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY=PENDING_BEFORE_PRODUCTION。詳見 SYSTEM_STATE.json 的 taskSeal 與 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md／03_ARCHITECTURE.md 的 V1.9.6 條目。 |
-| Latest Completed Version | V1.9.6 |
-| Known Blocker | 無程式碼層級 blocker。本輪為治理封版，Windows 端執行期狀態（Task Scheduler 常駐、真實 Secret 生效、Claude Browser mock 驗證）本 sandbox 無法連線 Windows 機器或 Cloudflare Dashboard 獨立驗證，相關欄位已誠實標示為人類回報，未假冒本 Session 證實。 |
+| Production Verification | V1.9.7 persistent idempotency logic verified via 52 deterministic unit/fixture tests (test/pbsDebugPush.test.js) with real counting-mock KV measurements — real Production cross-isolate verification NOT yet attempted this round (see taskSeal.productionVerification); sandbox has no network access to verify directly. |
+| Current Phase | Production maintenance — V1.9.7 SEALED（無施工中項目） |
+| Current Task | none（無進行中工作）。Latest completed task = PERSISTENT_PBS_DEBUG_PUSH_IDEMPOTENCY_V1_9_7，status = SEALED（前序 PBS_WINDOWS_LOCAL_EDGE_DEBUG_PUSH_INTEGRATION_V1_9_6、WINDOWS_CLOUDFLARE_DEBUG_PUSH_ENDPOINT_V1_9_5 亦為 SEALED）。CURRENT_OFFICIAL_VERSION = V1.9.7。本輪為V1.9.6標記風險的正式修復：新增TRAFFIC_KV下獨立debug-only前綴的持久冪等L2層，關閉isolate回收/重啟/redeploy造成的事後重複accept；KV_ONLY_ATOMICITY=NOT_SUFFICIENT但依施工令指示不引入Durable Object，PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY誠實標記PARTIAL。KV成本實測10/30/100 events/day分別+10/30/100 writes/day，遠低於1000上限。詳見SYSTEM_STATE.json的taskSeal與06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V1.9.7條目。 |
+| Latest Completed Version | V1.9.7 |
+| Known Blocker | 無程式碼層級blocker。本輪程式碼變更尚未在真實Production環境由Claude Browser驗證跨isolate行為（本sandbox持續受egress封鎖限制，見歷輪查修令）——部署後應補測A/B/C三步驟，若無法真正證明跨isolate應標記CROSS_ISOLATE_VERIFICATION=INCONCLUSIVE。 |
 | Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 無待辦，需真人另行授權才能繼續。Phase 1（目前）：Real Debug Observation，至少觀察2-4小時或至少1筆真實NEW/UPDATED/CLEARED，驗證Windows detection/Cloudflare ACK/duplicate/failure rate/false positive/false clear。不自行開始 Phase 2 以後工作（Persistent Idempotency Design／Production Business Pipeline／LINE activation／PBS輪詢退休），也不自行開始 V1.9.7。 |
-| Export Generated At | 2026-08-27T09:58:55.323Z |
+| Next Action | 無待辦，需真人另行授權才能繼續。建議：部署後由Claude Browser或真人驗證跨isolate冪等行為（mock一次accepted、同payload duplicate、不同isolate情境仍duplicate）。不自行開始正式Business Pipeline/LINE integration/V1.9.8。 |
+| Export Generated At | 2026-08-28T01:56:14.837Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
@@ -54,37 +54,40 @@ bump 到 `V1.9.0`，同一個 commit 內完成。
 - 大型不相容版本 → major：`→ V2.0.0`
 - 純文件／治理／Engineering Memory／測試整理 → 不升 Product Version
 
-## PBS Windows Local Edge Debug Push Integration（V1.9.6，2026-08-27，ACTIVE／Debug-only）
+## PBS Windows Local Edge Debug Push Integration（V1.9.6 治理封版＋V1.9.7 持久冪等，2026-08-28，ACTIVE／Debug-only）
 
-真人的 Windows 機器（`C:\Users\mrhap\traffic-reporter\pbs-relay`）現在**真的在跑**一個
+真人的 Windows 機器（`C:\Users\mrhap\traffic-reporter\pbs-relay`）**真的在跑**一個
 常駐的 PBS 本機邊緣篩選＋Debug Push 整合：`localMonitor.js` 每 3 分鐘抓一次官方 PBS
-feed，經本機服務區篩選（**現已改為直接 import 並重用 Production 自己的
-`src/pbs/hsinchuFilter.js#isPbsEventHsinchuRelevant` 與 `src/pbs/roadName.js#normalizePbsRoad`**，
-不再是舊版那個會誤收鶯歌/楊梅的寬鬆矩形）與事件生命週期比較（NEW/UPDATED/CLEARED/
-UNCHANGED/MISSING_PENDING_CLEAR），只有 `SHOULD_PUSH=YES` 的事件才呼叫 V1.9.5 建立的
-Debug-only 接收端 `POST /internal/pbs-debug-push`。**程式碼已 push 進 GitHub feature
-branch**（`feature/pbs-local-edge-filter-prototype`，最新 commit
-`95ecdc4718f836ff36c974e829b549f262e6b936`，**尚未 merge 進 main**）——本 Cloud
-Session 已獨立唯讀驗證：`git fetch`＋`git merge-base --is-ancestor`（確認未合併）＋
-`git worktree` 乾淨簽出跑 `node --test`，**118 項全數通過，0 失敗**，與真人回報數字
-完全一致（先前輪次的 `cache.js` 缺口，此 commit 已補上）。
+feed，經本機服務區篩選（重用 Production 自己的
+`src/pbs/hsinchuFilter.js#isPbsEventHsinchuRelevant` 與 `src/pbs/roadName.js#normalizePbsRoad`）
+與事件生命週期比較（NEW/UPDATED/CLEARED/UNCHANGED/MISSING_PENDING_CLEAR），只有
+`SHOULD_PUSH=YES` 的事件才呼叫 Cloudflare Debug-only 接收端 `POST
+/internal/pbs-debug-push`。**程式碼已 push 進 GitHub feature branch**
+（`feature/pbs-local-edge-filter-prototype`，最新 commit
+`95ecdc4718f836ff36c974e829b549f262e6b936`，**尚未 merge 進 main**，本 Cloud Session
+已獨立驗證：118/118 測試通過，未合併 main）。**V1.9.6 首筆真實事件驗收成功**（台68
+西向5K：Windows早於 Cloudflare 既有 30 分鐘輪詢約 12.1 分鐘偵測到）。
 
-**現狀旗標**：`WINDOWS_LOCAL_EDGE_FILTER = ACTIVE`、`WINDOWS_REAL_DEBUG_PUSH = ACTIVE`
-（真人已設定 `PBS_DEBUG_PUSH_ENABLED=true`）、`CLOUDFLARE_DEBUG_RECEIVER = ACTIVE`
-（V1.9.5）、`WINDOWS_TO_CLOUDFLARE_DEBUG_CHANNEL = VERIFIED`、
+**V1.9.7（本輪，2026-08-28）**：關閉 V1.9.6 標記的持久冪等風險。
+`src/pbs/debugPush.js` 新增 TRAFFIC_KV 下獨立 debug-only 前綴
+（`debug:pbs-push-idempotency:v1:*`，48h TTL，key=SHA-256(source:eventId:lifecycle:
+fingerprint)）作為 L2 持久層，V1.9.5 既有記憶體 Map 保留為 L1 快取但非唯一真相。
+`KV_ONLY_ATOMICITY = NOT_SUFFICIENT`（KV 無 compare-and-swap），但此 endpoint 零
+business side effect，故不引入 Durable Object；`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY`
+誠實標記為 **`PARTIAL`**（關閉主要風險，非 atomic exactly-once）。**這次是真正的
+Cloudflare runtime 變更，`APP_VERSION` 因此 bump 到 `V1.9.7`**（V1.9.6 的 bump 才是
+純治理封版）。
+
+**現狀旗標**：`WINDOWS_LOCAL_EDGE_FILTER = ACTIVE`、`WINDOWS_REAL_DEBUG_PUSH = ACTIVE`、
+`CLOUDFLARE_DEBUG_RECEIVER = ACTIVE`、`WINDOWS_TO_CLOUDFLARE_DEBUG_CHANNEL = VERIFIED`、
 `WINDOWS_TO_PRODUCTION_BUSINESS_PIPELINE = NOT_STARTED`（不進 LINE／CCTV／Shared
-Feed／正式 KV）、`LINE_INTEGRATION = NOT_STARTED`、`PBS_30_MIN_POLLING = PRESERVED`
-（Cloudflare 既有 PBS 輪詢完全不受影響，仍是目前的正式路徑）、
-`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY = PENDING_BEFORE_PRODUCTION`（目前只有
-per-isolate 記憶體內判斷，**正式接上 LINE 前必須解決**）。**不影響本專案任何 Product
-Version 的 runtime 行為改變本身不是這個 Prototype 造成的**——`src/version.js` 這次的
-bump 是治理封版（把已完成的 Windows 端架構正式寫入 Engineering Memory），並非新的
-Cloudflare runtime 變更；Cloudflare Worker 端的實際程式碼仍是 V1.9.5 的
-`/internal/pbs-debug-push`。完整架構圖、服務區/CLEARED 治理修正、Secret 治理教訓、
-路線圖 → `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`；機器可讀狀態 →
-`SYSTEM_STATE.json` 的 `pbsLocalEdgeFilterPrototype`。**下一個 Agent：不要自行 merge
-這個 feature branch、不要自行開始 LINE/CCTV/Business KV 整合、不要修改 Windows
-Secret 或 Task Scheduler、不要碰本機 Prototype runtime、不要自行開始 V1.9.7。**
+Feed／正式 KV）、`LINE_INTEGRATION = NOT_STARTED`、`PBS_30_MIN_POLLING = PRESERVED`、
+`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY = PARTIAL`。完整架構圖、服務區/CLEARED 治理
+修正、Secret 治理教訓、KV 成本量化、race condition 分析、路線圖 →
+`03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`；機器可讀狀態 → `SYSTEM_STATE.json` 的
+`pbsLocalEdgeFilterPrototype`。**下一個 Agent：不要自行 merge 這個 feature branch、
+不要自行開始 LINE/CCTV/Business KV 整合、不要修改 Windows Secret 或 Task
+Scheduler、不要碰本機 Prototype runtime、不要自行開始 V1.9.8。**
 
 ## 我能改什麼／不能改什麼（一句話版）
 
