@@ -31,8 +31,11 @@ test('1. the canonical version is a single well-formed value', () => {
   // bumped APP_VERSION, per this file's own standing rule (see test 6's
   // comment and src/version.js's own scheme-switch note). VERSION_PATTERN
   // itself already accepted both four-part and three-part shapes and
-  // needed no change.
-  assert.ok(APP_VERSION.startsWith('V1.9.'), 'the current official series is V1.9.x');
+  // needed no change. V2.0.0 (2026-08-28) is the Windows PBS + Workers AI
+  // architecture milestone (a "明顯新功能／架構階段" per 00_CURRENT_STATE.md's
+  // own version rules) — the prefix check below moved from 'V1.9.' to 'V2.'
+  // in the SAME commit that bumped APP_VERSION, same standing rule.
+  assert.ok(APP_VERSION.startsWith('V2.'), 'the current official series is V2.x');
   assert.equal(typeof SCHEMA_VERSION, 'number');
 });
 

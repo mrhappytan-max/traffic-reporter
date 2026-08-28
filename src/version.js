@@ -588,8 +588,51 @@
 // runAiApprovedPbsBroadcast/LINE policy/service area/lifecycle/
 // idempotency/CCTV/Shared Feed) was touched. AI_BINDING = ACTIVE
 // (GPT Work confirmed), AI_DECISION = DISABLED_PENDING_GPT_WORK_RETRY.
+//
+// ============================================================================
+// V2.0.0 MILESTONE (2026-08-28) — ARCHITECTURE GENERATION CHANGE, not a
+// feature round. Bumped major per this file's own rule above ("large
+// incompatible change -> major"): the Windows PBS + Cloudflare Workers AI
+// pipeline built across V1.9.5-V1.9.9 Phase 3D is a full replacement of
+// how this project decides what a taxi/for-hire driver gets notified
+// about for Windows-sourced PBS events — the OLD generation and the NEW
+// generation are not two versions of the same decision logic, they are
+// two different judges:
+//
+//   OLD (retired for the Windows PBS path, code preserved for rollback):
+//     Cloudflare 30-min PBS polling -> MAJOR_ACCIDENT_ONLY / V1.5 type
+//     whitelist / location-quality hard-reject -> LINE
+//
+//   NEW (the V2.0.0 canonical path):
+//     PBS official source -> Windows PBS Relay (Hsinchu-only local edge
+//     filter, lifecycle NEW/UPDATED/MISSING_PENDING_CLEAR/CLEARED) ->
+//     Cloudflare production ingress (POST /internal/pbs-debug-push) ->
+//     persistent transport idempotency (TRAFFIC_KV, 48h) -> AI candidate
+//     (pbs/aiCandidate.js) -> AI decision cache (48h) -> Cloudflare
+//     Workers AI (@cf/zai-org/glm-4.7-flash, driver-impact judgment, NOT
+//     event-type-based) -> validated notify:true only -> the EXISTING
+//     LINE execution infrastructure (subscriptions/notified-state/
+//     incident suppression/message formatting/CCTV/pushMessage, reused
+//     unchanged) -> LINE.
+//
+// See 03_ARCHITECTURE.md's own "V2.0.0 接手地圖" section for the full
+// 26-question onboarding map (where Windows runs, how auth works, where
+// duplicates are stopped, how to roll back, how to troubleshoot a missing
+// LINE push, etc.) and 02_PROJECT_HANDOFF.md for the Dashboard settings
+// manual and rollback runbook. This bump does not change any runtime
+// decision logic itself — it is a documentation/governance milestone
+// marking that this architecture generation is now the recorded canonical
+// state, on top of the already-shipped V1.9.5-V1.9.9 Phase 3D code.
+//
+// FIRST_REAL_AI_EVENT = WAITING — a real Production PBS event flowing all
+// the way through Workers AI to a LINE push has not yet been observed by
+// this session (sandbox network egress blocks the Production domain and
+// Cloudflare Dashboard). AI_BINDING/AI_DECISION/LINE_AI_DECISION = ACTIVE
+// per GPT Work's own report; this session has not independently verified
+// Production activation and does not claim to.
+// ============================================================================
 
-export const APP_VERSION = 'V1.9.9';
+export const APP_VERSION = 'V2.0.0';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,
