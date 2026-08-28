@@ -896,3 +896,221 @@ test('KV cost quantification: duplicates (including repeated retries) never add 
   assert.equal(kv.putCalls, putsAfterFirst, 'no number of retries for the same event may add ANY additional write — 0 second Business Pipeline pass');
   assert.equal(kv.getCalls, 5 + 5, '1 first-accept scan (idempotency get + 4 Business Pipeline reads) + 1 idempotency get per duplicate retry (a duplicate never re-reads business state)');
 });
+
+// ============================================================================
+// V1.9.9 Phase 2 — AI-ready Business Pipeline Simplification (order section
+// 十, the 15-item minimum targeted test list). Fixtures reuse the V1.9.8
+// section's own fullEventFields()/accidentComment()/OUT_OF_AREA_COORDS/
+// mockLinePushFetch()/ENROLLED_AT helpers above.
+// ============================================================================
+
+function constructionComment() {
+  return '國道一號北向94公里處進行道路工程施工'; // matches CONSTRUCTION_PATTERNS (道路工程/施工) — type:'construction'
+}
+
+function closureComment() {
+  return '國道一號北向94公里處全線封閉'; // matches CONTROL_PATTERNS (封閉) only — PBS classify.js has no distinct 'closure' type; this is PBS's own "road closure" shape, type:'control'
+}
+
+function congestionComment() {
+  return '國道一號北向94公里處車多壅塞'; // matches CONGESTION_PATTERNS — type:'congestion'
+}
+
+function otherComment() {
+  return '國道一號北向路況異常告警'; // matches no CLASSIFICATION_RULES pattern — falls to type:'other'
+}
+
+function aiCandidateLogLines(lines, eventId) {
+  return lines.filter((l) => l.includes('[pbs-debug-push][ai-candidate]') && l.includes(`eventId=${eventId}`));
+}
+
+test('V1.9.9 (1): a NEW non-accident-type event still becomes an AI candidate — not eliminated before the candidate is built', async () => {
+  const env = baseEnv();
+  await handlePbsDebugPush(
+    pushRequest({ body: validPayload({ eventId: 'PBS-V199-1', lifecycle: 'NEW', fingerprint: 'fp-v199-1', event: fullEventFields({ comment: otherComment() }) }) }),
+    env,
+    NOW
+  );
+  const lines = aiCandidateLogLines(logLines, 'PBS-V199-1');
+  assert.equal(lines.length, 1);
+  assert.ok(lines[0].includes('eventType=other'));
+  assert.ok(lines[0].includes(`mode=${'PREPARED_NOT_ACTIVE'}`));
+});
+
+test('V1.9.9 (2): a traffic control event becomes an AI candidate', async () => {
+  const env = baseEnv();
+  await handlePbsDebugPush(
+    pushRequest({ body: validPayload({ eventId: 'PBS-V199-2', lifecycle: 'NEW', fingerprint: 'fp-v199-2', event: fullEventFields({ comment: closureComment() }) }) }),
+    env,
+    NOW
+  );
+  const lines = aiCandidateLogLines(logLines, 'PBS-V199-2');
+  assert.equal(lines.length, 1);
+  assert.ok(lines[0].includes('eventType=control'));
+});
+
+test('V1.9.9 (3): a construction event becomes an AI candidate', async () => {
+  const env = baseEnv();
+  await handlePbsDebugPush(
+    pushRequest({ body: validPayload({ eventId: 'PBS-V199-3', lifecycle: 'NEW', fingerprint: 'fp-v199-3', event: fullEventFields({ comment: constructionComment() }) }) }),
+    env,
+    NOW
+  );
+  const lines = aiCandidateLogLines(logLines, 'PBS-V199-3');
+  assert.equal(lines.length, 1);
+  assert.ok(lines[0].includes('eventType=construction'));
+});
+
+test('V1.9.9 (4): an accident event becomes an AI candidate', async () => {
+  const env = baseEnv();
+  await handlePbsDebugPush(
+    pushRequest({ body: validPayload({ eventId: 'PBS-V199-4', lifecycle: 'NEW', fingerprint: 'fp-v199-4', event: fullEventFields({ comment: accidentComment() }) }) }),
+    env,
+    NOW
+  );
+  const lines = aiCandidateLogLines(logLines, 'PBS-V199-4');
+  assert.equal(lines.length, 1);
+  assert.ok(lines[0].includes('eventType=accident'));
+});
+
+test('V1.9.9 (5): a "road closure" style event (PBS classifies it as control — no distinct closure type exists) becomes an AI candidate, and a congestion event does too', async () => {
+  const env = baseEnv();
+  await handlePbsDebugPush(
+    pushRequest({ body: validPayload({ eventId: 'PBS-V199-5A', lifecycle: 'NEW', fingerprint: 'fp-v199-5a', event: fullEventFields({ comment: closureComment() }) }) }),
+    env,
+    NOW
+  );
+  await handlePbsDebugPush(
+    pushRequest({ body: validPayload({ eventId: 'PBS-V199-5B', lifecycle: 'NEW', fingerprint: 'fp-v199-5b', event: fullEventFields({ comment: congestionComment() }) }) }),
+    env,
+    NOW
+  );
+  assert.equal(aiCandidateLogLines(logLines, 'PBS-V199-5A').length, 1);
+  assert.equal(aiCandidateLogLines(logLines, 'PBS-V199-5B').length, 1);
+});
+
+test('V1.9.9 (6): an in-service-area event with imperfect location quality (no KM marker) is NOT hard-rejected before becoming a candidate', async () => {
+  const env = baseEnv();
+  await handlePbsDebugPush(
+    pushRequest({
+      body: validPayload({
+        eventId: 'PBS-V199-6',
+        lifecycle: 'NEW',
+        fingerprint: 'fp-v199-6',
+        event: fullEventFields({ comment: '國道一號北向發生追撞事故' }), // no KM marker in the comment
+      }),
+    }),
+    env,
+    NOW
+  );
+  const lines = aiCandidateLogLines(logLines, 'PBS-V199-6');
+  assert.equal(lines.length, 1, 'expected a candidate to be built regardless of location-quality precision');
+});
+
+test('V1.9.9 (7): out-of-service-area event still does not become a candidate', async () => {
+  const env = baseEnv();
+  await handlePbsDebugPush(
+    pushRequest({
+      body: validPayload({
+        eventId: 'PBS-V199-7',
+        lifecycle: 'NEW',
+        fingerprint: 'fp-v199-7',
+        event: fullEventFields({ comment: '國道一號北向發生追撞事故', ...OUT_OF_AREA_COORDS }), // no KM marker, so coordinates decide
+      }),
+    }),
+    env,
+    NOW
+  );
+  const lines = logLines.filter((l) => l.includes('[pbs-debug-push][ai-candidate]') && l.includes('eventId=PBS-V199-7'));
+  assert.equal(lines.length, 1);
+  assert.ok(lines[0].includes('candidate=false'));
+  assert.ok(lines[0].includes('reason=outside-service-area'));
+});
+
+test('V1.9.9 (8): invalid auth -> reject, 0 AI candidate log lines', async () => {
+  await handlePbsDebugPush(pushRequest({ token: null }), baseEnv(), NOW);
+  assert.equal(logLines.filter((l) => l.includes('[pbs-debug-push][ai-candidate]')).length, 0);
+});
+
+test('V1.9.9 (9): invalid payload -> reject, 0 AI candidate log lines', async () => {
+  await handlePbsDebugPush(pushRequest({ body: validPayload({ lifecycle: 'NOT_A_LIFECYCLE' }) }), baseEnv(), NOW);
+  assert.equal(logLines.filter((l) => l.includes('[pbs-debug-push][ai-candidate]')).length, 0);
+});
+
+test('V1.9.9 (10): a duplicate payload does not produce a second AI candidate', async () => {
+  const env = baseEnv();
+  const payload = validPayload({ eventId: 'PBS-V199-10', lifecycle: 'NEW', fingerprint: 'fp-v199-10', event: fullEventFields() });
+  await handlePbsDebugPush(pushRequest({ body: payload }), env, NOW);
+  assert.equal(aiCandidateLogLines(logLines, 'PBS-V199-10').length, 1);
+  logLines.length = 0;
+  await handlePbsDebugPush(pushRequest({ body: { ...payload, requestId: 'req-v199-10-dup' } }), env, new Date(NOW.getTime() + 1000));
+  assert.equal(aiCandidateLogLines(logLines, 'PBS-V199-10').length, 0, 'a duplicate must never produce a second AI candidate');
+});
+
+// (11) candidate schema correctness is covered exhaustively at the unit
+// level in test/pbsAiCandidate.test.js (buildAiCandidate's own tests) —
+// this integration test only confirms the real call site's log line
+// carries the expected observable fields.
+test('V1.9.9 (11): the real call site logs eventType and locationQualitySufficient for a built candidate', async () => {
+  const env = baseEnv();
+  await handlePbsDebugPush(
+    pushRequest({ body: validPayload({ eventId: 'PBS-V199-11', lifecycle: 'NEW', fingerprint: 'fp-v199-11', event: fullEventFields() }) }),
+    env,
+    NOW
+  );
+  const [line] = aiCandidateLogLines(logLines, 'PBS-V199-11');
+  assert.ok(line);
+  assert.match(line, /eventType=accident/);
+  assert.match(line, /locationQualitySufficient=(true|false)/);
+});
+
+test('V1.9.9 (12): Phase 2 AI-inactive — building a candidate causes ZERO additional LINE push (0 fetch calls for an otherwise-ineligible event)', async () => {
+  const kv = countingKV();
+  const env = baseEnv({ TRAFFIC_KV: kv });
+  // default beforeEach fetch mock throws if called at all
+  const res = await handlePbsDebugPush(
+    pushRequest({ body: validPayload({ eventId: 'PBS-V199-12', lifecycle: 'NEW', fingerprint: 'fp-v199-12', event: fullEventFields({ comment: otherComment() }) }) }),
+    env,
+    NOW
+  );
+  assert.equal(res.status, 200); // if the candidate build had triggered any fetch, the throwing mock would have failed this
+  assert.equal(aiCandidateLogLines(logLines, 'PBS-V199-12').length, 1, 'expected a candidate to still be built for observability');
+});
+
+test('V1.9.9 (13): existing LINE safety/dedupe is unbroken — a real eligible accident still pushes to LINE exactly once, unaffected by candidate building running alongside it', async () => {
+  const kv = countingKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  const env = baseEnv({ TRAFFIC_KV: kv });
+  const mockFetch = mockLinePushFetch();
+  globalThis.fetch = mockFetch;
+  await handlePbsDebugPush(
+    pushRequest({ body: validPayload({ eventId: 'PBS-V199-13', lifecycle: 'NEW', fingerprint: 'fp-v199-13', event: fullEventFields() }) }),
+    env,
+    NOW
+  );
+  assert.equal(mockFetch.calls.length, 1, 'expected exactly 1 real LINE push — the legacy Business Pipeline decision is completely unaffected by the new candidate-building code path');
+  assert.equal(aiCandidateLogLines(logLines, 'PBS-V199-13').length, 1, 'and the candidate preview is STILL built alongside it');
+});
+
+test('V1.9.9 (14): lifecycle unchanged — UPDATED still works exactly as V1.9.8, and also produces a candidate', async () => {
+  const env = baseEnv();
+  const res = await handlePbsDebugPush(
+    pushRequest({ body: validPayload({ eventId: 'PBS-V199-14', lifecycle: 'UPDATED', fingerprint: 'fp-v199-14', event: fullEventFields() }) }),
+    env,
+    NOW
+  );
+  assert.equal((await res.json()).lifecycle, 'UPDATED');
+  const lines = aiCandidateLogLines(logLines, 'PBS-V199-14');
+  assert.equal(lines.length, 1);
+  assert.ok(lines[0].includes('lifecycle=UPDATED'));
+});
+
+test('V1.9.9 (15): CLEARED never enters the AI candidate path', async () => {
+  const env = baseEnv();
+  await handlePbsDebugPush(
+    pushRequest({ body: validPayload({ eventId: 'PBS-V199-15', lifecycle: 'CLEARED', fingerprint: 'fp-v199-15', event: fullEventFields({ comment: '國道一號北向94公里處已排除' }) }) }),
+    env,
+    NOW
+  );
+  assert.equal(aiCandidateLogLines(logLines, 'PBS-V199-15').length, 0, 'CLEARED must never reach buildAiCandidate — same gate as the Business Pipeline itself');
+});

@@ -498,6 +498,38 @@
 // order section 十) and test/pbsPollingRetirementV198.test.js (retirement
 // items 14/15), and 07_KNOWN_ISSUES.md for the full record.
 
+// V1.9.9 Phase 1 (2026-08-28, fix commit 7acb82a) — restricted the Windows
+// PBS Local Edge Filter's service area to 新竹市／新竹縣 only (竹南/頭份/
+// 苗栗市 and the rest of Miaoli County are now excluded — the old broad
+// bounding box could no longer let a Miaoli event through on its own).
+// Entirely a pbs-relay/ (Windows-side) change, now committed to main rather
+// than an unmerged feature branch. See 07_KNOWN_ISSUES.md for the full
+// record.
+//
+// V1.9.9 Phase 2 (2026-08-28) — AI-ready Business Pipeline Simplification.
+// Preparation for a future Workers AI decision stage (Phase 3), NOT an
+// integration with one. New src/pbs/aiCandidate.js builds a minimal AI
+// candidate object for every genuinely accepted (non-duplicate) NEW/
+// UPDATED Windows-sourced event, applying ONLY the service-area gate
+// (reusing the canonical resolver runLineBroadcast itself uses) — NOT
+// today's content-judgment hard rules (MAJOR_ACCIDENT_ONLY, the V1.5
+// type/keyword whitelist, location-quality hard-reject). This candidate is
+// observability-only: PBS_AI_DECISION_MODE = 'PREPARED_NOT_ACTIVE' — it is
+// built and logged, but never used to decide anything, never reaches LINE/
+// CCTV/Shared Feed, and no AI model is ever called. The REAL LINE decision
+// (src/pbs/debugPush.js's existing call into traffic/broadcastPipeline.js's
+// runLineBroadcast) is completely unmodified — every existing hard rule
+// stays fully active as the "legacy policy" gatekeeper of every real LINE
+// push this round, exactly as before V1.9.9. Also adds a minimal, unused-
+// this-round AI-decision-cache key design (computeAiDecisionCacheKeyHash,
+// eventId+fingerprint — reusing Windows's own existing stable fingerprint,
+// deliberately not a new NLP/semantic one) for Phase 3 to adopt. No KV
+// read/write, no AI call, no LINE behavior change anywhere in this round.
+// AI_INTEGRATION = NOT_STARTED, LINE_AI_DECISION = NOT_ACTIVE. See
+// src/pbs/aiCandidate.js's own header comment, test/pbsAiCandidate.test.js,
+// and test/pbsDebugPush.test.js's V1.9.9 Phase 2 section (15-item targeted
+// list, order section 十) for the full design and proof.
+
 export const APP_VERSION = 'V1.9.9';
 
 // Bumped only when the SHAPE of a public/admin JSON response this

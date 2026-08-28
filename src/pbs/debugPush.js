@@ -1,8 +1,16 @@
-// V1.9.5/V1.9.7/V1.9.8 — POST /internal/pbs-debug-push
+// V1.9.5/V1.9.7/V1.9.8/V1.9.9 Phase 2 — POST /internal/pbs-debug-push
 //
 // Windows PBS Local Monitor → Cloudflare. V1.9.5 proved the channel itself
 // (auth, shape validation, a durable idempotency judgment, log, ACK).
 // V1.9.7 made that idempotency judgment durable across isolates/restarts.
+//
+// V1.9.9 Phase 2 — AI-ready pipeline preparation. Alongside the (unchanged)
+// legacy Business Pipeline call below, a genuinely accepted NEW/UPDATED
+// event now ALSO builds and logs an "AI candidate" preview via
+// pbs/aiCandidate.js — see that module's own header comment for the full
+// design. This is observability-only (PBS_AI_DECISION_MODE =
+// PREPARED_NOT_ACTIVE): it never gates, delays, or changes the real
+// runLineBroadcast call or its outcome.
 //
 // V1.9.8 (order section 三/四) — this is now the FORMAL Windows PBS
 // PRODUCTION INGRESS, upgraded in place rather than duplicated into a
@@ -108,6 +116,7 @@ import { normalizePbsEvent } from './normalize.js';
 import { runLineBroadcast } from '../traffic/broadcastPipeline.js';
 import { runSharedFeedPersist } from '../traffic/sharedFeed.js';
 import { toTaipeiParts } from '../traffic/broadcastHours.js';
+import { isWindowsPbsAiCandidateEligible, buildAiCandidate, PBS_AI_DECISION_MODE } from './aiCandidate.js';
 
 export const PBS_DEBUG_PUSH_PATH = '/internal/pbs-debug-push';
 
@@ -528,6 +537,36 @@ export async function handlePbsDebugPush(request, env, now = new Date()) {
     try {
       const rawRecord = buildRawPbsRecordFromPush({ eventId, generatedAt, event });
       const normalizedEvent = normalizePbsEvent(rawRecord);
+
+      // V1.9.9 Phase 2 (order section 一/二/三/四/六/七) — AI-ready pipeline
+      // preparation. Fully isolated from, and additional to, the legacy
+      // Business Pipeline call below: this NEVER gates, delays, or alters
+      // the real runLineBroadcast call or its outcome — it only builds and
+      // logs a preview of what a future AI candidate list would contain.
+      // PBS_AI_DECISION_MODE = PREPARED_NOT_ACTIVE: prepared (this runs and
+      // logs a real candidate), not active (the candidate is never used to
+      // decide anything, never reaches LINE/CCTV/Shared Feed, no AI model
+      // is ever called). See src/pbs/aiCandidate.js's own header comment
+      // for the full design and exactly which existing hard rules this
+      // deliberately does NOT apply (event-type whitelist, LINE policy,
+      // location-quality hard-reject) versus which it still respects
+      // (service area — reusing the SAME canonical resolver, never a
+      // second implementation).
+      try {
+        if (isWindowsPbsAiCandidateEligible(normalizedEvent)) {
+          const candidate = buildAiCandidate(normalizedEvent, { lifecycle, generatedAt });
+          console.log(
+            `[pbs-debug-push][ai-candidate] eventId=${eventId} lifecycle=${lifecycle} ` +
+              `mode=${PBS_AI_DECISION_MODE} eventType=${candidate.eventType} ` +
+              `locationQualitySufficient=${Boolean(candidate.locationQuality && candidate.locationQuality.sufficient)}`
+          );
+        } else {
+          console.log(`[pbs-debug-push][ai-candidate] eventId=${eventId} lifecycle=${lifecycle} mode=${PBS_AI_DECISION_MODE} candidate=false reason=outside-service-area`);
+        }
+      } catch (err) {
+        console.error(`[pbs-debug-push][ai-candidate] eventId=${eventId} lifecycle=${lifecycle} failed: ${err && err.message}`);
+      }
+
       // Reuses the EXACT SAME canonical Business Pipeline entry point
       // traffic/scheduled.js's Cron path calls for every polled TDX/PBS
       // event — see this module's own header comment. Every eligibility/
