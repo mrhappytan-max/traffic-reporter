@@ -117,6 +117,9 @@ import { runLineBroadcast } from '../traffic/broadcastPipeline.js';
 import { runSharedFeedPersist } from '../traffic/sharedFeed.js';
 import { toTaipeiParts } from '../traffic/broadcastHours.js';
 import { isWindowsPbsAiCandidateEligible, buildAiCandidate, PBS_AI_DECISION_MODE } from './aiCandidate.js';
+import { resolvePbsAiDecisionEnabled } from './aiConfig.js';
+import { resolveAiDecision, PBS_AI_MODEL_ID } from './aiDecisionEngine.js';
+import { runAiApprovedPbsBroadcast } from '../traffic/aiApprovedPbsBroadcast.js';
 
 export const PBS_DEBUG_PUSH_PATH = '/internal/pbs-debug-push';
 
@@ -381,6 +384,97 @@ function buildRawPbsRecordFromPush({ eventId, generatedAt, event }) {
 }
 
 /**
+ * V1.9.9 Phase 3B — the AI decision path, only ever invoked when
+ * resolvePbsAiDecisionEnabled(env) is true (see aiConfig.js). Fully
+ * isolated in its own try/catch by the caller — an exception anywhere in
+ * here can never crash the endpoint or the ACK back to Windows, same
+ * failure-isolation principle as the legacy Business Pipeline call (order
+ * section 九's own reasoning, extended to this path).
+ *
+ * Ordering matches the order's own section 八 exactly: candidate already
+ * built by the caller (steps 1-4: auth/validation/idempotency/candidate)
+ * -> here: (5) cache lookup -> (6) cache miss only calls Workers AI ->
+ * (7) validate -> (8) persist (inside resolveAiDecision) -> (9) execute
+ * notify/no-notify.
+ */
+async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lifecycle, fingerprint, now }) {
+  if (!candidate) {
+    // Outside the service area — already logged by the caller
+    // (candidate=false reason=outside-service-area). No AI call, no LINE.
+    return;
+  }
+
+  // event=AI_CALL_STARTED is logged UNCONDITIONALLY here, before the cache
+  // lookup that resolveAiDecision performs internally — "started" marks
+  // this decision RESOLUTION starting (order section十五's own trace
+  // vocabulary), which a cache hit still resolves without ever reaching
+  // Workers AI itself (see the AI_CACHE_HIT/AI_CACHE_MISS line right
+  // after, which is what actually distinguishes the two).
+  console.log(`[pbs-debug-push][ai-decision] event=AI_CALL_STARTED eventId=${eventId} lifecycle=${lifecycle}`);
+
+  let aiResult;
+  try {
+    aiResult = await resolveAiDecision(env, candidate, { eventId, fingerprint }, now);
+  } catch (err) {
+    console.error(`[pbs-debug-push][ai-decision] event=AI_CALL_FAILED eventId=${eventId} lifecycle=${lifecycle} detail=${err && err.message}`);
+    return; // fail closed — no LINE, no fallback to the legacy hard-rule decision (order section 十二)
+  }
+
+  console.log(
+    `[pbs-debug-push][ai-decision] event=${aiResult.source === 'cache-hit' ? 'AI_CACHE_HIT' : 'AI_CACHE_MISS'} ` +
+      `eventId=${eventId} lifecycle=${lifecycle} durationMs=${aiResult.durationMs}`
+  );
+
+  if (!aiResult.ok) {
+    console.log(
+      `[pbs-debug-push][ai-decision] event=${aiResult.reason} eventId=${eventId} lifecycle=${lifecycle} ` +
+        `detail=${aiResult.detail || ''} durationMs=${aiResult.durationMs}`
+    );
+    return; // AI_CALL_FAILED or AI_DECISION_INVALID -> 0 LINE, no fallback
+  }
+
+  console.log(`[pbs-debug-push][ai-decision] event=AI_DECISION_VALID eventId=${eventId} lifecycle=${lifecycle}`);
+
+  const { decision } = aiResult;
+  console.log(
+    `[pbs-debug-push][ai-decision] event=${decision.notify ? 'AI_NOTIFY_TRUE' : 'AI_NOTIFY_FALSE'} eventId=${eventId} ` +
+      `lifecycle=${lifecycle} model=${PBS_AI_MODEL_ID} impact=${decision.impact} ` +
+      `confidence=${decision.confidence} reason=${decision.reason}`
+  );
+
+  if (!decision.notify) {
+    return; // trace only — no LINE, no CCTV, no proactive broadcast (order section 九)
+  }
+
+  try {
+    const broadcastResult = await runAiApprovedPbsBroadcast(env, { event: normalizedEvent, now });
+    console.log(
+      `[pbs-debug-push][ai-decision] event=AI_LINE_ATTEMPTED eventId=${eventId} lifecycle=${lifecycle} ` +
+        `lineReady=${broadcastResult.lineReady} suppressed=${broadcastResult.suppressed} ` +
+        `pendingTargets=${broadcastResult.pendingTargetCount} pushAttempted=${broadcastResult.pushAttempted} ` +
+        `pushSucceeded=${broadcastResult.pushSucceeded}`
+    );
+    console.log(
+      `[pbs-debug-push][ai-decision] event=${broadcastResult.pushAttempted > 0 && broadcastResult.pushSucceeded === broadcastResult.pushAttempted ? 'AI_LINE_SENT' : broadcastResult.pushAttempted > 0 ? 'AI_LINE_FAILED' : 'AI_LINE_NOT_ATTEMPTED'} ` +
+        `eventId=${eventId} lifecycle=${lifecycle}`
+    );
+
+    let sharedFeedCommitted = false;
+    try {
+      const sharedFeedSummary = await runSharedFeedPersist(env, { completedProducts: broadcastResult.completedProducts, now });
+      sharedFeedCommitted = Boolean(sharedFeedSummary.committed);
+    } catch (err) {
+      console.error(`[pbs-debug-push][shared-feed] eventId=${eventId} failed: ${err && err.message}`);
+    }
+    if (broadcastResult.lineErrors.length > 0) {
+      console.error(`[pbs-debug-push][ai-decision] eventId=${eventId} lineErrors=${broadcastResult.lineErrors.join('; ')} sharedFeedCommitted=${sharedFeedCommitted}`);
+    }
+  } catch (err) {
+    console.error(`[pbs-debug-push][ai-decision] event=AI_LINE_FAILED eventId=${eventId} lifecycle=${lifecycle} failed: ${err && err.message}`);
+  }
+}
+
+/**
  * GET /internal/pbs-debug-push (any non-POST method): 405, checked BEFORE
  * auth — which HTTP methods a route accepts is not sensitive information
  * (unlike whether an admin page's CONTENT exists), so this can be a plain
@@ -538,25 +632,20 @@ export async function handlePbsDebugPush(request, env, now = new Date()) {
       const rawRecord = buildRawPbsRecordFromPush({ eventId, generatedAt, event });
       const normalizedEvent = normalizePbsEvent(rawRecord);
 
-      // V1.9.9 Phase 2 (order section 一/二/三/四/六/七) — AI-ready pipeline
-      // preparation. Fully isolated from, and additional to, the legacy
-      // Business Pipeline call below: this NEVER gates, delays, or alters
-      // the real runLineBroadcast call or its outcome — it only builds and
-      // logs a preview of what a future AI candidate list would contain.
-      // PBS_AI_DECISION_MODE = PREPARED_NOT_ACTIVE: prepared (this runs and
-      // logs a real candidate), not active (the candidate is never used to
-      // decide anything, never reaches LINE/CCTV/Shared Feed, no AI model
-      // is ever called). See src/pbs/aiCandidate.js's own header comment
-      // for the full design and exactly which existing hard rules this
-      // deliberately does NOT apply (event-type whitelist, LINE policy,
-      // location-quality hard-reject) versus which it still respects
-      // (service area — reusing the SAME canonical resolver, never a
-      // second implementation).
+      // V1.9.9 Phase 2 (order section 一/二/三/四/六/七) — build the AI
+      // candidate preview once, regardless of whether AI decisions are
+      // active (see below). See src/pbs/aiCandidate.js's own header
+      // comment for the full design and exactly which existing hard rules
+      // this deliberately does NOT apply (event-type whitelist, LINE
+      // policy, location-quality hard-reject) versus which it still
+      // respects (service area — reusing the SAME canonical resolver,
+      // never a second implementation).
+      let candidate = null;
       try {
         if (isWindowsPbsAiCandidateEligible(normalizedEvent)) {
-          const candidate = buildAiCandidate(normalizedEvent, { lifecycle, generatedAt });
+          candidate = buildAiCandidate(normalizedEvent, { lifecycle, generatedAt });
           console.log(
-            `[pbs-debug-push][ai-candidate] eventId=${eventId} lifecycle=${lifecycle} ` +
+            `[pbs-debug-push][ai-candidate] event=AI_CANDIDATE_CREATED eventId=${eventId} lifecycle=${lifecycle} ` +
               `mode=${PBS_AI_DECISION_MODE} eventType=${candidate.eventType} ` +
               `locationQualitySufficient=${Boolean(candidate.locationQuality && candidate.locationQuality.sufficient)}`
           );
@@ -567,37 +656,51 @@ export async function handlePbsDebugPush(request, env, now = new Date()) {
         console.error(`[pbs-debug-push][ai-candidate] eventId=${eventId} lifecycle=${lifecycle} failed: ${err && err.message}`);
       }
 
-      // Reuses the EXACT SAME canonical Business Pipeline entry point
-      // traffic/scheduled.js's Cron path calls for every polled TDX/PBS
-      // event — see this module's own header comment. Every eligibility/
-      // service-area/location-quality/dedupe/incident-suppression/CCTV/
-      // LINE-push-policy/notified-state decision below is made by that
-      // SAME function, never a second copy.
-      const lineSummary = await runLineBroadcast(env, {
-        allEvents: [normalizedEvent],
-        dedupeAvailable: true,
-        now,
-        dryRun: false,
-      });
-      // Same reuse principle for the Shared Traffic Feed — the exact call
-      // traffic/scheduled.js makes immediately after its own
-      // runLineBroadcast, using the SAME lineSummary.completedProducts
-      // shape, so a Windows-originated PBS event keeps appearing in the
-      // Shared Feed after Cloudflare's own PBS polling retires (order
-      // section 八) exactly as it did before.
-      let sharedFeedCommitted = false;
-      try {
-        const sharedFeedSummary = await runSharedFeedPersist(env, { completedProducts: lineSummary.completedProducts, now });
-        sharedFeedCommitted = Boolean(sharedFeedSummary.committed);
-      } catch (err) {
-        console.error(`[pbs-debug-push][shared-feed] eventId=${eventId} failed: ${err && err.message}`);
+      // V1.9.9 Phase 3B (order section 十八) — the ONE branch point. When
+      // AI decisions are disabled (the safe default — see aiConfig.js's
+      // own comment), behavior is BYTE-IDENTICAL to V1.9.8/Phase 2: the
+      // legacy canonical Business Pipeline (runLineBroadcast) is the sole
+      // judge. When enabled, the NEW AI decision path (order section
+      // 八/九/十) runs INSTEAD of the legacy call for this event — never
+      // BOTH, which would risk a genuine double LINE push if both the old
+      // hard rules and the AI happened to approve the same event (order
+      // section 十二's own "避免同一事件有兩套裁判" reasoning applies here
+      // too, not just to AI-call failures).
+      if (resolvePbsAiDecisionEnabled(env)) {
+        await runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lifecycle, fingerprint, now });
+      } else {
+        // Reuses the EXACT SAME canonical Business Pipeline entry point
+        // traffic/scheduled.js's Cron path calls for every polled TDX/PBS
+        // event — see this module's own header comment. Every eligibility/
+        // service-area/location-quality/dedupe/incident-suppression/CCTV/
+        // LINE-push-policy/notified-state decision below is made by that
+        // SAME function, never a second copy.
+        const lineSummary = await runLineBroadcast(env, {
+          allEvents: [normalizedEvent],
+          dedupeAvailable: true,
+          now,
+          dryRun: false,
+        });
+        // Same reuse principle for the Shared Traffic Feed — the exact call
+        // traffic/scheduled.js makes immediately after its own
+        // runLineBroadcast, using the SAME lineSummary.completedProducts
+        // shape, so a Windows-originated PBS event keeps appearing in the
+        // Shared Feed after Cloudflare's own PBS polling retires (order
+        // section 八) exactly as it did before.
+        let sharedFeedCommitted = false;
+        try {
+          const sharedFeedSummary = await runSharedFeedPersist(env, { completedProducts: lineSummary.completedProducts, now });
+          sharedFeedCommitted = Boolean(sharedFeedSummary.committed);
+        } catch (err) {
+          console.error(`[pbs-debug-push][shared-feed] eventId=${eventId} failed: ${err && err.message}`);
+        }
+        console.log(
+          `[pbs-debug-push][business-pipeline] eventId=${eventId} lifecycle=${lifecycle} ` +
+            `lineReady=${lineSummary.lineReady} broadcastRelevant=${lineSummary.broadcastRelevantCount} ` +
+            `pendingTargets=${lineSummary.pendingTargetCount} pushAttempted=${lineSummary.pushAttempted} ` +
+            `pushSucceeded=${lineSummary.pushSucceeded} sharedFeedCommitted=${sharedFeedCommitted}`
+        );
       }
-      console.log(
-        `[pbs-debug-push][business-pipeline] eventId=${eventId} lifecycle=${lifecycle} ` +
-          `lineReady=${lineSummary.lineReady} broadcastRelevant=${lineSummary.broadcastRelevantCount} ` +
-          `pendingTargets=${lineSummary.pendingTargetCount} pushAttempted=${lineSummary.pushAttempted} ` +
-          `pushSucceeded=${lineSummary.pushSucceeded} sharedFeedCommitted=${sharedFeedCommitted}`
-      );
     } catch (err) {
       console.error(`[pbs-debug-push][business-pipeline] eventId=${eventId} lifecycle=${lifecycle} failed: ${err && err.message}`);
     }

@@ -100,5 +100,16 @@
       "binding": "PBS_RELAY_WINDOWS",
       "service_id": "01a008ab-4cc4-7c22-a747-4e27cdcc83c8"
     }
-  ]
+  ],
+  // V1.9.9 Phase 3B — Workers AI binding for Windows PBS driver-impact
+  // decisions (src/pbs/aiDecisionEngine.js, model '@cf/zai-org/glm-4.7-flash').
+  // Declaring this binding here does NOT turn AI decisions on by itself —
+  // src/pbs/aiConfig.js#PBS_AI_DECISION_ENABLED_DEFAULT is false, and no
+  // Production var sets PBS_AI_DECISION_ENABLED, so the existing legacy
+  // Business Pipeline (traffic/broadcastPipeline.js#runLineBroadcast)
+  // stays the sole judge until a human explicitly flips that on, after
+  // verifying this binding is actually live.
+  "ai": {
+    "binding": "AI"
+  }
 }

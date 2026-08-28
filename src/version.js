@@ -530,6 +530,45 @@
 // and test/pbsDebugPush.test.js's V1.9.9 Phase 2 section (15-item targeted
 // list, order section 十) for the full design and proof.
 
+// V1.9.9 Phase 3B (2026-08-28) — Workers AI Driver Impact Decision
+// Integration. Wires a real Workers AI call ('@cf/zai-org/glm-4.7-flash',
+// binding 'AI') into the Windows PBS candidate Phase 2 built but never
+// used: src/pbs/aiDecisionEngine.js#resolveAiDecision does cache lookup
+// (src/pbs/aiDecisionCache.js, reusing Phase 2's reserved
+// AI_DECISION_CACHE_KV_PREFIX/computeAiDecisionCacheKeyHash — same
+// eventId+fingerprint authority, 48h TTL) -> on a miss, one Workers AI
+// call with a short fixed Traditional-Chinese prompt ("would this
+// materially affect a working taxi/for-hire driver's ability to get
+// through, right now" — never event-TYPE-based) -> strict structured-
+// output validation ({notify:boolean, impact:'HIGH'|'LOW', reason,
+// confidence} — anything else is AI_DECISION_INVALID, never reaches
+// LINE) -> persist. A validated notify:true routes to the NEW
+// traffic/aiApprovedPbsBroadcast.js#runAiApprovedPbsBroadcast() — a
+// scoped executor that reuses (never duplicates) notified-state dedupe,
+// incident suppression, message formatting, CCTV, and the LINE sender,
+// but deliberately never re-applies MAJOR_ACCIDENT_ONLY/the V1.5 type
+// whitelist/location-quality hard-reject — those are exactly the
+// content-judgment rules this round retires from the Windows PBS
+// decision path; the AI verdict is now that path's sole semantic
+// authority. Any AI failure (missing binding, call error, invalid
+// response) fails closed to 0 LINE with NO fallback to the legacy
+// hard-rule decision (never two judges for the same event).
+//
+// SAFETY: src/pbs/aiConfig.js#PBS_AI_DECISION_ENABLED_DEFAULT = false
+// (env-overridable, same idiom as PBS_30_MIN_POLLING_ENABLED) is the ONE
+// branch point in src/pbs/debugPush.js — when off (the shipped default),
+// behavior is BYTE-IDENTICAL to V1.9.8/Phase 2: the existing legacy
+// runLineBroadcast() call remains the sole judge, completely unmodified.
+// Enabling AI decisions is a deliberate, separate human action (after
+// Cloudflare Dashboard confirms the AI binding is actually live) —
+// deploying this code alone changes nothing in Production.
+//
+// AI_INTEGRATION = CODE_READY, AI_BINDING = PENDING_GPT_WORK, AI_DECISION
+// = DISABLED, LINE_AI_DECISION = NOT_ACTIVE. See test/aiDecisionEngine.test.js,
+// test/aiDecisionCache.test.js, test/aiApprovedPbsBroadcast.test.js, and
+// test/pbsAiDecisionScenarios.test.js (order section 十七's A-P scenarios,
+// deterministic mocked AI adapter) for the full design and proof.
+
 export const APP_VERSION = 'V1.9.9';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
