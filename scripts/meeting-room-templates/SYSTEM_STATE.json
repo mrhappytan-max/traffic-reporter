@@ -232,41 +232,27 @@
     "AI_CANDIDATE_PIPELINE": "PREPARED_NOT_ACTIVE — V1.9.9 Phase 2: src/pbs/aiCandidate.js builds a minimal AI candidate for every accepted NEW/UPDATED Windows event, parallel to (never gating) the unchanged runLineBroadcast() call. Observability-only; no AI model called, no KV read/write for the reserved AI_DECISION_CACHE_KV_PREFIX yet."
   },
   "taskSeal": {
-    "task": "WORKERS_AI_DRIVER_IMPACT_DECISION_INTEGRATION_V1_9_9_PHASE_3B",
-    "status": "CODE_READY",
+    "task": "CLOUDFLARE_STRING_BOOLEAN_PARSING_FIX_V1_9_9_PHASE_3D_HOTFIX",
+    "status": "SEALED",
     "sealedAt": "2026-08-28",
-    "sealedBy": "human directive (路況工程部 V1.9.9 Phase 3B 正式施工令｜Workers AI Driver Impact Decision Integration)",
+    "sealedBy": "human directive (路況工程部 V1.9.9 Phase 3D Hotfix 正式施工令｜修正 PBS_AI_DECISION_ENABLED 布林解析)",
     "releaseVersion": "V1.9.9",
-    "fixCommit": "5d1f9fe",
-    "model": "@cf/zai-org/glm-4.7-flash",
-    "binding": "AI",
-    "design": {
-      "modules": "src/pbs/aiConfig.js（kill switch PBS_AI_DECISION_ENABLED，預設false）、src/pbs/aiDecisionCache.js（重用Phase 2 cache key設計，TRAFFIC_KV，48h TTL，fail-open讀寫）、src/pbs/aiDecisionEngine.js（固定繁中prompt只判斷駕駛通行影響、不依事件類型名稱決定；validateAiDecisionResponse()嚴格schema：notify boolean/impact HIGH|LOW/reason≤80字/confidence 0-1，任何不合格即AI_DECISION_INVALID絕不到達LINE；resolveAiDecision() orchestrator）、src/traffic/aiApprovedPbsBroadcast.js（runAiApprovedPbsBroadcast()，重用既有subscriptions/notified/incidentSuppression（事故限定）/messageFormat/CCTV（事故限定）/pushMessage，只保留broadcastHours執行安全閘門，明確不呼叫getBroadcastEligibility/getLinePushPolicyDecision/resolveLocationQuality，也不重新呼叫service area）。",
-      "ordering": "auth→payload驗證→既有persistent transport idempotency→建立AI candidate→resolvePbsAiDecisionEnabled(env)分支：關閉時走完全未修改的legacy runLineBroadcast()+runSharedFeedPersist()；開啟時走cache lookup→miss才呼叫env.AI.run→驗證→驗證通過才快取→notify=true才呼叫runAiApprovedPbsBroadcast()+runSharedFeedPersist()。",
-      "mutualExclusivity": "AI開啟時legacy runLineBroadcast()整段跳過，兩條路徑對同一事件絕不同時執行——避免舊硬規則與AI同時核准同一事件造成LINE重複推播。Exact transport duplicate與AI cache hit皆是0次AI呼叫。",
-      "aiFailurePolicy": "429/5xx/network/invalid response/binding missing一律0 LINE、trace記錄AI_CALL_FAILED，絕不fallback回MAJOR_ACCIDENT_ONLY或任何舊硬規則。未加入retry——無可直接重用的既有retry helper，且施工令要求第一版保持簡單、不做複雜retry queue。",
-      "killSwitch": "src/pbs/aiConfig.js#resolvePbsAiDecisionEnabled(env)，PBS_AI_DECISION_ENABLED預設false。理由：Claude push程式碼後Cloudflare會自動部署，但GPT Work尚未在Dashboard建立並驗證真正的AI binding；若AI決策預設開啟，正式LINE推播可能在人類決定啟用AI之前就因部署而壞掉。安全rollout：程式碼部署→AI決策關閉→GPT Work建立Binding→驗證→另有明確指令才開啟。"
-    },
+    "fixCommit": "61795b1",
+    "rootCause": "Cloudflare Dashboard/CLI Variables 一律以字串注入 Worker，從不是真正的 boolean。GPT Work 在 Dashboard 設定 PBS_AI_DECISION_ENABLED=\"true\"，但 resolvePbsAiDecisionEnabled() 原本嚴格檢查 typeof==='boolean'，字串 'true' 永遠不符合，導致每次請求都悄悄落回安全預設值 false，AI決策始終未啟用。不是 Dashboard 操作錯誤，是 resolver 本身的 bug。",
+    "fix": "src/pbs/aiConfig.js#resolvePbsAiDecisionEnabled() 現在同時接受真正 boolean true/false，以及 Cloudflare runtime 字串形式 'true'/'false'（不分大小寫、trim前後空白）。undefined/null/空字串/其他真值拼法('1'/'yes'/'on')/任何非字串非boolean型別，一律 fail-safe 回 PBS_AI_DECISION_ENABLED_DEFAULT=false，刻意不做寬鬆truthy判斷。wrangler.jsonc 檢查後確認未宣告任何 PBS_AI_DECISION_ENABLED 值，Production 預設安全性不受影響。",
+    "scopeDiscipline": "單點 config parsing hotfix。AI prompt/model ID/AI candidate schema/AI cache/cache TTL/runAiApprovedPbsBroadcast/LINE policy/MAJOR_ACCIDENT_ONLY legacy path/service area/lifecycle/idempotency/CCTV/Shared Feed/hourly reminder/TDX/Windows monitor 全部未觸碰。",
     "testEvidence": {
-      "newTests": "5個新測試檔共57項：aiConfig.test.js(4)/aiDecisionCache.test.js(9)/aiDecisionEngine.test.js(18)/aiApprovedPbsBroadcast.test.js(9)/pbsAiDecisionScenarios.test.js(17，含施工令A-P十六個mocked-AI-adapter情境+2個kill switch測試)。全部第一次執行即PASS，零fix iteration。",
-      "fullRegression": "1509項／1476 pass／33 fail，與變更前基線（1452/1419/33）逐項比對完全相同的33項失敗清單，NEW FAILURES=0（以git stash基線diff嚴格驗證）。"
+      "targetedTests": "test/aiConfig.test.js 擴充為完整 true/false/字串/大小寫/空白/未知值矩陣（新增6項，1項既有測試斷言依新預期行為反轉）。",
+      "integrationTest": "test/pbsAiDecisionScenarios.test.js 新增2項：透過真實 handlePbsDebugPush() 端對端證明字串 \"true\" 讓 mocked AI adapter 被呼叫、字串 \"false\" 維持0次AI呼叫。",
+      "fullRegression": "1517項／1484 pass／33 fail，以 failure 名稱集合對照 Phase 3B 基準確認 NEW FAILURES=0（唯一差異：先前 session 量到的一項環境敏感 git/build-metadata flaky 測試本輪未再出現）。"
     },
     "productionVerification": {
       "attempted": false,
-      "note": "本輪為repo-side程式碼準備工作，依施工令本身指示（Cloudflare Dashboard/AI Binding建立/驗證是GPT Work工作範圍，Claude不需要進Dashboard），本Cloud Session未嘗試連線驗證。sandbox網路egress政策仍封鎖Production網域與Cloudflare Dashboard（與V1.9.8/Phase 2輪相同的既有限制）。",
-      "aiBindingStatus": "PENDING_BROWSER_SETUP",
-      "aiDecisionStatus": "DISABLED",
-      "lineAiDecisionStatus": "NOT_ACTIVE"
+      "note": "本輪為repo-side程式碼修正，依施工令指示 Cloudflare Dashboard 重試由 GPT Work 負責，Claude 不需要進 Dashboard。",
+      "aiBindingStatus": "ACTIVE（GPT Work已確認）",
+      "aiDecisionStatus": "DISABLED_PENDING_GPT_WORK_RETRY"
     },
-    "notTouchedByThisRound": [
-      "MAJOR_ACCIDENT_ONLY/getBroadcastEligibility/resolveLocationQuality函式本身（未刪除，只是Windows PBS AI開啟時不再被呼叫）",
-      "TDX或其他來源既有runLineBroadcast判斷路徑",
-      "LINE quota硬性gate（本輪未新增）",
-      "每小時重大事件提醒實作（僅方向性設計）",
-      "Windows Secret/Task Scheduler",
-      "Cloudflare Dashboard/AI Binding建立與驗證"
-    ],
-    "readerNote": "完成後STOP。不得自行開啟Production AI。不得自行進Cloudflare Dashboard。不得開始Phase 4。不得升V1.9.10。"
+    "readerNote": "完成後STOP。不得自行開啟Production AI。不得開始Phase 4。不得升V1.9.10。"
   },
   "taskSealHistory": [
     {
@@ -528,6 +514,15 @@
         "Windows Secret/Task Scheduler"
       ],
       "readerNote": "This task is CLOSED — superseded by V1.9.9 Phase 3B. Do not re-open it."
+    },
+    {
+      "task": "WORKERS_AI_DRIVER_IMPACT_DECISION_INTEGRATION_V1_9_9_PHASE_3B",
+      "status": "CODE_READY",
+      "sealedAt": "2026-08-28",
+      "releaseVersion": "V1.9.9",
+      "fixCommit": "5d1f9fe",
+      "compressedSummary": "固定model @cf/zai-org/glm-4.7-flash透過env.AI.run()判斷駕駛通行影響（非事件類型）。新模組aiConfig.js(kill switch)/aiDecisionCache.js(48h TTL cache，重用Phase 2 cache key)/aiDecisionEngine.js(嚴格schema驗證，不合格即AI_DECISION_INVALID絕不到LINE)/aiApprovedPbsBroadcast.js(scoped LINE執行，不呼叫getBroadcastEligibility/getLinePushPolicyDecision/resolveLocationQuality)。debugPush.js新增與legacy runLineBroadcast()互斥的AI分支，同一事件絕不同時執行兩者。AI失敗0 LINE絕不fallback舊硬規則，未加retry。kill switch PBS_AI_DECISION_ENABLED預設false。新增57項測試全部首次PASS，1509/1476/33，NEW FAILURES=0。Production未嘗試（GPT Work工作範圍）。",
+      "readerNote": "This task is CLOSED — superseded by V1.9.9 Phase 3D Hotfix (資料型別bug已修正，見下方). Do not re-open it."
     }
   ],
   "version": {
@@ -542,7 +537,7 @@
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
   "currentPhase": "{{CURRENT_PHASE}}",
-  "currentTask": "none（無進行中工作）。Latest completed task = WORKERS_AI_DRIVER_IMPACT_DECISION_INTEGRATION_V1_9_9_PHASE_3B，status = CODE_READY。CURRENT_OFFICIAL_VERSION = V1.9.9（同一版本線分階段施工，本輪未升版本號）。本輪：(1) 新增 src/pbs/aiConfig.js／aiDecisionCache.js／aiDecisionEngine.js／traffic/aiApprovedPbsBroadcast.js，固定 model @cf/zai-org/glm-4.7-flash，透過 env.AI.run(...) 判斷駕駛通行影響；(2) src/pbs/debugPush.js 新增與 legacy runLineBroadcast() 互斥的 AI 決策分支；(3) kill switch PBS_AI_DECISION_ENABLED 預設 false，正式環境 AI 決策仍關閉，Windows PBS 事件目前仍走 V1.9.8 legacy 路徑；(4) AI Binding Dashboard 建立/驗證是 GPT Work 工作範圍，本輪未嘗試。下一件事若要開工：等待 GPT Work 完成 AI Binding 並回報後，等待新的正式施工令才可開啟 Production AI 或開始 Phase 4；或見 07_KNOWN_ISSUES.md 既有約33項過期斷言（與本輪無關）。",
+  "currentTask": "none（無進行中工作）。Latest completed task = CLOUDFLARE_STRING_BOOLEAN_PARSING_FIX_V1_9_9_PHASE_3D_HOTFIX，status = SEALED。CURRENT_OFFICIAL_VERSION = V1.9.9（同一版本線分階段施工，本輪未升版本號）。本輪：(1) 修正 src/pbs/aiConfig.js#resolvePbsAiDecisionEnabled()，使其同時接受真正 boolean 與 Cloudflare Dashboard/CLI Variables 注入的字串形式 'true'/'false'（根因：GPT Work 設定 PBS_AI_DECISION_ENABLED=\"true\" 後 AI 決策仍未啟用，因原本嚴格檢查 typeof==='boolean' 永遠不符合字串）；(2) 未知值/其他真值拼法一律 fail-safe 回 false，未做寬鬆 truthy 判斷；(3) wrangler.jsonc 檢查後確認無需修改。AI_BINDING = ACTIVE（GPT Work已確認），AI_DECISION = DISABLED_PENDING_GPT_WORK_RETRY（rollback仍在效，尚未重新以修正後的邏輯重試）。下一件事若要開工：等待 GPT Work 重新在 Dashboard 設定 PBS_AI_DECISION_ENABLED 並回報結果；或見 07_KNOWN_ISSUES.md 既有約33項過期斷言（與本輪無關）。",
   "knownBlocker": "{{KNOWN_BLOCKER}}",
   "realWorldConfirmation": {
     "status": "{{REAL_WORLD_CONFIRMATION}}",
@@ -569,6 +564,7 @@
   "LINE_AI_DECISION": "NOT_ACTIVE",
   "PBS_AI_DECISION_MODE": "IMPLEMENTED_KILL_SWITCH_OFF",
   "V1.9.9_PHASE_3B": "CODE_READY",
-  "AI_BINDING": "PENDING_BROWSER_SETUP",
-  "AI_DECISION": "DISABLED"
+  "AI_BINDING": "ACTIVE",
+  "AI_DECISION": "DISABLED_PENDING_GPT_WORK_RETRY",
+  "V1.9.9_PHASE_3D_HOTFIX": "CLOUDFLARE_STRING_BOOLEAN_PARSING_FIX"
 }

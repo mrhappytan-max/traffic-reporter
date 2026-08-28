@@ -254,8 +254,47 @@ CLEARED 事件不呼叫 AI、不產生相關 LINE 推播。
 `LINE_AI_DECISION = NOT_ACTIVE`。Production AI Binding 建立/驗證是 GPT Work
 的工作範圍，本輪未嘗試開啟 Cloudflare Dashboard、未驗證 Neurons Dashboard。
 完整設計理由 → `07_KNOWN_ISSUES.md`／`03_ARCHITECTURE.md`；機器可讀狀態 →
-`SYSTEM_STATE.json` 的 `taskSeal`。**下一個 Agent：不得自行開啟 Production
-AI；不得自行進 Cloudflare Dashboard；不得開始 Phase 4；不得升 V1.9.10。**
+`SYSTEM_STATE.json` 的 `taskSeal`。（Phase 3B 當時的現行禁令已由下方 Phase
+3D Hotfix 段落取代——見該段落結尾。）
+
+## V1.9.9 Phase 3D Hotfix — Cloudflare 字串布林解析（本輪，2026-08-28）
+
+GPT Work 在 Dashboard 把 `PBS_AI_DECISION_ENABLED` 設為 `"true"` 後，正式
+環境 AI 決策仍未啟用。根因：Cloudflare Dashboard／CLI Variables 一律以
+**字串**注入 Worker，從不是真正的 boolean；`src/pbs/aiConfig.js#
+resolvePbsAiDecisionEnabled()` 原本嚴格檢查 `typeof === 'boolean'`，字串
+`"true"` 永遠不符合，因此每次請求都悄悄落回安全預設值 `false`——不是
+Dashboard 操作錯誤，是 resolver 本身的 bug。GPT Work 已先行 rollback
+（`PBS_AI_DECISION_ENABLED = FALSE`），本輪只修這一點。
+
+修正：`resolvePbsAiDecisionEnabled()` 現在同時接受真正 boolean
+`true`/`false`，以及 Cloudflare runtime 的字串形式 `"true"`/`"false"`
+（不分大小寫、去除前後空白）；除此之外的任何值（`undefined`、`null`、
+空字串、其他常見「真值」拼法如 `"1"`/`"yes"`/`"on"`、或任何非字串非
+boolean 型別）一律 fail-safe 回 `PBS_AI_DECISION_ENABLED_DEFAULT =
+false`——刻意不做寬鬆 truthy 判斷。`wrangler.jsonc` 檢查後確認未宣告任何
+`PBS_AI_DECISION_ENABLED` 值，Production 預設安全性不受影響。
+
+新增 8 項測試：`test/aiConfig.test.js` 擴充為完整 true/false/字串/大小寫/
+空白/未知值矩陣（新增 6 項，1 項既有測試斷言依新預期行為反轉）；
+`test/pbsAiDecisionScenarios.test.js` 新增 2 項 integration-level 測試，
+透過真實 `handlePbsDebugPush()` 端對端證明字串 `"true"` 確實會讓 mocked
+AI adapter 被呼叫、字串 `"false"` 確實維持 0 次 AI 呼叫。完整迴歸
+1517/1484/33，NEW FAILURES=0。
+
+本輪**未觸碰**：AI prompt、model ID、AI candidate schema、AI cache、
+cache TTL、`runAiApprovedPbsBroadcast`、LINE policy、
+`MAJOR_ACCIDENT_ONLY` legacy path、service area、lifecycle、
+idempotency、CCTV、Shared Feed、hourly reminder、TDX、Windows
+monitor——單點 config parsing hotfix。APP_VERSION 維持 `V1.9.9`。
+
+**現狀旗標**：`AI_BINDING = ACTIVE`（GPT Work 已確認）、
+`AI_DECISION = DISABLED_PENDING_GPT_WORK_RETRY`——修正已部署，但 Dashboard
+端 `PBS_AI_DECISION_ENABLED` 目前仍是 GPT Work rollback 後的 `FALSE`，
+尚未重新設回 `"true"` 重試。是否／何時重試由 GPT Work 決定，不在本輪
+範圍。完整設計理由 → `07_KNOWN_ISSUES.md`／`03_ARCHITECTURE.md`；機器
+可讀狀態 → `SYSTEM_STATE.json` 的 `taskSeal`。**下一個 Agent：不得自行
+開啟 Production AI；不得開始 Phase 4；不得升 V1.9.10。**
 
 ## PBS Windows Local Edge Debug Push Integration（V1.9.6＋V1.9.7，2026-08-28，歷史記錄——已由上方 V1.9.8／V1.9.9 取代為 Production 主線）
 

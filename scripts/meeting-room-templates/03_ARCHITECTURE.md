@@ -207,6 +207,14 @@ resolvePbsAiDecisionEnabled(env)（kill switch，預設 false）
 上面這個 code-level kill switch，等 GPT Work 完成 Dashboard 端 AI Binding
 建立/驗證後，才由另一個明確指令開啟。
 
+**V1.9.9 Phase 3D Hotfix（2026-08-28）**：`resolvePbsAiDecisionEnabled()`
+原本只接受真正的 boolean，但 Cloudflare Dashboard/CLI Variables 一律以
+**字串**注入 Worker——GPT Work 設定 `PBS_AI_DECISION_ENABLED="true"` 後
+因此永遠判定為 false，AI 決策始終未啟用。修正後同時接受 boolean 與
+Cloudflare 字串形式 `'true'`/`'false'`（不分大小寫、trim），其餘一切值
+（含 `'1'`/`'yes'`/`'on'`等常見「真值」拼法）仍 fail-safe 回預設值
+`false`。詳見 `07_KNOWN_ISSUES.md` 的完整記錄。
+
 詳見 `07_KNOWN_ISSUES.md` 的完整記錄。
 
 ## PBS Windows Local Edge Debug Push Integration（V1.9.6/V1.9.7 建立的基礎，Windows 端不變）

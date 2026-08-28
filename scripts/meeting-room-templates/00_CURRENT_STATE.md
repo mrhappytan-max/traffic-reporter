@@ -61,7 +61,25 @@
 - AI 失敗（429/5xx/network/invalid response/binding missing）一律 0 LINE、trace 記錄，絕不 fallback 回舊硬規則。未加入 retry（無可重用 helper，且施工令要求第一版簡單）。
 - 新增 57 項測試（5 個新測試檔），全部第一次執行即 PASS；完整 regression 1509/1476/33，NEW FAILURES=0。
 - APP_VERSION 維持 `V1.9.9`（本輪不升版本號）。
-- 詳見 `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`。**下一個 Agent：不得自行開啟 Production AI；不得自行進 Cloudflare Dashboard；不得開始 Phase 4；不得升 V1.9.10。**
+- 詳見 `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`。
+
+## V1.9.9 Phase 3D Hotfix 封版（2026-08-28）— Cloudflare 字串布林解析
+
+- `V1.9.9_PHASE_3D_HOTFIX = CLOUDFLARE_STRING_BOOLEAN_PARSING_FIX`
+- 根因：Cloudflare Dashboard/CLI Variables 一律以**字串**注入 Worker，從不是真正的 boolean。GPT Work 設定
+  `PBS_AI_DECISION_ENABLED = "true"` 後，`resolvePbsAiDecisionEnabled()` 原本嚴格檢查 `typeof === 'boolean'`，
+  字串永遠不符合，每次請求都悄悄落回安全預設值 `false`——不是 Dashboard 操作錯誤，是 resolver 本身的 bug。
+- 修正：`src/pbs/aiConfig.js#resolvePbsAiDecisionEnabled()` 現在同時接受真正 boolean 與 Cloudflare 字串形式
+  `'true'`／`'false'`（不分大小寫、trim 前後空白）；`undefined`/`null`/空字串/其他真值拼法（`'1'`/`'yes'`/`'on'`）
+  一律 fail-safe 回 `false`，刻意不做寬鬆 truthy 判斷。
+- `AI_BINDING = ACTIVE`（GPT Work 已確認）、`AI_DECISION = DISABLED_PENDING_GPT_WORK_RETRY`（rollback 仍在效，
+  尚未以修正後邏輯重試）。
+- 單點 config parsing hotfix：AI prompt/model/schema/cache/`runAiApprovedPbsBroadcast`/LINE policy/service area/
+  lifecycle/idempotency/CCTV/Shared Feed/hourly reminder/TDX/Windows monitor 全部未觸碰。
+- 新增 8 項測試（`aiConfig.test.js` 6 項＋`pbsAiDecisionScenarios.test.js` 2 項 integration-level），全部通過；
+  完整 regression 1517/1484/33，NEW FAILURES=0。
+- APP_VERSION 維持 `V1.9.9`（本輪不升版本號）。
+- 詳見 `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`。**下一個 Agent：不得自行開啟 Production AI；不得開始 Phase 4；不得升 V1.9.10。**
 
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
 

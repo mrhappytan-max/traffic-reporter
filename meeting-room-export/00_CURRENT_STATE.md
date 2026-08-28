@@ -10,19 +10,19 @@
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
 | Current Version | V1.9.9（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | 18fe0f8c9297ad30c457505673c3091b74bfd910 |
+| Source main HEAD | 27223abd71fbcc415215ff6f94eadb98221e33c8 |
 | Source main HEAD resolved from | origin/main |
 | Source working tree | dirty (7 changed source file(s)) |
 | Production | DEPLOYED |
-| Production Verification | V1.9.9 Phase 3B code-ready, AI decision disabled by kill switch; NOT_OBSERVED for Production AI activation (GPT Work's responsibility per this round's order) |
-| Current Phase | V1.9.9 Phase 3B CODE_READY — Workers AI Driver Impact Decision Integration 已實作並通過測試，正式環境 AI 決策仍關閉（kill switch 預設 false），等待 GPT Work 完成 AI Binding Dashboard 設定 |
-| Current Task | none（無進行中工作）。Latest completed task = WORKERS_AI_DRIVER_IMPACT_DECISION_INTEGRATION_V1_9_9_PHASE_3B，status = CODE_READY。詳見 SYSTEM_STATE.json 的 taskSeal 與 07_KNOWN_ISSUES.md。 |
+| Production Verification | V1.9.9 Phase 3D hotfix deployed; AI decision still DISABLED_PENDING_GPT_WORK_RETRY; NOT_OBSERVED for Production AI activation (GPT Work's responsibility per this round's order) |
+| Current Phase | V1.9.9 Phase 3D Hotfix SEALED — Cloudflare 字串布林解析已修正，AI_BINDING=ACTIVE，AI_DECISION 仍為 DISABLED_PENDING_GPT_WORK_RETRY（GPT Work rollback尚未重試） |
+| Current Task | none（無進行中工作）。Latest completed task = CLOUDFLARE_STRING_BOOLEAN_PARSING_FIX_V1_9_9_PHASE_3D_HOTFIX，status = SEALED。詳見 SYSTEM_STATE.json 的 taskSeal 與 07_KNOWN_ISSUES.md。 |
 | Latest Completed Version | V1.9.9 |
-| Known Blocker | 無 repo-side blocker。AI_BINDING = PENDING_BROWSER_SETUP（Cloudflare Dashboard 端由 GPT Work 負責建立/驗證，非本專案程式碼缺陷） |
-| Real-world Confirmation | NOT_OBSERVED — AI decision path never activated in Production this round (kill switch off by design) |
+| Known Blocker | 無 repo-side blocker。AI_DECISION = DISABLED_PENDING_GPT_WORK_RETRY（Dashboard 端重試時機由 GPT Work 決定，非本專案程式碼缺陷） |
+| Real-world Confirmation | NOT_OBSERVED — AI decision path not yet re-activated in Production this round |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 等待 GPT Work 完成 AI Binding 建立與驗證並回報；等待新的正式施工令才可開啟 Production AI 決策（PBS_AI_DECISION_ENABLED）或開始 Phase 4 |
-| Export Generated At | 2026-08-28T06:42:51.156Z |
+| Next Action | 等待 GPT Work 在 Cloudflare Dashboard 重新設定 PBS_AI_DECISION_ENABLED 並回報結果；等待新的正式施工令才可開啟 Production AI 決策或開始 Phase 4 |
+| Export Generated At | 2026-08-28T07:41:12.556Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## V1.9.9 Phase 1 封版（2026-08-28，另一個 session 完成，本 Cloud Session 未參與，port 進本模板僅為維持 template↔engineering-memory 一致）
@@ -61,7 +61,25 @@
 - AI 失敗（429/5xx/network/invalid response/binding missing）一律 0 LINE、trace 記錄，絕不 fallback 回舊硬規則。未加入 retry（無可重用 helper，且施工令要求第一版簡單）。
 - 新增 57 項測試（5 個新測試檔），全部第一次執行即 PASS；完整 regression 1509/1476/33，NEW FAILURES=0。
 - APP_VERSION 維持 `V1.9.9`（本輪不升版本號）。
-- 詳見 `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`。**下一個 Agent：不得自行開啟 Production AI；不得自行進 Cloudflare Dashboard；不得開始 Phase 4；不得升 V1.9.10。**
+- 詳見 `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`。
+
+## V1.9.9 Phase 3D Hotfix 封版（2026-08-28）— Cloudflare 字串布林解析
+
+- `V1.9.9_PHASE_3D_HOTFIX = CLOUDFLARE_STRING_BOOLEAN_PARSING_FIX`
+- 根因：Cloudflare Dashboard/CLI Variables 一律以**字串**注入 Worker，從不是真正的 boolean。GPT Work 設定
+  `PBS_AI_DECISION_ENABLED = "true"` 後，`resolvePbsAiDecisionEnabled()` 原本嚴格檢查 `typeof === 'boolean'`，
+  字串永遠不符合，每次請求都悄悄落回安全預設值 `false`——不是 Dashboard 操作錯誤，是 resolver 本身的 bug。
+- 修正：`src/pbs/aiConfig.js#resolvePbsAiDecisionEnabled()` 現在同時接受真正 boolean 與 Cloudflare 字串形式
+  `'true'`／`'false'`（不分大小寫、trim 前後空白）；`undefined`/`null`/空字串/其他真值拼法（`'1'`/`'yes'`/`'on'`）
+  一律 fail-safe 回 `false`，刻意不做寬鬆 truthy 判斷。
+- `AI_BINDING = ACTIVE`（GPT Work 已確認）、`AI_DECISION = DISABLED_PENDING_GPT_WORK_RETRY`（rollback 仍在效，
+  尚未以修正後邏輯重試）。
+- 單點 config parsing hotfix：AI prompt/model/schema/cache/`runAiApprovedPbsBroadcast`/LINE policy/service area/
+  lifecycle/idempotency/CCTV/Shared Feed/hourly reminder/TDX/Windows monitor 全部未觸碰。
+- 新增 8 項測試（`aiConfig.test.js` 6 項＋`pbsAiDecisionScenarios.test.js` 2 項 integration-level），全部通過；
+  完整 regression 1517/1484/33，NEW FAILURES=0。
+- APP_VERSION 維持 `V1.9.9`（本輪不升版本號）。
+- 詳見 `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`。**下一個 Agent：不得自行開啟 Production AI；不得開始 Phase 4；不得升 V1.9.10。**
 
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
 

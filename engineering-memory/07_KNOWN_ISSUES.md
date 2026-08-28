@@ -822,6 +822,46 @@ commit `7acb82a`；Cloudflare Worker Version ID `defc1da4-6328-47ce-82c6-
 81082519bc2`，Windows `TrafficReporter-PBS-LocalMonitor`已重啟為Running
 （人類回報，本Session未獨立驗證）。
 
+## 修正紀錄｜V1.9.9 Phase 3D Hotfix — Cloudflare 字串布林解析（2026-08-28）
+
+GPT Work 在 Cloudflare Dashboard 把 `PBS_AI_DECISION_ENABLED` 設為 `"true"`
+後，正式環境 AI 決策仍未啟用。根因：Cloudflare Dashboard／CLI Variables
+一律以**字串**注入 Worker，從不是真正的 boolean；`src/pbs/aiConfig.js#
+resolvePbsAiDecisionEnabled()` 原本嚴格檢查`typeof === 'boolean'`，字串
+`"true"`永遠不符合，因此每次請求都悄悄落回安全預設值`false`——不是
+Dashboard操作錯誤，是resolver本身的bug。GPT Work已先行rollback
+（`PBS_AI_DECISION_ENABLED = FALSE`），本輪只修這一點。
+
+**修正**：`resolvePbsAiDecisionEnabled()`現在同時接受真正的boolean
+`true`/`false`，以及Cloudflare runtime的字串形式`"true"`/`"false"`
+（不分大小寫、去除前後空白，如`" TRUE "`、`"True"`）；除此之外的任何值
+（`undefined`、`null`、空字串、其他常見「真值」拼法如`"1"`/`"yes"`/
+`"on"`、或任何非字串非boolean型別）一律fail-safe回`PBS_AI_DECISION_
+ENABLED_DEFAULT = false`——刻意不做寬鬆truthy判斷。`wrangler.jsonc`
+檢查後確認未宣告任何`PBS_AI_DECISION_ENABLED`值，Production預設安全性
+不受影響。
+
+**測試**：`test/aiConfig.test.js`擴充為完整true/false/字串/大小寫/空白/
+未知值矩陣（新增6項，1項既有測試的斷言依新預期行為反轉）；
+`test/pbsAiDecisionScenarios.test.js`新增2項integration-level測試，
+透過真實`handlePbsDebugPush()`端對端驗證字串`"true"`確實會讓mocked AI
+adapter被呼叫、字串`"false"`確實維持0次AI呼叫——不只測純函式。全量
+迴歸1517/1484/33，NEW FAILURES=0（以failure名稱集合對照Phase 3B基準
+確認，本輪唯一差異是先前session量到的一項環境敏感git/build-metadata
+flaky測試這次未再出現）。
+
+本輪**未觸碰**：AI prompt、model ID、AI candidate schema、AI cache、
+cache TTL、`runAiApprovedPbsBroadcast`、LINE policy、
+`MAJOR_ACCIDENT_ONLY` legacy path、service area、lifecycle、
+idempotency、CCTV、Shared Feed、hourly reminder、TDX、Windows
+monitor——單點config parsing hotfix。APP_VERSION維持`V1.9.9`。
+
+**現狀**：`AI_BINDING = ACTIVE`（GPT Work已確認）、
+`AI_DECISION = DISABLED_PENDING_GPT_WORK_RETRY`——修正已部署，但
+Dashboard端`PBS_AI_DECISION_ENABLED`目前仍是GPT Work rollback後的
+`FALSE`，尚未重新設回`"true"`重試。是否／何時重試由GPT Work決定，
+不在本輪範圍。
+
 ## 修正紀錄｜V1.9.9 Phase 3B — Workers AI Driver Impact Decision Integration（2026-08-28）
 
 Phase 2預留的AI candidate／cache key設計，本輪正式接上真實Workers AI呼叫。
