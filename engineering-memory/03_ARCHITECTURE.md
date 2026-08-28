@@ -7,7 +7,10 @@
 ## 主要資料流（Pipeline）
 
 ```
-TDX（國道/省道 RoadEvent）+ PBS（公路總局）
+TDX（國道/省道 RoadEvent，仍由 Cron 輪詢）+ PBS（V1.9.8起：由 Windows Push 注入，
+    見下方「Windows PBS Production Ingress」——下方每一段 Normalization/
+    Classification/Eligibility/... 對 PBS 事件仍是同一套函式，只是不再由
+    Cloudflare 自己的 30 分鐘輪詢觸發，而是由 debugPush.js 直接呼叫）
         ↓
 Normalization  (tdx/normalize.js, pbs/normalize.js)
         ↓
@@ -65,11 +68,58 @@ Pipeline Trace  (traffic/pipelineTrace.js, pipelineTraceView.js — 24h 人工�
 - **R2 image lifecycle**：`cctv/publishedImage.js`，opaque 128-bit id、`customMetadata.expiresAt` 於每次讀取時檢查（不依賴 R2 lifecycle rule 本身作為有效性依據），TTL 900 秒（15 分鐘）。
 - **LINE delivery path**：`line/pushMessage.js`（Push API，text-only 或 text+image 兩則訊息同一次呼叫）、`line/webhook.js`（處理使用者訂閱/取消訂閱等互動指令）、`line/verifySignature.js`（Webhook 簽章驗證）。
 
-## PBS Windows Local Edge Debug Push Integration（V1.9.6，2026-08-27，feature branch，ACTIVE／Debug-only／NOT_MERGED）
+## Windows PBS Production Ingress（V1.9.8，2026-08-28，main／ACTIVE／Production）
 
-與上面「主要資料流」完全分開、**目前只到 Debug-only 接收端為止**的一條路徑——尚未
-接入 LINE／CCTV／Shared Feed／正式 Business KV／正式 Broadcast Pipeline 任何一段。
-Windows 端程式碼在 `pbs-relay/`（`src/` 掃描結果——下方模組清單——不會出現它），已
+**V1.9.8 起，這是 PBS 的正式 Production 主線，取代上面「主要資料流」圖中 PBS 那一半
+（TDX 側完全不受影響，仍照原圖運作）**。`traffic/scheduled.js` 的 PBS 30 分鐘輪詢
+已退休（`pbs/pbsConfig.js#PBS_30_MIN_POLLING_ENABLED = false`）——`pbs/pipeline.js`／
+`pbs/lifecycle.js`／`traffic/pbsSchedule.js` 程式碼完整保留、一行未刪，翻回旗標即可
+rollback，但目前**不再被 Cron 實際呼叫**。PBS 事件現在唯一的入口是 Windows Push：
+
+```
+PBS 警廣官方來源
+    ↓
+Windows 本機每 3 分鐘抓取 / Local Edge Filter / 生命週期比較（見下方，V1.9.6/V1.9.7 不變）
+    ↓
+SHOULD_PUSH=YES 的 NEW/UPDATED/CLEARED
+    ↓
+POST /internal/pbs-debug-push（src/pbs/debugPush.js，就地升級，非另建 endpoint）
+    ↓
+Authentication → Validation → 持久冪等（V1.9.7，見下方，不變）
+    ↓
+duplicate？ ── 是 → 停止，0 次以下任何處理
+    │ 否
+CLEARED？ ── 是 → 只 ACK/log，停止（比照 pbs/pipeline.js 的 clearedEvents 從不進 broadcastEvents）
+    │ 否（NEW/UPDATED）
+    ↓
+buildRawPbsRecordFromPush()：Windows payload → raw-PBS-shaped record
+    （happendate/happentime/modDttm 由 payload 自己的 generatedAt 精確反推
+     Asia/Taipei 本地時間字串——UTC+8 固定無 DST，非近似值；roadtype 留空，
+     因 Windows 本機過濾器已保證 comment 含事故關鍵字，comment-only 分類已足夠）
+    ↓
+pbs/normalize.js#normalizePbsEvent()（既有、未修改）
+    ↓
+traffic/broadcastPipeline.js#runLineBroadcast()（既有、未修改——
+    與 Cron 輪詢路徑呼叫的「同一個函式」：service area／accident policy／
+    location quality／dedupe／incident suppression／CCTV／
+    LINE Push Policy／notified-state 全部同一套判斷，0 份重複邏輯）
+    ↓
+traffic/sharedFeed.js#runSharedFeedPersist()（既有、未修改，與 scheduled.js 呼叫時機相同）
+    ↓
+LINE（若通過資格判斷）／Shared Feed（無論是否推播成功都記錄完成品）
+```
+
+LINE Push Policy（`MAJOR_ACCIDENT_ONLY` 及每一條既有資格規則）**完全未變動**——
+Windows 只多了一條事件來源，最終播報與否的決定權仍 100% 在 Cloudflare 這一側，
+Windows 從未被賦予這個決定權。已知可接受的副作用：`pbs:lifecycle-state`（輪詢
+路徑專用 KV key）不再被寫入；`GET /health` 的 `pbs` 區塊凍結在退休前最後一次真實
+數值（Windows 已獨立追蹤 PBS 生命週期，不依賴這個 KV key）。
+
+## PBS Windows Local Edge Debug Push Integration（V1.9.6/V1.9.7 建立的基礎，Windows 端不變）
+
+以下段落描述 Windows 本機那一半（服務區篩選／CLEARED 治理／持久冪等），**V1.9.8
+完全未修改這部分**，只是把 Cloudflare 端接收後「只 ACK/log」的行為升級為上方的
+正式 Business Pipeline。Windows 端程式碼在 `pbs-relay/`（`src/` 掃描結果——下方模組清單——不會出現它），已
 push 進 GitHub 的 `feature/pbs-local-edge-filter-prototype` 分支（最新 commit
 `95ecdc4718f836ff36c974e829b549f262e6b936`，**尚未 merge 進 main**）；Cloudflare 端
 接收端在 `src/pbs/debugPush.js`／`src/pbs/debugPushAuth.js`（V1.9.5，已在 `src/`
@@ -108,9 +158,9 @@ Windows Debug Push Client（debugPushClient.js）
     ↓
 POST /internal/pbs-debug-push
     ↓
-Cloudflare V1.9.5 Debug-only Receiver（src/pbs/debugPush.js）
-    ↓
-Authentication → Validation → best-effort duplicate check → Workers Logs → ACK
+Cloudflare src/pbs/debugPush.js（V1.9.5 建立，V1.9.8 起是正式 Production Ingress——
+    見上方新版流程圖，Authentication/Validation/持久冪等之後接正式 Business Pipeline，
+    不再只是 Workers Logs → ACK）
 ```
 
 ### 服務區治理修正（真實踩過的誤收 bug）
@@ -172,10 +222,12 @@ L1 僅是快速路徑（同 isolate 內短時間重試可跳過 KV 讀取），*
 完整記錄於 `07_KNOWN_ISSUES.md`（機器可讀欄位 → `SYSTEM_STATE.json` 的
 `pbsLocalEdgeFilterPrototype`）：Windows 常駐模式（Task Scheduler／watchdog／log
 retention）、Cloudflare Secret binding 曾經歷的一次真實 503 事故與根因、六階段
-路線圖（Phase 1 現行觀察 → Phase 2 持久冪等設計【V1.9.7 已完成】→ … → Phase 6 才
-評估 Cloudflare PBS 輪詢退休，不得提前）、緊急停用方法（Windows 端環境變數
-`PBS_DEBUG_PUSH_ENABLED=false` + 重啟本機排程即可，不需動 Cloudflare／不需動既有
-PBS 輪詢）。
+路線圖（Phase 1 現行觀察、Phase 2 持久冪等設計【V1.9.7】、Phase 3-5 Business
+Pipeline／LINE 正式啟用／Windows 成為主要來源、Phase 6 PBS 輪詢退休——**V1.9.8
+一次性由正式施工令授權合併完成，非本 Session 自行提前推進**）、緊急停用方法
+（Windows 端環境變數 `PBS_DEBUG_PUSH_ENABLED=false` + 重啟本機排程即可停止
+Windows 推播；V1.9.8 起 Cloudflare 自身 PBS 輪詢已非 fallback，若需暫時恢復
+PBS 資料流須改回 `PBS_30_MIN_POLLING_ENABLED=true` 並重新部署）。
 
 ## 模組清單（自動掃描）
 

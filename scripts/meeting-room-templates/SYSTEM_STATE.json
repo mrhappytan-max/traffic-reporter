@@ -128,9 +128,9 @@
     "readerNote": "OBSERVATION, not construction. Do not modify src/, the broadcast policy, Cron, TDX, CCTV, the Consumer, or redeploy because of this entry."
   },
   "pbsLocalEdgeFilterPrototype": {
-    "PBS_LOCAL_EDGE_FILTER_PROTOTYPE": "ACTIVE_DEBUG_ONLY",
-    "recordedAt": "2026-08-27",
-    "recordedBy": "human directive (路況工程部 V1.9.6 第二棒正式封版令｜PBS Windows Local Edge Debug Push Integration) — governance-only round: Engineering Memory/Version Governance/Documentation/Canonical Sync only, no merge, no new Cloudflare runtime change, no LINE/CCTV/business-KV integration, no PBS polling retirement, no Windows Secret/Task Scheduler change, no Prototype runtime change this round.",
+    "PBS_LOCAL_EDGE_FILTER_PROTOTYPE": "ACTIVE_PRODUCTION_INGRESS",
+    "recordedAt": "2026-08-28",
+    "recordedBy": "human directive (路況工程部 V1.9.8 正式施工令｜Windows PBS Push → Production Business Pipeline ＋ 退休 Cloudflare 30 分鐘 PBS Polling) — 真正的 Cloudflare runtime 變更：debugPush.js 升級為正式 Windows PBS Production Ingress，重用既有 canonical runLineBroadcast()/runSharedFeedPersist()，Cloudflare 自身 30 分鐘 PBS 輪詢正式退休（PBS_30_MIN_POLLING_ENABLED=false）。",
     "LOCAL_PROTOTYPE_CODE_GITHUB_STATUS": "COMMITTED_TO_FEATURE_BRANCH",
     "LOCAL_PROTOTYPE_GITHUB_BRANCH": "feature/pbs-local-edge-filter-prototype",
     "LOCAL_PROTOTYPE_GITHUB_COMMIT": "95ecdc4718f836ff36c974e829b549f262e6b936",
@@ -141,15 +141,15 @@
     "WINDOWS_REAL_DEBUG_PUSH": "ACTIVE",
     "CLOUDFLARE_DEBUG_RECEIVER": "ACTIVE",
     "WINDOWS_TO_CLOUDFLARE_DEBUG_CHANNEL": "VERIFIED",
-    "WINDOWS_TO_PRODUCTION_BUSINESS_PIPELINE": "NOT_STARTED",
-    "LINE_INTEGRATION": "NOT_STARTED",
-    "CCTV_INTEGRATION": "NOT_STARTED",
-    "PBS_CLOUDFLARE_POLLING_RETIREMENT": "NOT_STARTED",
-    "PBS_30_MIN_POLLING": "PRESERVED — Cloudflare 既有 V1.9.3 排程閘門完全不變，仍是目前的正式/備援路徑",
-    "PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY": "PARTIAL — V1.9.7 加入 TRAFFIC_KV 下的持久 L2 層（debug:pbs-push-idempotency:v1:*，48h TTL，stable key = SHA-256(source:eventId:lifecycle:fingerprint)），關閉了 isolate回收/重啟/redeploy 造成的事後重複accept；KV_ONLY_ATOMICITY=NOT_SUFFICIENT（KV無compare-and-swap，理論極窄race window仍存在，但此endpoint零business side effect，race後果僅為冗餘debug log，故非ACTIVE亦非NOT_SOLVED）。見V1.9.7條目。",
+    "WINDOWS_TO_PRODUCTION_BUSINESS_PIPELINE": "ACTIVE",
+    "LINE_INTEGRATION": "ACTIVE",
+    "CCTV_INTEGRATION": "ACTIVE（透過重用runLineBroadcast自動套用，未新增獨立CCTV程式碼）",
+    "PBS_CLOUDFLARE_POLLING_RETIREMENT": "COMPLETE",
+    "PBS_30_MIN_POLLING": "RETIRED — pbsConfig.js#PBS_30_MIN_POLLING_ENABLED=false，scheduled.js的pbsFetchPerformed恆為false；pbsSchedule.js/pbs/pipeline.js/pbs/lifecycle.js程式碼完整保留未刪除，翻回true即可rollback。",
+    "PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY": "PARTIAL — V1.9.7 加入 TRAFFIC_KV 下的持久 L2 層（debug:pbs-push-idempotency:v1:*，48h TTL，stable key = SHA-256(source:eventId:lifecycle:fingerprint)），關閉了 isolate回收/重啟/redeploy 造成的事後重複accept；KV_ONLY_ATOMICITY=NOT_SUFFICIENT（KV無compare-and-swap，理論極窄race window仍存在，但此endpoint零business side effect，race後果僅為冗餘debug log，故非ACTIVE亦非NOT_SOLVED）。見V1.9.7條目。V1.9.8未變動此設計（施工令第六節明確要求沿用）。",
     "PBS_DEBUG_PUSH_ENABLED_CURRENT_STATE": "true（真人已啟用，Feature Switch 預設值為 false，讀 pbs-relay/src/localDebugPush.js#isDebugPushEnabled 程式碼確認）",
-    "CURRENT_PRODUCT_VERSION": "V1.9.7",
-    "PRODUCT_VERSION_BUMP": "YES — 本輪的封版令本身就是升版理由：Windows Local Edge Runtime + Persistent Monitor + SHOULD_PUSH Automation + Debug Channel Integration 正式併入 Product 架構線，即使本輪 Cloudflare 端沒有新增程式碼（Cloudflare runtime 仍是 V1.9.5 的 src/pbs/debugPush.js）",
+    "CURRENT_PRODUCT_VERSION": "V1.9.8",
+    "PRODUCT_VERSION_BUMP": "YES — V1.9.8是真正的Cloudflare runtime變更（src/pbs/debugPush.js升級為正式Production Ingress、src/pbs/pbsConfig.js新增退休flag、src/traffic/scheduled.js讀取該flag），非純治理封版。",
     "localPaths": {
       "windowsProjectRoot": "C:\\Users\\mrhap\\traffic-reporter",
       "prototypeRoot": "C:\\Users\\mrhap\\traffic-reporter\\pbs-relay",
@@ -207,8 +207,8 @@
     },
     "mockVerificationEvidence": "人類回報（本Session未親自操作Claude Browser）：對正確Worker(traffic-reporter)完整跑過NEW/DUPLICATE/UPDATED/CLEARED四種情境皆PASS；Workers Logs交叉驗證NEW_LOG_FOUND/DUPLICATE_LOG_FOUND/UPDATED_LOG_FOUND/CLEARED_LOG_FOUND皆YES；LINE_SIDE_EFFECT/CCTV_SIDE_EFFECT/R2_SIDE_EFFECT/SHARED_FEED_SIDE_EFFECT/BUSINESS_KV_WRITE_SIDE_EFFECT皆0，SECRET_LEAK=NO，DEBUG_PUSH_CHANNEL_VERIFIED=YES。",
     "architectureSummary": "PBS警廣官方來源 -> Windows本機每3分鐘抓取(localMonitor.js，Task Scheduler常駐) -> Local Edge Filter(localPrototype.js，重用Production服務區規則) -> 事件生命週期比較(localState.js，二輪CLEARED確認) -> NEW/UPDATED/CLEARED/UNCHANGED/MISSING_PENDING_CLEAR -> SHOULD_PUSH判斷(localDebugPush.js) -> [NO:停在Windows / YES:Windows Debug Push Client] -> POST /internal/pbs-debug-push -> Cloudflare V1.9.5 Debug-only Receiver -> Authentication -> Validation -> best-effort duplicate check -> Workers Logs -> ACK。明確不進：LINE/CCTV/R2/Shared Feed/正式Business KV/正式Broadcast Pipeline。",
-    "roadmap": "Phase 1（目前）Real Debug Observation：至少觀察2-4小時或至少1筆真實NEW/UPDATED/CLEARED，驗證Windows detection/Cloudflare ACK/duplicate/failure rate/false positive/false clear -> Phase 2 Persistent Idempotency Design（正式Production前解決跨isolate/跨deployment/跨restart重複保護）-> Phase 3 Debug Receiver -> Production Business Pipeline（仍先LINE disabled，驗證Shared Feed/Pipeline/State lifecycle）-> Phase 4 LINE limited activation（先小範圍/管理員測試）-> Phase 5 Windows Edge becomes primary PBS trigger（Cloudflare 30分鐘輪詢降為fallback）-> Phase 6（長期觀察後才評估PBS Cloudflare輪詢退休，不得提前）。",
-    "emergencyKillSwitch": "若Windows Debug Push異常：Windows User Environment設定PBS_DEBUG_PUSH_ENABLED=false，重啟TrafficReporter-PBS-LocalMonitor即可停止Windows自動Push，不需停PBS monitor/刪Secret/rollback Cloudflare/關PBS輪詢。Production PBS 30分鐘輪詢仍存在作為既有路徑，完全不受影響。",
+    "roadmap": "Phase 1（Real Debug Observation）與 Phase 2（Persistent Idempotency, V1.9.7）已完成。Phase 3-5（Debug Receiver 升級為 Production Business Pipeline、LINE正式啟用、Windows Edge成為主要PBS觸發來源）與 Phase 6（Cloudflare PBS輪詢退休）於 V1.9.8 一次性合併完成——已由本輪的真人正式施工令明確授權加速，非本Session自行提前推進。目前無下一階段roadmap；後續產品方向（LINE policy擴大、台61/台15全線封閉等）需新的正式施工令。",
+    "emergencyKillSwitch": "若Windows Debug Push異常：Windows User Environment設定PBS_DEBUG_PUSH_ENABLED=false，重啟TrafficReporter-PBS-LocalMonitor即可停止Windows自動Push。V1.9.8起，Cloudflare自身PBS 30分鐘輪詢已retired（非fallback）——若Windows Push本身也需要緊急關閉且需要暫時恢復PBS資料流，唯一rollback是將pbsConfig.js#PBS_30_MIN_POLLING_ENABLED改回true並重新部署，此前無其他PBS資料來源。",
     "windowsPersistentMode": {
       "taskSchedulerName": "TrafficReporter-PBS-LocalMonitor",
       "command": "C:\\Program Files\\nodejs\\node.exe C:\\Users\\mrhap\\traffic-reporter\\pbs-relay\\src\\localMonitor.js --watch",
@@ -228,46 +228,41 @@
       "note": "以上為人類回報，本Cloud Session無法連線Windows機器獨立驗證執行期狀態"
     },
     "driveGovernance": "Claude Drive WRITE = FORBIDDEN（本輪維持）。本輪只同步 Engineering Memory 文字紀錄到 Drive；Prototype 程式碼本身已由真人 commit/push 進 feature/pbs-local-edge-filter-prototype 分支，該分支不經過 Engineering Memory 的 GitHub→Drive 鏡射流程（鏡射對象是 engineering-memory/ 這 10 份文件，不是 repo 的每一個分支）。",
-    "readerNote": "這是治理封版記錄，不是完工的 Production Business 功能。目前僅 Debug-only：Windows 真的在跑、真的會呼叫 Cloudflare，但 Cloudflare 端只做驗證/記錄/ACK，不進 LINE/CCTV/Shared Feed/正式KV/正式Pipeline。下一個 Agent：不要自行 merge 這個 feature branch；不要開始 LINE/CCTV/Business KV 整合；不要退休 Cloudflare 既有 PBS 輪詢；不要修改 Windows Secret 或 Task Scheduler；不要碰本機 Prototype runtime；不要自行開始 V1.9.7。"
+    "readerNote": "V1.9.8起，這是正式Production架構的一部分，不再只是治理封版記錄：Windows是fast detector/edge filter，Cloudflare是Traffic Producer/Business Authority，LINE最終播報與否的判斷仍完全由Cloudflare既有規則決定。下一個Agent：不要自行開始V1.9.9；不要擴大LINE policy（MAJOR_ACCIDENT_ONLY等既有規則不變）；不要處理台61/台15全線封閉產品政策；不要新增Durable Object；不要進行與PBS/LINE無關的架構重構；不要修改Windows Secret或Task Scheduler；不要碰本機Prototype runtime。"
   },
   "taskSeal": {
-    "task": "PERSISTENT_PBS_DEBUG_PUSH_IDEMPOTENCY_V1_9_7",
+    "task": "WINDOWS_PBS_PRODUCTION_INGRESS_AND_POLLING_RETIREMENT_V1_9_8",
     "status": "SEALED",
     "sealedAt": "2026-08-28",
-    "sealedBy": "human directive (路況工程部 V1.9.7 正式施工令｜Persistent Idempotency｜跨執行個體持久重複防護)",
-    "releaseVersion": "V1.9.7",
-    "fixCommit": "9cfa8ef",
-    "realWorldTrigger": "V1.9.6首筆真實事件驗收成功（台68西向5K：Windows Debug Push 08:48:30，Cloudflare 30分鐘輪詢09:00:39，Windows早發現約12.1分鐘），確認channel運作正常，但當時標記的持久冪等風險仍未解決。",
+    "sealedBy": "human directive (路況工程部 V1.9.8 正式施工令｜Windows PBS Push → Production Business Pipeline ＋ 退休 Cloudflare 30 分鐘 PBS Polling)",
+    "releaseVersion": "V1.9.8",
     "design": {
-      "persistentStoreChosen": "TRAFFIC_KV（重用既有binding，獨立debug-only前綴 debug:pbs-push-idempotency:v1:*，不建立新binding、不碰任何business key）",
-      "stableIdempotencyKey": "SHA-256(source:eventId:lifecycle:fingerprint)，刻意不用requestId（同事件重試requestId本就不同）",
-      "ttl": "48小時（IDEMPOTENCY_TTL_SECONDS）",
-      "l1MemoryCachePreserved": true,
-      "l2PersistentLayer": "TRAFFIC_KV get-then-put，L1 miss才查L2，L2結果才是唯一真相",
-      "kvOnlyAtomicity": "NOT_SUFFICIENT — KV無compare-and-swap，理論極窄race window存在，但endpoint零business side effect，本輪依施工令自身指示不引入Durable Object",
-      "persistentCrossIsolateIdempotency": "PARTIAL — 關閉了主要風險（isolate/restart/redeploy事後重複accept），未達atomic exactly-once保證",
-      "kvOutageBehavior": "fail OPEN（事件仍accepted，debug-only功能不因KV outage阻擋合法事件）"
+      "ingressApproach": "Option A（既有 debug-only endpoint 直接升級為正式 Windows PBS Production Ingress，非另建第二個 endpoint）— src/pbs/debugPush.js",
+      "normalization": "新增 buildRawPbsRecordFromPush()：Windows payload → raw-PBS-shaped record → pbs/normalize.js 既有 normalizePbsEvent()（未修改）。happendate/happentime/modDttm 由 generatedAt 精確反推 Asia/Taipei 本地時間字串（非近似值，UTC+8固定無DST，往返可還原同一時刻）；roadtype 刻意留空（Windows 本地過濾器已保證轉發事件comment含事故關鍵字，comment-only分類已足夠）。",
+      "businessPipelineReuse": "首次有效NEW/UPDATED事件 → traffic/broadcastPipeline.js 既有未修改 runLineBroadcast()（與Cron輪詢路徑呼叫的同一函式）→ traffic/sharedFeed.js 既有未修改 runSharedFeedPersist()（與scheduled.js呼叫時機相同）。debugPush.js 內0份重複的事故/服務區/位置品質/資格/去重/CCTV/Shared Feed邏輯。",
+      "clearedLifecycle": "CLEARED 僅ACK+log，刻意不進入runLineBroadcast，比照pbs/pipeline.js既有clearedEvents從不進入broadcastEvents的行為。",
+      "linePolicy": "完全未變動：MAJOR_ACCIDENT_ONLY與既有service-area/location-quality gate對Windows來源事件套用方式與TDX/輪詢-PBS事件完全相同。",
+      "idempotency": "沿用V1.9.7持久L2層，未修改，key authority/48hTTL不變。",
+      "retirement": "pbs/pbsConfig.js 新增 PBS_30_MIN_POLLING_ENABLED=false（resolvePbsPollingEnabled(env)可由env覆寫，僅供本repo既有PBS/CCTV測試套件使用，Production不設此env var）。scheduled.js的pbsFetchPerformed因此恆為false。pbsSchedule.js/pbs/pipeline.js/pbs/lifecycle.js完整保留未刪除，翻回true即可rollback。"
     },
     "testEvidence": {
-      "newTestFile": "test/pbsDebugPush.test.js — 52項測試（原33項），涵蓋施工令20項清單：首次請求/同isolate duplicate(L1)/模擬新isolate duplicate(L2)/模擬deployment restart duplicate/不同fingerprint非duplicate/同eventId不同lifecycle分開/同key重複判定(NEW/UPDATED/CLEARED)/無效auth零KV操作/無效payload零KV操作/duplicate零額外寫入/accept恰好1次寫入/TTL斷言/KV前綴隔離/schema向下相容/KV outage fail-open/KV成本量化fixture。",
-      "kvCostQuantification": "真實counting mock量測（非估算）：10/30/100筆相異accepted事件/日分別消耗10/30/100次KV get+10/30/100次KV put；duplicate(含5次重試)僅1次put+6次get。加上既有~118 writes/day基線 → 約128/148/218 writes/day，遠低於1,000/day帳戶上限，KV_WRITE_PRESSURE=LOW。",
-      "fullRegression": "1404項測試／1371 pass／33 fail，失敗清單與變更前基線逐項比對完全相同，NEW FAILURES=0。"
+      "newTests": "test/pbsDebugPush.test.js 新增V1.9.8 15項最低測試(order section十)：NEW/UPDATED業務處理、CLEARED不進broadcast、duplicate不重複處理、無效auth/payload、服務區外0推播、不符合LINE政策0推播、符合政策恰好1次LINE推播、duplicate 0額外推播、canonical notified-state key、Shared Feed正常、CCTV canonical邏輯(無metadata cache仍text-only成功)。test/pbsPollingRetirementV198.test.js 新增4項：flag=false、getPbsScheduleState()本身不變、would-be-scheduled tick確認PBS fetch從未被呼叫、其餘Cron工作(health/LINE/SharedFeed/PipelineTrace)不受影響。",
+      "kvCostRevision": "V1.9.8誠實修正KV成本剖面：genuinely accepted事件現在真正呼叫Business Pipeline，非僅debug log。實測(0-broadcast-relevant fixture)：N筆事件 → gets=5N,puts=N+2(idempotency=N + incident-suppression-state一次 + shared-feed一次,均WRITE_ON_CHANGE只在整輪第一筆寫入)。",
+      "fullRegression": "1424項測試／1391 pass／33 fail，與變更前基線(1404/1371/33)逐項比對完全相同的33項失敗清單，NEW FAILURES=0（透過git stash基線diff嚴格驗證）。9個既有測試檔（broadcastEligibility/congestionValidationIntegration/pbsLineBroadcast/pbsOnlyCrossSourceDedup/pipelineTraceIntegration/pipelineTraceNoRelevantChange/tdxQuotaPbsOnlyMode/tdxUsageReduction/v572TdxGatedFreewayBroadcast）因直接透過runScheduledTdxSync行使PBS輪詢入口注入fixture而需要env.PBS_30_MIN_POLLING_ENABLED=true覆寫，其被測邏輯本身完全未變。"
     },
     "productionVerification": {
       "attempted": false,
-      "note": "本輪程式碼變更（src/pbs/debugPush.js的持久冪等邏輯）尚未在真實Production環境由Claude Browser驗證跨isolate行為——部署後應由Claude Browser或真人執行：(A)第一次mock→accepted=true，(B)同payload→duplicate=true，(C)重新部署或不同isolate情境→仍duplicate=true。若無法真正證明跨isolate，應標記CROSS_ISOLATE_VERIFICATION=INCONCLUSIVE，不得硬報PASS。本session對Production的驗證能力持續受限於sandbox egress封鎖（見歷輪查修令記錄）。"
+      "note": "sandbox網路egress政策封鎖對Production網域(traffic-reporter.mr-happytan.workers.dev)與Cloudflare Dashboard的存取(curl 403 CONNECT tunnel failed; WebFetch EGRESS_BLOCKED)，本輪Production驗收項目（APP_VERSION/Production主動部署/Windows monitor/Ingress/Idempotency/Business Pipeline/LINE整合/PBS輪詢退休 是否確實生效）皆無法從此sandbox直接觀測，誠實標記NOT_OBSERVED，以確定性測試+部署狀態(commit/version.js)作為本輪封版依據，符合施工令第十一節本身的明確指示。"
     },
     "notTouchedByThisRound": [
-      "LINE",
-      "CCTV",
-      "Shared Feed",
-      "Business KV（既有business key前綴）",
-      "正式Broadcast Pipeline",
-      "Cloudflare既有PBS 30分鐘輪詢閘門",
-      "Windows Prototype本身的程式碼/Secret/Task Scheduler",
-      "Debug API既有JSON回應schema（向下相容，測試驗證）"
+      "LINE policy 本身（MAJOR_ACCIDENT_ONLY等既有規則）",
+      "台61/台15全線封閉產品政策",
+      "Durable Object（未新增）",
+      "服務區canonical邏輯（Windows既有沿用，本輪僅確認未變）",
+      "Windows Secret/Task Scheduler",
+      "與PBS無關的其他Cron工作(TDX/health snapshot/Shared Feed其他來源)"
     ],
-    "readerNote": "完成後STOP，未自行開始正式Business Pipeline/LINE integration/V1.9.8。"
+    "readerNote": "完成後STOP。禁止自行開始V1.9.9。禁止擴大LINE policy。禁止處理台61/台15全線封閉產品政策。禁止新增Durable Object。禁止進行無關架構重構。"
   },
   "taskSealHistory": [
     {
@@ -551,6 +546,14 @@
       "status": "SEALED",
       "sealedAt": "2026-08-23",
       "summary": "TDX 額度用盡，TRAFFIC_SOURCE_MODE=PBS_ONLY 關閉 Cron 路徑上所有 TDX 呼叫，未刪除任何 TDX 程式碼。還原程序見 07_KNOWN_ISSUES.md「TDX 還原程序」。"
+    },
+    {
+      "task": "PERSISTENT_PBS_DEBUG_PUSH_IDEMPOTENCY_V1_9_7",
+      "status": "SEALED",
+      "sealedAt": "2026-08-28",
+      "releaseVersion": "V1.9.7",
+      "fixCommit": "9cfa8ef",
+      "summary": "debugPush.js 加入 TRAFFIC_KV 下獨立 debug-only 前綴(debug:pbs-push-idempotency:v1:*,48h TTL,key=SHA-256(source:eventId:lifecycle:fingerprint))作為L2持久層,L1記憶體Map保留為快取但非唯一真相。KV_ONLY_ATOMICITY=NOT_SUFFICIENT(無compare-and-swap),但endpoint零business side effect,依施工令指示不引入Durable Object,PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY誠實標記PARTIAL。52項測試(原33+19),KV成本量化：10/30/100筆事件/日=10/30/100次put。1404/1371/33基線,NEW FAILURES=0。"
     }
   ],
   "version": {
@@ -565,7 +568,7 @@
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
   "currentPhase": "{{CURRENT_PHASE}}",
-  "currentTask": "none（無進行中工作）。Latest completed task = KV_WRITE_OPTIMIZATION_V1_9_2，status = SEALED（前序 PIPELINE_TRACE_FILTER_ROOT_CAUSE_V1_9_1、CCTV_QUAD_PREPARE_TIMEOUT_OBSERVABILITY_V1_9_0、THREE_PART_VERSIONING_TRANSITION、PRODUCTION_VERSION_LINEAGE_RECONCILIATION 亦為 SEALED）。CURRENT_OFFICIAL_VERSION = V1.9.2。本輪：(1) traffic:shared-feed／line:incident-suppression-state 改為 WRITE_ON_CHANGE（內容不變則跳過寫入，只更新 updatedAt/lastSeenAt 真的改變時才寫）；(2) Pipeline Trace 改為每輪一把 batch key（debug:pipeline-trace-batch:v2:*），舊版 v1 per-entry key 不刪除不遷移、靠 24h TTL 自然過期，listPipelineTrace 已能正確合併新舊兩種схема；(3) TDX Usage Summary 正式退休（tdx:usage:summary:v1 與底層 tdx:usage:entry:v1:* 帳本皆為 0 writes/day，/health 的用量卡片改為指向 TDX 官方後台的靜態提示，TDX 本身能力完全未動）；(4) 新增 [kv-write-budget] Cron console.log（僅 Workers Logs，無新 KV key）。雲端同步治理維持 V2：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源。**下一件事若要開工，建議處理約 33 項過期斷言**（見 07_KNOWN_ISSUES.md，與本輪無關的既有項目）。",
+  "currentTask": "none（無進行中工作）。Latest completed task = WINDOWS_PBS_PRODUCTION_INGRESS_AND_POLLING_RETIREMENT_V1_9_8，status = SEALED。CURRENT_OFFICIAL_VERSION = V1.9.8。本輪：(1) src/pbs/debugPush.js 升級為正式 Windows PBS Production Ingress，重用既有canonical runLineBroadcast()/runSharedFeedPersist()；(2) Cloudflare自身PBS 30分鐘輪詢正式退休（pbsConfig.js#PBS_30_MIN_POLLING_ENABLED=false，程式碼完整保留可rollback）；(3) LINE/Shared Feed/CCTV整合透過重用canonical pipeline自動生效，0份重複業務邏輯；(4) LINE Push Policy（MAJOR_ACCIDENT_ONLY）完全未變動。下一件事若要開工：見07_KNOWN_ISSUES.md既有約33項過期斷言（與本輪無關），或等待新的正式施工令。",
   "knownBlocker": "{{KNOWN_BLOCKER}}",
   "realWorldConfirmation": {
     "status": "{{REAL_WORLD_CONFIRMATION}}",

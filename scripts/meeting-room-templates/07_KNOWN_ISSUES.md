@@ -807,126 +807,167 @@ Windows Prototype、LINE、CCTV、TDX、Cron 頻率。Production 驗證：見
 `SYSTEM_STATE.json.taskSealHistory` 的 V1.9.4 紀錄（sandbox 無法連 Production，誠實標記
 `NOT_OBSERVED`）。
 
-## 修正紀錄｜Persistent PBS Debug Push Idempotency（V1.9.7）（2026-08-28）
+## 修正紀錄｜Windows PBS Push → Production Business Pipeline ＋ PBS 輪詢退休（V1.9.8）（2026-08-28）
 
-### 真實觸發：V1.9.6 首筆真實事件驗收
+### 真實觸發與決策
 
-台68西向5K：Windows Debug Push於08:48:30送達，Cloudflare既有30分鐘PBS輪詢直到
-09:00:39才自己看到——Windows早發現約12.1分鐘，證明整條Debug Push channel運作正常。
-但當時封版時明確標記的風險仍在：V1.9.5的冪等判斷只有per-isolate記憶體
-（`PBS_DEBUG_PUSH_IDEMPOTENCY_MODE=NOT_PERSISTENT`）——Cloudflare isolate換掉、
-Worker重啟、或redeploy都可能讓Windows對同一事件的重試被重新`accepted=true`。
+V1.9.7關閉了持久冪等風險，channel本身已證實可靠（V1.9.6首筆真實事件，Windows早
+Cloudflare舊30分鐘輪詢約12.1分鐘）。本輪由真人正式施工令一次性授權，把六階段
+路線圖的Phase 3-6合併完成：Debug Receiver升級為Production Ingress、正式Business
+Pipeline整合、LINE正式啟用、Windows成為PBS主要來源、Cloudflare自身PBS輪詢退休。
+明確排除：長期Shadow Mode、多日A/B比較、對即將退休路徑的額外深度查證。
 
-### 修正：新增 TRAFFIC_KV 下的持久 L2 層
+### Ingress：就地升級，非另建 endpoint（施工令「改動最小、重複程式碼最少」）
 
-`src/pbs/debugPush.js` 新增獨立 debug-only 前綴 `debug:pbs-push-idempotency:v1:*`
-（`IDEMPOTENCY_KV_PREFIX`）——絕不觸碰任何 business key（`traffic:shared-feed`／
-`line:notified-state`／`line:incident-suppression-state`／`debug:pipeline-trace*`／
-`pbs:lifecycle-state`），有專門的「KV prefix isolation」測試鎖住。
+`src/pbs/debugPush.js`（V1.9.5建立，V1.9.7加持久冪等）本輪第三次升級：一個真正
+被接受（非duplicate）的NEW/UPDATED事件，新函式`buildRawPbsRecordFromPush()`把
+Windows payload組成raw-PBS-shaped record，交給`pbs/normalize.js`既有未修改的
+`normalizePbsEvent()`，再交給`traffic/broadcastPipeline.js`既有未修改的
+`runLineBroadcast()`——**與Cron輪詢路徑呼叫的同一個函式**，同一套service area／
+accident policy／location quality／eligibility／dedupe／incident suppression／
+CCTV／LINE Push Policy／notified-state判斷，隨後呼叫`traffic/sharedFeed.js`既有
+`runSharedFeedPersist()`，與`scheduled.js`呼叫時機相同。debugPush.js本身0份重複的
+業務邏輯——這是施工令第四節「同一事件不論來源，正式判斷結果應由同一套函式產生」
+的直接體現。
 
-**Stable Idempotency Key**：由 `source:eventId:lifecycle:fingerprint` 的 SHA-256
-雜湊決定性產生（`computeIdempotencyKeyHash`），**刻意不用 requestId**——同一事件的
-Windows端重試本就會產生不同requestId（見`debugPushClient.js`），若拿requestId當key
-會讓每次重試都變成一筆新事件。同一eventId不同lifecycle（NEW/UPDATED/CLEARED）分開判定，
-同一eventId+lifecycle+fingerprint則永遠是同一把key，不論retry／Windows重啟／isolate
-換掉／redeploy。
+### 欄位重建：Windows payload → raw-PBS-shaped record
 
-**L1/L2 兩層架構**：V1.9.5既有記憶體Map保留作為L1快取（同isolate內短時間重試可跳過
-KV讀取），但**絕非唯一真相**——L1 miss一律再查L2 KV才能決定accept，故全新isolate的
-空L1仍能正確命中別的isolate寫入的L2紀錄。
+Windows的debug-push payload（V1.9.5建立的`EVENT_LOG_FIELDS`白名單：road/areaNm/
+direction/comment/longitude/latitude/sourceDetail）缺少`normalizePbsEvent()`需要
+的`roadtype`/`happendate`/`happentime`/`modDttm`/原始`UID`（有等效的`eventId`）。
+解法，誠實記錄：
+- `UID` = `eventId`（equivalent，非近似）。
+- `happendate`/`happentime`/`modDttm`：由payload自己的`generatedAt`（ISO UTC瞬間）
+  反推Asia/Taipei本地時間字串（`YYYY-MM-DD`/`HH:MM:SS`），因Taipei為固定UTC+8無
+  DST，`normalizePbsEvent`內部的`parseHappenedAt`/`parsePbsDateTime`會用同一套
+  UTC+8換算把它還原回**完全相同**的瞬間——這是精確重建，不是近似值。用同一瞬間
+  同時當作happenedAt與updatedAt是正確的（非取巧近似）：Windows只轉發它剛偵測到
+  的真正NEW/UPDATED transition，`generatedAt`本身就是這個transition被發現的那一
+  刻，對兩個欄位而言都是真實值，等同一筆剛被輪詢路徑首次觀察到的PBS紀錄的
+  happendate/modDttm關係。
+- `roadtype`：刻意留空字串。`classifyPbsEvent({roadtype,comment})`把兩者串接成
+  一段文字做關鍵字比對，Windows本機過濾器（V1.9.6起）已保證只轉發comment含事故
+  關鍵字的NEW/UPDATED事件，故comment-only分類已足夠可信；此欄位只在NEW/UPDATED
+  時被讀取（CLEARED事件從不到達`normalizePbsEvent`，見下段），故此gap不影響
+  CLEARED的分類正確性（CLEARED本就不需要分類，因為它從不進eligibility判斷）。
 
-**KV行為**：驗證auth→驗證payload→計算stable key→L1檢查→(L1 miss)L2 KV get→存在則
-200 duplicate=true不寫KV；不存在則KV put（帶48小時TTL）+accepted=true。duplicate
-**永遠0次額外KV寫入**，只有真正首次的idempotency key才花費1次寫入。
+### CLEARED lifecycle：只 ACK/log，刻意不進 Business Pipeline
 
-### TTL：48小時
+比照既有`pbs/pipeline.js`：`classifyPbsLifecycle()`產生的`clearedEvents`從未被
+餵進`crossSourceDedup`/`canonicalEvents`/`uniquePbsEvents`——只有`activeEvents`
+會到達broadcast。CLEARED的Windows push因此只做ACK+結構化log，**不**呼叫
+`runLineBroadcast`，維持與輪詢路徑完全一致的語意，也符合施工令第七節「不得提前
+推播正式CLEARED」的要求。Windows端自己的CLEARED治理（明確解除文字立即CLEARED；
+否則需連續2輪成功fetch缺席才CONFIRMED_CLEARED，第1輪為MISSING_PENDING_CLEAR）
+本輪完全未修改，Cloudflare端只是誠實地不對它做任何業務處理。
 
-PBS事件自身的活躍生命週期通常數小時、偶爾略超過一天（見本檔案其他PBS事件紀錄）；
-本輪要撐過的isolate回收／重啟／redeploy間隔遠短於此。48小時給予事件整個實際生命週期
-內任何一次因isolate更換而需要重新查詢都能命中同一筆紀錄的餘裕，同時避免KV無限期累積。
+### LINE Push Policy：完全未變動
 
-### KV成本量化（真實counting mock量測，非估算）
+`MAJOR_ACCIDENT_ONLY`（`broadcastPolicy.js`）與每一條既有資格規則對Windows來源
+事件的套用方式與TDX/輪詢-PBS事件完全相同——因為呼叫的是同一個`runLineBroadcast`
+函式。本輪未擴大播報類型（全線封閉、非事故重大事件、動態路肩恆常播報等皆未觸碰，
+明確排除於施工令範圍外）。
 
-`test/pbsDebugPush.test.js` 的決定性fixture：10/30/100筆真正相異的accepted事件/日，
-分別實測消耗**10/30/100次KV get + 10/30/100次KV put**（1 accepted event = 恰好1次
-寫入，符合施工令「不得每Cron round寫」的原則）；duplicate（含重試5次）實測僅
-1次put、6次get（1次首次miss+5次重試皆hit）——證實「duplicate永遠0次額外寫入」。
-加上既有約118 writes/day基線：
+### 退休 Cloudflare PBS 30 分鐘輪詢：最小改動，完整保留
 
-| 情境 | 新增 writes/day | 總計 writes/day |
-|---|---|---|
-| 10 events/day | +10 | ≈128 |
-| 30 events/day | +30 | ≈148 |
-| 100 events/day | +100 | ≈218 |
+`src/pbs/pbsConfig.js`新增`PBS_30_MIN_POLLING_ENABLED = false`（可由
+`env.PBS_30_MIN_POLLING_ENABLED`覆寫，`resolvePbsPollingEnabled(env)`——與既有
+`TRAFFIC_SOURCE_MODE`/`LINE_PUSH_POLICY`同一慣例，**Production不設此env var**，
+僅供本repo既有PBS/CCTV測試套件沿用輪詢入口注入fixture）。`traffic/scheduled.js`
+的`pbsFetchPerformed`因此恆為false，不論`pbsSchedule.js#getPbsScheduleState()`
+回報什麼（該函式本身完全未修改，仍正確計算排程狀態，只是不再被實際採用）。
+`pbsSchedule.js`/`pbs/pipeline.js`/`pbs/lifecycle.js`程式碼**一行未刪**——rollback
+只需把旗標翻回true並重新部署。同一個Cron tick的TDX/health snapshot/Shared Feed/
+Pipeline Trace完全不受影響（未整支砍掉Cron，只停PBS輪詢這一分支）。
 
-三者皆遠低於Cloudflare帳戶1,000 writes/day上限，**`KV_WRITE_PRESSURE=LOW`**。
+**已知可接受的副作用（誠實記錄，非bug）**：`pbs:lifecycle-state`（輪詢路徑專用
+KV key）不再被寫入——Windows已獨立在本機追蹤PBS生命週期，此KV key僅是輪詢路徑
+自己的內部bookkeeping，無其他讀者依賴它。`GET /health`的`pbs`區塊凍結在退休前
+最後一次真實數值（`healthSnapshot.js`既有的carry-forward邏輯完全未修改，只是
+現在永遠carry-forward，因為fetch永遠不再發生）——未來若需要監控Windows Ingress
+本身的健康狀態，需要一個新的health區塊，本輪明確排除（避免無關架構重構）。
 
-### 競態條件（Race Condition）誠實分析
+### KV 成本剖面：誠實修正
 
-**`KV_ONLY_ATOMICITY=NOT_SUFFICIENT`**——Cloudflare KV的get-then-put沒有
-compare-and-swap，理論上兩個isolate在完全相同瞬間收到完全相同payload，仍可能
-兩者的KV get都miss、兩者的KV put都成功，產生雙重`accepted=true`。本輪依施工令自身
-「不要過度設計」的明確指示，**不**引入Durable Object或其他原子協調機制，理由：
+V1.9.7的「debug-only endpoint，1 accepted event=至多1次寫入」在本輪起不再成立——
+一個真正被接受的事件現在會真的呼叫Business Pipeline。實測（0-broadcast-relevant
+fixture，即事件本身不符合播報資格）：N筆事件 → `gets=5N`（idempotency 1次 +
+Business Pipeline讀取4次：subscriptions/notified-state/incident-suppression-
+state/shared-feed）、`puts=N+2`（idempotency N次 + incident-suppression-state
+與shared-feed各恰好1次，皆WRITE_ON_CHANGE，只在整輪第一筆事件時真正寫入，
+之後內容穩定在「空」而跳過）。一個真正符合播報資格的事件另外會寫入
+`line:notified-state`與`debug:broadcast-provenance:v1:*`（與輪詢路徑完全相同的
+寫入模式，非本輪新增的寫入類別）。
 
-1. 本輪真正要關閉的風險——isolate回收／重啟／redeploy造成**事後**（不同時刻）的
-   重複accept——已被持久KV層完全解決，與這個race window（**同時**）是不同問題。
-2. 這個endpoint的真實流量型態是單一Windows來源、非爆發性（PBS事件本就稀疏），
-   兩個request真正同時命中同一把key的機率趨近於零。
-3. 即使真的發生，最壞後果只是一行重複的debug log與一次內容相同的冗餘KV寫入——
-   這個endpoint本身**零business side effect**（LINE=0/CCTV=0/R2=0/Shared Feed=0/
-   正式KV=0），race永遠不可能造成任何真實的重複播報或業務影響。
+### 測試（施工令第十節，十五項最低清單）
 
-`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY` 因此誠實標記為**`PARTIAL`**（不是ACTIVE，
-也不是NOT_SOLVED）——若未來這個endpoint被接上真正的business side effect
-（例如正式LINE整合），屆時才需要Durable Object等原子協調機制，現在不需要。
+`test/pbsDebugPush.test.js`新增V1.9.8區塊：(1)(2) NEW/UPDATED進Business
+Pipeline；(3) CLEARED不進broadcast；(4) duplicate不重複進Business Pipeline；
+(5)(6) 無效auth/payload零Business Pipeline呼叫（既有測試已涵蓋）；(7) 服務區外
+0 LINE；(8) 符合V1.5白名單但不符合MAJOR_ACCIDENT_ONLY政策（type=control）0
+LINE；(9) 符合政策恰好1次LINE推播；(10) duplicate 0額外LINE推播；(11) canonical
+notified-state key scheme（`pbs:<rawId>`）重用證明；(12) Shared Feed正常寫入
+真實product；(13) CCTV canonical fail-safe邏輯（無metadata cache仍text-only
+成功，非unsupported-road）。另建`test/pbsPollingRetirementV198.test.js`
+（(14)(15)）：旗標關閉、`getPbsScheduleState()`本身不變（rollback就緒證明）、
+would-be-scheduled tick確認PBS fetch從未被呼叫、其餘Cron工作(health/LINE/
+Shared Feed/Pipeline Trace)不受影響。
 
-### KV Outage 行為：fail OPEN
+**全量迴歸**：1424項／1391 pass／33 fail，與變更前基線（1404/1371/33）逐項比對
+完全相同的33項失敗清單，NEW FAILURES=0（以`git stash`基線diff嚴格驗證，非
+文字比對）。9個既有測試檔（broadcastEligibility/congestionValidationIntegration/
+pbsLineBroadcast/pbsOnlyCrossSourceDedup/pipelineTraceIntegration/
+pipelineTraceNoRelevantChange/tdxQuotaPbsOnlyMode/tdxUsageReduction/
+v572TdxGatedFreewayBroadcast）因直接透過`runScheduledTdxSync`行使PBS輪詢入口
+注入fixture，加上`env.PBS_30_MIN_POLLING_ENABLED=true`覆寫才能繼續驗證其被測
+邏輯（CCTV/dedup/cross-source等，皆與PBS輪詢排程本身無關，本輪完全未修改）。
 
-L2 KV的get或put若拋錯（模擬帳戶層級KV outage），一律fail OPEN——事件仍然
-`accepted=true`（只是這次沒有持久化冪等紀錄），絕不fail closed拒絕合法的debug事件。
-理由：這是debug-only可觀測性功能，不是業務閘門，寧可偶爾漏掉一次去重也不可漏掉
-一筆真實事件的記錄。Log line會標記`kvOutage=true`供人工追查。
+### Production 驗收（施工令第十一節）
 
-### Observability
-
-`[pbs-debug-push]` log新增欄位：`idempotencyMode`（=`PERSISTENT_KV_PARTIAL`）、
-`idempotencyKeyHashShort`（雜湊前12碼，非完整key、非完整fingerprint）、`memoryHit`、
-`persistentHit`、`accepted`、`duplicate`，異常時額外`kvOutage=true`。禁止輸出：
-完整KV key、Secret、Authorization、完整fingerprint（`shortFingerprint`仍只取前16碼，
-V1.9.5既有行為不變）。
-
-### 向下相容
-
-既有Debug API JSON回應schema完全不變（accepted:`{ok,accepted:true,debugOnly:true,
-requestId,eventId,lifecycle}`；duplicate:`{ok,accepted:false,duplicate:true,
-requestId,eventId,lifecycle}`）——本輪只改變「如何判定duplicate」，未改變回應形狀，
-有專門測試斷言。
-
-### 測試
-
-新增至`test/pbsDebugPush.test.js`（原33項→52項），涵蓋施工令20項清單：首次請求
-accepted、同isolate duplicate經L1（log可見`memoryHit=true`）、模擬新isolate（呼叫
-`resetPbsDebugPushIdempotencyState()`清L1、沿用同一個kv mock物件模擬持久KV存活）
-duplicate經L2（log可見`persistentHit=true`）、模擬deployment restart duplicate、
-不同fingerprint不算duplicate、同eventId不同lifecycle分開判定、同eventId+lifecycle+
-fingerprint重複判定duplicate（NEW/UPDATED/CLEARED各一）、無效auth零KV操作、無效
-payload零KV操作、duplicate零額外寫入、accept恰好1次寫入、TTL斷言等於
-`IDEMPOTENCY_TTL_SECONDS`、KV前綴隔離（key絕不含明文eventId/fingerprint）、schema
-向下相容、KV outage fail-open、KV成本量化fixture本身。NEW FAILURES=0（1404項／1371
-pass／33 fail，與變更前基線逐項比對完全相同）。
+Sandbox網路egress政策封鎖`traffic-reporter.mr-happytan.workers.dev`與Cloudflare
+Dashboard（curl 403 CONNECT tunnel failed；WebFetch EGRESS_BLOCKED），本輪
+APP_VERSION/Production主動部署/Windows monitor/Ingress/Idempotency/Business
+Pipeline/LINE整合/PBS輪詢退休是否確實生效等項目皆**NOT_OBSERVED**，以確定性
+測試+部署狀態（commit/src/version.js）作為本輪封版依據——符合施工令自身第十一節
+「不得為了封版硬造大量測試事件、不得卡在等真實事故發生」的明確指示。
 
 ### 不要誤讀
 
-- **不要以為冪等問題已完全解決**——`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY=PARTIAL`，
-  KV get-then-put沒有原子性保證，只是這個endpoint的真實風險輪廓下影響可忽略。
-- **不要因為這輪加了KV寫入就以為違反了V1.9.3的KV Write Optimization**——新增的是
-  獨立debug-only前綴，且duplicate零額外寫入，實測量級（10-100 writes/day）遠低於
-  帳戶上限，不影響既有business key的WRITE_ON_CHANGE策略。
-- **不要以為這輪解決了business side effect的冪等**——這個endpoint本身仍是
-  debug-only，LINE/CCTV/Shared Feed/正式KV皆為0，本輪的冪等只保護這個debug channel
-  自己，與正式Pipeline的冪等（`dedupe.js`／`incidentSuppression.js`）是完全不同的機制。
-- **不要在正式LINE整合前跳過Durable Object評估**——目前的PARTIAL狀態是本輪刻意的
-  範圍收斂，不是「已證明不需要」；一旦這個endpoint接上真正的業務行為，必須重新評估。
+- **不要以為Windows現在能決定LINE播報**——最終判斷仍100%在Cloudflare的
+  `runLineBroadcast`，Windows只是多了一條事件來源，從未取得決定權。
+- **不要以為CCTV/Shared Feed/incident suppression是本輪新寫的邏輯**——全部透過
+  重用既有`runLineBroadcast`/`runSharedFeedPersist`自動套用，debugPush.js內0份
+  獨立實作。
+- **不要以為`pbs:lifecycle-state`停止更新是bug**——Windows已獨立追蹤PBS生命
+  週期，此KV key是輪詢路徑自己的內部狀態，無其他讀者依賴。
+- **不要以為PBS輪詢退休是不可逆的**——`pbsSchedule.js`/`pbs/pipeline.js`/
+  `pbs/lifecycle.js`程式碼完整保留，翻回`PBS_30_MIN_POLLING_ENABLED=true`即可
+  rollback，未刪除任何程式碼。
+- **不要在下一輪自行擴大LINE policy或處理台61/台15全線封閉**——施工令明確排除，
+  這些是獨立的產品決策，需要新的正式施工令。
+
+## 修正紀錄｜Persistent PBS Debug Push Idempotency（V1.9.7）（2026-08-28，壓縮摘要）
+
+真實觸發：V1.9.6首筆事件驗收（台68西向5K，Windows早Cloudflare舊輪詢約12.1分鐘）
+證明channel正常，但V1.9.5的冪等只有per-isolate記憶體（`NOT_PERSISTENT`），isolate
+換掉/重啟/redeploy可能讓同一事件重新被accept。修正：`src/pbs/debugPush.js`新增
+TRAFFIC_KV下獨立debug-only前綴`debug:pbs-push-idempotency:v1:*`（`IDEMPOTENCY_KV_
+PREFIX`，絕不觸碰任何business key）作為L2持久層，key=SHA-256(source:eventId:
+lifecycle:fingerprint)決定性產生（不用requestId，因同事件重試requestId本就不同），
+48h TTL。L1既有記憶體Map保留為快取但非唯一真相，L1 miss一律查L2才能accept。實測
+KV成本：10/30/100筆相異事件/日各花10/30/100次get+put（1 accept=恰好1次寫），
+duplicate（含5次重試）僅1次put+6次get，加既有~118 writes/day基線→約128/148/218
+writes/day，遠低於1,000上限，`KV_WRITE_PRESSURE=LOW`。誠實回報`KV_ONLY_ATOMICITY=
+NOT_SUFFICIENT`（KV無compare-and-swap，理論極窄race window仍存在）——依施工令
+「不要過度設計」指示不引入Durable Object：本輪要關閉的風險（isolate換掉/重啟/
+redeploy造成**事後**重複accept）已被持久KV層完全解決，與**同時**發生的race是不同
+問題；此endpoint零business side effect（LINE/CCTV/Shared Feed/正式KV皆0），race
+最壞後果僅冗餘debug log。故`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY`誠實標記
+**`PARTIAL`**（非ACTIVE非NOT_SOLVED）——**V1.9.8已將此endpoint接上真正的business
+side effect（LINE/Shared Feed），沿用此PARTIAL設計未變動，Durable Object評估仍未
+進行，若未來race實際造成問題才需重新評估**。KV outage時fail OPEN（事件仍
+accepted）。既有Debug API JSON schema完全不變。新增52項測試（原33項）涵蓋施工令
+20項清單，NEW FAILURES=0（1404/1371/33基線）。
 
 ## 封版紀錄｜PBS Windows Local Edge Debug Push Integration（V1.9.6）（2026-08-27，壓縮摘要）
 

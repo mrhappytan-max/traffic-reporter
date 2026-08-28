@@ -139,7 +139,62 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 `GET /cctv/image/:id` 是另一個刻意公開的路由（LINE 伺服器要能抓圖），安全性靠 128-bit 不可猜 id + 程式強制的 15 分鐘到期檢查。
 
-## PBS Windows Local Edge Debug Push Integration（V1.9.6＋V1.9.7，2026-08-28，feature branch／未 merge，ACTIVE／Debug-only）
+## Windows PBS Production Ingress（V1.9.8，2026-08-28，main／ACTIVE／Production）
+
+**本輪把下面 V1.9.5-V1.9.7 建立的 Debug-only channel 正式升級為 Production 主線**：
+
+```
+PBS 警廣官方來源
+    ↓
+Windows 本機每 3 分鐘抓取 / 服務區篩選 / 生命週期比較（不變，見下方 V1.9.6/V1.9.7 段落）
+    ↓
+POST /internal/pbs-debug-push（src/pbs/debugPush.js，就地升級，非另建 endpoint）
+    ↓
+驗證身份 → 驗證格式 → 持久冪等（V1.9.7 不變）
+    ↓
+非duplicate？ ── 是CLEARED ──→ 只ACK/log，不進下一步（比照輪詢路徑 clearedEvents 從不進 broadcast）
+    │
+    是NEW/UPDATED
+    ↓
+buildRawPbsRecordFromPush()：Windows payload → raw-PBS-shaped record
+    ↓
+pbs/normalize.js#normalizePbsEvent()（既有、未修改）
+    ↓
+traffic/broadcastPipeline.js#runLineBroadcast()（既有、未修改 ——
+    與 Cron 輪詢路徑呼叫的「同一個函式」：事故/服務區/位置品質/
+    資格/去重/CCTV/LINE Push Policy/notified-state 全部同一套判斷）
+    ↓
+traffic/sharedFeed.js#runSharedFeedPersist()（既有、未修改）
+    ↓
+LINE（若通過資格）／Shared Feed（無論是否推播成功都記錄完成品）
+```
+
+**同時**：Cloudflare 自身既有 PBS 30 分鐘輪詢**正式退休**——
+`src/pbs/pbsConfig.js#PBS_30_MIN_POLLING_ENABLED = false`，`traffic/scheduled.js`
+不再實際呼叫 PBS fetch；`pbsSchedule.js`／`pbs/pipeline.js`／`pbs/lifecycle.js`
+程式碼一行未刪，翻回旗標即可 rollback。同一個 Cron tick 的 TDX／health
+snapshot／Shared Feed／Pipeline Trace 完全不受影響。
+
+**現狀旗標（取代下方 V1.9.6/V1.9.7 記錄的舊旗標）**：
+`WINDOWS_PBS_PRODUCTION_INGRESS = ACTIVE`、`PRODUCTION_BUSINESS_INTEGRATION =
+ACTIVE`、`LINE_INTEGRATION = ACTIVE`、`CCTV_INTEGRATION = ACTIVE`（重用
+runLineBroadcast 自動套用）、`PBS_30_MIN_POLLING = RETIRED`、
+`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY = PARTIAL`（V1.9.7 設計不變）。
+
+LINE Push Policy（`MAJOR_ACCIDENT_ONLY`）完全未變動——只是事件來源多了 Windows 這
+一條路，最終播報與否仍完全由 Cloudflare 既有規則決定，Windows 從未擁有這個決定權。
+
+新增測試：`test/pbsDebugPush.test.js` 施工令十五項最低清單、
+`test/pbsPollingRetirementV198.test.js`（退休驗證 4 項）。全量迴歸 1424/1391/33，
+與變更前基線（1404/1371/33）失敗清單逐項相同，NEW FAILURES = 0。
+
+完整設計理由（KV 成本剖面修正、已知副作用如 `pbs:lifecycle-state`/`/health` pbs
+區塊凍結）→ `07_KNOWN_ISSUES.md`；機器可讀狀態 → `SYSTEM_STATE.json` 的
+`pbsLocalEdgeFilterPrototype`／`taskSeal`。**下一個 Agent：不要自行開始
+V1.9.9；不要擴大 LINE policy；不要處理台61/台15全線封閉產品政策；不要新增
+Durable Object；不要進行無關架構重構。**
+
+## PBS Windows Local Edge Debug Push Integration（V1.9.6＋V1.9.7，2026-08-28，歷史記錄——已由上方 V1.9.8 取代為 Production 主線）
 
 真人在 Windows 本機（`C:\Users\mrhap\traffic-reporter\pbs-relay`）已把上一輪的邊緣篩選
 Prototype 接成一條**真的在跑、真的會呼叫 Cloudflare** 的 Debug-only 管線（與下面既有
@@ -209,11 +264,11 @@ NOT_STARTED`、`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY = PARTIAL`。
 
 服務區誤收修正、CLEARED 二輪確認治理、Windows 常駐/Secret 治理教訓（含一次真實
 503 事故與根因）、race condition 分析、KV 成本量化、Emergency kill switch、六階段
-路線圖 → 完整記錄於 `07_KNOWN_ISSUES.md`；機器可讀欄位於 `SYSTEM_STATE.json` 的
-`pbsLocalEdgeFilterPrototype`。**下一個 Agent／新工程師讀到這裡：這個 feature
-branch 已在 GitHub 但尚未 merge 進 main，不要自行 merge；不要開始 LINE／CCTV／
-Business KV 整合；不要退休 Cloudflare 既有 PBS 輪詢；不要修改 Windows Secret 或
-Task Scheduler；不要碰本機 Prototype runtime；不要自行開始 V1.9.8。**
+路線圖（Phase 1-6 已於 V1.9.8 全數完成，見上方） → 完整記錄於
+`07_KNOWN_ISSUES.md`；機器可讀欄位於 `SYSTEM_STATE.json` 的
+`pbsLocalEdgeFilterPrototype`。**（歷史記錄——此處「不要 merge feature
+branch／不要退休輪詢／不要開始 V1.9.8」等禁令已被上方 V1.9.8 段落取代，
+現行禁令請見上方 V1.9.8 段落結尾。）**
 
 ## Next action
 

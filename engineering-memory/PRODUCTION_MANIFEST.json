@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "project": "traffic-reporter",
-  "verifiedFromRepoAt": "2026-08-28T01:56:14.837Z",
-  "verifiedFromCommit": "8634269722510267cd316924d3f204356a4b7043",
+  "verifiedFromRepoAt": "2026-08-28T04:10:38.492Z",
+  "verifiedFromCommit": "29bf1d2fb6a1efdd4e8859faf824f94dcf1c94d8",
   "note": "Everything in this file is derived from wrangler.jsonc/src/index.js in THIS repo checkout, verifiable by any future reader by re-running the export script. Fields the repo cannot itself verify (real Cloudflare Dashboard state) are explicitly marked unverified, never guessed.",
   "worker": {
     "name": "traffic-reporter",
@@ -12,7 +12,7 @@
   },
   "cron": {
     "expression": "*/10 * * * *",
-    "note": "UTC in Cloudflare config; PBS runs every tick; TDX further gated inside scheduled handler to every 2nd tick (minute 00/20/40) and 08:00-21:59:59 Asia/Taipei only (src/traffic/tdxSchedule.js). Declared schedule from wrangler.jsonc -- verified from repo; the REAL Cloudflare Cron Trigger config is dashboard-only and not verifiable from here."
+    "note": "UTC in Cloudflare config. V1.9.8: Cloudflare's own PBS 30-minute fetch is RETIRED (src/pbs/pbsConfig.js#PBS_30_MIN_POLLING_ENABLED=false) — PBS's production main line is now the Windows push ingress (POST /internal/pbs-debug-push), not this Cron tick; the code path is preserved, not deleted, for rollback. TDX remains gated inside the scheduled handler to every 2nd tick (minute 00/20/40) and 08:00-21:59:59 Asia/Taipei only (src/traffic/tdxSchedule.js) — unaffected by the PBS retirement. Declared schedule from wrangler.jsonc -- verified from repo; the REAL Cloudflare Cron Trigger config is dashboard-only and not verifiable from here."
   },
   "bindings": {
     "kv_namespaces": [
@@ -36,7 +36,8 @@
       "LINE_CHANNEL_ACCESS_TOKEN",
       "LINE_CHANNEL_SECRET",
       "ADMIN_PASSWORD",
-      "TRAFFIC_FEED_SECRET"
+      "TRAFFIC_FEED_SECRET",
+      "PBS_DEBUG_PUSH_SECRET"
     ],
     "secretsNote": "Names only -- never values. Presence-only verifiable via GET /admin/deployment-status; correctness of any value is never verifiable from code."
   },
@@ -47,6 +48,7 @@
       { "path": "/health", "method": "GET", "auth": "admin-basic" },
       { "path": "/webhook", "method": "POST", "auth": "line-signature" },
       { "path": "/internal/shared-feed", "method": "GET", "auth": "bearer:TRAFFIC_FEED_SECRET", "note": "Shared Traffic Feed consumer read path" },
+      { "path": "/internal/pbs-debug-push", "method": "POST", "auth": "bearer:PBS_DEBUG_PUSH_SECRET", "note": "V1.9.8: Windows PBS Local Monitor -> formal Production ingress (src/pbs/debugPush.js) — an accepted NEW/UPDATED event reaches the canonical Business Pipeline (runLineBroadcast/Shared Feed); CLEARED is acknowledged but never broadcast; duplicates are idempotent via TRAFFIC_KV under debug:pbs-push-idempotency:v1:*" },
       { "path": "/cctv/image/:id", "method": "GET", "auth": "none", "note": "opaque 128-bit id, 15-min TTL enforced in code" }
     ],
     "admin": [

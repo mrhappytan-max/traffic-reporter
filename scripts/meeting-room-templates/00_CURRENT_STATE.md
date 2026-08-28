@@ -54,40 +54,40 @@ bump 到 `V1.9.0`，同一個 commit 內完成。
 - 大型不相容版本 → major：`→ V2.0.0`
 - 純文件／治理／Engineering Memory／測試整理 → 不升 Product Version
 
-## PBS Windows Local Edge Debug Push Integration（V1.9.6 治理封版＋V1.9.7 持久冪等，2026-08-28，ACTIVE／Debug-only）
+## Windows PBS Production Ingress ＋ Cloudflare PBS 輪詢退休（V1.9.8，2026-08-28，ACTIVE／Production）
 
-真人的 Windows 機器（`C:\Users\mrhap\traffic-reporter\pbs-relay`）**真的在跑**一個
-常駐的 PBS 本機邊緣篩選＋Debug Push 整合：`localMonitor.js` 每 3 分鐘抓一次官方 PBS
-feed，經本機服務區篩選（重用 Production 自己的
-`src/pbs/hsinchuFilter.js#isPbsEventHsinchuRelevant` 與 `src/pbs/roadName.js#normalizePbsRoad`）
-與事件生命週期比較（NEW/UPDATED/CLEARED/UNCHANGED/MISSING_PENDING_CLEAR），只有
-`SHOULD_PUSH=YES` 的事件才呼叫 Cloudflare Debug-only 接收端 `POST
-/internal/pbs-debug-push`。**程式碼已 push 進 GitHub feature branch**
-（`feature/pbs-local-edge-filter-prototype`，最新 commit
-`95ecdc4718f836ff36c974e829b549f262e6b936`，**尚未 merge 進 main**，本 Cloud Session
-已獨立驗證：118/118 測試通過，未合併 main）。**V1.9.6 首筆真實事件驗收成功**（台68
-西向5K：Windows早於 Cloudflare 既有 30 分鐘輪詢約 12.1 分鐘偵測到）。
+真人的 Windows 機器（`C:\Users\mrhap\traffic-reporter\pbs-relay`）持續跑常駐的 PBS
+本機邊緣篩選：`localMonitor.js` 每 3 分鐘抓一次官方 PBS feed，經本機服務區篩選（重用
+Production 自己的 `src/pbs/hsinchuFilter.js#isPbsEventHsinchuRelevant` 與
+`src/pbs/roadName.js#normalizePbsRoad`）與事件生命週期比較
+（NEW/UPDATED/CLEARED/UNCHANGED/MISSING_PENDING_CLEAR），`SHOULD_PUSH=YES` 的事件
+呼叫 `POST /internal/pbs-debug-push`。**V1.9.6 首筆真實事件驗收成功**（台68 西向5K：
+Windows早於 Cloudflare 舊 30 分鐘輪詢約 12.1 分鐘偵測到）；**V1.9.7** 加入 TRAFFIC_KV
+下持久 L2 冪等層（`debug:pbs-push-idempotency:v1:*`，48h TTL，
+`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY = PARTIAL`，維持不變）。
 
-**V1.9.7（本輪，2026-08-28）**：關閉 V1.9.6 標記的持久冪等風險。
-`src/pbs/debugPush.js` 新增 TRAFFIC_KV 下獨立 debug-only 前綴
-（`debug:pbs-push-idempotency:v1:*`，48h TTL，key=SHA-256(source:eventId:lifecycle:
-fingerprint)）作為 L2 持久層，V1.9.5 既有記憶體 Map 保留為 L1 快取但非唯一真相。
-`KV_ONLY_ATOMICITY = NOT_SUFFICIENT`（KV 無 compare-and-swap），但此 endpoint 零
-business side effect，故不引入 Durable Object；`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY`
-誠實標記為 **`PARTIAL`**（關閉主要風險，非 atomic exactly-once）。**這次是真正的
-Cloudflare runtime 變更，`APP_VERSION` 因此 bump 到 `V1.9.7`**（V1.9.6 的 bump 才是
-純治理封版）。
+**V1.9.8（本輪，2026-08-28）— 新的正式 Production 主線**：PBS 官方來源 → Windows 本機
+抓取／篩選／生命週期 → Debug Push → 持久冪等 → **正式 Business Pipeline** → 正式播報
+資格判斷 → LINE。`src/pbs/debugPush.js` 就地升級為正式 Windows PBS Production
+Ingress（改動最小方案，非另建第二 endpoint）：首次有效 NEW/UPDATED 事件正規化後，
+交給 `src/traffic/broadcastPipeline.js` 既有未修改的 `runLineBroadcast()`——與 Cron
+輪詢路徑呼叫的**同一個函式**——再呼叫 `src/traffic/sharedFeed.js` 既有
+`runSharedFeedPersist()`。CLEARED 只 ACK/log，比照既有 `pbs/pipeline.js` 的
+`clearedEvents` 從不進 broadcast 的行為。LINE Push Policy（`MAJOR_ACCIDENT_ONLY`）
+完全未變動。同時，Cloudflare 自身 PBS 30 分鐘輪詢**正式退休**：
+`src/pbs/pbsConfig.js#PBS_30_MIN_POLLING_ENABLED = false`，`pbsSchedule.js`／
+`pbs/pipeline.js`／`pbs/lifecycle.js` 程式碼完整保留未刪除，翻回 `true` 即可
+rollback。
 
-**現狀旗標**：`WINDOWS_LOCAL_EDGE_FILTER = ACTIVE`、`WINDOWS_REAL_DEBUG_PUSH = ACTIVE`、
-`CLOUDFLARE_DEBUG_RECEIVER = ACTIVE`、`WINDOWS_TO_CLOUDFLARE_DEBUG_CHANNEL = VERIFIED`、
-`WINDOWS_TO_PRODUCTION_BUSINESS_PIPELINE = NOT_STARTED`（不進 LINE／CCTV／Shared
-Feed／正式 KV）、`LINE_INTEGRATION = NOT_STARTED`、`PBS_30_MIN_POLLING = PRESERVED`、
-`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY = PARTIAL`。完整架構圖、服務區/CLEARED 治理
-修正、Secret 治理教訓、KV 成本量化、race condition 分析、路線圖 →
-`03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`；機器可讀狀態 → `SYSTEM_STATE.json` 的
-`pbsLocalEdgeFilterPrototype`。**下一個 Agent：不要自行 merge 這個 feature branch、
-不要自行開始 LINE/CCTV/Business KV 整合、不要修改 Windows Secret 或 Task
-Scheduler、不要碰本機 Prototype runtime、不要自行開始 V1.9.8。**
+**現狀旗標**：`WINDOWS_LOCAL_EDGE_FILTER = ACTIVE`、`WINDOWS_PBS_PRODUCTION_INGRESS
+= ACTIVE`、`PERSISTENT_IDEMPOTENCY = ACTIVE(PARTIAL)`、
+`PRODUCTION_BUSINESS_INTEGRATION = ACTIVE`、`LINE_INTEGRATION = ACTIVE`、
+`PBS_30_MIN_POLLING = RETIRED`。完整架構圖、服務區/CLEARED 治理修正、Secret 治理
+教訓、KV 成本量化、race condition 分析 → `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`；
+機器可讀狀態 → `SYSTEM_STATE.json` 的 `pbsLocalEdgeFilterPrototype`／`taskSeal`。
+**下一個 Agent：不要自行開始 V1.9.9、不要擴大 LINE policy、不要處理台61/台15全線
+封閉產品政策、不要新增 Durable Object、不要進行無關架構重構、不要修改 Windows
+Secret 或 Task Scheduler、不要碰本機 Prototype runtime。**
 
 ## 我能改什麼／不能改什麼（一句話版）
 
