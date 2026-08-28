@@ -568,6 +568,26 @@
 // test/aiDecisionCache.test.js, test/aiApprovedPbsBroadcast.test.js, and
 // test/pbsAiDecisionScenarios.test.js (order section 十七's A-P scenarios,
 // deterministic mocked AI adapter) for the full design and proof.
+//
+// V1.9.9 PHASE 3D HOTFIX (2026-08-28) — CLOUDFLARE_STRING_BOOLEAN_PARSING_FIX.
+// GPT Work set the Dashboard Variable PBS_AI_DECISION_ENABLED = "true" and
+// AI decisions stayed off in Production. Root cause: Cloudflare Dashboard/
+// CLI Variables are injected into the Worker as STRINGS, never real
+// booleans — src/pbs/aiConfig.js#resolvePbsAiDecisionEnabled()'s strict
+// `typeof === 'boolean'` check never matched the string "true", so every
+// request silently fell through to the safe default (false). Not a
+// Dashboard mistake; a resolver bug. Fix: resolvePbsAiDecisionEnabled()
+// now also accepts the Cloudflare-runtime string form ("true"/"false",
+// case-insensitive, trimmed); every other value (undefined, null, "",
+// other truthy spellings like "1"/"yes"/"on", or any non-string/
+// non-boolean) still fails safe to PBS_AI_DECISION_ENABLED_DEFAULT =
+// false — no loose truthy check was added. GPT Work's own rollback
+// (PBS_AI_DECISION_ENABLED = FALSE) stays in effect; this round only
+// fixes the parser so a future retry with the string "true" actually
+// works. Nothing else in the AI pipeline (prompt/model/schema/cache/
+// runAiApprovedPbsBroadcast/LINE policy/service area/lifecycle/
+// idempotency/CCTV/Shared Feed) was touched. AI_BINDING = ACTIVE
+// (GPT Work confirmed), AI_DECISION = DISABLED_PENDING_GPT_WORK_RETRY.
 
 export const APP_VERSION = 'V1.9.9';
 

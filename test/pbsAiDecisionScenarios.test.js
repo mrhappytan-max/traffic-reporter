@@ -343,3 +343,60 @@ test('V1.9.9 Phase 3B: kill switch off -> a real accident still pushes via the U
   );
   assert.equal(pushCalls.length, 1, 'legacy path must still work correctly with the kill switch off, with no AI binding present at all');
 });
+
+// --- V1.9.9 Phase 3D hotfix: Cloudflare Dashboard/CLI Variables inject
+// PBS_AI_DECISION_ENABLED as a STRING ("true"/"false"), never a real
+// boolean -- this is the exact shape GPT Work set in Production and hit
+// the bug with. These integration-level tests exercise the REAL
+// handlePbsDebugPush() end-to-end with a string env value, proving the
+// fix actually wires through the AI decision path (not just the pure
+// resolvePbsAiDecisionEnabled() unit) -- see test/aiConfig.test.js for
+// the exhaustive pure-function cases.
+
+test('V1.9.9 Phase 3D hotfix: PBS_AI_DECISION_ENABLED="true" (Cloudflare string form) -> AI path is entered and mocked AI is called', async () => {
+  const kv = countingKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  const pushCalls = [];
+  globalThis.fetch = async (url, init) => {
+    pushCalls.push({ url: String(url), body: JSON.parse(init.body) });
+    return new Response('{}', { status: 200 });
+  };
+  const env = {
+    PBS_DEBUG_PUSH_SECRET: SECRET,
+    TRAFFIC_KV: kv,
+    LINE_CHANNEL_ACCESS_TOKEN: 'tok',
+    PBS_AI_DECISION_ENABLED: 'true', // Cloudflare Dashboard/CLI Variable shape -- a string, not a boolean
+    AI: mockAi(verdictJson({ notify: true, impact: 'HIGH' })),
+  };
+  await handlePbsDebugPush(
+    pushRequest({ body: validPayload({ eventId: 'PBS-3D-1', fingerprint: 'fp-3d-1', event: fullEventFields({ comment: '國道一號北向94公里處落石雙向封閉需改道' }) }) }),
+    env,
+    NOW
+  );
+  assert.equal(env.AI.calls.length, 1, 'the mocked AI adapter must actually be called when PBS_AI_DECISION_ENABLED is the string "true"');
+  assert.equal(pushCalls.length, 1, 'a validated notify=true AI verdict must still reach LINE when the kill switch was set via a Cloudflare string variable');
+});
+
+test('V1.9.9 Phase 3D hotfix: PBS_AI_DECISION_ENABLED="false" (Cloudflare string form) -> AI path stays disabled, 0 AI calls', async () => {
+  const kv = countingKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  const pushCalls = [];
+  globalThis.fetch = async (url, init) => {
+    pushCalls.push({ url: String(url), body: JSON.parse(init.body) });
+    return new Response('{}', { status: 200 });
+  };
+  const env = {
+    PBS_DEBUG_PUSH_SECRET: SECRET,
+    TRAFFIC_KV: kv,
+    LINE_CHANNEL_ACCESS_TOKEN: 'tok',
+    PBS_AI_DECISION_ENABLED: 'false',
+    AI: mockAi(verdictJson({ notify: true, impact: 'HIGH' })),
+  };
+  await handlePbsDebugPush(
+    pushRequest({ body: validPayload({ eventId: 'PBS-3D-2', fingerprint: 'fp-3d-2', event: fullEventFields({ comment: '國道一號北向94公里處發生追撞事故' }) }) }),
+    env,
+    NOW
+  );
+  assert.equal(env.AI.calls.length, 0, 'AI must never be called when PBS_AI_DECISION_ENABLED is the string "false"');
+  assert.equal(pushCalls.length, 1, 'the legacy runLineBroadcast() path must still handle a real accident correctly');
+});
