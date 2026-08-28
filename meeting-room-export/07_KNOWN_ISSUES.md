@@ -586,81 +586,19 @@ fallback，4000ms 未變動，純可觀測性修復。「3支已成功等第4支
 `MAX_RETRY_PER_EVENT=0`，outer race 保證 Cron 不受背景 straggler 影響（測試 B/C 證實）。
 不要誤讀成已查明 09:20 具體延遲來源、或已加大 timeout。
 
-## 修正紀錄｜Pipeline Trace 查修頁篩選失效（V1.9.1，form-action CSP）（2026-08-26）
+## 修正紀錄｜Pipeline Trace 查修頁篩選失效（V1.9.1，form-action CSP）（2026-08-26，壓縮摘要）
 
-### 真實回報
-
-真人在真實手機（iOS Safari）操作 `/admin/pipeline-trace-view`：
-選擇來源／關鍵字／道路／rawId／狀態／筆數後按「篩選」，**畫面完全不跟著變**。
-
-### Root Cause（以真實 headless Chromium 對著真實部署的回應重現，非猜測）
-
-`applyAdminSecurityHeaders`（`security/adminAuth.js`）的 CSP 帶
-`form-action 'none'`。任何有強制執行 CSP 的瀏覽器（含真人回報所用的
-iOS Safari，以及所有現代主流瀏覽器）都會用這個指令**完全拒絕**頁面上
-任何 `<form>` 的送出——不只是這個篩選表單，本專案任何其他 admin HTML
-頁面上的表單也一樣會被擋。
-
-前一輪（V1.8.7.6）已經完整查證過伺服器端每一層：表單標記、
-真實瀏覽器產生的 query string、`listPipelineTrace` 的 filter predicate、
-分頁邏輯（含小規模與 2000+ key 真實分頁規模），**全部都是對的**，
-並推測剩下的解釋是「client-side staleness」。但那一輪自己的文件承認
-其 headless 瀏覽器重現「不在本 repo 的自動化測試套件內」——顯然從未
-真正對著這個 Worker 自己的安全標頭送出過請求，因此從未撞見這個指令
-真正擋下點擊的那一刻。
-
-### 重現（真實證據）
-
-真實 Chromium 載入真實 `handlePipelineTraceView` 回應（經過真實
-`applyAdminSecurityHeaders`），實際點擊渲染出來的送出按鈕——
-**瀏覽器完全不導頁**。瀏覽器主控台明確寫出原因：
-
-```
-Refused to send form data to '...' because it violates the following
-Content Security Policy directive: "form-action 'none'".
-```
-
-只拿掉這一個指令（其餘完全不動），同一個點擊就能正確導頁到篩選後的
-網址——同時證實了原因，也證實了沒有其他層需要改。
-
-### 修正（採方案 A：修好既有篩選功能，UI 保留）
-
-- `security/adminAuth.js`：`form-action 'none'` → `'self'`。
-  同源表單（本專案唯一擁有、未來合理新增的也會是同源）仍可送出；
-  攻擊者仍無法把這個頁面的表單資料導到外部網域——這才是 form-action
-  真正要保護的東西。CSP 其餘指令（`default-src`／`style-src`／
-  `img-src`／`base-uri`／`frame-ancestors`）完全未動。
-- `traffic/pipelineTrace.js`：`DEFAULT_LIST_LIMIT` 30 → 60。
-  `MAX_LIST_LIMIT`（100）與 KV `list()` 掃描安全上限
-  `MAX_ENTRIES_SCANNED`（500）完全不變——只移動「未指定 limit 時」
-  的預設值。
-- **伺服器端篩選邏輯本身沒有任何改動**——source/keyword/road/rawId/
-  status/組合/清除，V1.8.7.6 已證實全部正確，本輪未動任何 predicate。
-
-### 各項篩選驗證結果
-
-| 項目 | 結果 |
-|---|---|
-| source filter | 有效（既有邏輯，未改動） |
-| keyword (q) filter | 有效（既有邏輯，未改動） |
-| road filter | 有效（含道路正規化，既有邏輯，未改動） |
-| rawId filter | 有效（既有邏輯，未改動） |
-| status filter | 有效（既有邏輯，未改動） |
-| combined filter | 有效（AND 語意，既有邏輯，未改動） |
-| clear/reset | 有效（清除連結指向無 query string 的原始路徑） |
-| default limit | server=60、UI placeholder=60 |
-
-### 不要誤讀
-
-- **不要以為伺服器端篩選邏輯曾經壞過**——它從 V1.8.7.6 起就是對的；
-  壞的是瀏覽器層級的 CSP `form-action`，擋住了表單送出這個動作本身。
-- **不要把 `form-action` 改回 `'none'`**——那正是這次的缺陷本身。
-- **不要把 `form-action` 放寬到 `'*'` 或加上外部網域**——`'self'`
-  已經是這次修復所需要、且唯一安全的值。
-- **不要把 Playwright 加成本 repo 的正式相依套件**——這次的重現是
-  一次性的人工驗證；CI 覆蓋改用不需要瀏覽器的斷言（直接檢查 CSP
-  標頭字串）鎖住這個值，見 `test/adminAuth.test.js`／
-  `test/pipelineTraceView.test.js` 的 V1.9.1 測試。
+真人在真實手機（iOS Safari）操作 `/admin/pipeline-trace-view`：篩選後畫面完全
+不跟著變。Root cause（真實 headless Chromium 對著真實部署重現，非猜測）：
+`applyAdminSecurityHeaders` 的 CSP 帶 `form-action 'none'`，任何強制執行 CSP
+的瀏覽器都會完全拒絕頁面上任何 `<form>` 送出——伺服器端每一層（表單標記/
+query string/filter predicate/分頁）前一輪（V1.8.7.6）已查證全部正確，但那一
+輪的 headless 瀏覽器重現不在本 repo 測試套件內，從未真正撞見這個指令擋下點擊
+的那一刻。修正：`form-action 'none'` → `'self'`（同源表單仍可送出，CSP 其餘
+指令未動），`DEFAULT_LIST_LIMIT` 30→60（`MAX_LIST_LIMIT`/`MAX_ENTRIES_SCANNED`
+不變）。伺服器端篩選邏輯本身零改動——V1.8.7.6 已證實全部正確。**永久教訓**：
+不要把 `form-action` 改回 `'none'`；不要放寬到 `'*'`；不要把 Playwright 加成
+正式相依套件（CI 覆蓋改用不需瀏覽器的 CSP 標頭字串斷言）。
 
 ## 修正紀錄｜Cloudflare KV Write Optimization ＋ TDX Usage Summary 正式退休（V1.9.2）（2026-08-26，壓縮摘要）
 
@@ -750,6 +688,35 @@ invariants 73/73、Windows PBS full suite 121/121 PASS，NEW FAILURES=0。Fix
 commit `7acb82a`；Cloudflare Worker Version ID `defc1da4-6328-47ce-82c6-
 81082519bc2`，Windows `TrafficReporter-PBS-LocalMonitor`已重啟為Running
 （人類回報，本Session未獨立驗證）。
+
+## 修正紀錄｜V2.0.1 — AI Decision Observatory（2026-08-29）
+
+PATCH，Production observability/diagnostic UI 修正，不改 AI semantic authority。
+新 Admin 頁 `GET /admin/pbs-ai-observatory-view`（`src/pbs/aiObservatoryView.js`）
+回答「PBS 原文→AI 判斷→AI 理由→最終結果」，READ ONLY OBSERVABILITY：開啟／
+重新整理／搜尋一律 0 次 Workers AI 呼叫（`test/aiObservatoryView.test.js` 直接量
+測 mocked AI adapter 呼叫次數操作前後不變）。盤點既有資料後確認無法零額外
+KV 寫入：`aiDecisionCache.js` content-addressed 無法列舉事件；idempotency KV
+無 PBS 欄位；`AI_CALL_FAILED`／`AI_DECISION_INVALID`／`SERVICE_AREA_EXCLUDED`／
+legacy-path 完全無持久記錄（僅 console.log）。新增最小 thin index
+`src/pbs/aiObservatoryIndex.js`（`debug:pbs-ai-observatory-index:v1:*`，48h
+TTL），每個真正被接受（非重複）事件 +1 KV write（+0 額外讀取），刻意不重複儲存
+notify/impact/reason/confidence——頁面渲染時直接讀既有 `aiDecisionCache` 記錄，
+`reason` 保證是當時真正的 AI 輸出，絕不重新生成（測試直接證明：mock 第二次呼叫
+會回傳不同 reason，頁面仍顯示第一次的真實值，且 AI 總呼叫次數維持 1）。重複事件
+維持 0 額外寫入，頁面「重複事件」篩選誠實說明架構限制而非顯示誤導性空結果。KV
+成本：`puts = 2N + 2`（較 V1.9.8 的 `N + 2` 多 1 次/事件），`gets` 不變。查修頁
+語義全面改為 V2.x vocabulary（AI：建議通報／AI：不需主動通報／AI：判讀失敗，
+安全不通報／服務區域外／AI 未判讀），絕不使用舊版 `不符合播報資格`（那是
+`pipelineTraceView.js` 的 TDX/legacy 硬規則語意）。`APP_VERSION` V2.0.0→V2.0.1。
+新增 22 項測試，全量迴歸 1539/1506/33，NEW FAILURES=0（僅跑一次）。本輪未觸碰：
+AI Prompt、model、notify/impact/confidence 語意、service area、lifecycle、
+idempotency、LINE quota、CCTV、Shared Feed policy。`FIRST_REAL_AI_EVENT`
+仍 `WAITING`；`AI_DRIVER_SUMMARY = FUTURE_CANDIDATE`（僅記錄產品候選方向，
+未實作、未修改 Prompt、未新增 schema）。**不要誤讀**：「重複事件」篩選目前
+永遠回傳 0 筆（非 bug）——重複到達的事件在 transport idempotency 層就被攔截，
+從未產生新的 observatory 記錄；如需查重複到達次數請查 Workers Logs 的
+`duplicate=true`。
 
 ## 修正紀錄｜V2.0.0 MILESTONE — Windows PBS + Workers AI 架構封版（2026-08-28）
 

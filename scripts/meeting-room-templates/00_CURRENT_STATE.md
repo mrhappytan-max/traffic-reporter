@@ -113,8 +113,38 @@ AI driver-impact decision → 既有 LINE 執行基礎設施），依版本規�
   `PRODUCT_DECISIONS.md`。
 - 本輪只是文件/版本治理封版，未修改任何 runtime 決策邏輯本身。全量迴歸
   1517/1484/33，NEW FAILURES=0（僅跑一次，與既有 baseline 對照）。
-- **下一個 Agent：不得開始 hourly reminder；不得修改 AI Prompt；不得擴大
-  service area；不得開始其他新功能。**
+- 詳見 `03_ARCHITECTURE.md`／`02_PROJECT_HANDOFF.md`／`PRODUCT_DECISIONS.md`。
+
+## V2.0.1 封版（2026-08-29）— AI Decision Observatory
+
+PATCH，Production observability/diagnostic UI 修正，**不改 AI semantic
+authority**。新 Admin 頁 `GET /admin/pbs-ai-observatory-view`
+（`src/pbs/aiObservatoryView.js`）回答「PBS 原文 → AI 判斷 → AI 理由 →
+最終結果」。
+
+- `AI_DECISION_OBSERVATORY = ACTIVE`
+- `DIAGNOSTIC_PAGE_AI_RECALL = FORBIDDEN`（開啟／重新整理／搜尋本頁一律
+  0 次 Workers AI 呼叫，測試證明）
+- `DIAGNOSTIC_PAGE_ADDITIONAL_AI_CALLS = 0`
+- 新 thin index `src/pbs/aiObservatoryIndex.js`
+  （`debug:pbs-ai-observatory-index:v1:*`，48h TTL）——盤點既有資料後
+  確認無法零額外寫入（AI decision cache 內容定址無法列舉、idempotency KV
+  無 PBS 欄位、AI 失敗/服務區域外/legacy path 目前完全無持久記錄），改為
+  每個真正被接受（非重複）事件寫入 1 筆最小 KV（僅 PBS 原始欄位＋
+  outcome enum，`notify`/`impact`/`reason`/`confidence` 本身不重複儲存，
+  頁面讀取時直接讀既有 AI decision cache，`reason` 保證是當時真正的 AI
+  輸出，絕不重新生成）；重複事件仍是 0 額外寫入。
+- 查修頁語義全面改為 V2.x vocabulary（AI：建議通報／AI：不需主動通報／
+  AI：判讀失敗，安全不通報／服務區域外／AI 未判讀），絕不使用舊版
+  `不符合播報資格` 字樣。
+- `APP_VERSION` 從 `V2.0.0` 升為 `V2.0.1`（同一大版本內的 patch）。
+- 新增 22 項測試，全量迴歸 1539/1506/33，NEW FAILURES=0（僅跑一次）。
+- `FIRST_REAL_AI_EVENT = WAITING`（不變）；
+  `AI_DRIVER_SUMMARY = FUTURE_CANDIDATE`（僅記錄產品候選方向，未實作、
+  未修改 Prompt、未新增 schema）。
+- 詳見 `03_ARCHITECTURE.md`／`02_PROJECT_HANDOFF.md`／`07_KNOWN_ISSUES.md`。
+  **下一個 Agent：不得開始 hourly reminder；不得實作 driverSummary；
+  不得修改 AI Prompt；不得擴大服務區域。**
 
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
 

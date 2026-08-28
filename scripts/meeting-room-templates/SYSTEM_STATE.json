@@ -232,52 +232,40 @@
     "AI_CANDIDATE_PIPELINE": "PREPARED_NOT_ACTIVE — V1.9.9 Phase 2: src/pbs/aiCandidate.js builds a minimal AI candidate for every accepted NEW/UPDATED Windows event, parallel to (never gating) the unchanged runLineBroadcast() call. Observability-only; no AI model called, no KV read/write for the reserved AI_DECISION_CACHE_KV_PREFIX yet."
   },
   "taskSeal": {
-    "task": "V2_0_0_MILESTONE_WINDOWS_PBS_CLOUDFLARE_WORKERS_AI_PRODUCTION_ARCHITECTURE",
+    "task": "AI_DECISION_OBSERVATORY_V2_0_1",
     "status": "SEALED",
-    "sealedAt": "2026-08-28",
-    "sealedBy": "human directive (路況工程部 V2.0.0 MILESTONE 正式封版施工令｜Windows PBS + Cloudflare Workers AI Production Architecture 完整工程記憶／接手手冊／版本里程碑)",
-    "releaseVersion": "V2.0.0",
-    "previousVersion": "V1.9.9",
-    "nature": "重大架構里程碑封版，非新功能開發。本輪未修改任何 runtime 決策邏輯本身，只 bump APP_VERSION 並完整記錄 Windows PBS + Cloudflare Workers AI 架構世代更換。",
-    "versionRationale": "V1.9.5～V1.9.9 Phase 3D 逐輪建立的 Windows PBS 本機邊緣過濾 + Cloudflare Workers AI 判讀，是一次完整的 Production ingestion/semantic decision 架構世代更換：舊世代（Cloudflare 30分鐘PBS輪詢→MAJOR_ACCIDENT_ONLY/V1.5 whitelist/location-quality hard-reject→LINE，對Windows PBS路徑已退休）→新世代（PBS官方來源→Windows PBS Relay新竹市/縣本機邊緣過濾→lifecycle→Cloudflare production ingress→持久transport冪等→AI candidate→AI decision cache→Cloudflare Workers AI→AI driver-impact decision→既有LINE執行基礎設施）。依版本規則屬架構世代更換等級的不相容變更，以major版本號標記。不改寫V1.x歷史。",
-    "architecture": "WINDOWS_PBS_LOCAL_EDGE -> CLOUDFLARE_INGRESS -> WORKERS_AI -> AI_DRIVER_IMPACT -> LINE",
-    "documentationScope": {
-      "onboardingMap": "03_ARCHITECTURE.md 開頭新增「V2.0.0 接手地圖」26題問答（PBS來源/Windows專案路徑/lifecycle/Cloudflare ingress/AI Binding/AI Model/kill switch/字串布林bug根因/rollback/troubleshooting等），逐一附可查證的程式碼/文件位置，另新增完整端對端決策流程圖與Workers AI帳號設定（context window/pricing/neurons額度）。",
-      "handoffRunbooks": "02_PROJECT_HANDOFF.md 新增 Canonical Facts Checklist、Cloudflare Dashboard 設定手冊、Rollback Runbook（AI緊急停用）、Troubleshooting Runbook（Windows有事件但LINE沒收到，十步驟診斷順序）、Commit Lineage表。",
-      "productDecision": "PRODUCT_DECISIONS.md 新增「V2.0.0 — Cloudflare Workers AI Driver-Impact Judgment Replaces Accident-Only as the Windows PBS Semantic Authority」章節，記錄為何用AI driver-impact判斷取代accident-only作為Windows PBS語意權威、為何scoped僅限Windows PBS路徑不動TDX、為何AI verdict是唯一權威不得與舊規則並存、為何保留impact欄位。",
-      "versionHistory": "06_VERSION_HISTORY.md 新增V2.0.0里程碑列，完整記錄架構世代更換。",
-      "knownIssues": "07_KNOWN_ISSUES.md 誠實保留FIRST_REAL_AI_EVENT=WAITING與persistent idempotency atomicity限制（KV_ONLY_ATOMICITY=NOT_SUFFICIENT），未在本輪解決，亦非V2.0.0封版blocker。"
+    "sealedAt": "2026-08-29",
+    "sealedBy": "human directive (路況工程部 V2.0.1 正式施工令｜AI Decision Observatory｜AI 判讀查修頁)",
+    "releaseVersion": "V2.0.1",
+    "previousVersion": "V2.0.0",
+    "nature": "PATCH — observability/diagnostic UI 修正，不改 AI semantic authority。",
+    "newPage": "GET /admin/pbs-ai-observatory-view (src/pbs/aiObservatoryView.js) — READ ONLY OBSERVABILITY，開啟/重新整理/搜尋一律0次Workers AI呼叫。",
+    "design": {
+      "existingDataSurveyed": "aiDecisionCache.js（content-addressed，無法列舉事件）、debug:pbs-push-idempotency:v1:*（無PBS欄位）、AI_CALL_FAILED/AI_DECISION_INVALID/SERVICE_AREA_EXCLUDED/legacy-path（完全無持久記錄，僅console.log）。",
+      "newIndex": "src/pbs/aiObservatoryIndex.js，debug:pbs-ai-observatory-index:v1:*，48h TTL，每個真正被接受(非重複)事件+1 KV write，+0額外讀取。",
+      "noDuplicatePayload": "notify/impact/reason/confidence刻意不重複儲存於index——頁面渲染時直接讀既有aiDecisionCache記錄，reason保證是當時真正的AI輸出，絕不重新生成（測試9直接證明）。",
+      "duplicateHandling": "重複事件維持0額外寫入（transport idempotency已攔截），頁面「重複事件」篩選永遠回傳0筆並誠實說明架構限制，非bug。",
+      "kvCost": "puts = 2N + 2（較V1.9.8的N+2多1次寫入/事件），gets不變。"
     },
+    "vocabularyChange": "查修頁語義全面改為V2.x vocabulary（AI：建議通報/AI：不需主動通報/AI：判讀失敗，安全不通報/服務區域外/AI未判讀），絕不使用舊版「不符合播報資格」（pipelineTraceView.js的TDX/legacy硬規則語意）。",
     "testEvidence": {
-      "versionConfigTests": "test/versionLineage.test.js 官方版本序前綴斷言同步從'V1.9.'改為'V2.'（與APP_VERSION bump同一commit，該檔案自身標準做法）；test/aiConfig.test.js／test/aiDecisionEngine.test.js／test/pbsAiDecisionScenarios.test.js 全數重跑確認未因版本bump壞掉。",
-      "fullRegression": "1517項/1484 pass/33 fail，與V1.9.9 Phase 3D Hotfix基準以failure名稱集合對照確認NEW FAILURES=0，僅跑一次（本輪主要為milestone/version/docs，非release guard要求反覆執行全部無關測試）。"
-    },
-    "productionState": {
-      "attempted": false,
-      "note": "本輪未嘗試連線Cloudflare Dashboard或Production網域驗證（sandbox網路egress政策封鎖）。以下數字全部為GPT Work回報，本Session未獨立驗證，不冒充為本Session自行證實：",
-      "reportedByGptWork": {
-        "activeProductionVersion": "a8e9454c-ab3f-4555-ab7e-0d8c39ecf73c",
-        "activeTraffic": "100%",
-        "aiBinding": "ACTIVE",
-        "pbsAiDecisionEnabled": "\"true\"",
-        "productionHealth": "PASS",
-        "workerErrors": 0,
-        "ai429Count": 0,
-        "aiInvalidResponseCount": 0
-      },
-      "firstRealAiEvent": "WAITING — 真實Production PBS事件走完Workers AI判讀到LINE推播的完整驗證尚未觀察到，下一個observational milestone，非V2.0.0封版blocker"
+      "newTests": "22項：test/aiObservatoryIndex.test.js（11項純函式/KV測試）+ test/aiObservatoryView.test.js（11項端對端整合測試，涵蓋施工令十三的全部12項要求）。",
+      "fullRegression": "1539項/1506 pass/33 fail，與V2.0.0基準以failure名稱集合對照確認NEW FAILURES=0，僅跑一次。"
     },
     "notTouchedByThisRound": [
-      "AI prompt（未修改）",
+      "AI Prompt（未修改）",
       "AI model（未更換）",
-      "AI candidate schema（未修改）",
-      "AI decision cache 設計（未修改）",
-      "runAiApprovedPbsBroadcast（未修改）",
+      "notify/impact/confidence語意（未修改）",
       "service area（未擴大）",
-      "hourly reminder（未開始實作，僅方向性設計）",
-      "任何其他新功能"
+      "Windows PBS filter（未修改）",
+      "lifecycle（未修改）",
+      "transport idempotency（未修改）",
+      "LINE quota policy（未新增）",
+      "CCTV policy（未修改）",
+      "Shared Feed product policy（未修改）",
+      "driverSummary（未實作，僅記錄FUTURE_CANDIDATE方向）"
     ],
-    "readerNote": "完成後STOP。不得開始hourly reminder。不得修改AI Prompt。不得擴大service area。不得開始其他新功能。"
+    "readerNote": "完成後STOP。不得開始hourly reminder。不得實作driverSummary。不得修改AI Prompt。不得擴大服務區域。"
   },
   "taskSealHistory": [
     {
@@ -557,6 +545,15 @@
       "fixCommit": "61795b1",
       "compressedSummary": "根因：Cloudflare Dashboard/CLI Variables一律以字串注入Worker，非真正boolean。GPT Work設定PBS_AI_DECISION_ENABLED=\"true\"後，resolvePbsAiDecisionEnabled()原本嚴格檢查typeof==='boolean'，字串永遠不符合，悄悄落回false。修正：同時接受boolean與Cloudflare字串形式'true'/'false'（不分大小寫、trim），其餘一律fail-safe回false，不做寬鬆truthy判斷。單點config parsing hotfix，AI prompt/model/schema/cache/LINE policy等全部未觸碰。新增8項測試，1517/1484/33，NEW FAILURES=0。APP_VERSION維持V1.9.9。AI_BINDING=ACTIVE（GPT Work確認），AI_DECISION當時為DISABLED_PENDING_GPT_WORK_RETRY——V2.0.0里程碑taskSeal記錄GPT Work已完成重試回報。",
       "readerNote": "This task is CLOSED — superseded by V2.0.0 MILESTONE. Do not re-open it."
+    },
+    {
+      "task": "V2_0_0_MILESTONE_WINDOWS_PBS_CLOUDFLARE_WORKERS_AI_PRODUCTION_ARCHITECTURE",
+      "status": "SEALED",
+      "sealedAt": "2026-08-28",
+      "releaseVersion": "V2.0.0",
+      "fixCommit": "f1a05d0",
+      "compressedSummary": "重大架構里程碑封版，非新功能開發。APP_VERSION V1.9.9->V2.0.0（架構世代更換：舊世代Cloudflare 30分鐘PBS輪詢->MAJOR_ACCIDENT_ONLY等hard rules->LINE，對Windows PBS路徑已退休；新世代PBS官方來源->Windows Local Edge->Cloudflare ingress->持久冪等->AI candidate->AI decision cache->Cloudflare Workers AI->既有LINE執行基礎設施）。新增03_ARCHITECTURE.md「V2.0.0接手地圖」26題問答與完整決策流程圖；02_PROJECT_HANDOFF.md新增Canonical Facts Checklist/Dashboard設定手冊/Rollback Runbook/Troubleshooting Runbook/Commit Lineage；PRODUCT_DECISIONS.md新增AI driver-impact取代accident-only的產品決策記錄。未修改任何runtime決策邏輯。1517/1484/33，NEW FAILURES=0。Production狀態（AI_BINDING=ACTIVE/AI_DECISION=ACTIVE/Active Production Version a8e9454c-ab3f-4555-ab7e-0d8c39ecf73c）為GPT Work回報，本Session未獨立驗證。FIRST_REAL_AI_EVENT=WAITING誠實記錄，非封版blocker。",
+      "readerNote": "This task is CLOSED — superseded by V2.0.1. Do not re-open it."
     }
   ],
   "version": {
@@ -571,7 +568,7 @@
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
   "currentPhase": "{{CURRENT_PHASE}}",
-  "currentTask": "none（無進行中工作）。Latest completed task = V2_0_0_MILESTONE_WINDOWS_PBS_CLOUDFLARE_WORKERS_AI_PRODUCTION_ARCHITECTURE，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.0.0（架構世代更換里程碑，從V1.9.9 major bump，不改寫V1.x歷史）。本輪：(1) APP_VERSION從V1.9.9升為V2.0.0，記錄Windows PBS本機邊緣過濾+Cloudflare Workers AI判讀完整架構世代更換；(2) 03_ARCHITECTURE.md新增26題接手地圖與端對端決策流程圖；(3) 02_PROJECT_HANDOFF.md新增Dashboard設定手冊/Rollback Runbook/Troubleshooting Runbook/Commit Lineage；(4) PRODUCT_DECISIONS.md新增AI driver-impact取代accident-only的產品決策記錄；(5) 未修改任何runtime決策邏輯本身。AI_BINDING=ACTIVE、AI_DECISION=ACTIVE、LINE_AI_DECISION=ACTIVE為GPT Work回報，本Session未獨立驗證。FIRST_REAL_AI_EVENT=WAITING，非封版blocker。下一件事若要開工：等待GPT Work回報FIRST_REAL_AI_EVENT觀察證據；或見07_KNOWN_ISSUES.md既有約33項過期斷言（與本輪無關）。",
+  "currentTask": "none（無進行中工作）。Latest completed task = AI_DECISION_OBSERVATORY_V2_0_1，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.0.1（PATCH，不改AI semantic authority）。本輪：(1) 新增 GET /admin/pbs-ai-observatory-view，READ ONLY OBSERVABILITY，0次額外Workers AI呼叫；(2) 新增最小thin index src/pbs/aiObservatoryIndex.js（debug:pbs-ai-observatory-index:v1:*，48h TTL，+1 KV write/事件，+0額外讀取，刻意不重複儲存notify/impact/reason/confidence，頁面渲染時直接讀既有aiDecisionCache記錄）；(3) 查修頁語義全面改為V2.x vocabulary，絕不使用舊版「不符合播報資格」；(4) 未修改任何AI Prompt/model/決策語意/service area/lifecycle。新增22項測試，1539/1506/33，NEW FAILURES=0。AI_DRIVER_SUMMARY=FUTURE_CANDIDATE（僅記錄產品候選方向，未實作）。FIRST_REAL_AI_EVENT仍為WAITING（不變，非本輪範圍）。下一件事若要開工：等待真實Production PBS事件走完完整路徑的觀察證據；或見07_KNOWN_ISSUES.md既有約33項過期斷言（與本輪無關）。",
   "knownBlocker": "{{KNOWN_BLOCKER}}",
   "realWorldConfirmation": {
     "status": "{{REAL_WORLD_CONFIRMATION}}",
@@ -605,5 +602,9 @@
   "ARCHITECTURE": "WINDOWS_PBS_LOCAL_EDGE_CLOUDFLARE_INGRESS_WORKERS_AI_AI_DRIVER_IMPACT_LINE",
   "FIRST_REAL_AI_EVENT": "WAITING",
   "HOURLY_MAJOR_INCIDENT_REMINDER": "NOT_STARTED",
-  "CLOUDFLARE_PBS_30_MIN_POLLING": "RETIRED"
+  "CLOUDFLARE_PBS_30_MIN_POLLING": "RETIRED",
+  "AI_DECISION_OBSERVATORY": "ACTIVE",
+  "DIAGNOSTIC_PAGE_AI_RECALL": "FORBIDDEN",
+  "DIAGNOSTIC_PAGE_ADDITIONAL_AI_CALLS": 0,
+  "AI_DRIVER_SUMMARY": "FUTURE_CANDIDATE"
 }

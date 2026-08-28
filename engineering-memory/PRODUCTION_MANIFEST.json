@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "project": "traffic-reporter",
-  "verifiedFromRepoAt": "2026-08-28T08:42:08.217Z",
-  "verifiedFromCommit": "dfcc29d717bd4a4429f96b8ab782d22b01e691ea",
+  "verifiedFromRepoAt": "2026-08-28T09:48:13.154Z",
+  "verifiedFromCommit": "7d5ed36edbf8217f9063be92835348dc33e383e4",
   "note": "Everything in this file is derived from wrangler.jsonc/src/index.js in THIS repo checkout, verifiable by any future reader by re-running the export script. Fields the repo cannot itself verify (real Cloudflare Dashboard state) are explicitly marked unverified, never guessed.",
   "worker": {
     "name": "traffic-reporter",
@@ -51,7 +51,7 @@
       { "path": "/health", "method": "GET", "auth": "admin-basic" },
       { "path": "/webhook", "method": "POST", "auth": "line-signature" },
       { "path": "/internal/shared-feed", "method": "GET", "auth": "bearer:TRAFFIC_FEED_SECRET", "note": "Shared Traffic Feed consumer read path" },
-      { "path": "/internal/pbs-debug-push", "method": "POST", "auth": "bearer:PBS_DEBUG_PUSH_SECRET", "note": "V1.9.8: Windows PBS Local Monitor -> formal Production ingress (src/pbs/debugPush.js) — an accepted NEW/UPDATED event reaches the canonical Business Pipeline (runLineBroadcast/Shared Feed); CLEARED is acknowledged but never broadcast; duplicates are idempotent via TRAFFIC_KV under debug:pbs-push-idempotency:v1:*. V1.9.9 Phase 3B: when the code-level kill switch PBS_AI_DECISION_ENABLED is true (Production default: false), this same endpoint instead routes the event through resolveAiDecision() (src/pbs/aiDecisionEngine.js) and, on a validated notify:true verdict, runAiApprovedPbsBroadcast() (src/traffic/aiApprovedPbsBroadcast.js) — mutually exclusive with the legacy runLineBroadcast() call for that same event, never both." },
+      { "path": "/internal/pbs-debug-push", "method": "POST", "auth": "bearer:PBS_DEBUG_PUSH_SECRET", "note": "V1.9.8: Windows PBS Local Monitor -> formal Production ingress (src/pbs/debugPush.js) — an accepted NEW/UPDATED event reaches the canonical Business Pipeline (runLineBroadcast/Shared Feed); CLEARED is acknowledged but never broadcast; duplicates are idempotent via TRAFFIC_KV under debug:pbs-push-idempotency:v1:*. V1.9.9 Phase 3B: when the code-level kill switch PBS_AI_DECISION_ENABLED is true (Production default: false), this same endpoint instead routes the event through resolveAiDecision() (src/pbs/aiDecisionEngine.js) and, on a validated notify:true verdict, runAiApprovedPbsBroadcast() (src/traffic/aiApprovedPbsBroadcast.js) — mutually exclusive with the legacy runLineBroadcast() call for that same event, never both. V2.0.1: also writes ONE thin AI Decision Observatory index record (debug:pbs-ai-observatory-index:v1:*, 48h TTL, src/pbs/aiObservatoryIndex.js) per genuinely accepted non-duplicate event — see GET /admin/pbs-ai-observatory-view below." },
       { "path": "/cctv/image/:id", "method": "GET", "auth": "none", "note": "opaque 128-bit id, 15-min TTL enforced in code" }
     ],
     "admin": [
@@ -60,7 +60,7 @@
       "/admin/cctv-hsinchu-publish-test", "/admin/cctv-hsinchu-frame/0..3",
       "/admin/deployment-status", "/admin/deployment-status-view",
       "/admin/pipeline-trace", "/admin/pipeline-trace-view",
-      "/admin/broadcast-provenance"
+      "/admin/broadcast-provenance", "/admin/pbs-ai-observatory-view"
     ],
     "adminAuth": "HTTP Basic, fixed username 'admin', Cloudflare Secret ADMIN_PASSWORD, timing-safe SHA-256 comparison (src/security/adminAuth.js)"
   },

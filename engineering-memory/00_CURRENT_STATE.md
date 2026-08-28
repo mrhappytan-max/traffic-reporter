@@ -9,20 +9,20 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V2.0.0（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | dfcc29d717bd4a4429f96b8ab782d22b01e691ea |
+| Current Version | V2.0.1（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | 7d5ed36edbf8217f9063be92835348dc33e383e4 |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty (16 changed source file(s)) |
+| Source working tree | dirty (8 changed source file(s)) |
 | Production | DEPLOYED |
-| Production Verification | V2.0.0 MILESTONE sealed (docs/version only, no runtime logic change). AI_BINDING/AI_DECISION/LINE_AI_DECISION=ACTIVE per GPT Work report; NOT_OBSERVED independently by this session (sandbox network policy blocks Production domain and Cloudflare Dashboard). FIRST_REAL_AI_EVENT=WAITING. |
-| Current Phase | V2.0.0 MILESTONE SEALED — Windows PBS + Cloudflare Workers AI Production Architecture 完整記錄封版，架構世代更換，非新功能開發。AI_DECISION=ACTIVE（GPT Work回報，本Session未獨立驗證），FIRST_REAL_AI_EVENT=WAITING（非封版blocker） |
-| Current Task | none（無進行中工作）。Latest completed task = V2_0_0_MILESTONE_WINDOWS_PBS_CLOUDFLARE_WORKERS_AI_PRODUCTION_ARCHITECTURE，status = SEALED。詳見 SYSTEM_STATE.json 的 taskSeal 與 03_ARCHITECTURE.md/02_PROJECT_HANDOFF.md/PRODUCT_DECISIONS.md。 |
-| Latest Completed Version | V2.0.0 |
-| Known Blocker | 無 repo-side blocker。FIRST_REAL_AI_EVENT=WAITING（下一個observational milestone，非V2.0.0封版blocker，非程式缺陷） |
-| Real-world Confirmation | NOT_OBSERVED — FIRST_REAL_AI_EVENT (a real Production PBS event through Workers AI to LINE) not yet confirmed by this session; GPT Work's Dashboard-side status reports are recorded as human-reported, not independently verified |
+| Production Verification | V2.0.1 sealed (observability/diagnostic UI only, no AI semantic authority change). NOT_OBSERVED independently by this session (sandbox network policy blocks Production domain and Cloudflare Dashboard). |
+| Current Phase | V2.0.1 SEALED — AI Decision Observatory 查修頁已上線，READ ONLY OBSERVABILITY，0次額外Workers AI呼叫。FIRST_REAL_AI_EVENT仍為WAITING（非本輪範圍） |
+| Current Task | none（無進行中工作）。Latest completed task = AI_DECISION_OBSERVATORY_V2_0_1，status = SEALED。詳見 SYSTEM_STATE.json 的 taskSeal 與 03_ARCHITECTURE.md/02_PROJECT_HANDOFF.md/07_KNOWN_ISSUES.md。 |
+| Latest Completed Version | V2.0.1 |
+| Known Blocker | 無 repo-side blocker。FIRST_REAL_AI_EVENT=WAITING（下一個observational milestone，非封版blocker，非程式缺陷） |
+| Real-world Confirmation | NOT_OBSERVED — FIRST_REAL_AI_EVENT not yet confirmed by this session |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 等待GPT Work回報真實Production PBS事件走完Windows→Cloudflare→Workers AI→LINE完整路徑的觀察證據（FIRST_REAL_AI_EVENT）；下一個Agent不得開始hourly reminder、不得修改AI Prompt、不得擴大service area、不得開始其他新功能 |
-| Export Generated At | 2026-08-28T08:42:08.217Z |
+| Next Action | 等待真實Production PBS事件走完Windows→Cloudflare→Workers AI→LINE完整路徑的觀察證據（FIRST_REAL_AI_EVENT）；可透過新增的 GET /admin/pbs-ai-observatory-view 直接查看；下一個Agent不得開始hourly reminder、不得實作driverSummary、不得修改AI Prompt、不得擴大服務區域 |
+| Export Generated At | 2026-08-28T09:48:13.154Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## V1.9.9 Phase 1 封版（2026-08-28，另一個 session 完成，本 Cloud Session 未參與，port 進本模板僅為維持 template↔engineering-memory 一致）
@@ -113,8 +113,38 @@ AI driver-impact decision → 既有 LINE 執行基礎設施），依版本規�
   `PRODUCT_DECISIONS.md`。
 - 本輪只是文件/版本治理封版，未修改任何 runtime 決策邏輯本身。全量迴歸
   1517/1484/33，NEW FAILURES=0（僅跑一次，與既有 baseline 對照）。
-- **下一個 Agent：不得開始 hourly reminder；不得修改 AI Prompt；不得擴大
-  service area；不得開始其他新功能。**
+- 詳見 `03_ARCHITECTURE.md`／`02_PROJECT_HANDOFF.md`／`PRODUCT_DECISIONS.md`。
+
+## V2.0.1 封版（2026-08-29）— AI Decision Observatory
+
+PATCH，Production observability/diagnostic UI 修正，**不改 AI semantic
+authority**。新 Admin 頁 `GET /admin/pbs-ai-observatory-view`
+（`src/pbs/aiObservatoryView.js`）回答「PBS 原文 → AI 判斷 → AI 理由 →
+最終結果」。
+
+- `AI_DECISION_OBSERVATORY = ACTIVE`
+- `DIAGNOSTIC_PAGE_AI_RECALL = FORBIDDEN`（開啟／重新整理／搜尋本頁一律
+  0 次 Workers AI 呼叫，測試證明）
+- `DIAGNOSTIC_PAGE_ADDITIONAL_AI_CALLS = 0`
+- 新 thin index `src/pbs/aiObservatoryIndex.js`
+  （`debug:pbs-ai-observatory-index:v1:*`，48h TTL）——盤點既有資料後
+  確認無法零額外寫入（AI decision cache 內容定址無法列舉、idempotency KV
+  無 PBS 欄位、AI 失敗/服務區域外/legacy path 目前完全無持久記錄），改為
+  每個真正被接受（非重複）事件寫入 1 筆最小 KV（僅 PBS 原始欄位＋
+  outcome enum，`notify`/`impact`/`reason`/`confidence` 本身不重複儲存，
+  頁面讀取時直接讀既有 AI decision cache，`reason` 保證是當時真正的 AI
+  輸出，絕不重新生成）；重複事件仍是 0 額外寫入。
+- 查修頁語義全面改為 V2.x vocabulary（AI：建議通報／AI：不需主動通報／
+  AI：判讀失敗，安全不通報／服務區域外／AI 未判讀），絕不使用舊版
+  `不符合播報資格` 字樣。
+- `APP_VERSION` 從 `V2.0.0` 升為 `V2.0.1`（同一大版本內的 patch）。
+- 新增 22 項測試，全量迴歸 1539/1506/33，NEW FAILURES=0（僅跑一次）。
+- `FIRST_REAL_AI_EVENT = WAITING`（不變）；
+  `AI_DRIVER_SUMMARY = FUTURE_CANDIDATE`（僅記錄產品候選方向，未實作、
+  未修改 Prompt、未新增 schema）。
+- 詳見 `03_ARCHITECTURE.md`／`02_PROJECT_HANDOFF.md`／`07_KNOWN_ISSUES.md`。
+  **下一個 Agent：不得開始 hourly reminder；不得實作 driverSummary；
+  不得修改 AI Prompt；不得擴大服務區域。**
 
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
 

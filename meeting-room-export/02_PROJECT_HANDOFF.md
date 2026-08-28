@@ -17,11 +17,11 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | dfcc29d717bd4a4429f96b8ab782d22b01e691ea |
-| Snapshot generated at | 2026-08-28T08:42:08.217Z |
-| Source working tree | dirty (16 changed source file(s)) |
-| Current version | V2.0.0 |
-| Current phase | V2.0.0 MILESTONE SEALED — Windows PBS + Cloudflare Workers AI Production Architecture 完整記錄封版，架構世代更換，非新功能開發。AI_DECISION=ACTIVE（GPT Work回報，本Session未獨立驗證），FIRST_REAL_AI_EVENT=WAITING（非封版blocker） |
+| Source main HEAD | 7d5ed36edbf8217f9063be92835348dc33e383e4 |
+| Snapshot generated at | 2026-08-28T09:48:13.154Z |
+| Source working tree | dirty (8 changed source file(s)) |
+| Current version | V2.0.1 |
+| Current phase | V2.0.1 SEALED — AI Decision Observatory 查修頁已上線，READ ONLY OBSERVABILITY，0次額外Workers AI呼叫。FIRST_REAL_AI_EVENT仍為WAITING（非本輪範圍） |
 
 `Source main HEAD` 是這份快照所描述的正式 main commit（取自 `origin/main`），**不是**包含本檔案自己的那個 commit——兩者刻意分開，避免 Git 自我參照循環。詳見 `SYSTEM_STATE.json` 的 `sourceMainHead` / `exportArtifactCommit`。
 
@@ -98,17 +98,17 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 | 欄位 | 值 |
 |---|---|
-| Latest completed | V2.0.0 |
+| Latest completed | V2.0.1 |
 | package.json version | 0.1.0 |
 | Production status | DEPLOYED |
-| Production verification | V2.0.0 MILESTONE sealed (docs/version only, no runtime logic change). AI_BINDING/AI_DECISION/LINE_AI_DECISION=ACTIVE per GPT Work report; NOT_OBSERVED independently by this session (sandbox network policy blocks Production domain and Cloudflare Dashboard). FIRST_REAL_AI_EVENT=WAITING. |
+| Production verification | V2.0.1 sealed (observability/diagnostic UI only, no AI semantic authority change). NOT_OBSERVED independently by this session (sandbox network policy blocks Production domain and Cloudflare Dashboard). |
 
 版本線（哪些版本仍具架構意義）→ `06_VERSION_HISTORY.md`。
 
 ## Current known issues
 
-- **Known blocker**：無 repo-side blocker。FIRST_REAL_AI_EVENT=WAITING（下一個observational milestone，非V2.0.0封版blocker，非程式缺陷）
-- **Real-world confirmation**：NOT_OBSERVED — FIRST_REAL_AI_EVENT (a real Production PBS event through Workers AI to LINE) not yet confirmed by this session; GPT Work's Dashboard-side status reports are recorded as human-reported, not independently verified
+- **Known blocker**：無 repo-side blocker。FIRST_REAL_AI_EVENT=WAITING（下一個observational milestone，非封版blocker，非程式缺陷）
+- **Real-world confirmation**：NOT_OBSERVED — FIRST_REAL_AI_EVENT not yet confirmed by this session
 - **既有測試失敗基準線**：`npm test` 共 1272 項，其中穩定 38 項為已知失敗（2 項 `pbs-relay/tests/*` 缺 `pbs-relay/src/cache.js`；**33 項過期斷言**——動態路肩推播關閉、PBS 成為 CCTV 可信來源之後未同步更新的測試，是目前最大的一筆技術債，待獨立施工令；3 項 wall-clock 相依的 `healthQuotaDashboard`，會隨日期自然增加）。**注意：舊版文件宣稱那 13 項是「Workers-only `.wasm` codec 在沙盒無法載入」，這是錯的 Root Cause——真正原因是沙盒 `node_modules` 不完整、`@jsquash/jpeg` 沒安裝；裝了之後那些檔案全部可以執行，並揭露上述 33 項過期斷言。**出現這 18 項以外的新失敗才算真正回歸，且**判斷回歸一律以同一輪 `git stash -u` 對照為準**；逐項清單、`deploymentPolicyAndVerify` 第 12 項的「尚未 push 必失敗」現象，以及 `deploymentStatus` 那項只在全套執行時偶發的雜訊，都見 `07_KNOWN_ISSUES.md`。
 - **Dashboard-only 事實永遠無法從程式驗證**：Production branch 指向、真實 Cron 排程、Secret 值是否正確、Build 歷史——只能由真人開 Dashboard 確認。
 - **沙盒無 Production 網路**：這類 session 對 Production 網域的 outbound HTTPS 一律被 egress proxy 擋（403）。需要即時 Production 證據的任務只能誠實標記「無法證明」，不得用推測補齊。
@@ -408,6 +408,8 @@ Rollback／Troubleshooting／Commit lineage）。
 | V1.9.9 Phase 3D Hotfix (docs) | `dfcc29d` |
 | V2.0.0 release (fix) | `f1a05d0` |
 | V2.0.0 release (docs) | 見本檔案所在的 docs commit（`git log` 為準——一個 commit 無法在自己的內容裡預先寫入自己的 SHA） |
+| V2.0.1 release (fix) | `7b7bd05` |
+| V2.0.1 release (docs) | 見本檔案所在的 docs commit（同上，`git log` 為準） |
 
 ### 目前 Production 狀態（人類／GPT Work 回報，本 Session 未獨立驗證）
 
@@ -421,8 +423,59 @@ Dashboard，**無法獨立驗證**，按人類回報記錄，不冒充為本 Ses
 deployed commit／Version ID（同樣屬於 GPT Work 的驗證範圍）。
 
 完整設計理由 → `07_KNOWN_ISSUES.md`／`03_ARCHITECTURE.md`；機器可讀狀態 →
-`SYSTEM_STATE.json` 的 `taskSeal`。**下一個 Agent：不得開始 hourly reminder；不得
-修改 AI Prompt；不得擴大 service area；不得開始其他新功能。**
+`SYSTEM_STATE.json` 的 `taskSeal`。（V2.0.0 當時的現行禁令已由下方 V2.0.1
+段落取代——見該段落結尾。）
+
+## V2.0.1 — AI Decision Observatory（本輪，2026-08-29）
+
+PATCH，Production observability/diagnostic UI 修正，**不改 AI semantic
+authority**。新 Admin 頁 `GET /admin/pbs-ai-observatory-view`
+（`src/pbs/aiObservatoryView.js`）回答「PBS 原文 → AI 判斷 → AI 理由 →
+最終結果」，READ ONLY OBSERVABILITY：開啟／重新整理／搜尋一律 0 次
+Workers AI 呼叫（`test/aiObservatoryView.test.js` 直接量測 mocked AI
+adapter 呼叫次數在頁面操作前後完全不變）。
+
+**盤點既有資料（不重複儲存）**：`src/pbs/aiDecisionCache.js` 已保存每個
+驗證通過事件的 `{notify,impact,reason,confidence}`，但 content-addressed
+（key=SHA-256(eventId:fingerprint)）無法列舉「有哪些事件」；
+`debug:pbs-push-idempotency:v1:*` 只有 `{firstAcceptedAt,requestId}`，
+無 PBS 欄位；`AI_CALL_FAILED`／`AI_DECISION_INVALID`／
+`SERVICE_AREA_EXCLUDED`／legacy-path 目前完全不存在任何持久記錄（僅
+console.log）。結論：無法做到 0 額外寫入——新增最小 thin index
+`src/pbs/aiObservatoryIndex.js`（`debug:pbs-ai-observatory-index:v1:*`，
+48h TTL，同既有 debug KV 慣例），每個真正被接受（非重複）事件寫入 1 筆
+（PBS 原始欄位＋最終 outcome enum，**刻意不重複儲存** notify/impact/
+reason/confidence——頁面在渲染時直接讀既有 `aiDecisionCache` 記錄，
+`reason` 因此保證是當時真正的 AI 輸出，絕不重新生成，測試 9 直接證明：
+即使 mock 在第二次呼叫時會回傳不同 reason，頁面顯示的仍是第一次的真實
+值，且 AI 總呼叫次數維持 1）。重複事件維持 0 額外寫入（transport
+idempotency 已攔截，頁面「重複事件」篩選誠實說明此架構限制，而非顯示
+誤導性空結果）。
+
+**KV 成本**（`puts = 2N + 2`，較 V1.9.8 的 `N + 2` 多 1 次寫入/事件；
+`gets` 不變，見 `test/pbsDebugPush.test.js` 的 KV 成本量化測試同步更新）。
+
+**查修頁語義全面改為 V2.x vocabulary**：AI：建議通報／AI：不需主動通報／
+AI：判讀失敗，安全不通報／服務區域外／AI 未判讀（走既有規則路徑），絕不
+使用舊版 `不符合播報資格` 字樣（那是 `pipelineTraceView.js` 的 TDX/legacy
+PBS 硬規則語意，與 Windows PBS AI 路徑是不同的判官）。
+
+本輪**未觸碰**：AI Prompt、AI model、notify/impact/confidence 語意、
+service area、Windows PBS filter、lifecycle、transport idempotency、
+LINE quota policy、CCTV policy、Shared Feed product policy。
+
+**現狀旗標**：`AI_DECISION_OBSERVATORY = ACTIVE`、
+`DIAGNOSTIC_PAGE_AI_RECALL = FORBIDDEN`、
+`DIAGNOSTIC_PAGE_ADDITIONAL_AI_CALLS = 0`、`FIRST_REAL_AI_EVENT = WAITING`
+（不變）、`AI_DRIVER_SUMMARY = FUTURE_CANDIDATE`（僅記錄產品候選方向：
+未來可能把行政地名/里名/公里數轉成交流道/匝道/橋梁/隧道/常用地標等司機
+可立即理解的位置描述，本輪未實作、未修改 Prompt、未新增 schema）。新增
+22 項測試，全量迴歸 1539/1506/33，NEW FAILURES=0（僅跑一次）。
+
+完整設計理由 → `07_KNOWN_ISSUES.md`／`03_ARCHITECTURE.md`；機器可讀狀態 →
+`SYSTEM_STATE.json` 的 `taskSeal`。**下一個 Agent：不得開始 hourly
+reminder；不得實作 driverSummary；不得修改 AI Prompt；不得擴大服務
+區域。**
 
 ## PBS Windows Local Edge Debug Push Integration（V1.9.6＋V1.9.7，2026-08-28，歷史記錄——已由上方 V1.9.8／V1.9.9 取代為 Production 主線）
 
@@ -501,7 +554,7 @@ branch／不要退休輪詢／不要開始 V1.9.8」等禁令已被上方 V1.9.8
 
 ## Next action
 
-等待GPT Work回報真實Production PBS事件走完Windows→Cloudflare→Workers AI→LINE完整路徑的觀察證據（FIRST_REAL_AI_EVENT）；下一個Agent不得開始hourly reminder、不得修改AI Prompt、不得擴大service area、不得開始其他新功能
+等待真實Production PBS事件走完Windows→Cloudflare→Workers AI→LINE完整路徑的觀察證據（FIRST_REAL_AI_EVENT）；可透過新增的 GET /admin/pbs-ai-observatory-view 直接查看；下一個Agent不得開始hourly reminder、不得實作driverSummary、不得修改AI Prompt、不得擴大服務區域
 
 ## Full history location
 

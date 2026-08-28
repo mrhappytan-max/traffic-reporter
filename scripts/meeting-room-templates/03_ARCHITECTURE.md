@@ -118,12 +118,51 @@ schema 一律 0 LINE、trace 記錄，絕不 fallback 回舊 hard rules。見下
 
 **25. 如何排查「Windows 有事件但 LINE 沒收到」？** 見 `02_PROJECT_HANDOFF.md`
 「Troubleshooting Runbook：Windows 有事件但 LINE 沒收到」十步驟診斷順序（免費/最快/
-高機率優先，非一開始就 Full Audit）。
+高機率優先，非一開始就 Full Audit）；亦可直接開 `GET /admin/pbs-ai-observatory-view`
+（V2.0.1 新增，見下方）逐筆查看 PBS 原文→AI 判斷→AI 理由→最終結果，不需要先讀
+Workers Logs。
 
 **26. 哪些功能仍未完成？** `FIRST_REAL_AI_EVENT = WAITING`（真實 Production PBS 事件
 走完 Workers AI 判讀到 LINE 推播的完整驗證尚未觀察到）；`HOURLY_MAJOR_INCIDENT_REMINDER
 = NOT_STARTED`（方向性設計，未實作，未來可重用 AI cached verdict，但不在 V2.0.0
-範圍）。見 `07_KNOWN_ISSUES.md` 與 `SYSTEM_STATE.json` 的 `taskSeal`。
+範圍）；`AI_DRIVER_SUMMARY = FUTURE_CANDIDATE`（V2.0.1 記錄的產品候選方向：把行政
+地名/里名/公里數轉成交流道/匝道/橋梁/隧道/常用地標等司機可立即理解的位置描述，
+未實作、未修改 Prompt、未新增 schema）。見 `07_KNOWN_ISSUES.md` 與
+`SYSTEM_STATE.json` 的 `taskSeal`。
+
+## V2.0.1 — AI Decision Observatory（本輪，2026-08-29）
+
+新 Admin 頁 `GET /admin/pbs-ai-observatory-view`（`src/pbs/aiObservatoryView.js`），
+READ ONLY OBSERVABILITY——開啟／重新整理／搜尋一律 0 次 Workers AI 呼叫。資料來源：
+
+```
+src/pbs/debugPush.js（每個真正被接受、非重複的事件完成處理後）
+    ↓
+buildAiObservatoryRecord()（純函式，PBS 原始欄位＋最終 outcome enum，
+    刻意不含 notify/impact/reason/confidence）
+    ↓
+recordAiObservatoryEntry()（debug:pbs-ai-observatory-index:v1:*，48h TTL，
+    +1 KV write／事件，+0 額外讀取）
+
+GET /admin/pbs-ai-observatory-view
+    ↓
+listAiObservatoryEntries()（KV list+get，同 broadcastProvenance.js 慣例）
+    ↓
+每筆記錄若 outcome 為 AI_NOTIFY_TRUE/FALSE
+    → 即時 readAiDecisionCache()（既有 aiDecisionCache.js，重新計算
+      computeAiDecisionCacheKeyHash({eventId,fingerprint})，非新雜湊）
+    → notify/impact/reason/confidence 直接讀既有記錄，絕不重新生成
+    → cache 記錄若已過期／不存在 → 顯示 UNKNOWN / NOT RECORDED
+```
+
+盤點既有資料後的結論（不重複儲存，最小新增）：`aiDecisionCache.js` 只能回答
+「已知 eventId+fingerprint 的判讀是什麼」，無法列舉「有哪些事件」；
+`debug:pbs-push-idempotency:v1:*` 沒有 PBS 欄位；`AI_CALL_FAILED`／
+`AI_DECISION_INVALID`／`SERVICE_AREA_EXCLUDED`／legacy-path 完全無持久記錄——因此
+無法做到 0 額外 KV 寫入，thin index 是能同時回答全部 outcome 的最小方案。重複事件
+維持 0 額外寫入（transport idempotency 已攔截前一步）。
+
+詳見 `07_KNOWN_ISSUES.md`／`02_PROJECT_HANDOFF.md` 的完整記錄。
 
 ## 主要資料流（Pipeline）
 
