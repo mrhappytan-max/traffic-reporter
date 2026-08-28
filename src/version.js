@@ -656,8 +656,39 @@
 // Feed product policy are all UNCHANGED this round. FIRST_REAL_AI_EVENT
 // remains WAITING; AI_DRIVER_SUMMARY remains a documented FUTURE
 // candidate only, not implemented.
+//
+// V2.0.2 (2026-08-29) — Config Drift Hotfix. PATCH — Production
+// configuration correctness fix, does not change AI semantic behavior.
+// Root cause: PBS_AI_DECISION_ENABLED lived ONLY as a manually-set
+// Cloudflare Dashboard Variable from V1.9.9 Phase 3D through V2.0.1 —
+// Workers Builds treats wrangler.jsonc as authoritative on every
+// deploy (same mechanism already documented next to
+// TRAFFIC_SOURCE_MODE's own var), so a Dashboard-only value is silently
+// dropped the next time this repo's main branch deploys. GPT Work's
+// manual "true" setting was removed this way, without anyone changing
+// PBS_AI_DECISION_ENABLED on purpose, and AI decisions fell back to the
+// code-level default (false). Fix: wrangler.jsonc's own "vars" block now
+// declares `"PBS_AI_DECISION_ENABLED": "true"` (the string form — see
+// that var's own wrangler.jsonc comment) — wrangler.jsonc / GitHub main
+// is now the ONE canonical source of truth for this switch; the
+// Dashboard is no longer used to set it long-term. No `keep_vars` was
+// added — Dashboard-state-authoritative is exactly the failure mode
+// this round retires, not something to preserve. Nothing in
+// src/pbs/aiConfig.js, aiDecisionEngine.js, aiCandidate.js, the AI
+// prompt/model, Windows PBS filter, service area, lifecycle, message
+// formatting, LINE policy, Shared Feed, or CCTV changed this round.
+//
+// FIRST_REAL_AI_EVENT remains WAITING. A real 台68 event observed at
+// 17:49 during the config-drift window is NOT counted as a genuine AI
+// decision — PBS_AI_DECISION_ENABLED had already been dropped back to
+// false by that point, so that event was decided by the legacy path,
+// not by Workers AI. A separate, already-known, NOT fixed this round,
+// issue is tracked as PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_
+// FORMATTER — the LINE message formatter does not yet surface a PBS
+// comment's own precise interchange/ramp text (e.g. "近竹科匝道") even
+// when it's present in the source comment; see 07_KNOWN_ISSUES.md.
 
-export const APP_VERSION = 'V2.0.1';
+export const APP_VERSION = 'V2.0.2';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

@@ -93,7 +93,24 @@
     // Set to "ALL_ELIGIBLE" to restore the previous behaviour. A typo
     // resolves to the restrictive default on purpose (the expensive
     // mistake here is pushing too much). Rule: src/traffic/broadcastPolicy.js.
-    "LINE_PUSH_POLICY": "MAJOR_ACCIDENT_ONLY"
+    "LINE_PUSH_POLICY": "MAJOR_ACCIDENT_ONLY",
+    // V2.0.2 (Config Drift Hotfix) — PBS_AI_DECISION_ENABLED lived ONLY as
+    // a Dashboard Variable from V1.9.9 Phase 3D through V2.0.1. Same root
+    // cause as TRAFFIC_SOURCE_MODE's own comment above: Workers Builds
+    // treats THIS FILE as authoritative on every deploy, so a
+    // Dashboard-only var is silently dropped the next time main is
+    // pushed — GPT Work's manual "true" setting was removed by a later
+    // deployment, and AI decisions fell back to the code-level default
+    // (false) without anyone changing PBS_AI_DECISION_ENABLED on
+    // purpose. wrangler.jsonc / GitHub main is now the ONE canonical
+    // source of truth for this var — the Dashboard is no longer used to
+    // set it long-term. MUST be the STRING "true" (Cloudflare injects
+    // Workers Variables as strings, never real booleans — see
+    // src/pbs/aiConfig.js#resolvePbsAiDecisionEnabled(), which accepts
+    // this exact string form since V1.9.9 Phase 3D). To disable AI
+    // decisions, change this value here and push — never rely on a
+    // Dashboard-only override again.
+    "PBS_AI_DECISION_ENABLED": "true"
   },
   "vpc_services": [
     {
@@ -103,12 +120,10 @@
   ],
   // V1.9.9 Phase 3B — Workers AI binding for Windows PBS driver-impact
   // decisions (src/pbs/aiDecisionEngine.js, model '@cf/zai-org/glm-4.7-flash').
-  // Declaring this binding here does NOT turn AI decisions on by itself —
-  // src/pbs/aiConfig.js#PBS_AI_DECISION_ENABLED_DEFAULT is false, and no
-  // Production var sets PBS_AI_DECISION_ENABLED, so the existing legacy
-  // Business Pipeline (traffic/broadcastPipeline.js#runLineBroadcast)
-  // stays the sole judge until a human explicitly flips that on, after
-  // verifying this binding is actually live.
+  // Declaring this binding here does NOT by itself turn AI decisions on —
+  // that gate is the "vars" block's own PBS_AI_DECISION_ENABLED above
+  // (see its own V2.0.2 comment for why it now lives here, canonically,
+  // instead of only in the Dashboard).
   "ai": {
     "binding": "AI"
   }

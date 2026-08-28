@@ -82,6 +82,34 @@ function checkRequiredBindings(results) {
   }
 }
 
+// V2.0.2 (Config Drift Hotfix) — guards against the exact failure this
+// round exists to fix: PBS_AI_DECISION_ENABLED living ONLY as a
+// Dashboard Variable, which Workers Builds silently drops on the next
+// deploy since wrangler.jsonc is authoritative (same mechanism as
+// TRAFFIC_SOURCE_MODE's own long-standing comment in that file). If a
+// future edit removes this var from wrangler.jsonc, Production AI
+// decisions would fall back to disabled without anyone changing this
+// switch on purpose — this check exists so that regresses loudly here,
+// not silently in Production. Must be the exact STRING "true" (Cloudflare
+// injects Workers Variables as strings, never real booleans — see
+// src/pbs/aiConfig.js#resolvePbsAiDecisionEnabled()).
+function checkPbsAiDecisionEnabledVar(results) {
+  const raw = readText('wrangler.jsonc');
+  if (raw === null) {
+    results.push({ ok: false, name: 'pbs-ai-decision-enabled-var', message: 'wrangler.jsonc not found' });
+    return;
+  }
+  const match = raw.match(/"PBS_AI_DECISION_ENABLED"\s*:\s*"([^"]*)"/);
+  const ok = Boolean(match && match[1] === 'true');
+  results.push({
+    ok,
+    name: 'pbs-ai-decision-enabled-var',
+    message: ok
+      ? 'wrangler.jsonc vars.PBS_AI_DECISION_ENABLED = "true" (canonical, not Dashboard-only)'
+      : `wrangler.jsonc vars.PBS_AI_DECISION_ENABLED = ${match ? `"${match[1]}"` : '(not declared)'}, expected the string "true" — see V2.0.2's own Config Drift Hotfix history before changing this`,
+  });
+}
+
 /**
  * Extracts the fenced code block immediately following the
  * "## Current Production version / main HEAD" heading in
@@ -177,6 +205,7 @@ export function checkDeploymentPolicy() {
   const results = [];
   checkCronSchedule(results);
   checkRequiredBindings(results);
+  checkPbsAiDecisionEnabledVar(results);
   checkNoLegacyProductionBranchReference(results);
   checkCanonicalPolicyStatementPresent(results);
   checkPackageJsonScripts(results);
