@@ -390,7 +390,61 @@
 // current; Phase 6 Cloudflare-polling-retirement is explicitly not to be
 // started early).
 
-export const APP_VERSION = 'V1.9.6';
+// V1.9.7 (2026-08-28) — Persistent PBS Debug Push Idempotency. V1.9.6's
+// own real Production evidence (a genuine 台68 西向 5K event: Windows
+// Debug Push at 08:48:30, Cloudflare's own 30-minute polling only caught
+// it at 09:00:39 — Windows ~12.1 minutes earlier) confirmed the channel
+// works; this round closes its one open risk: V1.9.5's idempotency was
+// per-isolate in-memory ONLY (PBS_DEBUG_PUSH_IDEMPOTENCY_MODE =
+// NOT_PERSISTENT) — an isolate eviction, Worker restart, or redeploy
+// could re-accept the identical event.
+//
+// Fix: src/pbs/debugPush.js now adds a durable L2 layer in TRAFFIC_KV
+// under its OWN debug-only prefix (`debug:pbs-push-idempotency:v1:*`,
+// IDEMPOTENCY_KV_PREFIX) — never a business key. Keyed by a STABLE,
+// deterministic SHA-256 hash of `source:eventId:lifecycle:fingerprint`
+// (never requestId, which differs across a client's own retries) —
+// computeIdempotencyKeyHash. The V1.9.5 in-memory Map is kept as an L1
+// fast-path (skips a KV read for a genuine same-isolate repeat) but is
+// NEVER the sole source of truth: an L1 miss always falls through to an
+// L2 KV read before a request is accepted, so a fresh isolate with empty
+// L1 still correctly sees an L2 record written by a different isolate.
+// TTL: 48 hours (IDEMPOTENCY_TTL_SECONDS) — see that constant's own
+// comment for the reasoning. A duplicate NEVER costs a KV write (get-only
+// on a hit); only a genuinely new idempotency key costs exactly 1 write —
+// measured via test/pbsDebugPush.test.js's KV-cost-quantification tests:
+// 10/30/100 distinct accepted events/day cost exactly 10/30/100 KV writes
+// (+118/day existing Production baseline stays ≈128/148/218 writes/day,
+// all far under the 1,000/day account budget — KV_WRITE_PRESSURE = LOW).
+//
+// KV_ONLY_ATOMICITY = NOT_SUFFICIENT for a true atomic exactly-once
+// guarantee (Cloudflare KV's get-then-put has no compare-and-swap) —
+// reported honestly, NOT solved with a Durable Object this round (the
+// order's own "不要過度設計" instruction): the actual identified risk
+// (isolate/restart/redeploy causing re-acceptance of the SAME transition
+// sent again LATER) is fully closed regardless of this narrow race, whose
+// blast radius is bounded to a harmless duplicate debug log line — this
+// endpoint still has ZERO business side effects (LINE=0, CCTV=0, Shared
+// Feed=0, business KV=0), so a race here can never double-push anything
+// real. PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY is therefore honestly
+// reported as PARTIAL, not ACTIVE — a Durable Object would be the correct
+// fix if this endpoint is ever wired to a genuine business side effect,
+// not before.
+//
+// A KV outage on the idempotency read/write fails OPEN (the event is
+// still accepted) rather than closed — a debug-only observability
+// feature must never lose a legitimate event to a KV hiccup.
+//
+// NOT touched this round: LINE, CCTV, Shared Feed, Business KV, the real
+// Broadcast Pipeline, Cloudflare's existing PBS 30-minute polling gate
+// (still PRESERVED), the Windows Prototype's own code/Secret/Task
+// Scheduler, and the debug API's response schema (unchanged, verified
+// backward-compatible by test).
+//
+// See test/pbsDebugPush.test.js (52 tests) and 07_KNOWN_ISSUES.md for the
+// full design, the race-condition analysis, and the KV cost table.
+
+export const APP_VERSION = 'V1.9.7';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,
