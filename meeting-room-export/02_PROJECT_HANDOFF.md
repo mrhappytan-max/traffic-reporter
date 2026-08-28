@@ -17,11 +17,11 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | 29bf1d2fb6a1efdd4e8859faf824f94dcf1c94d8 |
-| Snapshot generated at | 2026-08-28T04:10:38.492Z |
-| Source working tree | dirty (14 changed source file(s)) |
-| Current version | V1.9.8 |
-| Current phase | V1.9.8 SEALED — Windows PBS Production Ingress + PBS Polling Retirement |
+| Source main HEAD | 179c94272e8f59c6dd1072a385240c0b10c2d70b |
+| Snapshot generated at | 2026-08-28T05:48:24.439Z |
+| Source working tree | dirty (13 changed source file(s)) |
+| Current version | V1.9.9 |
+| Current phase | V1.9.9 PHASE 2 SEALED — AI-ready Business Pipeline Simplification |
 
 `Source main HEAD` 是這份快照所描述的正式 main commit（取自 `origin/main`），**不是**包含本檔案自己的那個 commit——兩者刻意分開，避免 Git 自我參照循環。詳見 `SYSTEM_STATE.json` 的 `sourceMainHead` / `exportArtifactCommit`。
 
@@ -98,17 +98,17 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 | 欄位 | 值 |
 |---|---|
-| Latest completed | V1.9.8 |
+| Latest completed | V1.9.9 |
 | package.json version | 0.1.0 |
-| Production status | DEPLOYED（程式碼已合main，Production實際部署狀態本sandbox無法連線驗證，NOT_OBSERVED） |
-| Production verification | NOT_OBSERVED — sandbox egress封鎖Production網域與Cloudflare Dashboard，依施工令第十一節以確定性測試+部署狀態(commit/version.js)作為封版依據 |
+| Production status | DEPLOYED（Phase 1由另一session實際部署驗證；本輪Phase 2為repo-side準備工作，依施工令指示Dashboard驗證由GPT Work接手，本Session未嘗試連線） |
+| Production verification | NOT_OBSERVED（本輪）— sandbox egress封鎖Production網域與Cloudflare Dashboard；施工令本身指示本輪不需要Dashboard驗證 |
 
 版本線（哪些版本仍具架構意義）→ `06_VERSION_HISTORY.md`。
 
 ## Current known issues
 
 - **Known blocker**：none
-- **Real-world confirmation**：N/A — 本輪為確定性測試驅動封版，未等待/未人工製造真實PBS事件
+- **Real-world confirmation**：N/A — 本輪為確定性測試驅動的repo-side準備工作，未等待/未人工製造真實PBS事件
 - **既有測試失敗基準線**：`npm test` 共 1272 項，其中穩定 38 項為已知失敗（2 項 `pbs-relay/tests/*` 缺 `pbs-relay/src/cache.js`；**33 項過期斷言**——動態路肩推播關閉、PBS 成為 CCTV 可信來源之後未同步更新的測試，是目前最大的一筆技術債，待獨立施工令；3 項 wall-clock 相依的 `healthQuotaDashboard`，會隨日期自然增加）。**注意：舊版文件宣稱那 13 項是「Workers-only `.wasm` codec 在沙盒無法載入」，這是錯的 Root Cause——真正原因是沙盒 `node_modules` 不完整、`@jsquash/jpeg` 沒安裝；裝了之後那些檔案全部可以執行，並揭露上述 33 項過期斷言。**出現這 18 項以外的新失敗才算真正回歸，且**判斷回歸一律以同一輪 `git stash -u` 對照為準**；逐項清單、`deploymentPolicyAndVerify` 第 12 項的「尚未 push 必失敗」現象，以及 `deploymentStatus` 那項只在全套執行時偶發的雜訊，都見 `07_KNOWN_ISSUES.md`。
 - **Dashboard-only 事實永遠無法從程式驗證**：Production branch 指向、真實 Cron 排程、Secret 值是否正確、Build 歷史——只能由真人開 Dashboard 確認。
 - **沙盒無 Production 網路**：這類 session 對 Production 網域的 outbound HTTPS 一律被 egress proxy 擋（403）。需要即時 Production 證據的任務只能誠實標記「無法證明」，不得用推測補齊。
@@ -190,11 +190,38 @@ LINE Push Policy（`MAJOR_ACCIDENT_ONLY`）完全未變動——只是事件來�
 
 完整設計理由（KV 成本剖面修正、已知副作用如 `pbs:lifecycle-state`/`/health` pbs
 區塊凍結）→ `07_KNOWN_ISSUES.md`；機器可讀狀態 → `SYSTEM_STATE.json` 的
-`pbsLocalEdgeFilterPrototype`／`taskSeal`。**下一個 Agent：不要自行開始
-V1.9.9；不要擴大 LINE policy；不要處理台61/台15全線封閉產品政策；不要新增
-Durable Object；不要進行無關架構重構。**
+`pbsLocalEdgeFilterPrototype`／`taskSeal`。（V1.9.8 當時的「不要自行開始 V1.9.9」
+已過期——V1.9.9 Phase 1/Phase 2 見下方新段落；現行禁令見該段落結尾。）
 
-## PBS Windows Local Edge Debug Push Integration（V1.9.6＋V1.9.7，2026-08-28，歷史記錄——已由上方 V1.9.8 取代為 Production 主線）
+## V1.9.9 Phase 1（Windows 服務區收斂）＋ Phase 2（AI-ready 準備，2026-08-28）
+
+**Phase 1**（fix commit `7acb82a`，完成於另一個 session，本 Cloud Session 未
+參與）：Windows PBS Local Edge Filter 服務區收斂為新竹市／新竹縣（竹南／頭份／
+苗栗市及其他苗栗縣區域排除）。純 `pbs-relay/`（Windows 端）變更，**這一輪同時
+把 `pbs-relay/` 整包直接 commit 進 main**——不再是未合併的 feature branch（下方
+V1.9.6/V1.9.7 段落記錄的 `MERGED_TO_MAIN = NO` 已過期，見該段自己的標記）。
+
+**Phase 2**（本輪）— AI-ready Business Pipeline Simplification：為 Phase 3
+Workers AI 全量判讀做準備，本階段刻意不接 AI、不啟用新 LINE 判讀政策，只整理
+decision path。新模組 `src/pbs/aiCandidate.js`：從 `src/pbs/debugPush.js` 既有
+（完全未修改）的正規化事件建立最小 AI candidate 物件，與既有 `runLineBroadcast()`
+呼叫**並行、完全獨立**——只保留 service area 與冪等/重複防護兩個 gate，不套用
+`MAJOR_ACCIDENT_ONLY`／V1.5 type whitelist／location quality hard-reject（那些
+函式本身完全未修改，對真實 LINE 決策仍完整生效，直到 Phase 3 才會被取代）。
+candidate 純粹 log 觀察用（`PBS_AI_DECISION_MODE = PREPARED_NOT_ACTIVE`），從未
+觸及 LINE／CCTV／Shared Feed，從未呼叫任何 AI 模型。另預留 AI decision cache
+key 設計（`computeAiDecisionCacheKeyHash`，重用既有穩定 fingerprint）僅
+schema/helper，本輪無任何 KV 讀寫。
+
+新增測試：`test/pbsAiCandidate.test.js`（13 項單元測試）＋
+`test/pbsDebugPush.test.js` 施工令十五項最低清單。全量迴歸 1452/1419/33，與
+變更前基線（1424/1391/33）失敗清單逐項相同，NEW FAILURES = 0。
+
+完整設計理由 → `07_KNOWN_ISSUES.md`／`03_ARCHITECTURE.md`；機器可讀狀態 →
+`SYSTEM_STATE.json` 的 `taskSeal`。**下一個 Agent：不得自行開始 Phase 3；不得
+接 Workers AI；不得修改 Workers AI Dashboard；不得開始 V1.9.10。**
+
+## PBS Windows Local Edge Debug Push Integration（V1.9.6＋V1.9.7，2026-08-28，歷史記錄——已由上方 V1.9.8／V1.9.9 取代為 Production 主線）
 
 真人在 Windows 本機（`C:\Users\mrhap\traffic-reporter\pbs-relay`）已把上一輪的邊緣篩選
 Prototype 接成一條**真的在跑、真的會呼叫 Cloudflare** 的 Debug-only 管線（與下面既有
@@ -230,9 +257,8 @@ Cloudflare Debug-only Receiver（見 03_ARCHITECTURE.md／07_KNOWN_ISSUES.md）
 （明確不進：LINE／CCTV／R2／Shared Feed／正式 Business KV／正式 Broadcast Pipeline）
 ```
 
-**最新程式事實**（`LOCAL_PROTOTYPE_BRANCH = feature/pbs-local-edge-filter-prototype`，
-`LOCAL_PROTOTYPE_HEAD = 95ecdc4718f836ff36c974e829b549f262e6b936`，
-`LOCAL_PROTOTYPE_MERGED_TO_MAIN = NO`）：本 Cloud Session 對這個新 commit 做了獨立
+**最新程式事實，V1.9.6/V1.9.7 當時的歷史快照**（`LOCAL_PROTOTYPE_MERGED_TO_MAIN = NO` 已於 V1.9.9 Phase 1 過期——`pbs-relay/` 現已直接 commit 進 main，見本檔案最上方「V1.9.9 Phase 1」段落，此處數字不重寫，僅標記過期）：`LOCAL_PROTOTYPE_BRANCH = feature/pbs-local-edge-filter-prototype`，
+`LOCAL_PROTOTYPE_HEAD = 95ecdc4718f836ff36c974e829b549f262e6b936`。本 Cloud Session 對這個新 commit 做了獨立
 唯讀驗證——`git fetch`＋`git rev-parse` 確認 SHA 完全相符、`git merge-base
 --is-ancestor` 確認尚未合併進 main、`git worktree add --detach` 乾淨簽出跑
 `node --test tests/*.test.js`：**118 項測試、118 pass、0 fail**，與真人回報的數字
@@ -272,7 +298,7 @@ branch／不要退休輪詢／不要開始 V1.9.8」等禁令已被上方 V1.9.8
 
 ## Next action
 
-等待下一個正式施工令。若要主動開工，可處理07_KNOWN_ISSUES.md既有約33項過期斷言（與V1.9.8無關）。
+STOP；等待新的正式施工令。不得自行開始 Phase 3。不得接 Workers AI。不得修改 Workers AI Dashboard。不得開始 V1.9.10。
 
 ## Full history location
 

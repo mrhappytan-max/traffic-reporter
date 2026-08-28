@@ -190,11 +190,38 @@ LINE Push Policy（`MAJOR_ACCIDENT_ONLY`）完全未變動——只是事件來�
 
 完整設計理由（KV 成本剖面修正、已知副作用如 `pbs:lifecycle-state`/`/health` pbs
 區塊凍結）→ `07_KNOWN_ISSUES.md`；機器可讀狀態 → `SYSTEM_STATE.json` 的
-`pbsLocalEdgeFilterPrototype`／`taskSeal`。**下一個 Agent：不要自行開始
-V1.9.9；不要擴大 LINE policy；不要處理台61/台15全線封閉產品政策；不要新增
-Durable Object；不要進行無關架構重構。**
+`pbsLocalEdgeFilterPrototype`／`taskSeal`。（V1.9.8 當時的「不要自行開始 V1.9.9」
+已過期——V1.9.9 Phase 1/Phase 2 見下方新段落；現行禁令見該段落結尾。）
 
-## PBS Windows Local Edge Debug Push Integration（V1.9.6＋V1.9.7，2026-08-28，歷史記錄——已由上方 V1.9.8 取代為 Production 主線）
+## V1.9.9 Phase 1（Windows 服務區收斂）＋ Phase 2（AI-ready 準備，2026-08-28）
+
+**Phase 1**（fix commit `7acb82a`，完成於另一個 session，本 Cloud Session 未
+參與）：Windows PBS Local Edge Filter 服務區收斂為新竹市／新竹縣（竹南／頭份／
+苗栗市及其他苗栗縣區域排除）。純 `pbs-relay/`（Windows 端）變更，**這一輪同時
+把 `pbs-relay/` 整包直接 commit 進 main**——不再是未合併的 feature branch（下方
+V1.9.6/V1.9.7 段落記錄的 `MERGED_TO_MAIN = NO` 已過期，見該段自己的標記）。
+
+**Phase 2**（本輪）— AI-ready Business Pipeline Simplification：為 Phase 3
+Workers AI 全量判讀做準備，本階段刻意不接 AI、不啟用新 LINE 判讀政策，只整理
+decision path。新模組 `src/pbs/aiCandidate.js`：從 `src/pbs/debugPush.js` 既有
+（完全未修改）的正規化事件建立最小 AI candidate 物件，與既有 `runLineBroadcast()`
+呼叫**並行、完全獨立**——只保留 service area 與冪等/重複防護兩個 gate，不套用
+`MAJOR_ACCIDENT_ONLY`／V1.5 type whitelist／location quality hard-reject（那些
+函式本身完全未修改，對真實 LINE 決策仍完整生效，直到 Phase 3 才會被取代）。
+candidate 純粹 log 觀察用（`PBS_AI_DECISION_MODE = PREPARED_NOT_ACTIVE`），從未
+觸及 LINE／CCTV／Shared Feed，從未呼叫任何 AI 模型。另預留 AI decision cache
+key 設計（`computeAiDecisionCacheKeyHash`，重用既有穩定 fingerprint）僅
+schema/helper，本輪無任何 KV 讀寫。
+
+新增測試：`test/pbsAiCandidate.test.js`（13 項單元測試）＋
+`test/pbsDebugPush.test.js` 施工令十五項最低清單。全量迴歸 1452/1419/33，與
+變更前基線（1424/1391/33）失敗清單逐項相同，NEW FAILURES = 0。
+
+完整設計理由 → `07_KNOWN_ISSUES.md`／`03_ARCHITECTURE.md`；機器可讀狀態 →
+`SYSTEM_STATE.json` 的 `taskSeal`。**下一個 Agent：不得自行開始 Phase 3；不得
+接 Workers AI；不得修改 Workers AI Dashboard；不得開始 V1.9.10。**
+
+## PBS Windows Local Edge Debug Push Integration（V1.9.6＋V1.9.7，2026-08-28，歷史記錄——已由上方 V1.9.8／V1.9.9 取代為 Production 主線）
 
 真人在 Windows 本機（`C:\Users\mrhap\traffic-reporter\pbs-relay`）已把上一輪的邊緣篩選
 Prototype 接成一條**真的在跑、真的會呼叫 Cloudflare** 的 Debug-only 管線（與下面既有
@@ -230,9 +257,8 @@ Cloudflare Debug-only Receiver（見 03_ARCHITECTURE.md／07_KNOWN_ISSUES.md）
 （明確不進：LINE／CCTV／R2／Shared Feed／正式 Business KV／正式 Broadcast Pipeline）
 ```
 
-**最新程式事實**（`LOCAL_PROTOTYPE_BRANCH = feature/pbs-local-edge-filter-prototype`，
-`LOCAL_PROTOTYPE_HEAD = 95ecdc4718f836ff36c974e829b549f262e6b936`，
-`LOCAL_PROTOTYPE_MERGED_TO_MAIN = NO`）：本 Cloud Session 對這個新 commit 做了獨立
+**最新程式事實，V1.9.6/V1.9.7 當時的歷史快照**（`LOCAL_PROTOTYPE_MERGED_TO_MAIN = NO` 已於 V1.9.9 Phase 1 過期——`pbs-relay/` 現已直接 commit 進 main，見本檔案最上方「V1.9.9 Phase 1」段落，此處數字不重寫，僅標記過期）：`LOCAL_PROTOTYPE_BRANCH = feature/pbs-local-edge-filter-prototype`，
+`LOCAL_PROTOTYPE_HEAD = 95ecdc4718f836ff36c974e829b549f262e6b936`。本 Cloud Session 對這個新 commit 做了獨立
 唯讀驗證——`git fetch`＋`git rev-parse` 確認 SHA 完全相符、`git merge-base
 --is-ancestor` 確認尚未合併進 main、`git worktree add --detach` 乾淨簽出跑
 `node --test tests/*.test.js`：**118 項測試、118 pass、0 fail**，與真人回報的數字

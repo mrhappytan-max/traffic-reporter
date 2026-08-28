@@ -10,22 +10,22 @@
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
 | Current Version | V1.9.9（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | 7acb82abecfdf4784a027e1253738925d3f39af1 |
+| Source main HEAD | 179c94272e8f59c6dd1072a385240c0b10c2d70b |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty (14 changed source file(s)) |
-| Production | DEPLOYED — Cloudflare Worker Version ID `defc1da4-6328-47ce-82c6-81082519bc2`；Windows `TrafficReporter-PBS-LocalMonitor` 已重啟為 Running |
-| Production Verification | Wrangler deploy PASS；Windows 實際工作夾 PBS tests 121/121 PASS |
-| Current Phase | V1.9.9 PHASE 1 SEALED — WINDOWS_SERVICE_AREA_HSINCHU_ONLY |
-| Current Task | none（無進行中工作）。Latest completed = WINDOWS_SERVICE_AREA_HSINCHU_ONLY, status=SEALED. CURRENT_OFFICIAL_VERSION=V1.9.9. |
+| Source working tree | dirty (13 changed source file(s)) |
+| Production | DEPLOYED（Phase 1由另一session實際部署驗證；本輪Phase 2為repo-side準備工作，依施工令指示Dashboard驗證由GPT Work接手，本Session未嘗試連線） |
+| Production Verification | NOT_OBSERVED（本輪）— sandbox egress封鎖Production網域與Cloudflare Dashboard；施工令本身指示本輪不需要Dashboard驗證 |
+| Current Phase | V1.9.9 PHASE 2 SEALED — AI-ready Business Pipeline Simplification |
+| Current Task | none（無進行中工作）。Latest completed = AI_READY_PIPELINE_PREPARATION_V1_9_9_PHASE_2, status=SEALED. CURRENT_OFFICIAL_VERSION=V1.9.9. |
 | Latest Completed Version | V1.9.9 |
 | Known Blocker | none |
-| Real-world Confirmation | N/A — 本輪為確定性測試驅動封版，未等待/未人工製造真實PBS事件 |
+| Real-world Confirmation | N/A — 本輪為確定性測試驅動的repo-side準備工作，未等待/未人工製造真實PBS事件 |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | STOP；等待新的正式施工令。不得自行開始 V1.9.9 Phase 2。 |
-| Export Generated At | 2026-08-28T04:10:38.492Z |
+| Next Action | STOP；等待新的正式施工令。不得自行開始 Phase 3。不得接 Workers AI。不得修改 Workers AI Dashboard。不得開始 V1.9.10。 |
+| Export Generated At | 2026-08-28T05:48:24.439Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
-## V1.9.9 Phase 1 封版（2026-08-28）
+## V1.9.9 Phase 1 封版（2026-08-28，另一個 session 完成，本 Cloud Session 未參與，port 進本模板僅為維持 template↔engineering-memory 一致）
 
 - `V1.9.9_PHASE_1 = WINDOWS_SERVICE_AREA_HSINCHU_ONLY`
 - `AI_INTEGRATION = NOT_STARTED`
@@ -33,6 +33,18 @@
 - Windows PBS Local Edge Filter 僅納入新竹市、新竹縣；竹南、頭份、苗栗市及其他苗栗縣區域一律排除。
 - 跨縣市道路依實際新竹路段納入；舊 broad bounding box 不再能單獨讓苗栗事件通過。
 - `NEW`／`UPDATED`／`MISSING_PENDING_CLEAR`／`CLEARED` lifecycle 行為未修改。
+- fix commit `7acb82a`，純 `pbs-relay/`（Windows 端）變更，未觸碰任何 `src/` Cloudflare runtime。
+
+## V1.9.9 Phase 2 封版（2026-08-28）— AI-ready Business Pipeline Simplification
+
+- `V1.9.9_PHASE_2 = AI_READY_PIPELINE_PREPARATION`
+- `AI_INTEGRATION = NOT_STARTED`、`AI_MODEL = NOT_SELECTED_IN_RUNTIME`、`LINE_AI_DECISION = NOT_ACTIVE`
+- `PBS_AI_DECISION_MODE = PREPARED_NOT_ACTIVE`
+- 新模組 `src/pbs/aiCandidate.js`：從 Windows 已正規化事件建立最小 AI candidate 物件，僅保留服務區與冪等/重複防護兩個 gate，不套用
+  `MAJOR_ACCIDENT_ONLY`／V1.5 type whitelist／location quality hard-reject（那些函式本身完全未修改，對真實 LINE 決策仍完整生效）。
+- candidate 純粹 log 觀察用，從未觸及 LINE／CCTV／Shared Feed，從未呼叫任何 AI 模型。
+- 新增 AI decision cache key 設計（`computeAiDecisionCacheKeyHash`，eventId+既有穩定fingerprint）僅schema/helper，本輪無任何KV讀寫。
+- 詳見 `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`。**下一個 Agent：不得自行開始 Phase 3；不得接 Workers AI；不得修改 Workers AI Dashboard；不得開始 V1.9.10。**
 
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
 

@@ -807,144 +807,146 @@ Windows Prototype、LINE、CCTV、TDX、Cron 頻率。Production 驗證：見
 `SYSTEM_STATE.json.taskSealHistory` 的 V1.9.4 紀錄（sandbox 無法連 Production，誠實標記
 `NOT_OBSERVED`）。
 
-## 修正紀錄｜Windows PBS Push → Production Business Pipeline ＋ PBS 輪詢退休（V1.9.8）（2026-08-28）
+## 修正紀錄｜V1.9.9 Phase 1 — Windows Service Area Hsinchu Only（2026-08-28，完成於另一個 session，本 Cloud Session 未參與，port 進本模板僅為維持一致）
 
-### 真實觸發與決策
+`V1.9.9_PHASE_1 = WINDOWS_SERVICE_AREA_HSINCHU_ONLY`。Windows PBS Local Edge
+Filter原先以竹南／頭份文字直接納入，且國1／國3公里上限與座標bounding box過寬，
+可能把苗栗事件送入正式Business Pipeline。本輪只修改`pbs-relay/src/
+localPrototype.js`（Windows端，本輪首次隨main一起commit，不再是未合併的feature
+branch），重用既有`src/pbs/hsinchuFilter.js`與`src/pbs/roadName.js`：新竹市、
+新竹縣、竹北、湖口、新豐、關西納入；竹南、頭份、苗栗市與其他苗栗縣區域排除；
+同一道路只納入新竹段；座標不得再單獨授予服務區資格。lifecycle完全未改。
+`AI_INTEGRATION=NOT_STARTED`；`LINE_POLICY=UNCHANGED`。Targeted 12/12、root
+invariants 73/73、Windows PBS full suite 121/121 PASS，NEW FAILURES=0。Fix
+commit `7acb82a`；Cloudflare Worker Version ID `defc1da4-6328-47ce-82c6-
+81082519bc2`，Windows `TrafficReporter-PBS-LocalMonitor`已重啟為Running
+（人類回報，本Session未獨立驗證）。
 
-V1.9.7關閉了持久冪等風險，channel本身已證實可靠（V1.9.6首筆真實事件，Windows早
-Cloudflare舊30分鐘輪詢約12.1分鐘）。本輪由真人正式施工令一次性授權，把六階段
-路線圖的Phase 3-6合併完成：Debug Receiver升級為Production Ingress、正式Business
-Pipeline整合、LINE正式啟用、Windows成為PBS主要來源、Cloudflare自身PBS輪詢退休。
-明確排除：長期Shadow Mode、多日A/B比較、對即將退休路徑的額外深度查證。
+## 修正紀錄｜V1.9.9 Phase 2 — AI-ready Business Pipeline Simplification（2026-08-28）
 
-### Ingress：就地升級，非另建 endpoint（施工令「改動最小、重複程式碼最少」）
+### 目標與決策
 
-`src/pbs/debugPush.js`（V1.9.5建立，V1.9.7加持久冪等）本輪第三次升級：一個真正
-被接受（非duplicate）的NEW/UPDATED事件，新函式`buildRawPbsRecordFromPush()`把
-Windows payload組成raw-PBS-shaped record，交給`pbs/normalize.js`既有未修改的
-`normalizePbsEvent()`，再交給`traffic/broadcastPipeline.js`既有未修改的
-`runLineBroadcast()`——**與Cron輪詢路徑呼叫的同一個函式**，同一套service area／
-accident policy／location quality／eligibility／dedupe／incident suppression／
-CCTV／LINE Push Policy／notified-state判斷，隨後呼叫`traffic/sharedFeed.js`既有
-`runSharedFeedPersist()`，與`scheduled.js`呼叫時機相同。debugPush.js本身0份重複的
-業務邏輯——這是施工令第四節「同一事件不論來源，正式判斷結果應由同一套函式產生」
-的直接體現。
+為Phase 3 Workers AI全量判讀做準備，本階段刻意**不接AI**、**不啟用新LINE判讀
+政策**，只整理decision path。目標未來流程：PBS→Windows服務區篩選→lifecycle→
+Cloudflare ingress→auth→validation→persistent idempotency→**AI Decision（
+Phase 3才加入）**→LINE execution。
 
-### 欄位重建：Windows payload → raw-PBS-shaped record
+### 找到的既有內容硬規則（施工令第二節）
 
-Windows的debug-push payload（V1.9.5建立的`EVENT_LOG_FIELDS`白名單：road/areaNm/
-direction/comment/longitude/latitude/sourceDetail）缺少`normalizePbsEvent()`需要
-的`roadtype`/`happendate`/`happentime`/`modDttm`/原始`UID`（有等效的`eventId`）。
-解法，誠實記錄：
-- `UID` = `eventId`（equivalent，非近似）。
-- `happendate`/`happentime`/`modDttm`：由payload自己的`generatedAt`（ISO UTC瞬間）
-  反推Asia/Taipei本地時間字串（`YYYY-MM-DD`/`HH:MM:SS`），因Taipei為固定UTC+8無
-  DST，`normalizePbsEvent`內部的`parseHappenedAt`/`parsePbsDateTime`會用同一套
-  UTC+8換算把它還原回**完全相同**的瞬間——這是精確重建，不是近似值。用同一瞬間
-  同時當作happenedAt與updatedAt是正確的（非取巧近似）：Windows只轉發它剛偵測到
-  的真正NEW/UPDATED transition，`generatedAt`本身就是這個transition被發現的那一
-  刻，對兩個欄位而言都是真實值，等同一筆剛被輪詢路徑首次觀察到的PBS紀錄的
-  happendate/modDttm關係。
-- `roadtype`：刻意留空字串。`classifyPbsEvent({roadtype,comment})`把兩者串接成
-  一段文字做關鍵字比對，Windows本機過濾器（V1.9.6起）已保證只轉發comment含事故
-  關鍵字的NEW/UPDATED事件，故comment-only分類已足夠可信；此欄位只在NEW/UPDATED
-  時被讀取（CLEARED事件從不到達`normalizePbsEvent`，見下段），故此gap不影響
-  CLEARED的分類正確性（CLEARED本就不需要分類，因為它從不進eligibility判斷）。
+`traffic/broadcastPolicy.js`的`MAJOR_ACCIDENT_ONLY`政策（僅`type==='accident'`
+才允許主動推播）、`traffic/broadcastRules.js`的V1.5 type/keyword whitelist
+（`getBroadcastEligibility`，construction/other需impact關鍵字、congestion/
+alert永不合格）、`traffic/locationQuality.js`的location quality hard-reject
+（無法定位即擋下）——這三者是目前會讓候選PBS事件在「內容判讀」階段被reject的
+規則，且全部發生在真正的LINE決策函式`runLineBroadcast`內部。
 
-### CLEARED lifecycle：只 ACK/log，刻意不進 Business Pipeline
+### 設計：新模組 aiCandidate.js，與既有決策路徑並行、完全獨立
 
-比照既有`pbs/pipeline.js`：`classifyPbsLifecycle()`產生的`clearedEvents`從未被
-餵進`crossSourceDedup`/`canonicalEvents`/`uniquePbsEvents`——只有`activeEvents`
-會到達broadcast。CLEARED的Windows push因此只做ACK+結構化log，**不**呼叫
-`runLineBroadcast`，維持與輪詢路徑完全一致的語意，也符合施工令第七節「不得提前
-推播正式CLEARED」的要求。Windows端自己的CLEARED治理（明確解除文字立即CLEARED；
-否則需連續2輪成功fetch缺席才CONFIRMED_CLEARED，第1輪為MISSING_PENDING_CLEAR）
-本輪完全未修改，Cloudflare端只是誠實地不對它做任何業務處理。
+新增`src/pbs/aiCandidate.js`（純函式、零I/O、零side effect）。`src/pbs/
+debugPush.js`在既有（完全未修改）呼叫`runLineBroadcast()`的**同一個位置**、
+**額外**呼叫`buildAiCandidate()`，兩者互不影響：candidate建構絕不gate、delay
+或改變真實LINE決策；`runLineBroadcast`的呼叫方式、參數、回傳值處理**一行未改**。
 
-### LINE Push Policy：完全未變動
+**只保留兩個gate**（施工令第三節「必須保留」）：
+- Service area：`isWindowsPbsAiCandidateEligible()`直接重用`traffic/
+  serviceArea.js#resolveServiceAreaEligibility`——與`runLineBroadcast`自己用
+  的同一個resolver，未建立第二套service-area邏輯。
+- Idempotency/重複防護：candidate建構呼叫點位於既有V1.9.7持久冪等判斷**之後**
+  （`!duplicate`），duplicate事件從不到達`buildAiCandidate`。
 
-`MAJOR_ACCIDENT_ONLY`（`broadcastPolicy.js`）與每一條既有資格規則對Windows來源
-事件的套用方式與TDX/輪詢-PBS事件完全相同——因為呼叫的是同一個`runLineBroadcast`
-函式。本輪未擴大播報類型（全線封閉、非事故重大事件、動態路肩恆常播報等皆未觸碰，
-明確排除於施工令範圍外）。
+**刻意不套用**在candidate建構上：`MAJOR_ACCIDENT_ONLY`政策、V1.5 type/keyword
+whitelist、location quality hard-reject——這三個函式本身**完全未修改**，對
+真實LINE決策（`runLineBroadcast`呼叫）仍是完整生效的legacy policy，直到Phase 3
+AI真正接手才會被取代。
 
-### 退休 Cloudflare PBS 30 分鐘輪詢：最小改動，完整保留
+### Location Quality：從gate改為metadata（施工令第四節）
 
-`src/pbs/pbsConfig.js`新增`PBS_30_MIN_POLLING_ENABLED = false`（可由
-`env.PBS_30_MIN_POLLING_ENABLED`覆寫，`resolvePbsPollingEnabled(env)`——與既有
-`TRAFFIC_SOURCE_MODE`/`LINE_PUSH_POLICY`同一慣例，**Production不設此env var**，
-僅供本repo既有PBS/CCTV測試套件沿用輪詢入口注入fixture）。`traffic/scheduled.js`
-的`pbsFetchPerformed`因此恆為false，不論`pbsSchedule.js#getPbsScheduleState()`
-回報什麼（該函式本身完全未修改，仍正確計算排程狀態，只是不再被實際採用）。
-`pbsSchedule.js`/`pbs/pipeline.js`/`pbs/lifecycle.js`程式碼**一行未刪**——rollback
-只需把旗標翻回true並重新部署。同一個Cron tick的TDX/health snapshot/Shared Feed/
-Pipeline Trace完全不受影響（未整支砍掉Cron，只停PBS輪詢這一分支）。
+`resolveLocationQuality()`在`buildAiCandidate()`內唯讀重用，結果只作為candidate
+的`locationQuality`附加欄位，從未用來決定是否建立candidate。僅scoped在
+aiCandidate.js這個新模組內——`runLineBroadcast`自己對其他來源（TDX）與真實LINE
+決策的使用方式完全未變動，未影響其他路徑。
 
-**已知可接受的副作用（誠實記錄，非bug）**：`pbs:lifecycle-state`（輪詢路徑專用
-KV key）不再被寫入——Windows已獨立在本機追蹤PBS生命週期，此KV key僅是輪詢路徑
-自己的內部bookkeeping，無其他讀者依賴它。`GET /health`的`pbs`區塊凍結在退休前
-最後一次真實數值（`healthSnapshot.js`既有的carry-forward邏輯完全未修改，只是
-現在永遠carry-forward，因為fetch永遠不再發生）——未來若需要監控Windows Ingress
-本身的健康狀態，需要一個新的health區塊，本輪明確排除（避免無關架構重構）。
+### AI Candidate Schema（施工令第七節）
 
-### KV 成本剖面：誠實修正
+`buildAiCandidate(normalizedEvent, {lifecycle, generatedAt})`回傳：source/
+eventId/lifecycle/road/direction/areaNm/comment/longitude/latitude/
+generatedAt，附加displayKM/eventType/sourceDetail/locationQuality。刻意不含
+`notify`/`impact`欄位——那是Phase 3 AI的工作，不得在此提前產生。
 
-V1.9.7的「debug-only endpoint，1 accepted event=至多1次寫入」在本輪起不再成立——
-一個真正被接受的事件現在會真的呼叫Business Pipeline。實測（0-broadcast-relevant
-fixture，即事件本身不符合播報資格）：N筆事件 → `gets=5N`（idempotency 1次 +
-Business Pipeline讀取4次：subscriptions/notified-state/incident-suppression-
-state/shared-feed）、`puts=N+2`（idempotency N次 + incident-suppression-state
-與shared-feed各恰好1次，皆WRITE_ON_CHANGE，只在整輪第一筆事件時真正寫入，
-之後內容穩定在「空」而跳過）。一個真正符合播報資格的事件另外會寫入
-`line:notified-state`與`debug:broadcast-provenance:v1:*`（與輪詢路徑完全相同的
-寫入模式，非本輪新增的寫入類別）。
+### 安全過渡狀態（施工令第六節）
+
+`PBS_AI_DECISION_MODE = 'PREPARED_NOT_ACTIVE'`（exported const）：candidate
+真的被建構並log（`[pbs-debug-push][ai-candidate]`），但從未被使用於任何決策、
+從未觸及LINE/CCTV/Shared Feed、從未呼叫任何AI模型。`AI_INTEGRATION=
+'NOT_STARTED'`、`AI_MODEL='NOT_SELECTED_IN_RUNTIME'`、`LINE_AI_DECISION=
+'NOT_ACTIVE'`皆為aiCandidate.js自我描述的exported常數。
+
+### AI Decision Cache 設計預留（施工令第八/九節，僅schema/helper）
+
+`computeAiDecisionCacheKeyHash({eventId, fingerprint})` = SHA-256(`
+${eventId}:${fingerprint}`)——重用Windows既有穩定fingerprint（V1.9.5起已存在
+的欄位），刻意不加複雜NLP/semantic fingerprint。`AI_DECISION_CACHE_KV_PREFIX
+= 'debug:pbs-ai-decision-cache:v1'`為獨立debug-only前綴，預留給Phase 3
+採用——**本輪完全沒有任何KV讀寫使用這個key**，純schema/helper，未真的呼叫AI、
+未增加任何LINE消耗。持續重大事件提醒（每小時reuse cached AI decision的設計）
+本輪只在Engineering Memory記錄方向，未實作、未啟用。
 
 ### 測試（施工令第十節，十五項最低清單）
 
-`test/pbsDebugPush.test.js`新增V1.9.8區塊：(1)(2) NEW/UPDATED進Business
-Pipeline；(3) CLEARED不進broadcast；(4) duplicate不重複進Business Pipeline；
-(5)(6) 無效auth/payload零Business Pipeline呼叫（既有測試已涵蓋）；(7) 服務區外
-0 LINE；(8) 符合V1.5白名單但不符合MAJOR_ACCIDENT_ONLY政策（type=control）0
-LINE；(9) 符合政策恰好1次LINE推播；(10) duplicate 0額外LINE推播；(11) canonical
-notified-state key scheme（`pbs:<rawId>`）重用證明；(12) Shared Feed正常寫入
-真實product；(13) CCTV canonical fail-safe邏輯（無metadata cache仍text-only
-成功，非unsupported-road）。另建`test/pbsPollingRetirementV198.test.js`
-（(14)(15)）：旗標關閉、`getPbsScheduleState()`本身不變（rollback就緒證明）、
-would-be-scheduled tick確認PBS fetch從未被呼叫、其餘Cron工作(health/LINE/
-Shared Feed/Pipeline Trace)不受影響。
+`test/pbsAiCandidate.test.js`（13項純函式單元測試：狀態常數、cache key雜湊
+決定性/差異性、KV前綴隔離、service area gate正確性、type不作為gate、candidate
+schema正確、displayKM有無、locationQuality metadata附加）。`test/
+pbsDebugPush.test.js`新增V1.9.9 Phase 2區塊15項：(1)非事故類型事件仍成為
+candidate；(2)交通管制事件成為candidate；(3)施工事件成為candidate；(4)事故
+事件成為candidate；(5)封閉類（PBS無獨立closure type，歸類control）與壅塞事件
+成為candidate；(6)位置品質不佳但服務區內事件不hard-reject；(7)服務區外事件
+仍不進candidate；(8)(9)無效auth/payload零candidate；(10)duplicate零額外
+candidate；(11)candidate schema觀測正確；(12)AI inactive狀態下0額外LINE推播；
+(13)既有LINE安全/去重機制不受影響（真實符合資格事故仍恰好1次推播）；
+(14)lifecycle(UPDATED)行為不變；(15)CLEARED不進AI candidate路徑。
 
-**全量迴歸**：1424項／1391 pass／33 fail，與變更前基線（1404/1371/33）逐項比對
-完全相同的33項失敗清單，NEW FAILURES=0（以`git stash`基線diff嚴格驗證，非
-文字比對）。9個既有測試檔（broadcastEligibility/congestionValidationIntegration/
-pbsLineBroadcast/pbsOnlyCrossSourceDedup/pipelineTraceIntegration/
-pipelineTraceNoRelevantChange/tdxQuotaPbsOnlyMode/tdxUsageReduction/
-v572TdxGatedFreewayBroadcast）因直接透過`runScheduledTdxSync`行使PBS輪詢入口
-注入fixture，加上`env.PBS_30_MIN_POLLING_ENABLED=true`覆寫才能繼續驗證其被測
-邏輯（CCTV/dedup/cross-source等，皆與PBS輪詢排程本身無關，本輪完全未修改）。
+**全量迴歸**：1452項／1419 pass／33 fail，與變更前基線（1424/1391/33，V1.9.9
+Phase 1後量測）逐項比對完全相同的33項失敗清單，NEW FAILURES=0（以`git stash`
+基線diff嚴格驗證）。
 
-### Production 驗收（施工令第十一節）
+### Production 驗收
 
-Sandbox網路egress政策封鎖`traffic-reporter.mr-happytan.workers.dev`與Cloudflare
-Dashboard（curl 403 CONNECT tunnel failed；WebFetch EGRESS_BLOCKED），本輪
-APP_VERSION/Production主動部署/Windows monitor/Ingress/Idempotency/Business
-Pipeline/LINE整合/PBS輪詢退休是否確實生效等項目皆**NOT_OBSERVED**，以確定性
-測試+部署狀態（commit/src/version.js）作為本輪封版依據——符合施工令自身第十一節
-「不得為了封版硬造大量測試事件、不得卡在等真實事故發生」的明確指示。
+施工令本身指示Browser/Cloudflare Dashboard驗證由GPT Work接手，Claude不需要
+耗額度進Dashboard。本Cloud Session未嘗試連線驗證；sandbox網路egress政策仍
+封鎖Production網域與Cloudflare Dashboard（與V1.9.8輪相同的既有限制）。
 
 ### 不要誤讀
 
-- **不要以為Windows現在能決定LINE播報**——最終判斷仍100%在Cloudflare的
-  `runLineBroadcast`，Windows只是多了一條事件來源，從未取得決定權。
-- **不要以為CCTV/Shared Feed/incident suppression是本輪新寫的邏輯**——全部透過
-  重用既有`runLineBroadcast`/`runSharedFeedPersist`自動套用，debugPush.js內0份
-  獨立實作。
-- **不要以為`pbs:lifecycle-state`停止更新是bug**——Windows已獨立追蹤PBS生命
-  週期，此KV key是輪詢路徑自己的內部狀態，無其他讀者依賴。
-- **不要以為PBS輪詢退休是不可逆的**——`pbsSchedule.js`/`pbs/pipeline.js`/
-  `pbs/lifecycle.js`程式碼完整保留，翻回`PBS_30_MIN_POLLING_ENABLED=true`即可
-  rollback，未刪除任何程式碼。
-- **不要在下一輪自行擴大LINE policy或處理台61/台15全線封閉**——施工令明確排除，
-  這些是獨立的產品決策，需要新的正式施工令。
+- **不要以為舊的內容硬規則被刪除或停用**——`broadcastPolicy.js`/
+  `broadcastRules.js`/`locationQuality.js`三個檔案本輪**一行未改**，對真實
+  LINE決策仍完整生效，只是對新的candidate-building路徑不適用。
+- **不要以為AI candidate會影響任何LINE推播**——candidate建構是完全獨立、純
+  log觀察的並行路徑，`runLineBroadcast`的呼叫與行為在本輪前後逐位元組相同。
+- **不要以為AI decision cache已經在用**——`AI_DECISION_CACHE_KV_PREFIX`與
+  `computeAiDecisionCacheKeyHash`本輪從未被任何實際KV read/write呼叫，純
+  schema預留給Phase 3。
+- **不要在下一輪自行開始Phase 3、接Workers AI、或修改Workers AI Dashboard**——
+  施工令明確排除，需要新的正式施工令。
+
+## 修正紀錄｜Windows PBS Push → Production Business Pipeline ＋ PBS 輪詢退休（V1.9.8）（2026-08-28，壓縮摘要）
+
+V1.9.7關閉了持久冪等風險後，本輪把六階段路線圖Phase 3-6合併完成：`src/pbs/
+debugPush.js`就地升級為正式Production Ingress（Option A，非另建endpoint）。
+新函式`buildRawPbsRecordFromPush()`把Windows payload組成raw-PBS-shaped record
+（`happendate`/`happentime`/`modDttm`由`generatedAt`精確反推Asia/Taipei本地
+時間字串，UTC+8固定無DST，非近似值；`roadtype`留空，因Windows本機過濾器已保證
+comment含事故關鍵字），交給既有未修改的`normalizePbsEvent()`→`runLineBroadcast()`
+（與Cron輪詢路徑同一函式，同一套service area/policy/location quality/dedupe/
+CCTV/notified-state判斷）→`runSharedFeedPersist()`。CLEARED只ACK/log，刻意不進
+`runLineBroadcast`（比照`pbs/pipeline.js`既有clearedEvents行為）。LINE Push
+Policy（`MAJOR_ACCIDENT_ONLY`）完全未變動。同時Cloudflare自身PBS 30分鐘輪詢
+正式退休：`pbsConfig.js`新增`PBS_30_MIN_POLLING_ENABLED=false`（env可覆寫，
+Production不設此var，僅供既有PBS/CCTV測試套件沿用），`pbsSchedule.js`/
+`pbs/pipeline.js`/`pbs/lifecycle.js`程式碼一行未刪，翻回旗標即可rollback。
+已知可接受副作用：`pbs:lifecycle-state`不再寫入、`/health`的pbs區塊凍結在
+退休前最後數值。KV成本剖面誠實修正：N筆事件→`gets=5N`/`puts=N+2`。新增
+`test/pbsDebugPush.test.js`施工令十五項最低清單 + `test/pbsPollingRetirementV198.
+test.js`（4項），1424/1391/33基線，NEW FAILURES=0。
 
 ## 修正紀錄｜Persistent PBS Debug Push Idempotency（V1.9.7）（2026-08-28，壓縮摘要）
 
@@ -1062,7 +1064,3 @@ Secret或Task Scheduler。
 
 - `git branch -r --no-merged main` 對以 cherry-pick 方式收編的分支會誤判為未合併（比對 commit SHA 祖先關係，不比對內容）——V1.8.7.3 分支即為實例。
 - `ENGINEERING_STATUS.md` 的「main HEAD」欄位歷史上曾經長時間未同步更新（曾停留在 V1.8.6.8 時代的 SHA，直到 V1.8.7.7 封版時才發現並更正）——此欄位理想上應由 script 自動產生，而不是每輪手動記，這正是本 export 系統 `SYSTEM_STATE.json` 存在的原因之一。
-
-## 修正紀錄｜V1.9.9 Phase 1 — Windows Service Area Hsinchu Only（2026-08-28）
-
-`V1.9.9_PHASE_1 = WINDOWS_SERVICE_AREA_HSINCHU_ONLY`。Windows PBS Local Edge Filter 原先以竹南／頭份文字直接納入，且國1／國3公里上限與座標 bounding box 過寬，可能把苗栗事件送入正式 Business Pipeline。本輪只修改已定位的 `pbs-relay/src/localPrototype.js`，重用既有 `src/pbs/hsinchuFilter.js` 與 `src/pbs/roadName.js`：新竹市、新竹縣、竹北、湖口、新豐、關西納入；竹南、頭份、苗栗市與其他苗栗縣區域排除；同一道路只納入新竹段；座標不得再單獨授予服務區資格。`NEW`／`UPDATED`／`MISSING_PENDING_CLEAR`／`CLEARED` lifecycle 完全未改。`AI_INTEGRATION = NOT_STARTED`；`LINE_POLICY = UNCHANGED`。Targeted tests 12/12、root invariants 73/73、Windows PBS full suite 121/121 PASS，NEW FAILURES=0。Fix commit `7acb82a`；Cloudflare Worker Version ID `defc1da4-6328-47ce-82c6-81082519bc2`，Windows `TrafficReporter-PBS-LocalMonitor` 已重啟為 Running。Phase 1 SEALED；不得自行開始 Phase 2。

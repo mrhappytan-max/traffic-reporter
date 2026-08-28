@@ -115,22 +115,56 @@ Windows 從未被賦予這個決定權。已知可接受的副作用：`pbs:life
 路徑專用 KV key）不再被寫入；`GET /health` 的 `pbs` 區塊凍結在退休前最後一次真實
 數值（Windows 已獨立追蹤 PBS 生命週期，不依賴這個 KV key）。
 
+## V1.9.9 Phase 1（Windows 服務區收斂）＋ Phase 2（AI-ready 準備，2026-08-28）
+
+**Phase 1**（fix commit `7acb82a`，完成於另一個 session，本 Cloud Session 未
+參與）：`pbs-relay/src/localPrototype.js` 的服務區篩選收斂為僅新竹市／新竹縣
+（竹南／頭份／苗栗市及其他苗栗縣區域排除），純 Windows 端變更，`src/` 下
+Cloudflare runtime 一行未動。**這一輪同時把 `pbs-relay/` 整包直接 commit 進
+main**——見下方模組清單／段落更新：`pbs-relay/` 不再是未合併的 feature branch。
+
+**Phase 2**（本輪）：新模組 `src/pbs/aiCandidate.js`，與上方 V1.9.8 的
+`runLineBroadcast()` 呼叫**並行、完全獨立**——為 Phase 3 Workers AI 全量判讀
+做準備，本階段不接 AI、不改變任何真實 LINE 決策：
+
+```
+（上方 V1.9.8 流程圖的 normalizedEvent 之後，額外並行一條路徑）
+normalizedEvent
+    ↓
+isWindowsPbsAiCandidateEligible()（重用 traffic/serviceArea.js，與
+    runLineBroadcast 自己用的同一個 resolver——唯一的 gate）
+    ↓ (true)
+buildAiCandidate()（純函式：source/eventId/lifecycle/road/direction/areaNm/
+    comment/longitude/latitude/generatedAt + displayKM/eventType/sourceDetail/
+    locationQuality（resolveLocationQuality() 唯讀重用，只當 metadata，
+    從未作為 gate）——刻意不含 notify/impact，那是 Phase 3 的工作）
+    ↓
+console.log('[pbs-debug-push][ai-candidate] ...')（唯一輸出：觀察用）
+    ↓
+（到此為止——candidate 從未觸及 LINE／CCTV／Shared Feed／任何 AI 模型）
+```
+
+`PBS_AI_DECISION_MODE = 'PREPARED_NOT_ACTIVE'`：candidate 真的被建構並 log，
+但從未被使用於任何決策。`MAJOR_ACCIDENT_ONLY`／V1.5 whitelist／location
+quality hard-reject 這三個既有函式**完全未修改**，對真實 LINE 決策仍是完整
+生效的 legacy policy，直到 Phase 3 才會被取代。另預留（僅 schema/helper，
+本輪無任何 KV 讀寫）AI decision cache key 設計：`computeAiDecisionCacheKeyHash
+({eventId, fingerprint})`，重用 Windows 既有穩定 fingerprint。詳見
+`07_KNOWN_ISSUES.md` 的完整記錄。
+
 ## PBS Windows Local Edge Debug Push Integration（V1.9.6/V1.9.7 建立的基礎，Windows 端不變）
 
 以下段落描述 Windows 本機那一半（服務區篩選／CLEARED 治理／持久冪等），**V1.9.8
 完全未修改這部分**，只是把 Cloudflare 端接收後「只 ACK/log」的行為升級為上方的
-正式 Business Pipeline。Windows 端程式碼在 `pbs-relay/`（`src/` 掃描結果——下方模組清單——不會出現它），已
-push 進 GitHub 的 `feature/pbs-local-edge-filter-prototype` 分支（最新 commit
-`95ecdc4718f836ff36c974e829b549f262e6b936`，**尚未 merge 進 main**）；Cloudflare 端
-接收端在 `src/pbs/debugPush.js`／`src/pbs/debugPushAuth.js`（V1.9.5，已在 `src/`
-下，會出現在下方模組清單）。**本 Cloud Session 對 Windows 端 commit 做過的唯一
-獨立驗證**：`git fetch`＋`git rev-parse` 確認 SHA、`git merge-base --is-ancestor`
-確認未合併、`git worktree` 乾淨簽出跑 `node --test tests/*.test.js` —— **118 項
-測試、118 pass、0 fail**（與真人回報數字一致；前一輪回報的 `pbsHandler.test.js`／
-`server.test.js` 因缺 `cache.js` 整檔失敗的問題，這個 commit 已補上該檔並修正）。
-Windows 端的**執行期狀態**（Task Scheduler 是否真的常駐、真實 PBS Push 觀察紀錄、
-Cloudflare Secret 是否確實生效等）無法從這個 sandbox 獨立驗證，以下按真人回報記錄，
-不冒充為本 Session 自行證實：
+正式 Business Pipeline。Windows 端程式碼在 `pbs-relay/`（`src/` 掃描結果——下方
+模組清單——不會出現它）**自 V1.9.9 Phase 1 起已直接 commit 進 main**（見上方，
+不再是未合併的 feature branch）；Cloudflare 端接收端在 `src/pbs/debugPush.js`／
+`src/pbs/debugPushAuth.js`（V1.9.5，已在 `src/` 下，會出現在下方模組清單）。
+以下段落記錄的「`feature/pbs-local-edge-filter-prototype` 分支、118/118 測試」
+是 V1.9.6 當時的歷史事實（該分支後續已併入 main，見上方 Phase 1）；Windows 端的
+**執行期狀態**（Task Scheduler 是否真的常駐、真實 PBS Push 觀察紀錄、Cloudflare
+Secret 是否確實生效等）無法從這個 sandbox 獨立驗證，以下按真人回報記錄，不冒充
+為本 Session 自行證實：
 
 ```
 PBS 警廣官方來源
