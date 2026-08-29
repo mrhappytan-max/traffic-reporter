@@ -4,7 +4,89 @@
 
 本檔案以 `src/` 實際模組結構整理，非憑記憶重寫。模組清單於 export 產生時由腳本重新掃描 `src/` 目錄核對（見本檔末尾「模組清單（自動掃描）」），若與下方敘述不符，以自動掃描結果與程式碼本身為準,並視為文件 Drift。
 
-## V2.1.0 — 四層架構角色邊界 ＋ Transport Ack Decoupled From Business Processing（本輪，2026-08-29）
+## V2.2.0 — AI Decision Observatory 四層事件生命週期查修頁（本輪，2026-08-29）
+
+把 `/admin/pbs-ai-observatory-view` 從單一 AI-outcome 列表升級為
+**四層事件生命週期檢視**，直接對應 V2.1.0 剛正式命名的四層架構角色：
+
+```
+① PBS/Windows → ② Cloudflare → ③ AI → ④ LINE
+```
+
+每層在事件卡展開後獨立顯示成功／未執行／失敗／未知四種狀態，頂部另有一條
+流程狀態條（flow strip）讓人一眼看出「卡在哪一層」，不需先讀完整段 log。
+
+**① PBS/Windows** — `EVENT_ID`／`lifecycle`／解析後的 road/direction/
+areaNm/displayKM/eventType（清楚標示「解析結果」）／longitude/latitude／
+Windows 送件時間，以及**獨立呈現、完整未截斷**的 PBS 原始通報全文
+（`rawComment`／`rawSourceDetail`——見下方「原始文字完整性」）。
+
+**② Cloudflare** — 收件狀態的人類可讀文案（✅已收件已交由背景流程處理完成／
+⏳已收件已交由背景流程處理尚未完成／⚠️收件後處理未完成），加上
+transport idempotency status（`PROCESSING`／`COMPLETED`）、attemptCount、
+以及（若有）AI 完成時間——這些都是**即時讀取**既有 V2.1.0 transport
+idempotency KV 記錄取得，Observatory index 本身從未複製這份狀態。
+
+**③ AI** — AI candidate created／AI call started（由既有 outcome 詞彙
+derive，非新存布林值）、Model、Cache HIT/MISS、notify/impact/confidence/
+reason（仍即時讀取既有 `aiDecisionCache`，從未複製或重新生成）。
+
+**④ LINE** — LINE attempted／LINE sent，未執行時附上明確原因文字（例如
+「AI notify=false」「服務區域外，未進入 AI 判讀」），不再只是一個布林值。
+
+### 原始文字完整性（RAW_PBS_TEXT_VISIBLE = YES）
+
+`src/pbs/aiObservatoryIndex.js` 的 `commentSummary`（原本截斷至 120 字）
+正式退休，改為 `rawComment`／`rawSourceDetail`——PBS 原始自由文字欄位，
+**完整未截斷儲存**，與 road/direction/areaNm/displayKM 等既有解析欄位
+**獨立標示、絕不合併覆蓋**。查修頁「原始通報」區塊與「解析結果」欄位分開
+呈現，符合本專案的 `RAW_PBS_TEXT_POLICY = IMMUTABLE_END_TO_END_UNTIL_AI`
+原則（V2.1.0 正式命名）。
+
+### 失敗事件可見性（FAILURE_EVENT_VISIBILITY，本輪真正補上的缺口）
+
+V2.1.0 的 `ctx.waitUntil` 背景處理若中途 crash 或從未跑完，原本
+Observatory index **完全不會留下任何紀錄**（原本只在處理「最尾端」寫入
+一次）。本輪 `src/pbs/debugPush.js` 的 `processAcceptedEvent` 現在在
+business processing「一開始」就先寫入一筆 `AI_OUTCOME.PROCESSING_
+STARTED` 紀錄（直接取自 Windows 原始 payload 欄位，寫在任何可能 throw
+的程式碼之前），既有的「最終」寫入之後**原地覆寫同一把 KV key**
+（`idempotencyKeyHash` + `taipeiDate` + 接受當下的 `now` 三者相同，見
+`aiObservatoryIndex.js` 自身的 header comment）。停滯／crash 的事件
+因此仍有一張卡可查（凍結在 `PROCESSING_STARTED`），不再完全消失。
+
+### KV 成本（實測，非估算）
+
+```
+KV_BASELINE_FORMULA（V2.1.0，含 Observatory 但無本輪早期寫入）＝ puts = 3N + 2
+KV_NEW_FORMULA（本輪）                                        ＝ puts = 4N + 2
+EXTRA_KV_WRITES_PER_ACCEPTED_EVENT = 1（Observatory 早期寫入）
+```
+
+50/100/200 accepted events/day 分別為 202/402/802 puts/day，遠低於
+Cloudflare Workers KV Free Plan 每日 1,000 次寫入額度。見
+`test/pbsAiObservatoryFourLayer.test.js` 的 KV cost formula 測試（實際
+程式路徑重新量化，非估感覺）。
+
+### 零副作用（不變）
+
+開啟／重新整理／搜尋／篩選本頁仍是 **0 次 Workers AI 呼叫、0 次 KV
+寫入**——本輪只新增「每列一次 transport-idempotency-status 讀取」，讀取
+本身從未受此限制，只有寫入才要求為 0。
+
+### 本輪未觸碰
+
+Windows PBS filter／relay transport、V2.1.0 的 `ctx.waitUntil` 架構、
+AI Prompt／model／semantic policy、service area、LINE policy／
+formatter、Shared Feed、CCTV、TDX、driverSummary、hourly reminder，
+以及「同一事故一小時內」AI 語意上下文功能（**刻意未實作**——若既有架構
+尚未真正做到，本輪不得偷偷加入）。
+
+詳見 `src/pbs/aiObservatoryIndex.js`／`aiObservatoryView.js`／
+`debugPush.js` 的完整 module comment、`07_KNOWN_ISSUES.md`／
+`PRODUCT_DECISIONS.md` 的完整記錄。
+
+## V2.1.0 — 四層架構角色邊界 ＋ Transport Ack Decoupled From Business Processing（2026-08-29）
 
 **正式四層架構角色邊界**（本輪寫入，往後每一輪的職責歸屬皆以此為準）：
 

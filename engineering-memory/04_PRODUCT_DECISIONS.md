@@ -423,3 +423,23 @@ Deleting the record on completion (letting a future request re-create it) was co
 ### Re-confirmed, not re-decided: raw PBS text stays immutable until the AI sees it
 
 This round's own order restated, as a formal architecture principle, something this project's code already did: `comment`/`sourceDetail` pass through `buildRawPbsRecordFromPush` → `normalizePbsEvent` → `buildAiCandidate` → `buildAiUserPrompt` completely untouched — no truncation, no summarization, no rewriting. An earlier read-only investigation this session already proved this by executing the real functions end-to-end against a real event's raw comment text; this round changed none of those four functions, so that proof still holds. The only NEW decision this round makes on this topic is naming it formally (`RAW_PBS_TEXT_POLICY = IMMUTABLE_END_TO_END_UNTIL_AI`) so a future round has an explicit rule to check against, not just an implicit property nobody wrote down.
+
+---
+
+## V2.2.0 — AI Decision Observatory: Four-Layer Event Lifecycle
+
+### Why the early Observatory write reuses `buildAiObservatoryRecord` with a pseudo-candidate, instead of a new record shape
+
+The order's own `REUSE_EXISTING_DATA_FIRST` principle argued against inventing a second, PROCESSING-specific record shape just for the early write. Building the pseudo-candidate directly from the raw Windows `event` payload (never from `normalizedEvent`/`candidate`, which don't exist yet at that point) lets the exact same `buildAiObservatoryRecord`/`recordAiObservatoryEntry` pair serve both writes — the early one and the final one — with the same field semantics, the same KV prefix, and the same TTL. The alternative (a dedicated "pending" table, or a different shape for the early write) would have doubled the surface area this module needs to keep consistent for one write that exists purely to not lose visibility during a crash window.
+
+### Why the same KV key is reused (overwrite), not two separate index entries
+
+An earlier design considered writing PROCESSING_STARTED and the final outcome as two distinct keys, then having the view layer merge/dedupe them at read time. This was rejected: it pushes complexity into every reader (list, filter, search all need "if two records share an idempotencyKeyHash prefix, keep only the newest") for a problem the writer can solve once, deterministically. Because both writes pass the identical `(now, taipeiDate, idempotencyKeyHash)` triple, the key is byte-identical between the two `recordAiObservatoryEntry` calls — the second `kv.put` is a genuine overwrite, not a coincidence of matching inputs. This keeps `listAiObservatoryEntries` exactly as simple as it was before this round: one key, one record, newest-first by construction.
+
+### Why raw text truncation was removed entirely rather than raised to a larger limit
+
+A larger character cap (say, 500 or 1000) was considered as a middle ground between the old 120-char summary and full text. It was rejected because any fixed cap is still a product decision that a real PBS comment could exceed — and the order's own rule is unconditional ("原始文字都不得被改寫、摘要、截斷或刪減"), not "truncate less aggressively." The only structural ceiling on comment/sourceDetail length is the endpoint's own existing 16 KiB request body cap (`MAX_BODY_BYTES` in `debugPush.js`, unchanged) — a transport safety limit, not a display policy — which was already sufficient without adding a second, redundant one in the Observatory layer.
+
+### Why the Cloudflare-layer status is read live from the transport idempotency record instead of being duplicated into the Observatory index
+
+The Observatory index already has a real, working precedent for this exact pattern: the AI layer's notify/impact/reason/confidence has been read live from `aiDecisionCache` since V2.0.1, specifically so a shown value can never drift from the value the system actually decided. Reading the transport idempotency record's `status`/`attemptCount`/`completedAt` live for the Cloudflare layer follows the identical reasoning — that record is the ONLY place those facts are computed and updated (by `debugPush.js`'s own accept/complete logic), so copying them into the Observatory index at write time would create a second copy that could silently go stale relative to the real state (e.g., if a stale-recovery re-attempt changes `attemptCount` after the Observatory's own final write already happened). A live read costs nothing in writes and can never disagree with the system it's describing.

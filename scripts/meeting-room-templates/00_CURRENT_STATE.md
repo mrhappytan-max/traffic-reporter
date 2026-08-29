@@ -218,6 +218,35 @@ duplicate 擋下。
 - 詳見 `03_ARCHITECTURE.md`／`PRODUCT_DECISIONS.md`／`07_KNOWN_ISSUES.md`。
   **下一個 Agent：不得直接開始查修頁改版（第二階段）。**
 
+## V2.2.0 封版（2026-08-29）— AI Decision Observatory 四層事件生命週期
+
+MINOR，backward-compatible observability/UI 擴充，不改 AI semantic
+authority、Windows PBS filter、LINE policy、V2.1.0 的 ctx.waitUntil 架構。
+
+- `/admin/pbs-ai-observatory-view` 升級為明確四層檢視：①PBS/Windows
+  ②Cloudflare ③AI ④LINE，各層獨立顯示成功／未執行／失敗／未知
+- `RAW_PBS_TEXT_VISIBLE = YES`：`commentSummary`（原截斷 120 字）退休為
+  `rawComment`／`rawSourceDetail`，完整未截斷，與解析欄位獨立標示
+- `FAILURE_EVENT_VISIBILITY`：`processAcceptedEvent` 現在於處理一開始
+  即寫入 `PROCESSING_STARTED` 記錄（取自 Windows 原始 payload，寫在任何
+  可能 throw 之前），最終寫入之後原地覆寫同一把 KV key——停滯/crash 事件
+  不再完全消失
+- `EXTRA_KV_WRITES_PER_ACCEPTED_EVENT = 1`（實測）：`puts = 4N + 2`，
+  50/100/200 events/day 分別 202/402/802 puts/day，遠低於 Free Plan
+  1,000/day 額度
+- Cloudflare 層狀態即時讀取既有 V2.1.0 transport idempotency 記錄
+  （零新增 KV prefix，非重複儲存）
+- 開啟／重新整理／搜尋／篩選本頁仍 0 次 Workers AI 呼叫、0 次 KV 寫入
+- `APP_VERSION` 從 `V2.1.0` 升為 `V2.2.0`
+- 新增 16 項測試，全量迴歸 1697/1663/34，NEW FAILURES=0（僅跑一次）
+- 本輪**未觸碰**：Windows PBS filter/relay transport、V2.1.0
+  ctx.waitUntil 架構、AI Prompt/model/semantic policy、service area、
+  LINE policy/formatter、Shared Feed、CCTV、TDX、driverSummary、hourly
+  reminder、「同一事故一小時內」AI 語意上下文（刻意未實作）
+- 詳見 `03_ARCHITECTURE.md`／`PRODUCT_DECISIONS.md`／`07_KNOWN_ISSUES.md`。
+  **下一個 Agent：不得接著開始「AI 一小時歷史上下文」、driverSummary、
+  formatter 修正或其他功能。**
+
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
 
 **開工前先寫下 `CURRENT_VERSION` 與 `TARGET_VERSION`**，並確認 TARGET 是 CURRENT 的合法下一版。

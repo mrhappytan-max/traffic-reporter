@@ -67,27 +67,9 @@
 - **已知限制**：`/debug/tdx`、`/admin/cctv-*` 這些**人工** admin 端點仍然存在。它們現在會因為拿不到 token 而失敗（不會燒額度），但這是副作用而非設計目標；本輪只保證「Cron／scheduled pipeline 的 TDX 呼叫為 0」。
 - **還原條件與方式**：見下方「TDX 還原程序」。
 
-## 封版紀錄｜TDX_QUOTA_PROTECTION_PBS_ONLY = SEALED（2026-08-23）
+## 封版紀錄｜TDX_QUOTA_PROTECTION_PBS_ONLY = SEALED（2026-08-23，壓縮摘要）
 
-本任務已由真人正式封版。**下一個 Agent 不需要接手、不需要補做、不需要重新部署。**
-
-**已完成**
-
-- 工程修改完成：`TRAFFIC_SOURCE_MODE=PBS_ONLY` 閘門，10 項專用回歸測試全數通過。
-- 已 push `main` 並觸發 Cloudflare Workers Builds 正式部署。
-- 全套測試 1060 項 / 17 項已知失敗，與乾淨 checkout 相同，非回歸。
-- Google Drive 工程記憶已完成 Delta Sync（canonical 10/10，missing 0，duplicate 0）。
-
-**驗證邊界（重要，不要誤讀成待辦）**
-
-- 執行本輪的沙盒 session 對 Production 網域的 outbound HTTPS 被環境 egress proxy 回 403，因此 `npm run verify:production` 結果為 `PASS_NETWORK_VERIFICATION_BLOCKED`。
-- **未執行**真人 `/health` 實機確認（亦即「線上 `trafficSourceMode` 確實為 `PBS_ONLY`」這件事，在本 repo 內沒有一手證據）。
-- 真人已明確裁示：**此項不構成 blocker，也不影響封版**。
-- 未來若有需要，可另行查證（開 `/health` 看 `sourceMode` 區塊即可），但那是選擇性的補充證據，不是未完成的工作。
-
-**這一段之所以寫得這麼細**：是為了讓未來的 Agent 能分辨「沒有證據」與「有反面證據」。目前狀態是前者。若日後真的取得反面證據（`/health` 顯示 `trafficSourceMode` 不是 `PBS_ONLY`），那是**新事故**，要重新走 root cause 流程，不要當成本輪沒做完。
-
-**額度恢復時**：不需要新版本、不需要重新設計，直接套用下方既有的 RESTORE TDX 程序。
+已由真人正式封版，下一個 Agent 不需接手。`TRAFFIC_SOURCE_MODE=PBS_ONLY` 閘門已 push main 並部署，10 項專用測試全數通過。真人 `/health` 實機確認為選擇性補充證據（沙盒無 Production 網路存取，`verify:production=PASS_NETWORK_VERIFICATION_BLOCKED`），不構成 blocker——若日後取得反面證據視為新事故，非本輪未完成。額度恢復時直接套用下方 RESTORE TDX 程序，不需新版本。
 
 ## KI｜LINE Push 額度保護 — 重大事故限定主動播報（2026-08-23，**生效中**）
 
@@ -151,68 +133,9 @@ MONTHLY_LINE_LIMIT   = 200
   - 接近或超過 200 → 由**真人**另開新任務，研究更嚴格的 `ROAD_IMPACT_ACCIDENT`／車道受阻・封閉限定策略。
 - **未來要收緊時的依據**：`broadcastPolicy.js` 已經在記錄每一則播出的事故究竟有沒有寫明通行受阻（`policy-major-accident-blocked-lanes` / `policy-major-accident-impact-keyword` / `policy-accident-no-stated-impact`），可從 `ineligibleByReason` 與 Pipeline Trace 讀出。**收緊要用這些真實比例去論證，不是再猜一次。**
 
-## 修正紀錄｜PBS_ONLY 下不得要求 TDX 對應（2026-08-24）
+## 修正紀錄｜PBS_ONLY 下不得要求 TDX 對應（2026-08-24，壓縮摘要）
 
-**一句話**：TDX 是**停用**的資料來源，不能反過來拿「沒有 TDX 對應」去擋 PBS。
-
-### 現象（真實 Production 案例，非假設）
-
-Pipeline Trace 出現：來源 PBS、國道一號南向、分類事故
-（`normalizedType=accident`、`pbsCategory=accident`），
-卻被判為不符播報資格，`gatingResult = 'gated-freeway-no-tdx-match'`，
-UI 顯示「國道閘門（無 TDX 對應）」。
-
-### Root cause
-
-`src/pbs/crossSourceDedup.js` 的 **V57.2「TDX 唯一播報閘門」**。
-原始設計：PBS 國道事件若當輪沒有 TDX 對應，就不當作獨立播報候選，
-**等更權威的 TDX 報告來決定**。這個理由**只有在 TDX 有在跑時才成立**。
-
-`TRAFFIC_SOURCE_MODE=PBS_ONLY` 下 TDX 已關閉，**永遠不會有 TDX 事件出現**，
-於是「等 TDX」實質變成「永遠不播」——一個**已停用的資料來源否決了唯一還在運作的來源**。
-閘門問錯了問題：它問「有沒有發生對應」，該問的是「對應**有沒有可能**發生」。
-
-### 修正方式（bypass，不是刪除）
-
-```
-crossSourceDedup(pbsEvents, tdxEvents, { requireTdxCorrelationForFreeway })
-
-requireTdxCorrelationForFreeway = true   （ALL mode）      → V57.2 原封不動
-requireTdxCorrelationForFreeway = false  （PBS_ONLY mode） → 略過閘門
-```
-
-- 旗標由 `src/pbs/pipeline.js` 以 `isTdxRuntimeEnabled(env)` 導出——
-  **與關閉 TDX 的是同一個開關**，兩者不可能各說各話。
-- `crossSourceDedup` 維持純函式（只讀旗標，不讀 env），可獨立單元測試。
-- **預設值為 `true`**：未來若有呼叫端忘記傳，會退回較保守的既有行為，
-  絕不會靜默放寬播報範圍。
-- `TRAFFIC_SOURCE_MODE` 改回 `ALL`，V57.2 立即完整恢復，不需要再改任何一行。
-
-### 沒有放寬播報政策
-
-略過閘門**只是讓 國道 PBS 事件能進入候選清單**。
-之後的 eligibility、事故限定 push policy、時效視窗、去重、抑制**全部照舊生效**。
-因此機動路肩與所有非 accident 類型**仍然不播**（已由測試釘住）。
-
-### CCTV 的地位（再次確認）
-
-CCTV 是**附加資訊，不是播報資格**。
-符合資格的 PBS 事故：有圖 → 文字＋圖片；無圖／metadata 不足／影格失敗 → **TEXT-ONLY 照常播報**。
-**禁止**因為沒有 CCTV 而拒絕事故播報。CCTV 仍為 0 次 TDX 呼叫。
-
-### 可觀測性
-
-- PBS summary 新增 `tdxCorrelationRequired`、`eligibilitySource`（`PBS` / `PBS+TDX`）。
-- Cron log 的 source-mode 行新增 `tdxCorrelationRequired=`。
-- 這樣 `freewayGatedCount = 0` 讀起來是「**依設計略過**」，而不是「剛好沒有東西被擋」。
-- PBS_ONLY 下不會再產生 `gated-freeway-no-tdx-match` 的 trace 項目，
-  「國道閘門（無 TDX 對應）」自然不再出現（該 UI label 本身未刪除，ALL mode 仍會用到）。
-
-### 給未來 Agent 的通則
-
-**任何「等待另一個來源佐證」的閘門，都必須先問那個來源是否還活著。**
-否則資料來源一旦停用，這類閘門就會從「延後」變成「永久否決」，而且**不會報錯**——
-它會安靜地讓事件消失。本專案已知只有 V57.2 這一處，修正時一併搜尋過。
+**一句話**：TDX 是**停用**的資料來源，不能反過來拿「沒有 TDX 對應」去擋 PBS。真實案例：PBS 國道一號南向事故被判 `gated-freeway-no-tdx-match`。根因：`src/pbs/crossSourceDedup.js` 的 V57.2「TDX 唯一播報閘門」原設計「PBS 國道事件等 TDX 對應」，但這理由只在 TDX 有在跑時成立——`PBS_ONLY` 下 TDX 永遠不會出現，「等 TDX」變成「永久否決」。修正：新增 `requireTdxCorrelationForFreeway` 旗標（由 `isTdxRuntimeEnabled(env)` 導出，與關閉 TDX 同一開關），`PBS_ONLY` 下略過閘門，`ALL` 模式下 V57.2 原封不動；預設值 `true`（未來呼叫端忘記傳會退回保守既有行為）。**未放寬播報政策**——略過閘門只是讓國道 PBS 事件進候選清單，事故限定 push policy／時效視窗／去重／抑制全部照舊，機動路肩仍不播。CCTV 維持「附加資訊，非播報資格」，無圖仍 TEXT-ONLY 播報。給未來 Agent 的通則：任何「等待另一個來源佐證」的閘門，都必須先問那個來源是否還活著，否則來源一旦停用，閘門會從「延後」靜默變成「永久否決」——本專案已知只有此一處。
 
 ## 修正紀錄｜服務區域閘門（八堵事件）（2026-08-24，壓縮摘要）
 
@@ -673,6 +596,64 @@ CASE A-I 決定性 fixture）。NEW FAILURES=0（1352 項／1319 pass／33 fail�
 Windows Prototype、LINE、CCTV、TDX、Cron 頻率。Production 驗證：見
 `SYSTEM_STATE.json.taskSealHistory` 的 V1.9.4 紀錄（sandbox 無法連 Production，誠實標記
 `NOT_OBSERVED`）。
+
+## 修正紀錄｜V2.2.0 — AI Decision Observatory 四層事件生命週期（2026-08-29）
+
+**產品目標**：把既有 AI Decision Observatory（`/admin/pbs-ai-observatory-view`）
+升級成「單一事件四層生命週期查修頁」——① PBS/Windows ② Cloudflare ③ AI
+④ LINE，每層各自顯示成功／未執行／失敗／未知四種狀態，一眼看出事件卡在
+哪一層，不需翻 Cloudflare log。純 backward-compatible 觀測/UI 擴充，
+**未改** AI semantic authority、Windows PBS filter、LINE policy、
+V2.1.0 的 ctx.waitUntil 架構。
+
+**RAW_PBS_TEXT_VISIBLE**：`src/pbs/aiObservatoryIndex.js` 的
+`commentSummary`（原截斷至 120 字）退休，改為 `rawComment`／
+`rawSourceDetail`——PBS 原始自由文字欄位，完整未截斷儲存，與既有解析欄位
+（road/direction/areaNm/displayKM）獨立標示，絕不合併覆蓋。
+
+**FAILURE_EVENT_VISIBILITY**（本輪真正要補的缺口）：一筆事件的
+`ctx.waitUntil`（V2.1.0）背景處理若中途 crash 或從未跑完，原本 Observatory
+index 完全不會留下任何紀錄（原本只在處理「最尾端」寫入一次）。本輪
+`src/pbs/debugPush.js` 的 `processAcceptedEvent` 在 business processing
+「一開始」就先寫入一筆 `AI_OUTCOME.PROCESSING_STARTED` 紀錄（直接取自
+Windows 原始 payload 欄位，寫在任何可能 throw 的程式碼之前），既有的
+「最終」寫入之後原地覆寫同一把 KV key（`idempotencyKeyHash` +
+`taipeiDate` + 接受當下的 `now` 三者相同）。停滯／crash 的事件因此仍有
+一張卡可查（凍結在 `PROCESSING_STARTED`），不再完全消失。
+
+**KV 成本**（實測，非估算，見
+`test/pbsAiObservatoryFourLayer.test.js` 的 KV cost formula 測試）：
+`EXTRA_KV_WRITES_PER_ACCEPTED_EVENT = 1`。
+`KV_NEW_FORMULA：puts = 4N + 2`（idempotency PROCESSING+COMPLETED、
+observatory PROCESSING_STARTED+最終、+1 incident-suppression-state、
++1 shared-feed／整輪一次）——50/100/200 accepted events/day 分別為
+202/402/802 puts/day，遠低於 Cloudflare Workers KV Free Plan 每日
+1,000 次寫入額度。REUSE_EXISTING_DATA_FIRST 全程遵守：Cloudflare 層
+PROCESSING/COMPLETED 狀態改為**即時讀取**既有 V2.1.0 transport
+idempotency 記錄（`computeIdempotencyKeyHash`／`buildIdempotencyKvKey`
+自 `debugPush.js` 匯出重用，非第二套 hash 實作）；AI 層 notify/impact/
+reason/confidence 仍即時讀取既有 `aiDecisionCache` 記錄，未重複儲存。
+**零新增 KV prefix**。
+
+**零副作用不變**：開啟／重新整理／搜尋／篩選本頁仍是 0 次 Workers AI
+呼叫、0 次 KV 寫入（僅讀取：既有的每列 aiDecisionCache 查詢 ＋新增的
+每列 transport-idempotency-status 查詢——讀取本身不受本輪規則限制，
+只有寫入才要求 0）。
+
+`APP_VERSION` 從 `V2.1.0` 升為 `V2.2.0`（MINOR，backward-compatible
+observability 擴充）。新增 16 項測試
+（`test/pbsAiObservatoryFourLayer.test.js`，涵蓋 order 十二的全部
+20 項最低要求），既有 `aiObservatoryIndex.test.js`／
+`aiObservatoryView.test.js`／`pbsDebugPush.test.js` 的相關斷言同步更新
+（截斷測試 → 完整性測試；KV 成本公式 3N+2 → 4N+2）。全部首次執行即
+PASS；全量迴歸 1697/1663/34，與 V2.1.0 基準以 failure 名稱集合對照確認
+NEW FAILURES=0，僅跑一次。
+
+本輪**未觸碰**：Windows PBS filter／relay transport、V2.1.0 的
+ctx.waitUntil 架構、AI Prompt／model／semantic policy、service area、
+LINE policy／formatter、Shared Feed、CCTV、TDX、driverSummary、hourly
+reminder，以及「同一事故一小時內」AI 語意上下文功能（本輪刻意未實作）。
+詳見 `03_ARCHITECTURE.md`／`PRODUCT_DECISIONS.md` 的完整記錄。
 
 ## 修正紀錄｜V1.9.9 Phase 1 — Windows Service Area Hsinchu Only（2026-08-28，完成於另一個 session，本 Cloud Session 未參與，port 進本模板僅為維持一致）
 

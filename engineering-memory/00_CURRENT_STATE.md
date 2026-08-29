@@ -9,20 +9,20 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V2.1.0（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | e6a1e2c39250df533fe0f4715bf8aa5f9fd366c9 |
+| Current Version | V2.2.0（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | 0fb1946d2da141cb20e86b97463919368268ca38 |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty (12 changed source file(s)) |
+| Source working tree | dirty (6 changed source file(s)) |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
 | Current Phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
 | Current Task | none（無進行中工作）。Latest completed task = DRIVE_SYNC_GOVERNANCE_V2，status = SEALED（前序 PBS_ACCIDENT_CCTV_ENRICHMENT_FIX、PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX、PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。雲端治理：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源，封版時只寫 GitHub、不要自己搬檔案到 Drive；GitHub → Drive 自動同步已由真人建置並實測通過（GitHub Actions，engineering-memory/ 為 canonical mirror source），GITHUB_TO_DRIVE_SYNC = PASS；不得人工補上傳，也不要重建那套自動同步。詳見 SYSTEM_STATE.json 的 cloudSyncGovernance。觀察中（非工作項，不是待辦）：一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數 |
-| Latest Completed Version | V2.1.0 |
+| Latest Completed Version | V2.2.0 |
 | Known Blocker | 無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md |
 | Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
 | Next Action | 無待辦。TDX 額度恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計） |
-| Export Generated At | 2026-08-29T02:58:53.054Z |
+| Export Generated At | 2026-08-29T03:39:54.097Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## V1.9.9 Phase 1 封版（2026-08-28，另一個 session 完成，本 Cloud Session 未參與，port 進本模板僅為維持 template↔engineering-memory 一致）
@@ -217,6 +217,35 @@ duplicate 擋下。
   刻意不做）
 - 詳見 `03_ARCHITECTURE.md`／`PRODUCT_DECISIONS.md`／`07_KNOWN_ISSUES.md`。
   **下一個 Agent：不得直接開始查修頁改版（第二階段）。**
+
+## V2.2.0 封版（2026-08-29）— AI Decision Observatory 四層事件生命週期
+
+MINOR，backward-compatible observability/UI 擴充，不改 AI semantic
+authority、Windows PBS filter、LINE policy、V2.1.0 的 ctx.waitUntil 架構。
+
+- `/admin/pbs-ai-observatory-view` 升級為明確四層檢視：①PBS/Windows
+  ②Cloudflare ③AI ④LINE，各層獨立顯示成功／未執行／失敗／未知
+- `RAW_PBS_TEXT_VISIBLE = YES`：`commentSummary`（原截斷 120 字）退休為
+  `rawComment`／`rawSourceDetail`，完整未截斷，與解析欄位獨立標示
+- `FAILURE_EVENT_VISIBILITY`：`processAcceptedEvent` 現在於處理一開始
+  即寫入 `PROCESSING_STARTED` 記錄（取自 Windows 原始 payload，寫在任何
+  可能 throw 之前），最終寫入之後原地覆寫同一把 KV key——停滯/crash 事件
+  不再完全消失
+- `EXTRA_KV_WRITES_PER_ACCEPTED_EVENT = 1`（實測）：`puts = 4N + 2`，
+  50/100/200 events/day 分別 202/402/802 puts/day，遠低於 Free Plan
+  1,000/day 額度
+- Cloudflare 層狀態即時讀取既有 V2.1.0 transport idempotency 記錄
+  （零新增 KV prefix，非重複儲存）
+- 開啟／重新整理／搜尋／篩選本頁仍 0 次 Workers AI 呼叫、0 次 KV 寫入
+- `APP_VERSION` 從 `V2.1.0` 升為 `V2.2.0`
+- 新增 16 項測試，全量迴歸 1697/1663/34，NEW FAILURES=0（僅跑一次）
+- 本輪**未觸碰**：Windows PBS filter/relay transport、V2.1.0
+  ctx.waitUntil 架構、AI Prompt/model/semantic policy、service area、
+  LINE policy/formatter、Shared Feed、CCTV、TDX、driverSummary、hourly
+  reminder、「同一事故一小時內」AI 語意上下文（刻意未實作）
+- 詳見 `03_ARCHITECTURE.md`／`PRODUCT_DECISIONS.md`／`07_KNOWN_ISSUES.md`。
+  **下一個 Agent：不得接著開始「AI 一小時歷史上下文」、driverSummary、
+  formatter 修正或其他功能。**
 
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
 
