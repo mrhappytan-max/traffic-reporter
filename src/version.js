@@ -765,8 +765,67 @@
 // regression suite (fast ACK, fresh-vs-stale PROCESSING dedupe/recovery,
 // CLEARED immediate completion, no-ctx byte-identical fallback, Observatory
 // outcome survives background execution).
+//
+// V2.2.0 (2026-08-29) — AI Decision Observatory: Four-Layer Event
+// Lifecycle. MINOR — a backward-compatible observability/UI expansion of
+// the existing V2.0.1 Observatory page, not a change to AI semantic
+// authority, the Windows PBS filter, LINE policy, or the V2.1.0 transport-
+// ack/background-execution architecture. Upgrades GET /admin/pbs-ai-
+// observatory-view from a single AI-outcome list into an explicit
+// per-event four-layer view (① PBS/Windows ② Cloudflare ③ AI ④ LINE), each
+// with its own visible status (成功/未執行/失敗/未知) and detail section.
+//
+// RAW PBS TEXT (order section 一/七) — src/pbs/aiObservatoryIndex.js's
+// `commentSummary` (previously truncated to 120 chars) is retired,
+// replaced by `rawComment`/`rawSourceDetail` — the PBS original free-text
+// fields, stored COMPLETE and UNTRUNCATED, independently labeled from the
+// separate, pre-existing parsed/formatted fields (road/direction/areaNm/
+// displayKM) — never merged. Only ever read live from the Observatory
+// index record itself; no new upstream data path was touched.
+//
+// FAILURE VISIBILITY (order section 一/九) — the real gap this round
+// closes: an event whose background processing (ctx.waitUntil, V2.1.0)
+// crashed or never completed previously left ZERO trace on the
+// Observatory page (the index record was only ever written once, at the
+// very end). src/pbs/debugPush.js's processAcceptedEvent now writes an
+// EARLY record (AI_OUTCOME.PROCESSING_STARTED) the instant business
+// processing begins — built from the raw Windows payload fields, before
+// anything that could throw — which the pre-existing FINAL write later
+// overwrites in place (identical KV key both times: same idempotencyKeyHash
+// + taipeiDate + accept-time `now`). A stalled/crashed event is therefore
+// still visible, frozen at PROCESSING_STARTED, instead of invisible.
+// EXTRA_KV_WRITES_PER_ACCEPTED_EVENT = 1 (measured, not estimated — see
+// test/pbsAiObservatoryFourLayer.test.js's own KV cost formula test):
+// puts = 4N + 2 (idempotency PROCESSING+COMPLETED, observatory
+// PROCESSING_STARTED+final, +1 incident-suppression-state +1 shared-feed
+// per run) — 202/402/802 puts/day at 50/100/200 accepted events/day,
+// comfortably under the Workers KV Free Plan's 1,000 writes/day budget.
+// REUSE_EXISTING_DATA_FIRST held throughout: the Cloudflare layer's
+// PROCESSING/COMPLETED status is read LIVE from the existing V2.1.0
+// transport idempotency record (computeIdempotencyKeyHash/
+// buildIdempotencyKvKey exported from debugPush.js, reused — never a
+// second hash implementation); the AI layer's notify/impact/reason/
+// confidence is still read live from the existing V2.0.1 aiDecisionCache
+// record, never duplicated. Zero new KV prefixes were created.
+//
+// ZERO SIDE EFFECTS UNCHANGED (order section 五) — opening/refreshing/
+// searching/filtering the Observatory page still makes 0 Workers AI calls
+// and 0 KV writes (only reads: the existing per-row aiDecisionCache
+// lookup, plus a new per-row transport-idempotency-status lookup — reads
+// were never restricted by this round's own rule, only writes).
+//
+// EXPLICITLY UNCHANGED THIS ROUND: Windows PBS filter/relay transport,
+// the V2.1.0 ctx.waitUntil architecture, AI prompt/model/semantic policy,
+// service area, LINE policy/formatter, Shared Feed, CCTV, TDX,
+// driverSummary, hourly reminder, and any "same-event-within-an-hour" AI
+// context feature (not implemented — deliberately not started this round).
+//
+// See src/pbs/aiObservatoryIndex.js/aiObservatoryView.js/debugPush.js's
+// own header comments for the full design and
+// test/pbsAiObservatoryFourLayer.test.js for the dedicated 16-item
+// regression suite (order section 十二's own minimum list).
 
-export const APP_VERSION = 'V2.1.0';
+export const APP_VERSION = 'V2.2.0';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

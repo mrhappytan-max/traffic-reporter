@@ -10,6 +10,22 @@
 // event's final outcome — and only ever READS on the admin page side
 // (aiObservatoryView.js). Nothing in this file calls env.AI.run().
 //
+// V2.2.0 — Four-Layer Event Lifecycle (order section 一/九). The SAME KV
+// key is now written TWICE, never as two separate records: once at
+// AI_OUTCOME.PROCESSING_STARTED the instant business processing begins
+// (before candidate/AI/legacy work — a raw pseudo-candidate built
+// straight from the Windows push payload, so this write can never be
+// blocked by a normalize/candidate-build exception), and once more with
+// the real final outcome once processing genuinely completes — both
+// calls pass the identical (now, taipeiDate, idempotencyKeyHash) so the
+// second `recordAiObservatoryEntry` call OVERWRITES the first at the
+// same key rather than creating a second entry. This is what makes a
+// crashed/never-completed event still show a card (frozen at
+// PROCESSING_STARTED) instead of vanishing — see debugPush.js's own
+// comment for the exact call sites — while keeping this round's own
+// storage cost to exactly ONE extra KV put per accepted event (not a
+// second index, not a second prefix).
+//
 // WHY A NEW KV PREFIX, NOT ZERO NEW WRITES (order section 三/四 — existing
 // data first, minimal new storage, justify anything short of zero):
 // surveyed before writing a line of this module —
@@ -51,14 +67,22 @@ export const MAX_LIST_LIMIT = 100;
 // never on the hot POST /internal/pbs-debug-push path.
 const MAX_ENTRIES_SCANNED = 300;
 
-const COMMENT_SUMMARY_MAX_CHARS = 120;
-
 // The fixed, closed outcome vocabulary (order section 五's status list,
 // minus the two states — LINE_ATTEMPTED/LINE_SENT — that are their own
 // boolean fields, not outcomes). `cacheStatus` is tracked SEPARATELY
 // (order section 七-D wants Cache: HIT/MISS shown distinct from
 // notify:true/false) — never folded into this enum.
+//
+// V2.2.0 — PROCESSING_STARTED (order section 九). Written as soon as
+// business processing genuinely begins (before any candidate/AI/legacy
+// work — see debugPush.js's own early write), then OVERWRITTEN in place
+// by whichever final outcome below actually happens. An event whose
+// background processing crashes or never completes (the exact failure
+// mode this order's own section 九 asks the Observatory to stop hiding)
+// is therefore still visible as a card — its outcome simply never moves
+// past PROCESSING_STARTED, rather than never having a card at all.
 export const AI_OUTCOME = {
+  PROCESSING_STARTED: 'PROCESSING_STARTED',
   SERVICE_AREA_EXCLUDED: 'SERVICE_AREA_EXCLUDED',
   AI_NOT_INVOKED_LEGACY_PATH: 'AI_NOT_INVOKED_LEGACY_PATH',
   AI_CALL_FAILED: 'AI_CALL_FAILED',
@@ -72,11 +96,6 @@ function safeErrorMessage(err) {
   return 'Unknown KV error';
 }
 
-function truncate(text, maxChars) {
-  if (typeof text !== 'string' || !text) return '';
-  return text.length > maxChars ? `${text.slice(0, maxChars)}…` : text;
-}
-
 /**
  * Pure — no I/O, directly unit-testable. Every field here is either a
  * scalar the caller (debugPush.js) already has in memory by the time an
@@ -85,11 +104,23 @@ function truncate(text, maxChars) {
  * raw PBS payload, or a copy of the AI decision's notify/impact/reason/
  * confidence (see this module's own header comment for why).
  *
+ * V2.2.0 (order section 一/二/七) — `rawComment`/`rawSourceDetail` are the
+ * PBS original free-text fields, stored COMPLETE and UNTRUNCATED — the
+ * order's own highest-priority rule ("原始文字都不得被改寫、摘要、截斷或
+ * 刪減"). Previously this field (`commentSummary`) was truncated to 120
+ * chars for a compact list preview; that preview never actually needed
+ * the raw text (the list row shows road/direction/eventType instead — see
+ * aiObservatoryView.js's renderRow), so truncation was serving no real UI
+ * need and only violated the raw-text-immutability principle. `road`/
+ * `direction`/`areaNm`/`displayKM` remain the SEPARATE, already-existing
+ * parsed/formatted fields — never overwritten by or merged with the raw
+ * text (order section 七: "原始欄位與解析欄位分離").
+ *
  * @param {object} params
- * @param {object} params.candidate - pbs/aiCandidate.js#buildAiCandidate() output, or null (SERVICE_AREA_EXCLUDED / legacy path with no candidate)
+ * @param {object} params.candidate - pbs/aiCandidate.js#buildAiCandidate() output, or null (SERVICE_AREA_EXCLUDED / legacy path with no candidate, or the earliest PROCESSING_STARTED write's own minimal pseudo-candidate — see debugPush.js)
  * @param {string} params.eventId
  * @param {string} params.lifecycle
- * @param {string} params.fingerprint - needed to re-derive the AI decision cache key at READ time; never used to re-run anything here
+ * @param {string} params.fingerprint - needed to re-derive the AI decision cache key AND the transport idempotency key at READ time; never used to re-run anything here
  * @param {string} params.outcome - one of AI_OUTCOME's values
  * @param {'HIT'|'MISS'|null} [params.cacheStatus]
  * @param {boolean} [params.lineAttempted]
@@ -122,7 +153,10 @@ export function buildAiObservatoryRecord({
     areaNm: (candidate && candidate.areaNm) || null,
     displayKM: candidate && typeof candidate.displayKM === 'number' ? candidate.displayKM : null,
     eventType: (candidate && candidate.eventType) || null,
-    commentSummary: truncate((candidate && (candidate.comment || candidate.sourceDetail)) || '', COMMENT_SUMMARY_MAX_CHARS),
+    rawComment: (candidate && candidate.comment) || '',
+    rawSourceDetail: (candidate && candidate.sourceDetail) || '',
+    longitude: candidate && typeof candidate.longitude === 'number' ? candidate.longitude : null,
+    latitude: candidate && typeof candidate.latitude === 'number' ? candidate.latitude : null,
     generatedAt: (candidate && candidate.generatedAt) || null,
     outcome,
     cacheStatus,
@@ -201,7 +235,7 @@ export async function listAiObservatoryEntries(kv, { limit = DEFAULT_LIST_LIMIT,
       if (road && record.road !== road) continue;
       if (eventId && record.eventId !== eventId) continue;
       if (q) {
-        const haystack = `${record.road || ''} ${record.areaNm || ''} ${record.commentSummary || ''} ${record.eventId || ''}`.toLowerCase();
+        const haystack = `${record.road || ''} ${record.areaNm || ''} ${record.rawComment || ''} ${record.rawSourceDetail || ''} ${record.eventId || ''}`.toLowerCase();
         if (!haystack.includes(String(q).toLowerCase())) continue;
       }
       records.push(record);

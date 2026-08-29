@@ -652,12 +652,21 @@ test('routing: a similar-but-different path still 404s (no accidental prefix mat
 // so a genuinely lost/crashed background attempt can be told apart from
 // one that finished. Still ZERO additional GETs (both idempotency writes
 // are straight puts on an already-known key, never a read-modify-write).
-// Measured exactly via this same mock, not guessed:
-//   N accepted events -> gets = 5*N (unchanged), puts = 3*N + 2
-//   (idempotency-PROCESSING=N + idempotency-COMPLETED=N + observatory=N,
-//   plus ONE incident-suppression-state write and ONE shared-feed write
-//   for the whole run). A run with real, broadcast-ELIGIBLE events (not
-//   this fixture) would additionally write line:notified-state and
+//
+// V2.2.0 (Four-Layer Event Lifecycle Observatory, order section 一/九)
+// adds exactly ONE further PUT per accepted event: the Observatory index
+// record is now ALSO written early (status=PROCESSING_STARTED, before any
+// candidate/AI/legacy work), then overwritten in place by the existing
+// final write — same single KV key both times (see aiObservatoryIndex.js
+// and debugPush.js's own comments for why the key stays identical), so
+// this is ONE extra write, never two separate index entries. Still ZERO
+// additional GETs. Measured exactly via this same mock, not guessed:
+//   N accepted events -> gets = 5*N (unchanged), puts = 4*N + 2
+//   (idempotency-PROCESSING=N + idempotency-COMPLETED=N +
+//   observatory-PROCESSING_STARTED=N + observatory-final=N, plus ONE
+//   incident-suppression-state write and ONE shared-feed write for the
+//   whole run). A run with real, broadcast-ELIGIBLE events (not this
+//   fixture) would additionally write line:notified-state and
 //   debug:broadcast-provenance:v1:* per successful push — see the
 //   dedicated V1.9.8 (9)/(12) tests below for that shape.
 
@@ -673,9 +682,9 @@ for (const eventsPerDay of [10, 30, 100]) {
       const res = await handlePbsDebugPush(pushRequest({ body: distinctPayloadForIndex(i) }), env, NOW);
       assert.equal((await res.json()).accepted, true);
     }
-    REAL_CONSOLE_LOG(`[V2.1.0 KV cost] eventsPerDay=${eventsPerDay} kvGetCalls=${kv.getCalls} kvPutCalls=${kv.putCalls}`);
-    // V2.1.0 measured shape (0-broadcast-relevant fixture, see comment above):
-    assert.equal(kv.putCalls, eventsPerDay * 3 + 2, 'N idempotency-PROCESSING writes + N idempotency-COMPLETED writes + N AI-observatory-index writes + 1 incident-suppression-state + 1 shared-feed (both WRITE_ON_CHANGE, once per run)');
+    REAL_CONSOLE_LOG(`[V2.2.0 KV cost] eventsPerDay=${eventsPerDay} kvGetCalls=${kv.getCalls} kvPutCalls=${kv.putCalls}`);
+    // V2.2.0 measured shape (0-broadcast-relevant fixture, see comment above):
+    assert.equal(kv.putCalls, eventsPerDay * 4 + 2, 'N idempotency-PROCESSING + N idempotency-COMPLETED + N observatory-PROCESSING_STARTED + N observatory-final + 1 incident-suppression-state + 1 shared-feed (both WRITE_ON_CHANGE, once per run)');
     assert.equal(kv.getCalls, eventsPerDay * 5, 'N idempotency reads + 4*N Business Pipeline reads (subscriptions/notified-state/incident-suppression/shared-feed) — observatory write adds 0 reads');
   });
 }

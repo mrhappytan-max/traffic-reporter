@@ -68,10 +68,27 @@ test('buildAiObservatoryRecord: candidate=null (SERVICE_AREA_EXCLUDED / legacy p
   assert.equal(record.outcome, AI_OUTCOME.SERVICE_AREA_EXCLUDED);
 });
 
-test('buildAiObservatoryRecord: comment truncated, never full raw payload', () => {
+// V2.2.0 (order section 一/二/七) — the order's own highest-priority rule
+// flips this test's old expectation: raw PBS text must NEVER be
+// truncated/summarized/rewritten. `rawComment`/`rawSourceDetail` are
+// stored complete; `road`/`direction`/`areaNm`/`displayKM` remain the
+// SEPARATE parsed/formatted fields, never merged with the raw text.
+test('buildAiObservatoryRecord: rawComment/rawSourceDetail are stored COMPLETE, never truncated', () => {
   const longComment = 'x'.repeat(500);
-  const record = buildAiObservatoryRecord({ candidate: { comment: longComment }, eventId: 'E3', lifecycle: 'NEW', fingerprint: 'fp3', outcome: AI_OUTCOME.AI_NOTIFY_FALSE });
-  assert.ok(record.commentSummary.length < 500);
+  const longSourceDetail = 'y'.repeat(500);
+  const record = buildAiObservatoryRecord({
+    candidate: { comment: longComment, sourceDetail: longSourceDetail, road: '台61', direction: '南向' },
+    eventId: 'E3',
+    lifecycle: 'NEW',
+    fingerprint: 'fp3',
+    outcome: AI_OUTCOME.AI_NOTIFY_FALSE,
+  });
+  assert.equal(record.rawComment, longComment);
+  assert.equal(record.rawComment.length, 500);
+  assert.equal(record.rawSourceDetail, longSourceDetail);
+  // parsed/formatted fields stay separate — never merged with raw text
+  assert.equal(record.road, '台61');
+  assert.equal(record.direction, '南向');
 });
 
 test('recordAiObservatoryEntry: writes exactly 1 KV put, key under the dedicated prefix, TTL set', async () => {

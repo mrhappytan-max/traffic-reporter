@@ -24,6 +24,12 @@ import { listAiObservatoryEntries, AI_OUTCOME, DEFAULT_LIST_LIMIT, MAX_LIST_LIMI
 import { computeAiDecisionCacheKeyHash, buildAiDecisionCacheKvKey } from './aiCandidate.js';
 import { readAiDecisionCache } from './aiDecisionCache.js';
 import { PBS_AI_MODEL_ID } from './aiDecisionEngine.js';
+// V2.2.0 (order section 二②) — reused, never re-implemented: the SAME
+// key-derivation debugPush.js's own transport idempotency layer uses, so
+// this page's "Cloudflare 已收件 / PROCESSING / COMPLETED" status is read
+// from the REAL record that layer itself writes, never guessed or
+// re-derived from the Observatory index's own data.
+import { computeIdempotencyKeyHash, buildIdempotencyKvKey, IDEMPOTENCY_STATUS } from './debugPush.js';
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -46,6 +52,11 @@ const OUTCOME_META = {
   [AI_OUTCOME.AI_DECISION_INVALID]: { emoji: '⚠️', label: 'AI：判讀失敗，安全不通報', cls: 'warn' },
   [AI_OUTCOME.SERVICE_AREA_EXCLUDED]: { emoji: '🚫', label: '服務區域外', cls: 'warn' },
   [AI_OUTCOME.AI_NOT_INVOKED_LEGACY_PATH]: { emoji: '⏸️', label: 'AI 未判讀（走既有規則路徑）', cls: 'unknown' },
+  // V2.2.0 (order section 九) — the record is still frozen at this outcome
+  // because the final write never happened (still genuinely in flight, or
+  // the background attempt was lost) — never silently absent from the
+  // page.
+  [AI_OUTCOME.PROCESSING_STARTED]: { emoji: '⚪', label: 'AI：未執行（處理中或未完成）', cls: 'unknown' },
 };
 function outcomeMeta(outcome) {
   return OUTCOME_META[outcome] || { emoji: 'ℹ️', label: outcome || '未知', cls: 'unknown' };
@@ -61,6 +72,7 @@ const STATUS_FILTER_OPTIONS = [
   ['AI_NOTIFY_FALSE', 'AI 不需通報'],
   ['AI_FAILED', 'AI 判讀失敗'],
   ['AI_NOT_INVOKED_LEGACY_PATH', '尚未判讀'],
+  [AI_OUTCOME.PROCESSING_STARTED, '處理中／未完成'],
   ['DUPLICATE', '重複事件'],
 ];
 function matchesStatusFilter(record, statusFilter) {
@@ -126,82 +138,203 @@ async function loadAiDecisionDetail(kv, record) {
   }
 }
 
-function renderComparisonBlock(record, decision) {
-  // order section 八 — the single most important screen: PBS 原文 → AI
-  // 判斷 → AI 理由 → 最終結果, stacked vertically, front and center.
-  const pbsText = [record.road, record.direction, record.areaNm, record.commentSummary].filter(Boolean).join(' ') || '（無可顯示的 PBS 內容）';
-  const aiVerdict = decision ? (decision.notify ? 'AI：建議通報' : 'AI：不需主動通報') : record.outcome === AI_OUTCOME.SERVICE_AREA_EXCLUDED ? '（未進入 AI 判讀：服務區域外）' : record.outcome === AI_OUTCOME.AI_NOT_INVOKED_LEGACY_PATH ? '（未進入 AI 判讀：走既有規則路徑）' : record.outcome === AI_OUTCOME.AI_CALL_FAILED || record.outcome === AI_OUTCOME.AI_DECISION_INVALID ? 'AI：判讀失敗，安全不通報' : 'UNKNOWN';
-  const finalResult = record.lineSent ? 'LINE 已送出' : record.lineAttempted ? 'LINE 已嘗試（未成功）' : 'LINE 未嘗試';
-
-  return `
-<div class="comparison">
-  <div class="comparison-step">
-    <div class="comparison-label">PBS 原文</div>
-    <div class="comparison-value">${escapeHtml(pbsText)}</div>
-  </div>
-  <div class="comparison-arrow">↓</div>
-  <div class="comparison-step">
-    <div class="comparison-label">AI 判斷</div>
-    <div class="comparison-value">${escapeHtml(aiVerdict)}${decision ? ` <span class="dim">（impact ${escapeHtml(decision.impact)}，confidence ${escapeHtml(decision.confidence)}）</span>` : ''}</div>
-  </div>
-  <div class="comparison-arrow">↓</div>
-  <div class="comparison-step">
-    <div class="comparison-label">AI 理由</div>
-    <div class="comparison-value">${decision ? escapeHtml(decision.reason) : '<span class="dim">UNKNOWN / NOT RECORDED</span>'}</div>
-  </div>
-  <div class="comparison-arrow">↓</div>
-  <div class="comparison-step">
-    <div class="comparison-label">最終結果</div>
-    <div class="comparison-value">${escapeHtml(finalResult)}</div>
-  </div>
-</div>`;
+// V2.2.0 (order section 二②) — reads the EXISTING transport idempotency
+// record (src/pbs/debugPush.js's own IDEMPOTENCY_KV_PREFIX) live, at
+// render time — never a second, duplicated copy of PROCESSING/COMPLETED
+// status stored inside the Observatory index itself. A miss (record
+// expired past its own 48h TTL, or genuinely never written) renders as
+// UNKNOWN / NOT RECORDED, never guessed.
+async function loadTransportIdempotencyDetail(kv, record) {
+  if (!record.eventId || !record.lifecycle || !record.fingerprint) return null;
+  try {
+    const keyHash = await computeIdempotencyKeyHash({
+      source: record.source || 'pbs',
+      eventId: record.eventId,
+      lifecycle: record.lifecycle,
+      fingerprint: record.fingerprint,
+    });
+    const kvKey = buildIdempotencyKvKey(keyHash);
+    const raw = await kv.get(kvKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed; // {firstAcceptedAt, requestId, status, attemptCount, completedAt?} — see debugPush.js's serializeIdempotencyRecord
+  } catch {
+    return null; // never let a corrupt/unreadable record break the page
+  }
 }
 
-function renderDetail(record, decision) {
+// V2.2.0 (order section 三) — derives what stage of the AI layer this
+// event reached PURELY from the already-stored, closed outcome
+// vocabulary — never a new stored boolean, per REUSE_EXISTING_DATA_FIRST
+// (order section 四). `candidateCreated`/`aiCallStarted` are tri-state
+// (true/false/null=UNKNOWN) — null only for a record still frozen at
+// PROCESSING_STARTED, where this page genuinely cannot know how far
+// processing got before it stalled.
+function deriveAiStageFlags(outcome) {
+  if (outcome === AI_OUTCOME.PROCESSING_STARTED) return { candidateCreated: null, aiCallStarted: null };
+  if (outcome === AI_OUTCOME.SERVICE_AREA_EXCLUDED) return { candidateCreated: false, aiCallStarted: false };
+  if (outcome === AI_OUTCOME.AI_NOT_INVOKED_LEGACY_PATH) return { candidateCreated: true, aiCallStarted: false };
+  return { candidateCreated: true, aiCallStarted: true }; // AI_CALL_FAILED / AI_DECISION_INVALID / AI_NOTIFY_TRUE / AI_NOTIFY_FALSE
+}
+
+function triStateLabel(value, trueLabel, falseLabel) {
+  if (value === null || value === undefined) return 'UNKNOWN / NOT RECORDED';
+  return value ? trueLabel : falseLabel;
+}
+
+// order section 十四's own required human-readable LINE-layer reason text
+// for every case LINE was never attempted — derived, never guessed beyond
+// what the outcome vocabulary already tells us.
+function lineNotAttemptedReason(record) {
+  switch (record.outcome) {
+    case AI_OUTCOME.PROCESSING_STARTED:
+      return 'AI 尚未完成';
+    case AI_OUTCOME.SERVICE_AREA_EXCLUDED:
+      return '服務區域外，未進入 AI 判讀';
+    case AI_OUTCOME.AI_CALL_FAILED:
+    case AI_OUTCOME.AI_DECISION_INVALID:
+      return 'AI 判讀失敗，安全不通報';
+    case AI_OUTCOME.AI_NOTIFY_FALSE:
+      return 'AI notify=false';
+    case AI_OUTCOME.AI_NOT_INVOKED_LEGACY_PATH:
+      return '既有規則判定不符合播報資格';
+    default:
+      return 'UNKNOWN / NOT RECORDED';
+  }
+}
+
+// V2.2.0 (order section 三) — the four-layer "which layer is this event
+// stuck at" strip: one glance, before any of the detail sections below.
+// Four states only (order's own vocabulary): 成功/未執行/失敗/未知.
+const LAYER_STATUS_ICON = { ok: '✅', none: '⏭️', fail: '❌', unknown: '⚪', pending: '⏳' };
+
+function layerStatusForPbsWindows(record) {
+  return record.eventId ? 'ok' : 'unknown';
+}
+function layerStatusForCloudflare(idem) {
+  if (!idem) return 'unknown';
+  if (idem.status === IDEMPOTENCY_STATUS.COMPLETED) return 'ok';
+  if (idem.status === IDEMPOTENCY_STATUS.PROCESSING) return 'pending';
+  return 'unknown';
+}
+function layerStatusForAi(record) {
+  switch (record.outcome) {
+    case AI_OUTCOME.PROCESSING_STARTED:
+      return 'pending';
+    case AI_OUTCOME.SERVICE_AREA_EXCLUDED:
+    case AI_OUTCOME.AI_NOT_INVOKED_LEGACY_PATH:
+      return 'none';
+    case AI_OUTCOME.AI_CALL_FAILED:
+    case AI_OUTCOME.AI_DECISION_INVALID:
+      return 'fail';
+    case AI_OUTCOME.AI_NOTIFY_TRUE:
+    case AI_OUTCOME.AI_NOTIFY_FALSE:
+      return 'ok';
+    default:
+      return 'unknown';
+  }
+}
+function layerStatusForLine(record) {
+  if (record.lineSent) return 'ok';
+  if (record.lineAttempted) return 'fail';
+  if (record.outcome === AI_OUTCOME.PROCESSING_STARTED) return 'pending';
+  return 'none';
+}
+
+function renderFlowStrip(record, idem) {
+  const layers = [
+    ['① PBS/Windows', layerStatusForPbsWindows(record)],
+    ['② Cloudflare', layerStatusForCloudflare(idem)],
+    ['③ AI', layerStatusForAi(record)],
+    ['④ LINE', layerStatusForLine(record)],
+  ];
+  return `<div class="flow-strip">${layers
+    .map(([label, status]) => `<div class="flow-chip flow-${status}"><span class="flow-icon">${LAYER_STATUS_ICON[status]}</span><span class="flow-label">${escapeHtml(label)}</span></div>`)
+    .join('<span class="flow-sep">→</span>')}</div>`;
+}
+
+function renderRawTextBlock(label, text) {
+  if (!text) return '';
+  return `<div class="raw-text-block"><div class="raw-text-label">${escapeHtml(label)}</div><div class="raw-text-value">${escapeHtml(text)}</div></div>`;
+}
+
+// order section 二④ — the human-readable reason text a NOT-attempted LINE
+// layer must show, per outcome; see lineNotAttemptedReason() above.
+function renderDetail(record, decision, idem) {
   const cacheLabel = record.cacheStatus === 'HIT' ? 'HIT（沿用先前已驗證的判讀，本次 0 次 AI 呼叫）' : record.cacheStatus === 'MISS' ? 'MISS（本次呼叫了 Workers AI）' : null;
+  const stage = deriveAiStageFlags(record.outcome);
+  const cloudflareStatusLabel = !idem
+    ? 'UNKNOWN / NOT RECORDED（冪等記錄已過期或未寫入）'
+    : idem.status === IDEMPOTENCY_STATUS.COMPLETED
+      ? '✅ Cloudflare 已收件，已交由背景流程處理完成'
+      : idem.status === IDEMPOTENCY_STATUS.PROCESSING
+        ? '⏳ Cloudflare 已收件，已交由背景流程處理（尚未完成）'
+        : '⚠️ 收件後處理未完成（狀態未知）';
+
   return `
 <div class="detail">
-  ${renderComparisonBlock(record, decision)}
+  ${renderFlowStrip(record, idem)}
   <div class="detail-section">
-    <h4>A. PBS 原始資料</h4>
-    ${renderField('eventId', record.eventId)}
+    <h4>① PBS / Windows</h4>
+    ${renderField('EVENT_ID', record.eventId)}
     ${renderField('lifecycle', record.lifecycle)}
-    ${renderField('道路', record.road)}
-    ${renderField('方向', record.direction)}
-    ${renderField('areaNm', record.areaNm)}
-    ${renderField('displayKM', record.displayKM)}
-    ${renderField('事件類型', record.eventType)}
-    ${renderField('comment / sourceDetail', record.commentSummary)}
-    ${renderField('事件時間（Windows generatedAt，Asia/Taipei）', formatTaipeiInstant(record.generatedAt))}
+    ${renderField('道路 road（解析結果）', record.road)}
+    ${renderField('方向 direction（解析結果）', record.direction)}
+    ${renderField('areaNm（解析結果）', record.areaNm)}
+    ${renderField('displayKM（解析結果）', record.displayKM)}
+    ${renderField('事件類型（解析結果）', record.eventType)}
+    ${renderField('longitude', record.longitude)}
+    ${renderField('latitude', record.latitude)}
+    ${renderRawTextBlock('【PBS 原始通報 comment（完整原文，未經摘要／截斷／改寫）】', record.rawComment) || renderField('【PBS 原始通報 comment】', null)}
+    ${renderRawTextBlock('【PBS 原始通報 sourceDetail（完整原文）】', record.rawSourceDetail)}
+    ${renderField('Windows 送件時間（generatedAt，Asia/Taipei）', formatTaipeiInstant(record.generatedAt))}
+    ${renderField('PBS 發生時間 / 更新時間', 'NOT RECORDED')}
   </div>
   <div class="detail-section">
-    <h4>B. 服務區域</h4>
-    ${renderField('新竹縣市', record.outcome === AI_OUTCOME.SERVICE_AREA_EXCLUDED ? '不在服務區域內' : 'PASS')}
+    <h4>② Cloudflare</h4>
+    <div class="row"><div class="label">收件狀態</div><div class="value">${cloudflareStatusLabel}</div></div>
+    ${renderField('Cloudflare 收到時間（Asia/Taipei）', formatTaipeiInstant(record.timestamp))}
+    ${renderField('transport idempotency status', idem ? idem.status : null)}
+    ${renderField('attemptCount', idem ? idem.attemptCount : null)}
+    ${renderField('AI 完成時間（idempotency completedAt，Asia/Taipei）', idem && idem.completedAt ? formatTaipeiInstant(idem.completedAt) : null)}
+    ${renderField('是否為 transport duplicate', 'NO（本紀錄本身即代表首次接受；重複到達不會另外建立紀錄，見本頁下方「重複事件」說明）')}
   </div>
   <div class="detail-section">
-    <h4>C. 重複防護</h4>
-    ${renderField('TRANSPORT DUPLICATE', 'PASS（本紀錄只在首次接受、非重複時才建立——見本頁下方「重複事件」說明）')}
-  </div>
-  <div class="detail-section">
-    <h4>D. AI 判讀</h4>
+    <h4>③ AI</h4>
+    ${renderField('AI candidate created', triStateLabel(stage.candidateCreated, 'YES', 'NO'))}
+    ${renderField('AI call started', triStateLabel(stage.aiCallStarted, 'YES', 'NO'))}
     ${renderField('Model', PBS_AI_MODEL_ID)}
     ${renderField('Cache', cacheLabel)}
-    ${renderField('notify', decision ? (decision.notify ? 'TRUE' : 'FALSE') : record.outcome === AI_OUTCOME.AI_CALL_FAILED || record.outcome === AI_OUTCOME.AI_DECISION_INVALID ? 'N/A（判讀失敗）' : 'N/A')}
+    ${renderField('notify', decision ? (decision.notify ? 'TRUE' : 'FALSE') : record.outcome === AI_OUTCOME.AI_CALL_FAILED || record.outcome === AI_OUTCOME.AI_DECISION_INVALID ? 'N/A（判讀失敗）' : 'UNKNOWN / NOT RECORDED')}
     ${renderField('impact', decision ? decision.impact : null)}
     ${renderField('confidence', decision ? decision.confidence : null)}
-    ${renderField('reason', decision ? decision.reason : record.outcome === AI_OUTCOME.AI_CALL_FAILED || record.outcome === AI_OUTCOME.AI_DECISION_INVALID ? 'UNKNOWN / NOT RECORDED（判讀失敗，無有效 decision）' : null)}
+    ${renderField('reason', decision ? decision.reason : record.outcome === AI_OUTCOME.AI_CALL_FAILED || record.outcome === AI_OUTCOME.AI_DECISION_INVALID ? 'UNKNOWN / NOT RECORDED（判讀失敗，無有效 decision）' : 'UNKNOWN / NOT RECORDED')}
   </div>
   <div class="detail-section">
-    <h4>E. 最終執行結果</h4>
+    <h4>④ LINE</h4>
     ${renderField('LINE attempted', record.lineAttempted ? 'YES' : 'NO')}
     ${renderField('LINE sent', record.lineSent ? 'YES' : 'NO')}
+    ${!record.lineAttempted ? renderField('未執行原因', lineNotAttemptedReason(record)) : ''}
+    ${record.lineAttempted && !record.lineSent ? renderField('失敗原因', 'UNKNOWN / NOT RECORDED（僅記錄嘗試/成功與否；詳細錯誤見 Workers Logs）') : ''}
+    ${renderField('LINE 發送時間', 'NOT RECORDED')}
     ${renderField('Shared Feed', record.sharedFeedPersisted === null || record.sharedFeedPersisted === undefined ? 'UNKNOWN / NOT RECORDED' : record.sharedFeedPersisted ? 'YES' : 'NO')}
     ${renderField('CCTV', record.imageUrlPresent === null || record.imageUrlPresent === undefined ? 'UNKNOWN / NOT RECORDED' : record.imageUrlPresent ? 'YES' : 'NO')}
   </div>
 </div>`;
 }
 
-function renderRow(record, decision, now) {
+// order section 十三 — the mobile-first summary card must always show
+// LINE's status in plain language, not only when it succeeded ("LINE：
+// 未發送" is just as important a fact as "LINE：已發送" — a card that
+// stays silent about a non-send looks like an oversight, not a fact).
+function lineSummaryBadge(record) {
+  if (record.lineSent) return '<span class="badge badge-line-ok">✅ LINE 已發送</span>';
+  if (record.lineAttempted) return '<span class="badge badge-line-fail">❌ LINE 發送失敗</span>';
+  return '<span class="badge badge-line-none">⏭️ LINE 未發送</span>';
+}
+
+function renderRow(record, decision, idem, now) {
   const meta = outcomeMeta(record.outcome);
   const timeLabel = formatTaipeiListTime(record.timestamp, now);
   const impactBadge = decision ? `<span class="badge badge-impact">${escapeHtml(decision.impact)}</span>` : '';
@@ -214,9 +347,9 @@ function renderRow(record, decision, now) {
     <span class="col-type">${escapeHtml(record.eventType || '')}</span>
     <span class="pill pill-${meta.cls}">${meta.emoji} ${escapeHtml(meta.label)}</span>
     ${impactBadge}
-    ${record.lineSent ? '<span class="badge badge-line">✅ LINE 已送出</span>' : ''}
+    ${lineSummaryBadge(record)}
   </summary>
-  ${renderDetail(record, decision)}
+  ${renderDetail(record, decision, idem)}
 </details>`;
 }
 
@@ -301,12 +434,20 @@ const PAGE_STYLE = `
   .pill-unknown { background: #262b34; color: #9aa1ac; }
   .badge { font-size: 12px; background: #262b34; color: #c3c9d1; border-radius: 6px; padding: 2px 6px; }
   .badge-impact { background: #2b2111; color: #e3b341; }
-  .badge-line { background: #12261a; color: #3fb950; }
-  .comparison { display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 8px 0 14px; }
-  .comparison-step { background: #12151a; border: 1px solid #262b34; border-radius: 8px; padding: 8px 10px; }
-  .comparison-label { font-size: 12px; color: #9aa1ac; margin-bottom: 2px; }
-  .comparison-value { font-size: 14px; color: #e8e9ec; }
-  .comparison-arrow { text-align: center; color: #6b7280; font-size: 13px; }
+  .badge-line-ok { background: #12261a; color: #3fb950; }
+  .badge-line-fail { background: #2b1414; color: #f85149; }
+  .badge-line-none { background: #262b34; color: #9aa1ac; }
+  .flow-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 8px 0 14px; }
+  .flow-chip { display: flex; align-items: center; gap: 5px; background: #12151a; border: 1px solid #262b34; border-radius: 999px; padding: 4px 10px; font-size: 12px; }
+  .flow-icon { font-size: 13px; }
+  .flow-label { color: #c3c9d1; }
+  .flow-ok .flow-label { color: #3fb950; }
+  .flow-fail .flow-label { color: #f85149; }
+  .flow-pending .flow-label { color: #e3b341; }
+  .flow-sep { color: #4b5563; font-size: 13px; padding: 0 2px; }
+  .raw-text-block { background: #12151a; border: 1px solid #262b34; border-radius: 8px; padding: 8px 10px; margin: 4px 0; }
+  .raw-text-label { font-size: 12px; color: #9aa1ac; margin-bottom: 4px; }
+  .raw-text-value { font-size: 14px; color: #e8e9ec; white-space: pre-wrap; word-break: break-word; }
   .detail { display: flex; flex-direction: column; gap: 10px; padding: 4px 12px 14px; border-top: 1px solid #262b34; }
   .detail-section h4 { font-size: 13px; margin: 8px 0 4px; color: #c3c9d1; }
   .row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; border-bottom: 1px solid #21252c; font-size: 13px; }
@@ -373,7 +514,8 @@ export async function handleAiObservatoryView(env, request, now = new Date()) {
   const rowsHtml = [];
   for (const record of filtered) {
     const decision = await loadAiDecisionDetail(env.TRAFFIC_KV, record);
-    rowsHtml.push(renderRow(record, decision, now));
+    const idem = await loadTransportIdempotencyDetail(env.TRAFFIC_KV, record);
+    rowsHtml.push(renderRow(record, decision, idem, now));
   }
 
   const html = renderPage({ rows: rowsHtml.join('\n'), filters, count: filtered.length, kvAvailable });

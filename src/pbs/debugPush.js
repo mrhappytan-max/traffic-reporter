@@ -202,6 +202,21 @@
 // PROCESSING record allowing exactly one recovery re-attempt, and CLEARED/
 // no-ctx call sites behaving byte-identically to before.
 
+// V2.2.0 — Four-Layer Event Lifecycle Observatory (order section 一/九).
+// This round adds exactly ONE thing to this module's own runtime
+// behavior: processAcceptedEvent (below) now writes an early
+// AI_OUTCOME.PROCESSING_STARTED Observatory record the instant business
+// processing begins, before anything that could throw — so a crashed or
+// never-completed background attempt still leaves a card on the
+// Observatory page instead of vanishing. The FINAL Observatory write
+// (unchanged from V2.0.1/V2.1.0) overwrites that SAME key once the real
+// outcome is known — see aiObservatoryIndex.js's own header comment for
+// exactly how the key stays identical across both writes. Everything else
+// this round changed lives in aiObservatoryIndex.js (rawComment/
+// rawSourceDetail, untruncated) and aiObservatoryView.js (the four-layer
+// page itself) — this file's AI-or-legacy decision logic, idempotency
+// design, and background-execution model (V2.1.0) are UNCHANGED.
+
 import { verifyDebugPushToken } from './debugPushAuth.js';
 import { normalizePbsEvent } from './normalize.js';
 import { runLineBroadcast } from '../traffic/broadcastPipeline.js';
@@ -361,12 +376,18 @@ async function sha256Hex(text) {
  * the IDENTICAL key. Hashed (not stored/logged raw) so the KV key itself
  * never carries the raw fingerprint text, and so the key length is fixed
  * regardless of how long an upstream fingerprint string gets.
+ *
+ * V2.2.0 — exported (was module-private) so aiObservatoryView.js can
+ * recompute the SAME key for a live, read-only "is this event's transport
+ * still PROCESSING or already COMPLETED" lookup at page-render time —
+ * never a second, parallel hash implementation (same reuse discipline as
+ * this file's own AI decision cache key reuse elsewhere in this project).
  */
-async function computeIdempotencyKeyHash({ source, eventId, lifecycle, fingerprint }) {
+export async function computeIdempotencyKeyHash({ source, eventId, lifecycle, fingerprint }) {
   return sha256Hex(`${source}:${eventId}:${lifecycle}:${fingerprint}`);
 }
 
-function buildIdempotencyKvKey(idempotencyKeyHash) {
+export function buildIdempotencyKvKey(idempotencyKeyHash) {
   return `${IDEMPOTENCY_KV_PREFIX}:${idempotencyKeyHash}`;
 }
 
@@ -856,6 +877,47 @@ export async function handlePbsDebugPush(request, env, now = new Date(), ctx) {
   // V2.1.0 — same AI-or-legacy branch, same Observatory write, same
   // failure isolation — only WHEN and HOW it runs changed.
   const processAcceptedEvent = async () => {
+    // V2.2.0 (order section 一/九) — the EARLIEST possible Observatory
+    // write, before anything that could throw (buildRawPbsRecordFromPush/
+    // normalizePbsEvent/candidate build). Built straight from the raw
+    // Windows payload fields (never normalized/parsed) so this write does
+    // not depend on any of the parsing this closure is about to attempt —
+    // an event that crashes moments later, or whose ctx.waitUntil work is
+    // genuinely lost, still leaves ONE card behind (frozen at
+    // PROCESSING_STARTED) instead of being invisible on the Observatory
+    // page, which is exactly the gap this round's order exists to close.
+    // The FINAL write later in this closure reuses the identical (now,
+    // taipeiDate, idempotencyKeyHash) triple, so it overwrites this same
+    // KV key rather than creating a second entry — ONE extra KV put per
+    // accepted event total, not two separate records.
+    try {
+      const pseudoCandidate = {
+        road: (event && event.road) || null,
+        direction: (event && event.direction) || null,
+        areaNm: (event && event.areaNm) || null,
+        comment: (event && event.comment) || '',
+        sourceDetail: (event && event.sourceDetail) || '',
+        longitude: event && typeof event.longitude === 'number' ? event.longitude : null,
+        latitude: event && typeof event.latitude === 'number' ? event.latitude : null,
+        generatedAt,
+      };
+      const startedRecord = buildAiObservatoryRecord({
+        candidate: pseudoCandidate,
+        eventId,
+        lifecycle,
+        fingerprint,
+        now,
+        outcome: AI_OUTCOME.PROCESSING_STARTED,
+      });
+      await recordAiObservatoryEntry(env.TRAFFIC_KV, startedRecord, {
+        taipeiDate: taipeiDateString(now),
+        idempotencyKeyHash,
+        now,
+      });
+    } catch (err) {
+      console.error(`[pbs-debug-push][ai-observatory] eventId=${eventId} lifecycle=${lifecycle} early-write failed: ${err && err.message}`);
+    }
+
     try {
       const rawRecord = buildRawPbsRecordFromPush({ eventId, generatedAt, event });
       const normalizedEvent = normalizePbsEvent(rawRecord);
