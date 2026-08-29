@@ -13,7 +13,6 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { resolvePbsAiDecisionEnabled } from '../src/pbs/aiConfig.js';
 import { PBS_AI_MODEL_ID } from '../src/pbs/aiDecisionEngine.js';
-import { APP_VERSION } from '../src/version.js';
 import { checkDeploymentPolicy } from '../scripts/check-deployment-policy.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -46,8 +45,17 @@ test('5: model is unchanged — PBS_AI_MODEL_ID is still @cf/zai-org/glm-4.7-fla
   assert.equal(PBS_AI_MODEL_ID, '@cf/zai-org/glm-4.7-flash');
 });
 
-test('6: APP_VERSION is V2.0.2', () => {
-  assert.equal(APP_VERSION, 'V2.0.2');
+// V2.1.0 note: this test used to assert the LIVE APP_VERSION export
+// equals 'V2.0.2', which — unlike test/aiObservatoryView.test.js's own
+// deliberately-moving "APP_VERSION reflects the current release" smoke
+// check — was never meant to move with every future bump; it broke the
+// instant V2.1.0 shipped. Fixed to check the frozen historical fact this
+// test actually cares about (the V2.0.2 round's own changelog entry is
+// still present in version.js), which never changes again regardless of
+// how many future versions ship.
+test('6: version.js still records the V2.0.2 Config Drift Hotfix in its permanent changelog history', () => {
+  const versionSource = readFileSync(join(__dirname, '..', 'src', 'version.js'), 'utf8');
+  assert.match(versionSource, /V2\.0\.2 \(2026-08-29\) — Config Drift Hotfix/);
 });
 
 test('7: deployment/config-related checkDeploymentPolicy() PASSes, including the new pbs-ai-decision-enabled-var guard', () => {

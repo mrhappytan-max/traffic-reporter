@@ -227,10 +227,11 @@ test('11: missing/expired AI decision cache data renders UNKNOWN / NOT RECORDED,
 // V2.0.1 order item 12's own literal version checklist assertion. Kept as
 // a live "current version" smoke check rather than a frozen historical
 // literal — updated in the SAME commit as every subsequent APP_VERSION
-// bump (V2.0.2's own Config Drift Hotfix moved it here), same discipline
-// test/versionLineage.test.js's own series-prefix check already follows.
+// bump (V2.1.0's own transport-ack/business-processing round moved it
+// here), same discipline test/versionLineage.test.js's own series-prefix
+// check already follows.
 test('12: APP_VERSION reflects the current release', () => {
-  assert.equal(APP_VERSION, 'V2.0.2');
+  assert.equal(APP_VERSION, 'V2.1.0');
 });
 
 test('SERVICE_AREA_EXCLUDED events show "服務區域外", never routed through AI at all', async () => {

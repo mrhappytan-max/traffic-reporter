@@ -111,6 +111,97 @@
 // See PBS_DEBUG_PUSH_IDEMPOTENCY_MODE / PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY
 // for the exported, honestly-reported status of this design.
 
+// V2.1.0 (order section 二/七/八/九) — TRANSPORT ACK DECOUPLED FROM BUSINESS
+// PROCESSING. Real Production incident: two genuine NEW events reached
+// service-area + AI_CALL_STARTED successfully, but Windows's own 5-second
+// HTTP timeout fired while this handler was still `await`ing
+// resolveAiDecision() (a real Workers AI call). Because this handler never
+// handed that work to `ctx.waitUntil()`, the Workers runtime treated the
+// client's disconnect as licence to cancel the still-running fetch handler
+// — the AI call, the LINE decision, and the Observatory record never
+// completed (AI decision complete = 0). Windows's own client-side retry
+// then found this endpoint's OWN idempotency record already written
+// (see IDEMPOTENCY_KV_PREFIX — written the instant a request was accepted,
+// BEFORE business processing began) and was silently treated as a
+// duplicate forever: nothing ever re-attempted the AI decision.
+//
+// This round makes two changes, together closing the whole failure mode —
+// neither one alone is sufficient:
+//
+// (1) BACKGROUND EXECUTION — a genuinely accepted (non-duplicate) NEW/
+// UPDATED event's business processing (AI candidate -> AI decision ->
+// LINE/Shared Feed -> Observatory record, OR the legacy runLineBroadcast
+// path) is now handed to `ctx.waitUntil()` (see runProcessingInBackground
+// below) instead of being awaited before the response is built. The HTTP
+// response to Windows now reflects ONLY "did Cloudflare durably accept
+// this transition" — never "did the AI finish deciding" — so Windows's
+// own short timeout can no longer race against Workers AI at all. Per
+// Cloudflare's own documented `ctx.waitUntil` contract, work handed to it
+// keeps running even after the response has been sent AND even if the
+// client that made the request disconnects — the exact guarantee this
+// endpoint needs. `ctx` is optional (4th positional parameter, added
+// after the pre-existing `now` parameter so every existing call site/test
+// that passes only `(request, env, now)` is unaffected — see
+// test/pbsDebugPush.test.js's untouched call sites): when absent (every
+// existing unit test), this function falls back to `await`ing the work
+// directly, preserving the exact synchronous-completion behavior those
+// tests already assert. Only Production (src/index.js's fetch handler,
+// which now accepts and forwards `ctx`) actually exercises the background
+// path.
+//
+// (2) TWO-PHASE IDEMPOTENCY MARKER — a genuinely new event's KV
+// idempotency record now carries a `status` field: 'PROCESSING' the
+// instant it's durably accepted (so a truly concurrent duplicate transport
+// retry still can't trigger a second business-processing run), then
+// 'COMPLETED' once that background work actually finishes (success OR an
+// internally-handled failure — see markProcessingComplete below). A
+// request whose idempotency key already has status='PROCESSING' is
+// STILL treated as a transport duplicate (no reprocessing) as long as
+// that record is younger than PROCESSING_STALE_MS — the original
+// background attempt, now genuinely unstoppable via ctx.waitUntil, is
+// trusted to finish on its own. Only once a 'PROCESSING' record is OLDER
+// than PROCESSING_STALE_MS (meaning the original attempt almost certainly
+// never got to run at all — e.g. an isolate evicted before ctx.waitUntil
+// could even schedule it, not a normal client-observed timeout, which
+// this round's fix (1) already prevents from mattering) is a retry
+// treated as NOT a duplicate, and business processing is genuinely
+// re-attempted. This is what closes section 十一 item 5 ("第一次背景處理
+// 失敗時，不得因過早 duplicate marker 永久卡死") — a legacy record with no
+// `status` field at all (written before this round shipped) is treated as
+// COMPLETED for backward compatibility, matching this endpoint's own
+// pre-V2.1.0 behavior (an existing record always meant "already handled").
+//
+// TRANSPORT RECEIVED != BUSINESS PROCESSING COMPLETED (order section 七) —
+// these are now two genuinely separate, separately-observable facts: the
+// HTTP response/idempotency-accept answers the FIRST; the KV record's own
+// `status` field (PROCESSING -> COMPLETED) and the existing
+// `[pbs-debug-push][ai-decision]`/`[pbs-debug-push][business-pipeline]`
+// log lines answer the SECOND. Deliberately NOT solved with a Cloudflare
+// Queue (order section 二's own "不要先引入 Queue，除非現有 Worker
+// lifecycle 無法可靠完成" — ctx.waitUntil is the existing Worker lifecycle
+// primitive, and it IS sufficient here) and NOT solved with a Durable
+// Object (order's own "不要過度設計" precedent, same reasoning as this
+// file's pre-existing KV_ONLY_ATOMICITY note) — a bounded staleness window
+// on a KV record is the minimum viable fix for the ACTUAL identified
+// failure (execution genuinely cancelled before ctx.waitUntil could
+// protect it), not a theoretical general-purpose exactly-once system.
+//
+// EXPLICITLY UNCHANGED THIS ROUND: AI prompt/model/schema/cache, the
+// Windows PBS service-area/eligibility gate, LINE message formatting,
+// driverSummary, hourly reminder, CCTV, Shared Feed product policy, TDX,
+// and every raw-PBS-text field (comment/srcdetail) copy path
+// (buildRawPbsRecordFromPush/normalizePbsEvent/buildAiCandidate/
+// buildAiUserPrompt below) — none of those functions were touched. See
+// this round's own final report for the RAW_TEXT_MUTATION_FOUND /
+// RAW_TEXT_LOSS_FOUND re-verification.
+//
+// See test/pbsDebugPushBackgroundProcessing.test.js for the full
+// regression suite: fast-ACK-before-AI-completes, ctx.waitUntil work
+// actually completing the AI/LINE/Observatory path afterward, a fresh
+// PROCESSING record still deduping a genuine transport retry, a STALE
+// PROCESSING record allowing exactly one recovery re-attempt, and CLEARED/
+// no-ctx call sites behaving byte-identically to before.
+
 import { verifyDebugPushToken } from './debugPushAuth.js';
 import { normalizePbsEvent } from './normalize.js';
 import { runLineBroadcast } from '../traffic/broadcastPipeline.js';
@@ -189,6 +280,26 @@ export const KV_ONLY_ATOMICITY = 'NOT_SUFFICIENT';
 export const WINDOWS_PBS_PRODUCTION_INGRESS = 'ACTIVE';
 export const PRODUCTION_BUSINESS_PIPELINE_INTEGRATION = 'ACTIVE';
 
+// V2.1.0 — see this module's own header comment for the full design.
+// The two-phase idempotency record status, and how a background attempt
+// stops being trusted to "still be running" and starts being eligible for
+// recovery. Exported for the same "final report cites the literal this
+// module itself asserts" discipline as the constants above.
+export const IDEMPOTENCY_STATUS = { PROCESSING: 'PROCESSING', COMPLETED: 'COMPLETED' };
+
+// 60 seconds — generous against a real Workers AI call's actual duration
+// (single-digit seconds per this project's own measured aiDecisionEngine.js
+// durationMs logging) so a legitimately still-running ctx.waitUntil
+// attempt is never mistaken for a lost one, while staying far shorter than
+// Windows's own natural ~3-minute PBS re-poll interval (see this file's
+// V1.9.8-era comment on Business Pipeline failure isolation) so a
+// genuinely lost attempt recovers well before Windows would have moved on
+// anyway.
+export const PROCESSING_STALE_MS = 60 * 1000;
+
+export const PBS_DEBUG_PUSH_LIFECYCLE_MODE = 'TRANSPORT_ACK_DECOUPLED_FROM_BUSINESS_PROCESSING';
+export const BACKGROUND_EXECUTION_MECHANISM = 'CTX_WAIT_UNTIL';
+
 let recentIdempotencyKeys = new Map(); // idempotencyKeyHash -> lastSeenAtEpochMs
 
 /** Test-only reset — mirrors this repo's existing resetTdxTokenCache()
@@ -257,6 +368,46 @@ async function computeIdempotencyKeyHash({ source, eventId, lifecycle, fingerpri
 
 function buildIdempotencyKvKey(idempotencyKeyHash) {
   return `${IDEMPOTENCY_KV_PREFIX}:${idempotencyKeyHash}`;
+}
+
+/** V2.1.0 — the two-phase idempotency record shape. See IDEMPOTENCY_STATUS
+ * and this module's own header comment. */
+function serializeIdempotencyRecord({ firstAcceptedAt, requestId, status, attemptCount = 1, completedAt }) {
+  const record = { firstAcceptedAt, requestId, status, attemptCount };
+  if (completedAt) record.completedAt = completedAt;
+  return JSON.stringify(record);
+}
+
+/**
+ * V2.1.0 — called once business processing (AI-or-legacy path +
+ * Observatory record) fully finishes, success or an internally-handled
+ * failure alike, so a future duplicate never re-attempts already-completed
+ * work. Best-effort and NEVER throws — marking COMPLETED is an
+ * optimization (it lets a genuinely lost/crashed attempt recover sooner
+ * via PROCESSING_STALE_MS), never a correctness requirement: the real
+ * outcome (AI decision, LINE push, Observatory record) has already fully
+ * happened by the time this is called, and a failed write here only means
+ * a future duplicate retry might redundantly re-run processing (bounded,
+ * self-correcting, same fail-open philosophy as every other KV write in
+ * this module) rather than anything being lost.
+ */
+async function markProcessingComplete(kv, kvKey, { firstAcceptedAt, requestId, attemptCount, now = new Date() }) {
+  if (!kv || !kvKey) return;
+  try {
+    await kv.put(
+      kvKey,
+      serializeIdempotencyRecord({
+        firstAcceptedAt,
+        requestId,
+        status: IDEMPOTENCY_STATUS.COMPLETED,
+        attemptCount,
+        completedAt: now.toISOString(),
+      }),
+      { expirationTtl: IDEMPOTENCY_TTL_SECONDS }
+    );
+  } catch (err) {
+    console.error(`[pbs-debug-push][idempotency] failed to mark COMPLETED keySuffix=${kvKey.slice(-16)}: ${err && err.message}`);
+  }
 }
 
 function jsonResponse(body, status = 200) {
@@ -504,7 +655,7 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
  * (unlike whether an admin page's CONTENT exists), so this can be a plain
  * routing-level answer, same as this project's public routes.
  */
-export async function handlePbsDebugPush(request, env, now = new Date()) {
+export async function handlePbsDebugPush(request, env, now = new Date(), ctx) {
   if (request.method !== 'POST') {
     return new Response('Method Not Allowed', { status: 405, headers: { Allow: 'POST' } });
   }
@@ -581,39 +732,85 @@ export async function handlePbsDebugPush(request, env, now = new Date()) {
   let memoryHit = false;
   let persistentHit = false;
   let kvOutage = false;
+  let staleRecovery = false;
+  const kv = env.TRAFFIC_KV;
+  let kvKey = null;
+  let acceptedFirstAcceptedAt = now.toISOString();
+  let acceptedAttemptCount = 1;
 
   if (checkAndRecordMemory(idempotencyKeyHash, nowMs)) {
     duplicate = true;
     memoryHit = true;
-  } else {
-    const kv = env.TRAFFIC_KV;
-    if (kv) {
-      const kvKey = buildIdempotencyKvKey(idempotencyKeyHash);
-      let existingRaw = null;
+  } else if (kv) {
+    kvKey = buildIdempotencyKvKey(idempotencyKeyHash);
+    let existingRaw = null;
+    try {
+      existingRaw = await kv.get(kvKey);
+    } catch {
+      kvOutage = true; // fail OPEN — see module comment
+    }
+
+    let existingRecord = null;
+    if (existingRaw !== null) {
       try {
-        existingRaw = await kv.get(kvKey);
+        existingRecord = JSON.parse(existingRaw);
       } catch {
-        kvOutage = true; // fail OPEN — see module comment
+        existingRecord = null; // corrupt record — treated the same as a legacy no-status record below
       }
-      if (existingRaw !== null) {
-        duplicate = true;
-        persistentHit = true;
-      } else {
+    }
+
+    if (existingRaw === null) {
+      // Genuinely new key (V2.1.0) — write the PROCESSING marker. See
+      // markProcessingComplete for the follow-up write once business
+      // processing actually finishes.
+      try {
+        await kv.put(
+          kvKey,
+          serializeIdempotencyRecord({ firstAcceptedAt: acceptedFirstAcceptedAt, requestId, status: IDEMPOTENCY_STATUS.PROCESSING, attemptCount: acceptedAttemptCount }),
+          { expirationTtl: IDEMPOTENCY_TTL_SECONDS }
+        );
+      } catch {
+        kvOutage = true; // event still accepted below — see module comment
+      }
+    } else if (existingRecord && existingRecord.status === IDEMPOTENCY_STATUS.PROCESSING) {
+      const firstAcceptedAtMs = existingRecord.firstAcceptedAt ? Date.parse(existingRecord.firstAcceptedAt) : NaN;
+      const ageMs = Number.isFinite(firstAcceptedAtMs) ? nowMs - firstAcceptedAtMs : Infinity;
+      if (ageMs >= PROCESSING_STALE_MS) {
+        // V2.1.0 recovery path (order section 十一 item 5) — the original
+        // attempt never reached COMPLETED and this record is now older
+        // than any real ctx.waitUntil-protected attempt should take;
+        // treat this retry as genuinely new and re-attempt business
+        // processing rather than staying duplicate-blocked forever.
+        staleRecovery = true;
+        acceptedFirstAcceptedAt = now.toISOString();
+        acceptedAttemptCount = (Number.isFinite(existingRecord.attemptCount) ? existingRecord.attemptCount : 1) + 1;
         try {
           await kv.put(
             kvKey,
-            JSON.stringify({ firstAcceptedAt: now.toISOString(), requestId }),
+            serializeIdempotencyRecord({ firstAcceptedAt: acceptedFirstAcceptedAt, requestId, status: IDEMPOTENCY_STATUS.PROCESSING, attemptCount: acceptedAttemptCount }),
             { expirationTtl: IDEMPOTENCY_TTL_SECONDS }
           );
         } catch {
-          kvOutage = true; // event still accepted below — see module comment
+          kvOutage = true;
         }
+      } else {
+        // A fresh PROCESSING record — the original attempt is trusted to
+        // still be genuinely running under ctx.waitUntil (see module
+        // comment); this retry is a true transport duplicate.
+        duplicate = true;
+        persistentHit = true;
       }
+    } else {
+      // status === COMPLETED, or a legacy pre-V2.1.0 record with no
+      // `status` field at all — both mean "already handled", exactly this
+      // endpoint's pre-V2.1.0 behavior for any existing record.
+      duplicate = true;
+      persistentHit = true;
     }
-    // No `env.TRAFFIC_KV` binding at all (should never happen in
-    // Production, but must never crash) degrades to memory-only L1,
-    // identical to V1.9.5's own behavior before this round.
   }
+  // No `env.TRAFFIC_KV` binding at all (should never happen in
+  // Production, but must never crash) degrades to memory-only L1,
+  // identical to V1.9.5's own behavior before this round.
 
   const logFields = [
     `requestId=${requestId}`,
@@ -633,6 +830,7 @@ export async function handlePbsDebugPush(request, env, now = new Date()) {
     `duplicate=${duplicate}`,
   ];
   if (kvOutage) logFields.push('kvOutage=true');
+  if (staleRecovery) logFields.push('staleRecovery=true');
   if (loggableEvent.road) logFields.push(`road=${loggableEvent.road}`);
   if (loggableEvent.areaNm) logFields.push(`areaNm=${loggableEvent.areaNm}`);
   console.log(`[pbs-debug-push] ${logFields.join(' ')}`);
@@ -651,7 +849,13 @@ export async function handlePbsDebugPush(request, env, now = new Date()) {
   // re-push the same transition on its own next ~3-minute poll if the
   // underlying PBS event is still present; no separate fallback-polling
   // mechanism is introduced for this.
-  if (!duplicate && lifecycle !== 'CLEARED') {
+  //
+  // V2.1.0 — this is now the exact unit of work handed to ctx.waitUntil()
+  // (see the dispatch right below this closure) instead of being awaited
+  // inline before the response. Nothing INSIDE this closure changed for
+  // V2.1.0 — same AI-or-legacy branch, same Observatory write, same
+  // failure isolation — only WHEN and HOW it runs changed.
+  const processAcceptedEvent = async () => {
     try {
       const rawRecord = buildRawPbsRecordFromPush({ eventId, generatedAt, event });
       const normalizedEvent = normalizePbsEvent(rawRecord);
@@ -763,8 +967,33 @@ export async function handlePbsDebugPush(request, env, now = new Date()) {
     } catch (err) {
       console.error(`[pbs-debug-push][business-pipeline] eventId=${eventId} lifecycle=${lifecycle} failed: ${err && err.message}`);
     }
+    // V2.1.0 — business processing has now genuinely finished (success or
+    // an internally-handled failure above) — mark this idempotency record
+    // COMPLETED so a future transport duplicate never re-attempts it. See
+    // markProcessingComplete's own comment for why this is best-effort.
+    await markProcessingComplete(kv, kvKey, { firstAcceptedAt: acceptedFirstAcceptedAt, requestId, attemptCount: acceptedAttemptCount, now: new Date() });
+  };
+
+  if (!duplicate && lifecycle !== 'CLEARED') {
+    // V2.1.0 (order section 二/七) — hand off to ctx.waitUntil() so the
+    // Windows HTTP response never waits on AI/LINE completion; every
+    // existing unit test call site (no `ctx` argument) falls back to a
+    // direct `await`, preserving their exact synchronous-completion
+    // assertions. See this module's own header comment for the full
+    // reasoning and test/pbsDebugPushBackgroundProcessing.test.js for the
+    // dedicated regression coverage of both paths.
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(processAcceptedEvent());
+    } else {
+      await processAcceptedEvent();
+    }
   } else if (!duplicate && lifecycle === 'CLEARED') {
     console.log(`[pbs-debug-push][business-pipeline] eventId=${eventId} lifecycle=CLEARED acknowledged=true routedToBroadcast=false`);
+    // CLEARED never performs async business processing — nothing for
+    // ctx.waitUntil to protect — so its own idempotency record can be
+    // marked COMPLETED immediately rather than sitting at PROCESSING
+    // until PROCESSING_STALE_MS passes for no reason.
+    await markProcessingComplete(kv, kvKey, { firstAcceptedAt: acceptedFirstAcceptedAt, requestId, attemptCount: acceptedAttemptCount, now });
   }
 
   // Response schema deliberately UNCHANGED from V1.9.5/V1.9.7 (Windows

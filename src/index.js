@@ -150,7 +150,12 @@ function routeAdminGet(pathname, env, request) {
 }
 
 export default {
-  async fetch(request, env) {
+  // V2.1.0 — `ctx` is now accepted (previously unused/undropped) so
+  // POST /internal/pbs-debug-push can hand its background AI/LINE work to
+  // ctx.waitUntil() instead of making the Windows HTTP response wait for
+  // it — see src/pbs/debugPush.js's own module comment for the full
+  // lifecycle-separation design. No other route reads `ctx`.
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     if (url.pathname === '/' && request.method === 'GET') {
@@ -226,7 +231,7 @@ export default {
     // has to be visible to a caller that uses the wrong verb, not hidden
     // behind a 404.
     if (url.pathname === PBS_DEBUG_PUSH_PATH) {
-      return handlePbsDebugPush(request, env);
+      return handlePbsDebugPush(request, env, undefined, ctx);
     }
 
     if (url.pathname === '/webhook' && request.method === 'POST') {

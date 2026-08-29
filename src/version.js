@@ -688,7 +688,85 @@
 // comment's own precise interchange/ramp text (e.g. "近竹科匝道") even
 // when it's present in the source comment; see 07_KNOWN_ISSUES.md.
 
-export const APP_VERSION = 'V2.0.2';
+// V2.1.0 (2026-08-29) — Transport Ack Decoupled From Business Processing.
+// Real Production incident: two genuine NEW events reached service-area +
+// AI_CALL_STARTED successfully, but Windows's own 5-second HTTP timeout
+// fired while src/pbs/debugPush.js's handler was still `await`ing the
+// real Workers AI call — because that work had never been handed to
+// `ctx.waitUntil()`, the Workers runtime cancelled the still-running
+// handler the instant the client disconnected, and this endpoint's OWN
+// idempotency record (written at accept time, BEFORE business processing
+// began) then silently blocked every later Windows retry from ever
+// re-attempting the AI decision (AI decision complete = 0, Observatory
+// = no record).
+//
+// MINOR, not a PATCH (per this file's own versioning rule — "clear new
+// feature / arch phase") — this is a genuine data-flow/responsibility-
+// boundary change (order's own framing: "屬於正式資料流／責任邊界調整"),
+// not a timeout-number tweak.
+//
+// TWO changes, together closing the whole failure mode:
+//   1. BACKGROUND EXECUTION — a genuinely accepted (non-duplicate) NEW/
+//      UPDATED event's business processing (AI-or-legacy path + LINE/
+//      Shared Feed + Observatory record) is now handed to `ctx.waitUntil()`
+//      instead of being awaited before the response. src/index.js's fetch
+//      handler now accepts and forwards `ctx`. The Windows HTTP response
+//      now reflects ONLY "did Cloudflare durably accept this transition",
+//      never "did the AI finish deciding" — Windows's own short timeout
+//      can no longer race against Workers AI at all. `ctx` is an optional
+//      4th parameter (after the pre-existing `now`); every existing unit
+//      test call site is unaffected and falls back to a direct `await`,
+//      preserving byte-identical synchronous-completion behavior.
+//   2. TWO-PHASE IDEMPOTENCY MARKER — the KV idempotency record now
+//      carries `status: 'PROCESSING' | 'COMPLETED'`. PROCESSING is written
+//      at accept time; COMPLETED once business processing genuinely
+//      finishes. A retry against a fresh PROCESSING record (younger than
+//      PROCESSING_STALE_MS = 60s) is still deduped — the original
+//      ctx.waitUntil-protected attempt is trusted to finish on its own. A
+//      retry against a STALE PROCESSING record (the rare case where the
+//      original attempt never even got scheduled — e.g. an isolate
+//      evicted before ctx.waitUntil could run, NOT the client-timeout
+//      case fix #1 already prevents) is NOT treated as a duplicate and
+//      genuinely re-attempts business processing. A legacy pre-V2.1.0
+//      record with no `status` field, or status=COMPLETED, is still
+//      always treated as a duplicate — unchanged backward-compatible
+//      behavior.
+//
+// Deliberately NOT a Cloudflare Queue (order's own "不要先引入 Queue，除非
+// 現有 Worker lifecycle 無法可靠完成" — ctx.waitUntil IS the existing
+// Worker lifecycle primitive, and is sufficient here) and NOT a Durable
+// Object (same "不要過度設計" precedent this file's own KV_ONLY_ATOMICITY
+// note already established) — a bounded staleness window on a KV record
+// is the minimum viable fix for the ACTUAL identified failure.
+//
+// RAW PBS TEXT IMMUTABILITY (order section 一/五) — re-verified, not
+// re-implemented: buildRawPbsRecordFromPush/normalizePbsEvent/
+// buildAiCandidate/buildAiUserPrompt were NOT touched this round; a live
+// code-execution trace (this round's own final report) confirms
+// comment/sourceDetail still reach the real AI prompt byte-for-byte
+// unmodified, exactly as an earlier read-only investigation this session
+// already proved for V2.0.2.
+//
+// WINDOWS DUPLICATE-LOGIC AUDIT (order section 六) — read-only, no code
+// change: pbs-relay/'s own NEW/UPDATED/CLEARED classification
+// (localPrototype.js#fingerprintEvent/classifyPbsChanges) is driven purely
+// by content-fingerprint comparison — no "same event within N hours"
+// content-suppression rule exists anywhere in pbs-relay/. Nothing to
+// remove; no violation of the new four-layer role boundary found.
+//
+// EXPLICITLY UNCHANGED THIS ROUND: AI prompt/model/schema/cache, Windows
+// PBS service-area/eligibility gate, LINE message formatting,
+// driverSummary, hourly reminder, CCTV, TDX, service area, and the
+// Observatory admin page UI (查修頁 second-phase work, deliberately
+// deferred — order section 十二).
+//
+// See src/pbs/debugPush.js's own header comment for the full design and
+// test/pbsDebugPushBackgroundProcessing.test.js for the dedicated
+// regression suite (fast ACK, fresh-vs-stale PROCESSING dedupe/recovery,
+// CLEARED immediate completion, no-ctx byte-identical fallback, Observatory
+// outcome survives background execution).
+
+export const APP_VERSION = 'V2.1.0';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,
