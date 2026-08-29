@@ -39,10 +39,10 @@
     "openStructuralQuestion": "TWO trees currently hold the same canonical content: engineering-memory/ (what the mirror syncs) and meeting-room-export/ (what scripts/export-meeting-room.mjs generates). They are kept in step by hand today, which is exactly the drift risk this governance exists to prevent. Needs a human decision: either point the generator at engineering-memory/, or retire one tree. NOT decided unilaterally."
   },
   "git": {
-    "sourceMainHead": "fbc50329f8333114d7bfa4485ecc46a14f86c3a2",
+    "sourceMainHead": "e6a1e2c39250df533fe0f4715bf8aa5f9fd366c9",
     "sourceMainHeadResolvedFrom": "origin/main",
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
-    "sourceWorkingTree": "dirty (9 changed source file(s))",
+    "sourceWorkingTree": "dirty (12 changed source file(s))",
     "selfReferenceNote": "sourceMainHead is the official main commit this snapshot DESCRIBES; exportArtifactCommit is the commit that CONTAINS this artifact and is intentionally never equal to it. Requiring the two to match would create a Git self-reference loop (every export changes the file, which changes the commit, which invalidates the recorded head). sourceMainHead is read from origin/main and is therefore stable across re-runs and across whichever branch the export was generated on.",
     "checkoutNote": "The transient checkout (branch/HEAD/date) this export happened to run from is deliberately NOT recorded here. It changes on every commit and would make every release look like a content change, defeating delta sync; it also says nothing about the snapshot itself. The snapshot is identified by sourceMainHead alone. Local sync evidence in .engineering/ still records the checkout for auditing.",
     "workingTreeNote": "sourceWorkingTree excludes meeting-room-export/, which this generator dirties by definition; it answers 'is the source tree clean', not 'did the export just write files'."
@@ -232,40 +232,41 @@
     "AI_CANDIDATE_PIPELINE": "PREPARED_NOT_ACTIVE — V1.9.9 Phase 2: src/pbs/aiCandidate.js builds a minimal AI candidate for every accepted NEW/UPDATED Windows event, parallel to (never gating) the unchanged runLineBroadcast() call. Observability-only; no AI model called, no KV read/write for the reserved AI_DECISION_CACHE_KV_PREFIX yet."
   },
   "taskSeal": {
-    "task": "CONFIG_DRIFT_HOTFIX_V2_0_2",
+    "task": "TRANSPORT_ACK_DECOUPLED_FROM_BUSINESS_PROCESSING_V2_1_0",
     "status": "SEALED",
     "sealedAt": "2026-08-29",
-    "sealedBy": "human directive (路況工程部 V2.0.2 Config Drift Hotfix 正式施工令｜PBS_AI_DECISION_ENABLED canonical deployment fix)",
-    "releaseVersion": "V2.0.2",
-    "previousVersion": "V2.0.1",
-    "nature": "PATCH — Production configuration correctness fix，不改AI semantic behavior。",
-    "configDriftIncident": "PBS_AI_DECISION_ENABLED從V1.9.9 Phase 3D到V2.0.1只存在於Cloudflare Dashboard手動設定，從未進入repo canonical configuration。每次GitHub main -> Workers Builds -> wrangler deploy都把wrangler.jsonc視為權威來源（與TRAFFIC_SOURCE_MODE既有機制相同），悄悄移除/覆寫Dashboard-only的值。GPT Work手動設定的\"true\"因此被後續一次部署移除，AI決策悄悄退回程式碼預設值false，沒有任何人真的改過這個開關。17:49台68事件發生時AI switch已被deployment移除，該筆不算真實AI判讀事件（legacy路徑決定，非Workers AI）。",
-    "fix": "wrangler.jsonc的vars區塊正式宣告\"PBS_AI_DECISION_ENABLED\": \"true\"（字串形式）。PBS_AI_DECISION_ENABLED_SOURCE=WRANGLER_CANONICAL_VAR，DASHBOARD_ONLY_AI_SWITCH=RETIRED，KEEP_VARS=NOT_USED（keep_vars會讓Dashboard-only設定繼續漂移，與本輪repo config authoritative目標相反）。",
-    "regressionGuard": "scripts/check-deployment-policy.mjs新增checkPbsAiDecisionEnabledVar()，與既有checkRequiredBindings()同一模式，npm run check:deployment-policy會在未來有人刪掉這個var時立即失敗。",
-    "scopeDiscipline": "未觸碰AI Prompt、AI model、aiDecisionEngine.js、aiConfig.js resolver語意、Windows PBS filter、service area、lifecycle、message formatter、driverSummary、LINE policy、Shared Feed、CCTV、hourly reminder。未新增任何Secret至wrangler.jsonc vars（測試直接斷言）。",
-    "testEvidence": {
-      "newTests": "10項：test/pbsAiConfigDriftHotfixV202.test.js，全部首次執行即PASS。",
-      "fullRegression": "1549項/1516 pass/33 fail，與V2.0.1基準以failure名稱集合對照確認NEW FAILURES=0，僅跑一次。"
+    "sealedBy": "human directive (路況工程部｜第一階段正式施工令｜四層架構維修 PBS → Windows → Cloudflare → AI → LINE)",
+    "releaseVersion": "V2.1.0",
+    "previousVersion": "V2.0.2",
+    "nature": "MINOR — 正式資料流／責任邊界調整，非單純timeout patch。",
+    "incident": "2筆真實NEW事件成功走完service area + AI_CALL_STARTED，但Windows自身5秒HTTP timeout觸發時Cloudflare仍在await Workers AI，因為那段工作從未交給ctx.waitUntil()，client斷線導致handler被runtime直接取消——AI判斷/LINE/Observatory全部沒完成，且冪等記錄（於business processing開始之前就已寫入）讓後續retry永久被當duplicate擋下。",
+    "fix": "(1) src/index.js的fetch handler現在接收並轉傳ctx；genuinely accepted的NEW/UPDATED事件之business processing交給ctx.waitUntil()，HTTP回應不再等AI完成。(2) KV冪等記錄新增兩階段標記：status=PROCESSING（接受當下）→COMPLETED（處理完成後）；PROCESSING_STALE_MS=60秒讓極少數「原嘗試根本沒被排程」的情況能復原重跑，一般情況（原嘗試仍在背景真實執行）的retry仍正確視為重複。",
+    "rejectedAlternatives": "刻意不用Cloudflare Queue（ctx.waitUntil已是既有Worker lifecycle原語，足以解決本次已確認的失效模式）；刻意不用Durable Object（沿用既有KV_ONLY_ATOMICITY「不要過度設計」先例）。",
+    "fourLayerArchitecture": {
+      "WINDOWS_ROLE": "HSINCHU_PBS_FILTER_AND_RELAY",
+      "CLOUDFLARE_ROLE": "INGRESS_STATE_CONTEXT_AND_AI_ORCHESTRATION",
+      "AI_ROLE": "SEMANTIC_DECISION_AUTHORITY",
+      "LINE_ROLE": "DELIVERY_ONLY",
+      "RAW_PBS_TEXT_POLICY": "IMMUTABLE_END_TO_END_UNTIL_AI"
     },
-    "knownIssueRecordedNotFixed": "PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER — LINE訊息格式化目前不會把PBS comment原文中的精確交流道/匝道文字（例如「近竹科匝道」）帶出來顯示，即使來源comment已經包含這個資訊。與本輪config drift修正無關，刻意不同時處理。",
-    "notTouchedByThisRound": [
-      "AI Prompt（未修改）",
-      "AI model（未更換）",
-      "aiDecisionEngine.js（未修改）",
-      "aiConfig.js resolver語意（未修改）",
-      "Windows PBS filter（未修改）",
-      "service area（未擴大）",
-      "lifecycle（未修改）",
-      "message formatter（未修改，包含已知的近竹科匝道問題）",
-      "driverSummary（未實作）",
-      "LINE policy（未修改）",
-      "Shared Feed（未修改）",
-      "CCTV（未修改）",
-      "hourly reminder（未開始）"
-    ],
-    "readerNote": "完成後STOP。不得開始formatter修正。不得driverSummary。不得hourly reminder。"
+    "rawTextReverification": "再次驗證（非重新實作）：buildRawPbsRecordFromPush/normalizePbsEvent/buildAiCandidate/buildAiUserPrompt本輪一行未改；以真實事件EVENT_ID=11508280025-5執行真正函式鏈路確認FULL_PBS_TEXT_REACHES_AI=YES。",
+    "windowsDedupAudit": "唯讀盤點pbs-relay/的NEW/UPDATED/CLEARED分類邏輯（fingerprintEvent），確認完全以內容fingerprint比對驅動，不存在任何「同一事故一小時內」語意抑制規則——沒有東西需要移除，未違反新四層架構邊界。",
+    "scopeDiscipline": "未觸碰AI Prompt、AI model、aiDecisionEngine.js、aiConfig.js resolver語意、Windows PBS filter、service area、lifecycle分類、message formatter、driverSummary、hourly reminder、CCTV、TDX、查修頁UI（第二階段，刻意不做）。",
+    "testEvidence": {
+      "newTests": "9項：test/pbsDebugPushBackgroundProcessing.test.js 8項全新＋既有KV成本量化測試公式由puts=2N+2更新為puts=3N+2，全部首次執行即PASS。",
+      "fullRegression": "1681項/1647 pass/34 fail，與V2.0.2基準以failure名稱集合對照確認NEW FAILURES=0，僅跑一次。"
+    },
+    "readerNote": "完成第一階段後STOP。不得直接開始查修頁改版（第二階段）。"
   },
   "taskSealHistory": [
+    {
+      "task": "CONFIG_DRIFT_HOTFIX_V2_0_2",
+      "status": "SEALED",
+      "sealedAt": "2026-08-29",
+      "releaseVersion": "V2.0.2",
+      "sealCommit": "2c784b5",
+      "summary": "Config Drift Hotfix：PBS_AI_DECISION_ENABLED從Dashboard-only移至wrangler.jsonc canonical宣告（字串\"true\"）。根因：Workers Builds每次部署都把wrangler.jsonc視為權威來源，悄悄移除Dashboard-only值。PBS_AI_DECISION_ENABLED_SOURCE=WRANGLER_CANONICAL_VAR，DASHBOARD_ONLY_AI_SWITCH=RETIRED，KEEP_VARS=NOT_USED。新增checkPbsAiDecisionEnabledVar() regression guard。10項新測試，1549/1516/33，NEW FAILURES=0。完整記錄見06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V2.0.2條目。"
+    },
     {
       "task": "PBS_WINDOWS_LOCAL_EDGE_DEBUG_PUSH_INTEGRATION_V1_9_6",
       "status": "SEALED",
@@ -565,31 +566,31 @@
   ],
   "version": {
     "packageJsonVersion": "0.1.0",
-    "latestCompleted": "V2.0.2",
+    "latestCompleted": "V2.1.0",
     "canonicalSource": "src/version.js 的 APP_VERSION — 唯一權威。packageJsonVersion 是 npm 套件版本（0.1.0），與產品版本線無關，不要混用。"
   },
   "production": {
     "status": "DEPLOYED",
-    "verification": "V2.0.2 sealed (config correctness fix only). NOT_OBSERVED independently by this session (sandbox network policy blocks Production domain and Cloudflare Dashboard).",
+    "verification": "Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why)",
     "deployMethod": "push to main -> Cloudflare Workers Builds auto-deploy",
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
-  "currentPhase": "V2.0.2 SEALED — Config Drift Hotfix，PBS_AI_DECISION_ENABLED 已正式宣告於 wrangler.jsonc（canonical，非Dashboard）。FIRST_REAL_AI_EVENT仍為WAITING",
-  "currentTask": "none（無進行中工作）。Latest completed task = CONFIG_DRIFT_HOTFIX_V2_0_2，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.0.2（PATCH，config correctness fix，不改AI semantic behavior）。本輪：(1) 根因確認：PBS_AI_DECISION_ENABLED只存在Dashboard，每次deploy被wrangler.jsonc覆寫；(2) wrangler.jsonc vars正式宣告PBS_AI_DECISION_ENABLED=\"true\"（字串）；(3) PBS_AI_DECISION_ENABLED_SOURCE=WRANGLER_CANONICAL_VAR，DASHBOARD_ONLY_AI_SWITCH=RETIRED，KEEP_VARS=NOT_USED；(4) 新增checkPbsAiDecisionEnabledVar() regression guard；(5) 17:49台68事件確認非真實AI判讀（AI switch當時已被移除）。新增10項測試，1549/1516/33，NEW FAILURES=0。另記已知問題PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER（本輪不修）。FIRST_REAL_AI_EVENT仍為WAITING（不變）。下一件事若要開工：等待GPT Work確認Production端Variable已生效並觀察真實AI判讀事件；或見07_KNOWN_ISSUES.md既有約33項過期斷言（與本輪無關）。",
-  "knownBlocker": "無 repo-side blocker。FIRST_REAL_AI_EVENT=WAITING（下一個observational milestone，非封版blocker）；另記已知問題PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER（本輪不修）",
+  "currentPhase": "Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留",
+  "currentTask": "none（無進行中工作）。Latest completed task = TRANSPORT_ACK_DECOUPLED_FROM_BUSINESS_PROCESSING_V2_1_0，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.1.0（MINOR，正式資料流／責任邊界調整）。本輪：(1) 根因確認：Windows 5秒HTTP timeout在Cloudflare仍await Workers AI時觸發，因background work從未交給ctx.waitUntil()導致handler被取消，冪等記錄過早寫入永久擋下retry；(2) src/index.js fetch handler接收並轉傳ctx，business processing改交給ctx.waitUntil()；(3) KV冪等記錄新增status=PROCESSING/COMPLETED兩階段標記，PROCESSING_STALE_MS=60秒容許復原重跑；(4) 正式寫入四層架構角色邊界（WINDOWS_ROLE/CLOUDFLARE_ROLE/AI_ROLE/LINE_ROLE/RAW_PBS_TEXT_POLICY）；(5) 再次驗證PBS原始comment/sourceDetail逐字元完整送達AI；(6) 唯讀盤點Windows端無「一小時內同事故」抑制規則。新增9項測試，1681/1647/34，NEW FAILURES=0。下一件事若要開工：查修頁第二階段改版（本輪刻意未做）；或觀察FIRST_REAL_AI_EVENT是否出現；或見07_KNOWN_ISSUES.md既有約34項過期斷言（與本輪無關）。",
+  "knownBlocker": "無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md",
   "realWorldConfirmation": {
-    "status": "NOT_OBSERVED — FIRST_REAL_AI_EVENT not yet confirmed by this session",
+    "status": "REAL_WORLD_CONFIRMATION_PENDING",
     "subject": "V1.8.7.7 CCTV gray broken image fix"
   },
-  "nextAction": "等待GPT Work確認Production端wrangler.jsonc canonical設定已透過deploy生效；等待真實Production PBS事件走完完整AI判讀路徑的觀察證據",
+  "nextAction": "無待辦。TDX 額度恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計）",
   "authorityLevels": {
     "levelA_selfServiceReadOnly": "own repo git log, own Worker/KV/test results only",
     "levelB_requiresHumanApproval": "interactive login/OAuth, private dashboards, real KV content, any other department's resources (read or write)",
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-08-28T11:57:52.387Z",
-    "sourceMainHead": "fbc50329f8333114d7bfa4485ecc46a14f86c3a2",
+    "generatedAt": "2026-08-29T02:58:53.054Z",
+    "sourceMainHead": "e6a1e2c39250df533fe0f4715bf8aa5f9fd366c9",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
     "historyDir": "_history"

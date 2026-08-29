@@ -4,6 +4,58 @@
 
 本檔案以 `src/` 實際模組結構整理，非憑記憶重寫。模組清單於 export 產生時由腳本重新掃描 `src/` 目錄核對（見本檔末尾「模組清單（自動掃描）」），若與下方敘述不符，以自動掃描結果與程式碼本身為準,並視為文件 Drift。
 
+## V2.1.0 — 四層架構角色邊界 ＋ Transport Ack Decoupled From Business Processing（本輪，2026-08-29）
+
+**正式四層架構角色邊界**（本輪寫入，往後每一輪的職責歸屬皆以此為準）：
+
+| 層 | 角色常數 | 職責 | 明確不負責 |
+|---|---|---|---|
+| Windows PBS | `WINDOWS_ROLE = HSINCHU_PBS_FILTER_AND_RELAY` | 從 PBS 全量資料篩出新竹縣市事件，完整保留原始事件資料傳給 Cloudflare | 重大程度判斷、是否值得播報、一小時語意重複判斷、AI 內容判斷、LINE 播報資格 |
+| Cloudflare | `CLOUDFLARE_ROLE = INGRESS_STATE_CONTEXT_AND_AI_ORCHESTRATION` | 收件中心：接收 Windows 完整資料、保存必要技術狀態、建立 AI 輸入、交給 AI 判讀 | 要求 Windows 等待 AI 完整判斷才算收件成功 |
+| AI | `AI_ROLE = SEMANTIC_DECISION_AUTHORITY` | 內容判斷唯一權威：是否重大影響營業車司機、是否為同事件重複、是否需要再次通知 | 不得把這些語意決策重新硬寫回 Windows |
+| LINE | `LINE_ROLE = DELIVERY_ONLY` | 只執行 AI 的最後通知結果（notify=true → 送、notify=false → 不送） | 不得由舊 legacy semantic rules 重新覆蓋 AI 決定 |
+
+`RAW_PBS_TEXT_POLICY = IMMUTABLE_END_TO_END_UNTIL_AI`：PBS → Windows →
+Cloudflare → AI 之間，原始自由文字欄位（`comment`／`srcdetail`）不得被
+改寫、摘要、截斷或刪減；`normalizedRoad`／`resolvedArea`／`displayKM`／
+`locationQuality` 等一律是**額外**欄位，不得覆蓋 raw 原文。本輪唯讀
+再次驗證（`buildRawPbsRecordFromPush`／`normalizePbsEvent`／
+`buildAiCandidate`／`buildAiUserPrompt` 一行未改）：以真實事件
+`EVENT_ID=11508280025-5`、`comment="東向近竹科匝道有A3交通事故"` 執行
+真正函式鏈路，確認逐字元完整送達 AI prompt。
+
+**修正：Transport Ack 與 Business Processing 生命週期分離**——真實
+Production 事故：Windows 5 秒 HTTP timeout 在 Cloudflare 仍 `await`
+Workers AI 呼叫時觸發，因為那段工作從未交給 `ctx.waitUntil()`，
+Workers runtime 在 client 斷線時直接取消了整個 handler，AI 判斷／LINE／
+Observatory 全部沒有完成，且冪等記錄（於 business processing「開始
+之前」就已寫入）讓後續 retry 永久被當成 duplicate 擋下。
+
+```
+Windows 送出事件
+    ↓
+Cloudflare：auth → 驗證 → 冪等 accept（寫入 status=PROCESSING）
+    ↓
+HTTP 回應立刻回傳「已收件」——不等 AI （V2.1.0 起，經 ctx.waitUntil）
+    ↓                                    ↓
+Windows 收到回應，不需等待               背景：AI candidate → AI 決策
+                                          → LINE/Shared Feed → Observatory
+                                          → 完成後改寫 status=COMPLETED
+```
+
+`ctx.waitUntil()` 保證背景工作在 HTTP 回應送出後、甚至 client 斷線後仍
+會跑完——這正是 Windows 短 timeout 不再能中止 AI business processing
+的機制保證，而非時間數字調整。冪等記錄新增 `status: PROCESSING |
+COMPLETED` 兩階段標記，搭配 `PROCESSING_STALE_MS`（60 秒）讓極少數
+「原本那次嘗試根本沒被排程到」的情況能夠復原重跑，而非永久卡死；一般
+情況（原嘗試仍在背景真實執行中）的 retry 仍正確被視為重複，不重跑
+AI。刻意不用 Cloudflare Queue／Durable Object——`ctx.waitUntil` 已是
+現有 Worker lifecycle 原語，足以解決本次已確認的失效模式。
+
+詳見 `src/pbs/debugPush.js` 的完整 module comment、
+`test/pbsDebugPushBackgroundProcessing.test.js`、
+`07_KNOWN_ISSUES.md`／`PRODUCT_DECISIONS.md` 的完整記錄。
+
 ## V2.0.0 接手地圖 — Windows PBS + Cloudflare Workers AI（2026-08-28）
 
 **里程碑背景**：V1.9.5～V1.9.9 Phase 3D 逐輪建立的 Windows PBS 本機邊緣過濾 + Cloudflare

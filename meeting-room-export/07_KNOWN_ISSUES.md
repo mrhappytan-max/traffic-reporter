@@ -689,6 +689,90 @@ commit `7acb82a`；Cloudflare Worker Version ID `defc1da4-6328-47ce-82c6-
 81082519bc2`，Windows `TrafficReporter-PBS-LocalMonitor`已重啟為Running
 （人類回報，本Session未獨立驗證）。
 
+## 修正紀錄｜V2.1.0 — Transport Ack Decoupled From Business Processing（2026-08-29）
+
+**INCIDENT**：真實 Production 事故。2 筆 NEW 事件成功走完 Windows relay →
+Worker ingress → service area → `AI_CALL_STARTED`，但 Windows 自身 5 秒
+HTTP timeout 觸發時，`POST /internal/pbs-debug-push` 的 handler 仍在
+`await` 真正的 Workers AI 呼叫。因為那段工作從未交給
+`ctx.waitUntil()`，Cloudflare Workers runtime 在 client（Windows）斷線
+時直接取消了仍在執行中的 handler——AI 判斷、LINE 結果、Observatory 記錄
+全部沒有完成（`Cloudflare outcome = canceled`，`AI decision complete =
+0`）。Windows 自己的 client-side retry 隨後發現冪等記錄早已寫入（**本輪
+之前**：於 business processing 開始「之前」就寫入完成），被永久視為
+`duplicate`，AI 決策從此再也沒有機會重跑，Observatory 也沒有任何紀錄。
+
+**ROOT CAUSE**：`transport received`（Cloudflare 是否已持久接收這個
+transition）與 `business processing completed`（AI 是否已判讀完成）在
+本輪之前是同一件事——回應本身要等 AI 判讀完成才送出，冪等記錄卻在 AI
+判讀「開始之前」就已寫入。兩者混為一談，導致 Windows 的短 timeout 可以
+直接跟 Workers AI 的真實延遲賽跑，一旦輸了，冪等機制反而變成永久卡死
+的原因，而非保護機制。
+
+**修正（兩部分，缺一不可）**：
+
+1. **背景執行**：`src/index.js` 的 `fetch` handler 現在接收並轉傳
+   `ctx`；`src/pbs/debugPush.js` 把真正被接受（非重複）的 NEW/UPDATED
+   事件之 business processing（AI-or-legacy 路徑＋Observatory 記錄）交給
+   `ctx.waitUntil()`，不再於回應前 inline `await`。Windows 收到的 HTTP
+   回應現在只代表「Cloudflare 是否已持久接收」，不再代表「AI 是否判讀
+   完成」——Windows 自己的短 timeout 因此結構上無法再與 Workers AI 賽跑。
+   `ctx` 是新增的第 4 個 optional 參數（接在既有 `now` 之後），既有全部
+   單元測試呼叫點完全不受影響，缺少 `ctx` 時 fallback 為直接 `await`，
+   行為與本輪之前逐位元組相同（見
+   `test/pbsDebugPushBackgroundProcessing.test.js` 的「no ctx argument」
+   測試）。
+2. **兩階段冪等標記**：KV 冪等記錄新增 `status: 'PROCESSING' |
+   'COMPLETED'`。接受當下寫入 `PROCESSING`，business processing 真正
+   完成後（成功或內部已妥善處理的失敗，皆算「完成」）才改寫為
+   `COMPLETED`。仍在 `PROCESSING_STALE_MS`（60 秒——遠大於真實 Workers
+   AI 呼叫的量測耗時，遠小於 Windows 自身約 3 分鐘的自然重新輪詢間隔）
+   之內的新鮮 `PROCESSING` 記錄，retry 仍視為 `duplicate`（信任原本受
+   `ctx.waitUntil()` 保護的那次嘗試會自己跑完，不重新觸發 AI）；超過
+   60 秒的過期 `PROCESSING` 記錄（極少數情況——原本那次嘗試根本沒被
+   排程到，例如 isolate 在 `ctx.waitUntil()` 排程前就被回收，**不是**
+   本輪已修正的 client timeout 那種情況），retry 才不視為 `duplicate`，
+   真正重新嘗試 business processing（`attemptCount` 遞增，供未來診斷）。
+   沒有 `status` 欄位的舊制記錄、或 `status=COMPLETED` 的記錄，一律仍
+   視為 `duplicate`，與本輪之前行為相容。
+
+**刻意不採用的方案**：Cloudflare Queue（order 本身：「不要先引入
+Queue，除非現有 Worker lifecycle 無法可靠完成」——`ctx.waitUntil` 已是
+既有 Worker lifecycle 原語，足以解決本次已確認的失效模式）；Durable
+Object（沿用本專案既有 `KV_ONLY_ATOMICITY` 註解「不要過度設計」的
+先例——真正需要解決的風險是「執行被取消」，不是「兩個真正同時的請求」，
+一個有界的 KV staleness window 已是最小可行修正）。
+
+**再次驗證（非重新實作）**：PBS 原始 `comment`／`sourceDetail` 是否逐字
+完整送進真正的 AI prompt——`buildRawPbsRecordFromPush`／
+`normalizePbsEvent`／`buildAiCandidate`／`buildAiUserPrompt` 本輪**一行
+未改**；以真實事件 `EVENT_ID=11508280025-5`、
+`comment="東向近竹科匝道有A3交通事故"` 執行真正的函式鏈路（非猜測）確認
+`FULL_PBS_TEXT_REACHES_AI = YES`，逐字元相同。另唯讀盤點
+`pbs-relay/` 的 NEW/UPDATED/CLEARED 分類邏輯（`localPrototype.js` 的
+`fingerprintEvent`／變更分類），確認完全以內容 fingerprint 比對驅動，
+**不存在**任何「同一事故一小時內」語意抑制規則——沒有東西需要移除，
+未違反新四層架構邊界。
+
+**正式寫入新架構原則**：`WINDOWS_ROLE = HSINCHU_PBS_FILTER_AND_RELAY`、
+`CLOUDFLARE_ROLE = INGRESS_STATE_CONTEXT_AND_AI_ORCHESTRATION`、
+`AI_ROLE = SEMANTIC_DECISION_AUTHORITY`、`LINE_ROLE = DELIVERY_ONLY`、
+`RAW_PBS_TEXT_POLICY = IMMUTABLE_END_TO_END_UNTIL_AI`——原始文字不得在
+PBS → Windows → Cloudflare → AI 之間被改寫或刪減；額外解析欄位
+（`normalizedRoad`／`resolvedArea`／`displayKM`／`locationQuality` 等）
+必須是額外欄位，不得覆蓋 raw 原文。詳見 `03_ARCHITECTURE.md`。
+
+本輪**未觸碰**：AI Prompt、AI model、`aiDecisionEngine.js`／
+`aiConfig.js` resolver 語意、Windows PBS filter、service area、
+lifecycle 分類、message formatter、driverSummary、hourly reminder、
+CCTV、TDX、查修頁 UI（列為第二階段，本輪刻意不做）。`APP_VERSION` 從
+`V2.0.2` 升為 `V2.1.0`（MINOR——正式資料流／責任邊界調整，非單純
+timeout patch）。新增 9 項測試（`test/pbsDebugPushBackgroundProcessing.
+test.js` 8 項全新＋既有 KV 成本量化測試公式由 `puts=2N+2` 更新為
+`puts=3N+2`——冪等記錄現在每個已接受事件寫入兩次：`PROCESSING` 再
+`COMPLETED`），全部首次執行即 PASS；全量迴歸 1681/1647/34，與 V2.0.2
+基準以 failure 名稱集合對照確認 NEW FAILURES=0，僅跑一次。
+
 ## 修正紀錄｜V2.0.2 Config Drift Hotfix — PBS_AI_DECISION_ENABLED canonical deployment（2026-08-29）
 
 **CONFIG_DRIFT_INCIDENT**：GPT Work 在 Cloudflare Dashboard 手動設定
@@ -775,45 +859,20 @@ idempotency、LINE quota、CCTV、Shared Feed policy。`FIRST_REAL_AI_EVENT`
    atomic exactly-once 保證）。完整分析見下方「Persistent PBS Debug Push
    Idempotency（V1.9.7）」記錄，含為何不引入 Durable Object 的理由。
 
-## 修正紀錄｜V1.9.9 Phase 3D Hotfix — Cloudflare 字串布林解析（2026-08-28）
+## 修正紀錄｜V1.9.9 Phase 3D Hotfix — Cloudflare 字串布林解析（2026-08-28，壓縮摘要）
 
-GPT Work 在 Cloudflare Dashboard 把 `PBS_AI_DECISION_ENABLED` 設為 `"true"`
-後，正式環境 AI 決策仍未啟用。根因：Cloudflare Dashboard／CLI Variables
-一律以**字串**注入 Worker，從不是真正的 boolean；`src/pbs/aiConfig.js#
-resolvePbsAiDecisionEnabled()` 原本嚴格檢查`typeof === 'boolean'`，字串
-`"true"`永遠不符合，因此每次請求都悄悄落回安全預設值`false`——不是
-Dashboard操作錯誤，是resolver本身的bug。GPT Work已先行rollback
-（`PBS_AI_DECISION_ENABLED = FALSE`），本輪只修這一點。
-
-**修正**：`resolvePbsAiDecisionEnabled()`現在同時接受真正的boolean
-`true`/`false`，以及Cloudflare runtime的字串形式`"true"`/`"false"`
-（不分大小寫、去除前後空白，如`" TRUE "`、`"True"`）；除此之外的任何值
-（`undefined`、`null`、空字串、其他常見「真值」拼法如`"1"`/`"yes"`/
-`"on"`、或任何非字串非boolean型別）一律fail-safe回`PBS_AI_DECISION_
-ENABLED_DEFAULT = false`——刻意不做寬鬆truthy判斷。`wrangler.jsonc`
-檢查後確認未宣告任何`PBS_AI_DECISION_ENABLED`值，Production預設安全性
-不受影響。
-
-**測試**：`test/aiConfig.test.js`擴充為完整true/false/字串/大小寫/空白/
-未知值矩陣（新增6項，1項既有測試的斷言依新預期行為反轉）；
-`test/pbsAiDecisionScenarios.test.js`新增2項integration-level測試，
-透過真實`handlePbsDebugPush()`端對端驗證字串`"true"`確實會讓mocked AI
-adapter被呼叫、字串`"false"`確實維持0次AI呼叫——不只測純函式。全量
-迴歸1517/1484/33，NEW FAILURES=0（以failure名稱集合對照Phase 3B基準
-確認，本輪唯一差異是先前session量到的一項環境敏感git/build-metadata
-flaky測試這次未再出現）。
-
-本輪**未觸碰**：AI prompt、model ID、AI candidate schema、AI cache、
-cache TTL、`runAiApprovedPbsBroadcast`、LINE policy、
-`MAJOR_ACCIDENT_ONLY` legacy path、service area、lifecycle、
-idempotency、CCTV、Shared Feed、hourly reminder、TDX、Windows
-monitor——單點config parsing hotfix。APP_VERSION維持`V1.9.9`。
-
-**現狀**：`AI_BINDING = ACTIVE`（GPT Work已確認）、
-`AI_DECISION = DISABLED_PENDING_GPT_WORK_RETRY`——修正已部署，但
-Dashboard端`PBS_AI_DECISION_ENABLED`目前仍是GPT Work rollback後的
-`FALSE`，尚未重新設回`"true"`重試。是否／何時重試由GPT Work決定，
-不在本輪範圍。
+根因：Cloudflare Dashboard／CLI Variables 一律以字串注入 Worker，`src/pbs/
+aiConfig.js#resolvePbsAiDecisionEnabled()` 原本嚴格檢查 `typeof ===
+'boolean'`，字串 `"true"` 永遠不符合，導致 GPT Work 在 Dashboard 設定的
+`"true"` 悄悄落回安全預設值 `false`。修正：resolver 同時接受真正
+boolean 與 Cloudflare runtime 字串形式（`"true"`/`"false"`，不分大小寫
+去除空白），其餘一律 fail-safe 回 `false`，不做寬鬆 truthy 判斷。新增
+8 項測試（`test/aiConfig.test.js`、`test/pbsAiDecisionScenarios.test.js`），
+全量迴歸 1517/1484/33，NEW FAILURES=0。單點 config parsing hotfix，
+APP_VERSION 維持 `V1.9.9`。此問題與 V2.0.2 記載的「Dashboard-only 設定
+被 Workers Builds 覆寫」是同一根本模式（wrangler.jsonc 權威 vs Dashboard
+易失狀態）在不同層次的兩次重演，V2.0.2 已將 canonical source 移至
+wrangler.jsonc 徹底解決；完整字串/布林矩陣測試細節見對應測試檔案本身。
 
 ## 修正紀錄｜V1.9.9 Phase 3B — Workers AI Driver Impact Decision Integration（2026-08-28，壓縮摘要）
 

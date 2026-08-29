@@ -181,6 +181,43 @@ Workers Builds → wrangler deploy 都把 `wrangler.jsonc` 視為權威來源，
   **下一個 Agent：不得開始 formatter 修正；不得實作 driverSummary；
   不得開始 hourly reminder。**
 
+## V2.1.0 封版（2026-08-29）— Transport Ack Decoupled From Business Processing
+
+MINOR，正式資料流／責任邊界調整，非單純 timeout patch。
+
+**INCIDENT**：2 筆真實 NEW 事件成功走完 service area + `AI_CALL_STARTED`，
+但 Windows 自身 5 秒 HTTP timeout 觸發時 Cloudflare 仍在 `await` Workers
+AI，因為那段工作從未交給 `ctx.waitUntil()`，client 斷線導致 handler 被
+runtime 直接取消——AI 判斷／LINE／Observatory 全部沒完成，且冪等記錄
+（於 business processing 開始「之前」就已寫入）讓後續 retry 永久被當
+duplicate 擋下。
+
+- `src/index.js` 的 `fetch` handler 現在接收並轉傳 `ctx`；genuinely
+  accepted 的 NEW/UPDATED 事件之 business processing 交給
+  `ctx.waitUntil()`，HTTP 回應不再等 AI 完成
+- KV 冪等記錄新增兩階段標記：`status: PROCESSING`（接受當下）→
+  `COMPLETED`（處理完成後）；`PROCESSING_STALE_MS = 60` 秒讓極少數
+  「原嘗試根本沒被排程」的情況能復原重跑，一般情況（原嘗試仍在背景
+  真實執行）的 retry 仍正確視為重複
+- 刻意不用 Cloudflare Queue／Durable Object——`ctx.waitUntil` 已足夠
+  解決本次已確認的失效模式
+- 正式寫入四層架構角色邊界：`WINDOWS_ROLE=HSINCHU_PBS_FILTER_AND_RELAY`、
+  `CLOUDFLARE_ROLE=INGRESS_STATE_CONTEXT_AND_AI_ORCHESTRATION`、
+  `AI_ROLE=SEMANTIC_DECISION_AUTHORITY`、`LINE_ROLE=DELIVERY_ONLY`、
+  `RAW_PBS_TEXT_POLICY=IMMUTABLE_END_TO_END_UNTIL_AI`
+- 再次驗證（非重新實作）：PBS 原始 `comment`／`sourceDetail` 逐字元
+  完整送達 AI prompt（`buildRawPbsRecordFromPush`／`normalizePbsEvent`／
+  `buildAiCandidate`／`buildAiUserPrompt` 一行未改）；唯讀盤點
+  `pbs-relay/` 分類邏輯，確認不存在「同一事故一小時內」語意抑制規則
+- `APP_VERSION` 從 `V2.0.2` 升為 `V2.1.0`
+- 新增 9 項測試，全量迴歸 1681/1647/34，NEW FAILURES=0（僅跑一次）
+- 本輪**未觸碰**：AI Prompt、AI model、resolver 語意、Windows PBS
+  filter、service area、lifecycle 分類、message formatter、
+  driverSummary、hourly reminder、CCTV、TDX、查修頁 UI（第二階段，
+  刻意不做）
+- 詳見 `03_ARCHITECTURE.md`／`PRODUCT_DECISIONS.md`／`07_KNOWN_ISSUES.md`。
+  **下一個 Agent：不得直接開始查修頁改版（第二階段）。**
+
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
 
 **開工前先寫下 `CURRENT_VERSION` 與 `TARGET_VERSION`**，並確認 TARGET 是 CURRENT 的合法下一版。

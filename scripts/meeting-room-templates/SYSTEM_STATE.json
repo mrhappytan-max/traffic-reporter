@@ -232,40 +232,41 @@
     "AI_CANDIDATE_PIPELINE": "PREPARED_NOT_ACTIVE — V1.9.9 Phase 2: src/pbs/aiCandidate.js builds a minimal AI candidate for every accepted NEW/UPDATED Windows event, parallel to (never gating) the unchanged runLineBroadcast() call. Observability-only; no AI model called, no KV read/write for the reserved AI_DECISION_CACHE_KV_PREFIX yet."
   },
   "taskSeal": {
-    "task": "CONFIG_DRIFT_HOTFIX_V2_0_2",
+    "task": "TRANSPORT_ACK_DECOUPLED_FROM_BUSINESS_PROCESSING_V2_1_0",
     "status": "SEALED",
     "sealedAt": "2026-08-29",
-    "sealedBy": "human directive (路況工程部 V2.0.2 Config Drift Hotfix 正式施工令｜PBS_AI_DECISION_ENABLED canonical deployment fix)",
-    "releaseVersion": "V2.0.2",
-    "previousVersion": "V2.0.1",
-    "nature": "PATCH — Production configuration correctness fix，不改AI semantic behavior。",
-    "configDriftIncident": "PBS_AI_DECISION_ENABLED從V1.9.9 Phase 3D到V2.0.1只存在於Cloudflare Dashboard手動設定，從未進入repo canonical configuration。每次GitHub main -> Workers Builds -> wrangler deploy都把wrangler.jsonc視為權威來源（與TRAFFIC_SOURCE_MODE既有機制相同），悄悄移除/覆寫Dashboard-only的值。GPT Work手動設定的\"true\"因此被後續一次部署移除，AI決策悄悄退回程式碼預設值false，沒有任何人真的改過這個開關。17:49台68事件發生時AI switch已被deployment移除，該筆不算真實AI判讀事件（legacy路徑決定，非Workers AI）。",
-    "fix": "wrangler.jsonc的vars區塊正式宣告\"PBS_AI_DECISION_ENABLED\": \"true\"（字串形式）。PBS_AI_DECISION_ENABLED_SOURCE=WRANGLER_CANONICAL_VAR，DASHBOARD_ONLY_AI_SWITCH=RETIRED，KEEP_VARS=NOT_USED（keep_vars會讓Dashboard-only設定繼續漂移，與本輪repo config authoritative目標相反）。",
-    "regressionGuard": "scripts/check-deployment-policy.mjs新增checkPbsAiDecisionEnabledVar()，與既有checkRequiredBindings()同一模式，npm run check:deployment-policy會在未來有人刪掉這個var時立即失敗。",
-    "scopeDiscipline": "未觸碰AI Prompt、AI model、aiDecisionEngine.js、aiConfig.js resolver語意、Windows PBS filter、service area、lifecycle、message formatter、driverSummary、LINE policy、Shared Feed、CCTV、hourly reminder。未新增任何Secret至wrangler.jsonc vars（測試直接斷言）。",
-    "testEvidence": {
-      "newTests": "10項：test/pbsAiConfigDriftHotfixV202.test.js，全部首次執行即PASS。",
-      "fullRegression": "1549項/1516 pass/33 fail，與V2.0.1基準以failure名稱集合對照確認NEW FAILURES=0，僅跑一次。"
+    "sealedBy": "human directive (路況工程部｜第一階段正式施工令｜四層架構維修 PBS → Windows → Cloudflare → AI → LINE)",
+    "releaseVersion": "V2.1.0",
+    "previousVersion": "V2.0.2",
+    "nature": "MINOR — 正式資料流／責任邊界調整，非單純timeout patch。",
+    "incident": "2筆真實NEW事件成功走完service area + AI_CALL_STARTED，但Windows自身5秒HTTP timeout觸發時Cloudflare仍在await Workers AI，因為那段工作從未交給ctx.waitUntil()，client斷線導致handler被runtime直接取消——AI判斷/LINE/Observatory全部沒完成，且冪等記錄（於business processing開始之前就已寫入）讓後續retry永久被當duplicate擋下。",
+    "fix": "(1) src/index.js的fetch handler現在接收並轉傳ctx；genuinely accepted的NEW/UPDATED事件之business processing交給ctx.waitUntil()，HTTP回應不再等AI完成。(2) KV冪等記錄新增兩階段標記：status=PROCESSING（接受當下）→COMPLETED（處理完成後）；PROCESSING_STALE_MS=60秒讓極少數「原嘗試根本沒被排程」的情況能復原重跑，一般情況（原嘗試仍在背景真實執行）的retry仍正確視為重複。",
+    "rejectedAlternatives": "刻意不用Cloudflare Queue（ctx.waitUntil已是既有Worker lifecycle原語，足以解決本次已確認的失效模式）；刻意不用Durable Object（沿用既有KV_ONLY_ATOMICITY「不要過度設計」先例）。",
+    "fourLayerArchitecture": {
+      "WINDOWS_ROLE": "HSINCHU_PBS_FILTER_AND_RELAY",
+      "CLOUDFLARE_ROLE": "INGRESS_STATE_CONTEXT_AND_AI_ORCHESTRATION",
+      "AI_ROLE": "SEMANTIC_DECISION_AUTHORITY",
+      "LINE_ROLE": "DELIVERY_ONLY",
+      "RAW_PBS_TEXT_POLICY": "IMMUTABLE_END_TO_END_UNTIL_AI"
     },
-    "knownIssueRecordedNotFixed": "PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER — LINE訊息格式化目前不會把PBS comment原文中的精確交流道/匝道文字（例如「近竹科匝道」）帶出來顯示，即使來源comment已經包含這個資訊。與本輪config drift修正無關，刻意不同時處理。",
-    "notTouchedByThisRound": [
-      "AI Prompt（未修改）",
-      "AI model（未更換）",
-      "aiDecisionEngine.js（未修改）",
-      "aiConfig.js resolver語意（未修改）",
-      "Windows PBS filter（未修改）",
-      "service area（未擴大）",
-      "lifecycle（未修改）",
-      "message formatter（未修改，包含已知的近竹科匝道問題）",
-      "driverSummary（未實作）",
-      "LINE policy（未修改）",
-      "Shared Feed（未修改）",
-      "CCTV（未修改）",
-      "hourly reminder（未開始）"
-    ],
-    "readerNote": "完成後STOP。不得開始formatter修正。不得driverSummary。不得hourly reminder。"
+    "rawTextReverification": "再次驗證（非重新實作）：buildRawPbsRecordFromPush/normalizePbsEvent/buildAiCandidate/buildAiUserPrompt本輪一行未改；以真實事件EVENT_ID=11508280025-5執行真正函式鏈路確認FULL_PBS_TEXT_REACHES_AI=YES。",
+    "windowsDedupAudit": "唯讀盤點pbs-relay/的NEW/UPDATED/CLEARED分類邏輯（fingerprintEvent），確認完全以內容fingerprint比對驅動，不存在任何「同一事故一小時內」語意抑制規則——沒有東西需要移除，未違反新四層架構邊界。",
+    "scopeDiscipline": "未觸碰AI Prompt、AI model、aiDecisionEngine.js、aiConfig.js resolver語意、Windows PBS filter、service area、lifecycle分類、message formatter、driverSummary、hourly reminder、CCTV、TDX、查修頁UI（第二階段，刻意不做）。",
+    "testEvidence": {
+      "newTests": "9項：test/pbsDebugPushBackgroundProcessing.test.js 8項全新＋既有KV成本量化測試公式由puts=2N+2更新為puts=3N+2，全部首次執行即PASS。",
+      "fullRegression": "1681項/1647 pass/34 fail，與V2.0.2基準以failure名稱集合對照確認NEW FAILURES=0，僅跑一次。"
+    },
+    "readerNote": "完成第一階段後STOP。不得直接開始查修頁改版（第二階段）。"
   },
   "taskSealHistory": [
+    {
+      "task": "CONFIG_DRIFT_HOTFIX_V2_0_2",
+      "status": "SEALED",
+      "sealedAt": "2026-08-29",
+      "releaseVersion": "V2.0.2",
+      "sealCommit": "2c784b5",
+      "summary": "Config Drift Hotfix：PBS_AI_DECISION_ENABLED從Dashboard-only移至wrangler.jsonc canonical宣告（字串\"true\"）。根因：Workers Builds每次部署都把wrangler.jsonc視為權威來源，悄悄移除Dashboard-only值。PBS_AI_DECISION_ENABLED_SOURCE=WRANGLER_CANONICAL_VAR，DASHBOARD_ONLY_AI_SWITCH=RETIRED，KEEP_VARS=NOT_USED。新增checkPbsAiDecisionEnabledVar() regression guard。10項新測試，1549/1516/33，NEW FAILURES=0。完整記錄見06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V2.0.2條目。"
+    },
     {
       "task": "PBS_WINDOWS_LOCAL_EDGE_DEBUG_PUSH_INTEGRATION_V1_9_6",
       "status": "SEALED",
@@ -575,7 +576,7 @@
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
   "currentPhase": "{{CURRENT_PHASE}}",
-  "currentTask": "none（無進行中工作）。Latest completed task = CONFIG_DRIFT_HOTFIX_V2_0_2，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.0.2（PATCH，config correctness fix，不改AI semantic behavior）。本輪：(1) 根因確認：PBS_AI_DECISION_ENABLED只存在Dashboard，每次deploy被wrangler.jsonc覆寫；(2) wrangler.jsonc vars正式宣告PBS_AI_DECISION_ENABLED=\"true\"（字串）；(3) PBS_AI_DECISION_ENABLED_SOURCE=WRANGLER_CANONICAL_VAR，DASHBOARD_ONLY_AI_SWITCH=RETIRED，KEEP_VARS=NOT_USED；(4) 新增checkPbsAiDecisionEnabledVar() regression guard；(5) 17:49台68事件確認非真實AI判讀（AI switch當時已被移除）。新增10項測試，1549/1516/33，NEW FAILURES=0。另記已知問題PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER（本輪不修）。FIRST_REAL_AI_EVENT仍為WAITING（不變）。下一件事若要開工：等待GPT Work確認Production端Variable已生效並觀察真實AI判讀事件；或見07_KNOWN_ISSUES.md既有約33項過期斷言（與本輪無關）。",
+  "currentTask": "none（無進行中工作）。Latest completed task = TRANSPORT_ACK_DECOUPLED_FROM_BUSINESS_PROCESSING_V2_1_0，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.1.0（MINOR，正式資料流／責任邊界調整）。本輪：(1) 根因確認：Windows 5秒HTTP timeout在Cloudflare仍await Workers AI時觸發，因background work從未交給ctx.waitUntil()導致handler被取消，冪等記錄過早寫入永久擋下retry；(2) src/index.js fetch handler接收並轉傳ctx，business processing改交給ctx.waitUntil()；(3) KV冪等記錄新增status=PROCESSING/COMPLETED兩階段標記，PROCESSING_STALE_MS=60秒容許復原重跑；(4) 正式寫入四層架構角色邊界（WINDOWS_ROLE/CLOUDFLARE_ROLE/AI_ROLE/LINE_ROLE/RAW_PBS_TEXT_POLICY）；(5) 再次驗證PBS原始comment/sourceDetail逐字元完整送達AI；(6) 唯讀盤點Windows端無「一小時內同事故」抑制規則。新增9項測試，1681/1647/34，NEW FAILURES=0。下一件事若要開工：查修頁第二階段改版（本輪刻意未做）；或觀察FIRST_REAL_AI_EVENT是否出現；或見07_KNOWN_ISSUES.md既有約34項過期斷言（與本輪無關）。",
   "knownBlocker": "{{KNOWN_BLOCKER}}",
   "realWorldConfirmation": {
     "status": "{{REAL_WORLD_CONFIRMATION}}",

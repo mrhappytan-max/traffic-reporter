@@ -9,20 +9,20 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V2.0.2（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | fbc50329f8333114d7bfa4485ecc46a14f86c3a2 |
+| Current Version | V2.1.0（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | e6a1e2c39250df533fe0f4715bf8aa5f9fd366c9 |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty (9 changed source file(s)) |
+| Source working tree | dirty (12 changed source file(s)) |
 | Production | DEPLOYED |
-| Production Verification | V2.0.2 sealed (config correctness fix only). NOT_OBSERVED independently by this session (sandbox network policy blocks Production domain and Cloudflare Dashboard). |
-| Current Phase | V2.0.2 SEALED — Config Drift Hotfix，PBS_AI_DECISION_ENABLED 已正式宣告於 wrangler.jsonc（canonical，非Dashboard）。FIRST_REAL_AI_EVENT仍為WAITING |
-| Current Task | none（無進行中工作）。Latest completed task = CONFIG_DRIFT_HOTFIX_V2_0_2，status = SEALED。詳見 SYSTEM_STATE.json 的 taskSeal 與 03_ARCHITECTURE.md/02_PROJECT_HANDOFF.md/07_KNOWN_ISSUES.md。 |
-| Latest Completed Version | V2.0.2 |
-| Known Blocker | 無 repo-side blocker。FIRST_REAL_AI_EVENT=WAITING（下一個observational milestone，非封版blocker）；另記已知問題PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER（本輪不修） |
-| Real-world Confirmation | NOT_OBSERVED — FIRST_REAL_AI_EVENT not yet confirmed by this session |
+| Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
+| Current Phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
+| Current Task | none（無進行中工作）。Latest completed task = DRIVE_SYNC_GOVERNANCE_V2，status = SEALED（前序 PBS_ACCIDENT_CCTV_ENRICHMENT_FIX、PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX、PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。雲端治理：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源，封版時只寫 GitHub、不要自己搬檔案到 Drive；GitHub → Drive 自動同步已由真人建置並實測通過（GitHub Actions，engineering-memory/ 為 canonical mirror source），GITHUB_TO_DRIVE_SYNC = PASS；不得人工補上傳，也不要重建那套自動同步。詳見 SYSTEM_STATE.json 的 cloudSyncGovernance。觀察中（非工作項，不是待辦）：一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數 |
+| Latest Completed Version | V2.1.0 |
+| Known Blocker | 無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md |
+| Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 等待GPT Work確認Production端wrangler.jsonc canonical設定已透過deploy生效；等待真實Production PBS事件走完完整AI判讀路徑的觀察證據 |
-| Export Generated At | 2026-08-28T11:57:52.387Z |
+| Next Action | 無待辦。TDX 額度恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計） |
+| Export Generated At | 2026-08-29T02:58:53.054Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## V1.9.9 Phase 1 封版（2026-08-28，另一個 session 完成，本 Cloud Session 未參與，port 進本模板僅為維持 template↔engineering-memory 一致）
@@ -181,6 +181,43 @@ Workers Builds → wrangler deploy 都把 `wrangler.jsonc` 視為權威來源，
   **下一個 Agent：不得開始 formatter 修正；不得實作 driverSummary；
   不得開始 hourly reminder。**
 
+## V2.1.0 封版（2026-08-29）— Transport Ack Decoupled From Business Processing
+
+MINOR，正式資料流／責任邊界調整，非單純 timeout patch。
+
+**INCIDENT**：2 筆真實 NEW 事件成功走完 service area + `AI_CALL_STARTED`，
+但 Windows 自身 5 秒 HTTP timeout 觸發時 Cloudflare 仍在 `await` Workers
+AI，因為那段工作從未交給 `ctx.waitUntil()`，client 斷線導致 handler 被
+runtime 直接取消——AI 判斷／LINE／Observatory 全部沒完成，且冪等記錄
+（於 business processing 開始「之前」就已寫入）讓後續 retry 永久被當
+duplicate 擋下。
+
+- `src/index.js` 的 `fetch` handler 現在接收並轉傳 `ctx`；genuinely
+  accepted 的 NEW/UPDATED 事件之 business processing 交給
+  `ctx.waitUntil()`，HTTP 回應不再等 AI 完成
+- KV 冪等記錄新增兩階段標記：`status: PROCESSING`（接受當下）→
+  `COMPLETED`（處理完成後）；`PROCESSING_STALE_MS = 60` 秒讓極少數
+  「原嘗試根本沒被排程」的情況能復原重跑，一般情況（原嘗試仍在背景
+  真實執行）的 retry 仍正確視為重複
+- 刻意不用 Cloudflare Queue／Durable Object——`ctx.waitUntil` 已足夠
+  解決本次已確認的失效模式
+- 正式寫入四層架構角色邊界：`WINDOWS_ROLE=HSINCHU_PBS_FILTER_AND_RELAY`、
+  `CLOUDFLARE_ROLE=INGRESS_STATE_CONTEXT_AND_AI_ORCHESTRATION`、
+  `AI_ROLE=SEMANTIC_DECISION_AUTHORITY`、`LINE_ROLE=DELIVERY_ONLY`、
+  `RAW_PBS_TEXT_POLICY=IMMUTABLE_END_TO_END_UNTIL_AI`
+- 再次驗證（非重新實作）：PBS 原始 `comment`／`sourceDetail` 逐字元
+  完整送達 AI prompt（`buildRawPbsRecordFromPush`／`normalizePbsEvent`／
+  `buildAiCandidate`／`buildAiUserPrompt` 一行未改）；唯讀盤點
+  `pbs-relay/` 分類邏輯，確認不存在「同一事故一小時內」語意抑制規則
+- `APP_VERSION` 從 `V2.0.2` 升為 `V2.1.0`
+- 新增 9 項測試，全量迴歸 1681/1647/34，NEW FAILURES=0（僅跑一次）
+- 本輪**未觸碰**：AI Prompt、AI model、resolver 語意、Windows PBS
+  filter、service area、lifecycle 分類、message formatter、
+  driverSummary、hourly reminder、CCTV、TDX、查修頁 UI（第二階段，
+  刻意不做）
+- 詳見 `03_ARCHITECTURE.md`／`PRODUCT_DECISIONS.md`／`07_KNOWN_ISSUES.md`。
+  **下一個 Agent：不得直接開始查修頁改版（第二階段）。**
+
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
 
 **開工前先寫下 `CURRENT_VERSION` 與 `TARGET_VERSION`**，並確認 TARGET 是 CURRENT 的合法下一版。
@@ -258,12 +295,3 @@ Secret 或 Task Scheduler、不要碰本機 Prototype runtime。**
 ## 這份檔案之外，還想知道更多才讀
 
 架構細節 → `03_ARCHITECTURE.md`　設計理由 → `04_PRODUCT_DECISIONS.md`　版本線 → `06_VERSION_HISTORY.md`　已知問題 → `07_KNOWN_ISSUES.md`　治理規則全文 → `01_FOUR_DEPARTMENT_GOVERNANCE.md`　接班摘要 → `02_PROJECT_HANDOFF.md`　完整工程歷史 → Repo `PROJECT_HANDOFF.md`（雲端分段見 `_history/`）
-
-## Engineering Memory 同步治理（2026-08-25 起）
-
-- `traffic-reporter` GitHub `main` 是唯一 canonical source。
-- Google Drive `路況播報員_工程記憶` 是 automated mirror。
-- 正常寫入路徑只允許 GitHub main → GitHub Actions → Google Drive API。
-- 同步採 missing → create、changed → update、unchanged → skip，不自動刪除 Drive 其他檔案。
-- Claude / Agent 不得日常從 Drive 反向搬回 GitHub，也不得人工逐檔上傳 Drive。
-- 認證採 GitHub OIDC + Google Workload Identity Federation 短效憑證；禁止建立長期 Service Account JSON key。
