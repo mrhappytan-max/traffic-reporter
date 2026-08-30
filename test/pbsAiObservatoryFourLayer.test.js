@@ -10,10 +10,51 @@
 
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { handlePbsDebugPush, PBS_DEBUG_PUSH_PATH, IDEMPOTENCY_STATUS, resetPbsDebugPushIdempotencyState } from '../src/pbs/debugPush.js';
+import {
+  handlePbsDebugPush as realHandlePbsDebugPush,
+  handlePbsAiQueueBatch,
+  PBS_DEBUG_PUSH_PATH,
+  IDEMPOTENCY_STATUS,
+  resetPbsDebugPushIdempotencyState,
+} from '../src/pbs/debugPush.js';
 import { handleAiObservatoryView } from '../src/pbs/aiObservatoryView.js';
 import { AI_OUTCOME } from '../src/pbs/aiObservatoryIndex.js';
 import { setUserEnabled } from '../src/traffic/subscriptions.js';
+
+// V2.3.0 — see test/pbsAiDecisionScenarios.test.js's own comment for the
+// full rationale: a self-draining fake Queue, attached transparently by a
+// same-named wrapper around handlePbsDebugPush, UNLESS a test supplies
+// its own `PBS_AI_QUEUE` (test 6 below deliberately does, to observe the
+// genuinely-still-PROCESSING state before the Queue Consumer ever runs).
+function fakeQueue(env) {
+  return {
+    async send(message) {
+      let attempts = 0;
+      for (;;) {
+        attempts += 1;
+        let acked = false;
+        let retried = false;
+        const message_ = {
+          body: message,
+          attempts,
+          ack() {
+            acked = true;
+          },
+          retry() {
+            retried = true;
+          },
+        };
+        await handlePbsAiQueueBatch({ messages: [message_] }, env);
+        if (acked || !retried || attempts >= 10) break;
+      }
+    },
+  };
+}
+
+async function handlePbsDebugPush(request, env, ...rest) {
+  if (env && !env.PBS_AI_QUEUE) env.PBS_AI_QUEUE = fakeQueue(env);
+  return realHandlePbsDebugPush(request, env, ...rest);
+}
 
 const SECRET = 'real-debug-secret-value';
 const NOW = new Date('2026-08-29T10:00:00+08:00'); // within LINE broadcast hours
@@ -153,13 +194,54 @@ test('2: AI notify=false — all four layers visible, LINE explicitly shown as n
 // --- 3/4: AI failure / AI invalid ------------------------------------------
 
 test('3: AI call failure — visible as a card, LINE never attempted, reason honestly UNKNOWN', async () => {
+  // V2.3.0 — a persistently-failing AI call (network/binding/timeout —
+  // AI_OUTCOME.AI_CALL_FAILED) is now Queue-retryable (order section 八);
+  // this fixture's AI mock ALWAYS throws, so the self-draining fake Queue
+  // genuinely exhausts MAX_QUEUE_RETRIES and the terminal outcome is
+  // PROCESSING_FAILED, not a lone AI_CALL_FAILED — see test 3b below for
+  // a single (non-exhausted) AI_CALL_FAILED attempt on its own terms, and
+  // test/pbsAiQueueReliability.test.js for the full retry regression.
   const env = await baseEnv({ AI: mockAi(null, { throwError: new Error('simulated network failure') }) });
   await handlePbsDebugPush(pushRequest({ body: validPayload({ eventId: 'PBS-4L-3', fingerprint: 'fp-4l-3' }) }), env, NOW);
   assert.equal(lineFetchCalls, 0);
 
   const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
-  assert.ok(html.includes('AI：判讀失敗，安全不通報'));
-  assert.ok(html.includes('AI 判讀失敗，安全不通報'), 'LINE 未執行原因 must name AI failure, not a generic UNKNOWN');
+  assert.ok(html.includes('AI／背景處理最終失敗'));
+  assert.ok(html.includes('背景處理已重試仍未能可靠完成，安全不通報'), 'LINE 未執行原因 must name the real cause, not a generic UNKNOWN');
+  assert.ok(!html.includes('LINE 已發送'));
+});
+
+test('3b: a SINGLE AI_CALL_FAILED attempt (not yet retried) is visible as its own distinct card, LINE never attempted', async () => {
+  let calls = 0;
+  const env = await baseEnv({
+    AI: {
+      run: async () => {
+        calls += 1;
+        throw new Error('simulated transient failure');
+      },
+    },
+    // A non-draining queue: capture the message without consuming it, so
+    // we can observe the state after exactly ONE (failed) attempt.
+    PBS_AI_QUEUE: {
+      captured: [],
+      async send(message) {
+        this.captured.push(message);
+      },
+    },
+  });
+  await handlePbsDebugPush(pushRequest({ body: validPayload({ eventId: 'PBS-4L-3B', fingerprint: 'fp-4l-3b' }) }), env, NOW);
+  const message = { body: env.PBS_AI_QUEUE.captured[0], attempts: 1, ack() {}, retry() {} };
+  let retried = false;
+  message.retry = () => {
+    retried = true;
+  };
+  await handlePbsAiQueueBatch({ messages: [message] }, env);
+
+  assert.equal(calls, 1, 'exactly one AI call for exactly one delivery attempt');
+  assert.ok(retried, 'a single transient failure must be retried, not immediately given up on');
+
+  const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
+  assert.ok(html.includes('AI：判讀失敗，安全不通報'), 'a single AI_CALL_FAILED attempt (not yet exhausted) keeps its own distinct label');
   assert.ok(!html.includes('LINE 已發送'));
 });
 
@@ -186,22 +268,35 @@ test('5: a transport duplicate never creates a second Observatory entry', async 
 
 // --- 6/7: Cloudflare PROCESSING vs COMPLETED --------------------------------
 
-test('6: Cloudflare layer shows PROCESSING while the AI call is still genuinely in flight', async () => {
-  const deferred = (() => {
-    let resolve;
-    const promise = new Promise((res) => { resolve = res; });
-    return { promise, resolve };
-  })();
-  const env = await baseEnv({ AI: { run: async () => deferred.promise } });
-  const ctx = { waitUntil(p) { this._p = p; } };
-  await handlePbsDebugPush(pushRequest({ body: validPayload({ eventId: 'PBS-4L-6', fingerprint: 'fp-4l-6' }) }), env, NOW, ctx);
+test('6: Cloudflare layer shows PROCESSING while the event is enqueued but not yet consumed', async () => {
+  // V2.3.0 — AI business processing no longer runs in this Worker
+  // invocation at all (not even via ctx.waitUntil — see debugPush.js's
+  // own header comment for the real incident this retires it over). This
+  // test's own PBS_AI_QUEUE deliberately does NOT auto-drain (unlike
+  // fakeQueue() above) — it just captures the message — so we can observe
+  // the genuinely-still-PROCESSING state before the Queue Consumer has
+  // ever run, then drive it explicitly ourselves.
+  const capturedMessages = [];
+  const env = await baseEnv({
+    AI: mockAi(verdictJson({ notify: false })),
+    PBS_AI_QUEUE: {
+      async send(message) {
+        capturedMessages.push(message);
+      },
+    },
+  });
+  const res = await handlePbsDebugPush(pushRequest({ body: validPayload({ eventId: 'PBS-4L-6', fingerprint: 'fp-4l-6' }) }), env, NOW);
+  assert.equal((await res.json()).accepted, true, 'the HTTP response reflects a durable ENQUEUE, not AI completion');
+  assert.equal(capturedMessages.length, 1, 'exactly one message was handed to the Queue');
 
   const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
   assert.ok(html.includes(IDEMPOTENCY_STATUS.PROCESSING));
   assert.ok(html.includes('AI：未執行（處理中或未完成）'));
 
-  deferred.resolve({ response: verdictJson({ notify: false }) });
-  await ctx._p; // let the background work finish so it doesn't leak into the next test
+  // Drive the Queue Consumer ourselves so this event doesn't leak into
+  // the next test's own KV store expectations.
+  const message = { body: capturedMessages[0], attempts: 1, ack() {}, retry() {} };
+  await handlePbsAiQueueBatch({ messages: [message] }, env);
 });
 
 test('7: Cloudflare layer shows COMPLETED once business processing genuinely finishes', async () => {

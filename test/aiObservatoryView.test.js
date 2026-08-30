@@ -7,10 +7,49 @@
 
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { handlePbsDebugPush, PBS_DEBUG_PUSH_PATH, resetPbsDebugPushIdempotencyState } from '../src/pbs/debugPush.js';
+import {
+  handlePbsDebugPush as realHandlePbsDebugPush,
+  handlePbsAiQueueBatch,
+  PBS_DEBUG_PUSH_PATH,
+  resetPbsDebugPushIdempotencyState,
+} from '../src/pbs/debugPush.js';
 import { handleAiObservatoryView } from '../src/pbs/aiObservatoryView.js';
 import { setUserEnabled } from '../src/traffic/subscriptions.js';
 import { APP_VERSION } from '../src/version.js';
+
+// V2.3.0 — see test/pbsAiDecisionScenarios.test.js's own comment for the
+// full rationale: a self-draining fake Queue, attached transparently by a
+// same-named wrapper around handlePbsDebugPush, so every existing call
+// site here keeps observing fully-completed business processing.
+function fakeQueue(env) {
+  return {
+    async send(message) {
+      let attempts = 0;
+      for (;;) {
+        attempts += 1;
+        let acked = false;
+        let retried = false;
+        const message_ = {
+          body: message,
+          attempts,
+          ack() {
+            acked = true;
+          },
+          retry() {
+            retried = true;
+          },
+        };
+        await handlePbsAiQueueBatch({ messages: [message_] }, env);
+        if (acked || !retried || attempts >= 10) break;
+      }
+    },
+  };
+}
+
+async function handlePbsDebugPush(request, env, ...rest) {
+  if (env && !env.PBS_AI_QUEUE) env.PBS_AI_QUEUE = fakeQueue(env);
+  return realHandlePbsDebugPush(request, env, ...rest);
+}
 
 const SECRET = 'real-debug-secret-value';
 const NOW = new Date('2026-08-29T10:00:00+08:00'); // within LINE broadcast hours
@@ -140,13 +179,19 @@ test('5: notify=false is correctly displayed as "AI：不需主動通報"', asyn
   assert.ok(html.includes('短暫輕微影響，可正常通行'));
 });
 
-test('6: AI failure (429/invalid) is correctly displayed as "AI：判讀失敗，安全不通報"', async () => {
+test('6: AI failure (429/invalid) is correctly displayed as a failure, never the legacy hard-rule label', async () => {
+  // V2.3.0 — a PERSISTENT 429 (this fixture's AI mock always throws) is
+  // now Queue-retried (order section 八) via the self-draining fake
+  // Queue; retries genuinely exhaust and the terminal outcome is
+  // PROCESSING_FAILED, not a lone AI_CALL_FAILED — see
+  // test/pbsAiObservatoryFourLayer.test.js's own test 3b for a single
+  // (non-exhausted) AI_CALL_FAILED attempt on its own terms.
   const env = await baseEnv({ AI: mockAi(null, { throwError: new Error('429 Too Many Requests') }) });
   await handlePbsDebugPush(pushRequest({ body: validPayload({ eventId: 'PBS-OBS-D', fingerprint: 'fp-d', event: fullEventFields() }) }), env, NOW);
 
   const res = await handleAiObservatoryView(env, viewRequest(), NOW);
   const html = await res.text();
-  assert.ok(html.includes('AI：判讀失敗，安全不通報'));
+  assert.ok(html.includes('AI／背景處理最終失敗'));
   assert.ok(!html.includes('不符合播報資格'), 'must never use the legacy V1.x hard-rule label for an AI-path event');
 });
 
@@ -227,11 +272,12 @@ test('11: missing/expired AI decision cache data renders UNKNOWN / NOT RECORDED,
 // V2.0.1 order item 12's own literal version checklist assertion. Kept as
 // a live "current version" smoke check rather than a frozen historical
 // literal — updated in the SAME commit as every subsequent APP_VERSION
-// bump (V2.2.0's own Four-Layer Event Lifecycle round moved it here),
+// bump (V2.2.0's own Four-Layer Event Lifecycle round moved it here;
+// V2.3.0's own PBS AI Queue Reliability round only bumps the literal),
 // same discipline test/versionLineage.test.js's own series-prefix check
 // already follows.
 test('12: APP_VERSION reflects the current release', () => {
-  assert.equal(APP_VERSION, 'V2.2.0');
+  assert.equal(APP_VERSION, 'V2.3.0');
 });
 
 test('SERVICE_AREA_EXCLUDED events show "服務區域外", never routed through AI at all', async () => {

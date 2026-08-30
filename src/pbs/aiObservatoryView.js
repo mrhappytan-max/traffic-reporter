@@ -57,6 +57,11 @@ const OUTCOME_META = {
   // the background attempt was lost) — never silently absent from the
   // page.
   [AI_OUTCOME.PROCESSING_STARTED]: { emoji: '⚪', label: 'AI：未執行（處理中或未完成）', cls: 'unknown' },
+  // V2.3.0 (order section 十) — the Queue Consumer gave up after
+  // MAX_QUEUE_RETRIES genuinely-retried attempts; distinct from
+  // AI_CALL_FAILED (a single attempt's call didn't complete) — this means
+  // retries were exhausted and processing is now definitively terminal.
+  [AI_OUTCOME.PROCESSING_FAILED]: { emoji: '❌', label: 'AI／背景處理最終失敗（已重試仍未完成）', cls: 'warn' },
 };
 function outcomeMeta(outcome) {
   return OUTCOME_META[outcome] || { emoji: 'ℹ️', label: outcome || '未知', cls: 'unknown' };
@@ -73,6 +78,7 @@ const STATUS_FILTER_OPTIONS = [
   ['AI_FAILED', 'AI 判讀失敗'],
   ['AI_NOT_INVOKED_LEGACY_PATH', '尚未判讀'],
   [AI_OUTCOME.PROCESSING_STARTED, '處理中／未完成'],
+  [AI_OUTCOME.PROCESSING_FAILED, '背景處理最終失敗'],
   ['DUPLICATE', '重複事件'],
 ];
 function matchesStatusFilter(record, statusFilter) {
@@ -175,7 +181,10 @@ function deriveAiStageFlags(outcome) {
   if (outcome === AI_OUTCOME.PROCESSING_STARTED) return { candidateCreated: null, aiCallStarted: null };
   if (outcome === AI_OUTCOME.SERVICE_AREA_EXCLUDED) return { candidateCreated: false, aiCallStarted: false };
   if (outcome === AI_OUTCOME.AI_NOT_INVOKED_LEGACY_PATH) return { candidateCreated: true, aiCallStarted: false };
-  return { candidateCreated: true, aiCallStarted: true }; // AI_CALL_FAILED / AI_DECISION_INVALID / AI_NOTIFY_TRUE / AI_NOTIFY_FALSE
+  // PROCESSING_FAILED: retries were genuinely attempted, so a candidate
+  // and at least one AI call attempt did happen — just never reliably
+  // completed.
+  return { candidateCreated: true, aiCallStarted: true }; // AI_CALL_FAILED / AI_DECISION_INVALID / AI_NOTIFY_TRUE / AI_NOTIFY_FALSE / PROCESSING_FAILED
 }
 
 function triStateLabel(value, trueLabel, falseLabel) {
@@ -199,6 +208,8 @@ function lineNotAttemptedReason(record) {
       return 'AI notify=false';
     case AI_OUTCOME.AI_NOT_INVOKED_LEGACY_PATH:
       return '既有規則判定不符合播報資格';
+    case AI_OUTCOME.PROCESSING_FAILED:
+      return '背景處理已重試仍未能可靠完成，安全不通報';
     default:
       return 'UNKNOWN / NOT RECORDED';
   }
@@ -227,6 +238,7 @@ function layerStatusForAi(record) {
       return 'none';
     case AI_OUTCOME.AI_CALL_FAILED:
     case AI_OUTCOME.AI_DECISION_INVALID:
+    case AI_OUTCOME.PROCESSING_FAILED:
       return 'fail';
     case AI_OUTCOME.AI_NOTIFY_TRUE:
     case AI_OUTCOME.AI_NOTIFY_FALSE:
@@ -239,7 +251,7 @@ function layerStatusForLine(record) {
   if (record.lineSent) return 'ok';
   if (record.lineAttempted) return 'fail';
   if (record.outcome === AI_OUTCOME.PROCESSING_STARTED) return 'pending';
-  return 'none';
+  return 'none'; // includes PROCESSING_FAILED — LINE was never reached
 }
 
 function renderFlowStrip(record, idem) {

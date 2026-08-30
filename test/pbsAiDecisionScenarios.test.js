@@ -9,8 +9,54 @@
 
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { handlePbsDebugPush, PBS_DEBUG_PUSH_PATH, resetPbsDebugPushIdempotencyState } from '../src/pbs/debugPush.js';
+import {
+  handlePbsDebugPush as realHandlePbsDebugPush,
+  handlePbsAiQueueBatch,
+  PBS_DEBUG_PUSH_PATH,
+  resetPbsDebugPushIdempotencyState,
+} from '../src/pbs/debugPush.js';
 import { setUserEnabled } from '../src/traffic/subscriptions.js';
+
+// V2.3.0 — a SELF-DRAINING fake Queue: `.send()` immediately drives the
+// REAL handlePbsAiQueueBatch (including its own bounded retry loop)
+// against the message just enqueued, so every existing call site in this
+// file — most of which build their own ad-hoc `env` object literal rather
+// than going through a shared `baseEnv()` — still observes fully-
+// completed business processing without needing each one edited
+// individually. `handlePbsDebugPush` below shadows the real import,
+// attaching this fake queue to `env` (if the test didn't already supply
+// its own) before delegating — a pure wrapper, never a second
+// implementation. See test/pbsAiQueueReliability.test.js for the real
+// Queue reliability/retry semantics on their own terms.
+function fakeQueue(env) {
+  return {
+    async send(message) {
+      let attempts = 0;
+      for (;;) {
+        attempts += 1;
+        let acked = false;
+        let retried = false;
+        const message_ = {
+          body: message,
+          attempts,
+          ack() {
+            acked = true;
+          },
+          retry() {
+            retried = true;
+          },
+        };
+        await handlePbsAiQueueBatch({ messages: [message_] }, env);
+        if (acked || !retried || attempts >= 10) break;
+      }
+    },
+  };
+}
+
+async function handlePbsDebugPush(request, env, ...rest) {
+  if (env && !env.PBS_AI_QUEUE) env.PBS_AI_QUEUE = fakeQueue(env);
+  return realHandlePbsDebugPush(request, env, ...rest);
+}
 
 const SECRET = 'real-debug-secret-value';
 const NOW = new Date('2026-08-28T10:00:00+08:00'); // within LINE broadcast hours

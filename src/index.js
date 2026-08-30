@@ -15,7 +15,7 @@ import { handlePipelineTrace } from './traffic/pipelineTrace.js';
 import { handlePipelineTraceView } from './traffic/pipelineTraceView.js';
 import { handleDeploymentStatus, handleVersion } from './traffic/deploymentStatus.js';
 import { handleDeploymentStatusView } from './traffic/deploymentStatusView.js';
-import { handlePbsDebugPush, PBS_DEBUG_PUSH_PATH } from './pbs/debugPush.js';
+import { handlePbsDebugPush, PBS_DEBUG_PUSH_PATH, handlePbsAiQueueBatch } from './pbs/debugPush.js';
 import { handleAiObservatoryView } from './pbs/aiObservatoryView.js';
 
 // V1.6.3 — Admin Protection: every human-facing admin/debug page requires
@@ -251,5 +251,18 @@ export default {
         console.error(`[cron] pipeline failed: ${err && err.message}`);
       })
     );
+  },
+
+  // V2.3.0 — PBS AI Queue Reliability. Cloudflare Queues consumer entry
+  // point (wrangler.jsonc's queues.consumers block, bound to the SAME
+  // queue declared in queues.producers/PBS_AI_QUEUE). Triggered by
+  // Cloudflare Queues on its own delivery schedule — genuinely
+  // independent of any HTTP request's lifecycle, which is the entire
+  // point (see src/pbs/debugPush.js's own header comment for the real
+  // incident this replaces ctx.waitUntil-for-AI over). All real logic
+  // lives in debugPush.js's own handlePbsAiQueueBatch — never
+  // reimplemented here.
+  async queue(batch, env, ctx) {
+    await handlePbsAiQueueBatch(batch, env);
   },
 };

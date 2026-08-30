@@ -81,8 +81,19 @@ const MAX_ENTRIES_SCANNED = 300;
 // mode this order's own section 九 asks the Observatory to stop hiding)
 // is therefore still visible as a card — its outcome simply never moves
 // past PROCESSING_STARTED, rather than never having a card at all.
+// V2.3.0 — PROCESSING_FAILED (order section 十). Written by the Queue
+// Consumer ONLY when a genuinely-retried event still hasn't reliably
+// completed after MAX_QUEUE_RETRIES attempts — the one new terminal
+// state this round adds, deliberately not a larger state machine. Distinct
+// from AI_CALL_FAILED (a single attempt's call didn't reliably complete —
+// still retryable) and from AI_DECISION_INVALID (the call DID complete,
+// with an invalid answer — an existing, unretried, fail-closed terminal
+// outcome): PROCESSING_FAILED means retries were exhausted and business
+// processing must stop, terminal, ack'd — never left stuck at
+// PROCESSING_STARTED forever.
 export const AI_OUTCOME = {
   PROCESSING_STARTED: 'PROCESSING_STARTED',
+  PROCESSING_FAILED: 'PROCESSING_FAILED',
   SERVICE_AREA_EXCLUDED: 'SERVICE_AREA_EXCLUDED',
   AI_NOT_INVOKED_LEGACY_PATH: 'AI_NOT_INVOKED_LEGACY_PATH',
   AI_CALL_FAILED: 'AI_CALL_FAILED',

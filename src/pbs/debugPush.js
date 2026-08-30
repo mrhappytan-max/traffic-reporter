@@ -217,6 +217,100 @@
 // page itself) — this file's AI-or-legacy decision logic, idempotency
 // design, and background-execution model (V2.1.0) are UNCHANGED.
 
+// V2.3.0 — PBS AI Queue Reliability (order: 路況工程部｜V2.3.0 正式施工令
+// ｜PBS AI Queue Reliability｜Cloudflare Queues 可靠背景處理).
+//
+// REAL PRODUCTION INCIDENT this round fixes: EVENT_ID=11508290166-0.
+// Cloudflare received the event, built the AI candidate, and started the
+// Workers AI call (16:49:03.112) — but the AI call itself did not return
+// within the Cloudflare runtime's own background-execution window, and at
+// 16:49:32.912 the platform force-cancelled the whole ctx.waitUntil task:
+// "waitUntil() tasks did not complete within the allowed time after
+// invocation end and have been cancelled." AI_CALL_COMPLETED=NO,
+// AI_DECISION=NONE, LINE=NOT_EXECUTED, OBSERVATORY_FINAL=NONE,
+// IDEMPOTENCY stayed PROCESSING permanently (its own 60s
+// PROCESSING_STALE_MS window helps a RETRY recover, but does nothing for
+// the original request's own AI decision, which is simply gone).
+// ROOT_CAUSE = a Workers AI call was placed inside ctx.waitUntil(), a
+// background-execution primitive with its OWN platform-enforced time
+// budget completely independent of Windows's HTTP timeout (the V2.1.0
+// fix already solved the "Windows's own short timeout races Workers AI"
+// failure mode — this is a DIFFERENT failure mode: the AI call itself
+// can simply run long enough to exceed Cloudflare's own background
+// window, something no client-side timeout tuning can prevent).
+//
+// FIX — WAITUNTIL_AI_PROCESSING = RETIRED. AI business processing no
+// longer runs inside this Worker's own HTTP-triggered invocation AT ALL
+// (not synchronously, not via ctx.waitUntil) — it runs in a genuinely
+// separate Worker invocation triggered by Cloudflare Queues, which has NO
+// coupling whatsoever to the HTTP request that originally accepted the
+// event:
+//
+//   Windows -> POST /internal/pbs-debug-push
+//     -> auth/validate/idempotency (unchanged)
+//     -> write status=PROCESSING (unchanged)
+//     -> write Observatory PROCESSING_STARTED (unchanged content, moved
+//        earlier — now written before enqueue, not before the old
+//        ctx.waitUntil closure)
+//     -> env.PBS_AI_QUEUE.send(message)   <- NEW: replaces ctx.waitUntil
+//     -> HTTP ACK (fast — reflects "durably enqueued", same principle
+//        V2.1.0 already established for "durably accepted")
+//
+//   Cloudflare Queues (independent delivery, AT_LEAST_ONCE)
+//     -> queue() handler (src/index.js) -> handlePbsAiQueueBatch (below)
+//     -> processQueuedPbsEvent: the EXACT SAME candidate/AI-decision/
+//        legacy/Observatory-final logic V2.1.0/V2.2.0 ran via
+//        ctx.waitUntil — REUSED, not reimplemented, just relocated and
+//        parameterized by the queue message instead of closed over the
+//        HTTP request
+//     -> success -> Observatory final + idempotency COMPLETED -> ack
+//     -> AI_CALL_FAILED (a call that didn't reliably complete — network/
+//        5xx/timeout/capacity) -> bounded Queue retry (MAX_QUEUE_RETRIES)
+//     -> retries exhausted -> ONE new terminal state,
+//        AI_OUTCOME.PROCESSING_FAILED (aiObservatoryIndex.js), written
+//        deterministically by THIS code (never left to an unconfigured
+//        platform DLQ/drop) + idempotency COMPLETED + ack — never stuck
+//        at PROCESSING forever
+//
+// AI_DECISION_INVALID (the call DID complete, with an invalid answer) is
+// UNCHANGED and NOT retried — the order is explicit that this round only
+// adds retry for "工作未可靠完成", never loosens the EXISTING fail-closed
+// policy for a completed-but-invalid AI response.
+//
+// QUEUE DELIVERY MODEL — AT_LEAST_ONCE (Cloudflare's own documented
+// guarantee, never assumed exactly-once). BUSINESS OUTCOME MODEL —
+// EFFECTIVELY_ONCE: a re-delivered message re-checks the SAME transport
+// idempotency record FIRST (processQueuedPbsEvent's own first step) and
+// skips all business processing the instant it finds status=COMPLETED —
+// on top of which the EXISTING notified-state/incident-suppression LINE
+// dedup (untouched this round) is the ultimate backstop against a real
+// double LINE push even in the narrow window where a retry re-runs
+// processing whose earlier attempt already pushed LINE successfully but
+// crashed before marking COMPLETED.
+//
+// KV COST — unchanged in the clean (no-retry) case: the SAME four writes
+// V2.2.0 already made (idempotency PROCESSING+COMPLETED, Observatory
+// PROCESSING_STARTED+final) still happen exactly once each — the Queue
+// Consumer's final write reuses the identical KV keys the old
+// ctx.waitUntil closure used, just from a different call site.
+// EXTRA_KV_WRITES_PER_EVENT (clean case) = 0. A retried event costs one
+// additional informational Observatory PUT per retry attempt (same KV
+// key, overwritten) — see this round's own final report for the measured
+// numbers.
+//
+// EXPLICITLY UNCHANGED THIS ROUND: Windows PBS filter/relay transport,
+// Windows's own HTTP timeout, every raw-PBS-text copy path (comment/
+// sourceDetail — see RAW_PBS_TEXT_POLICY, still IMMUTABLE_END_TO_END_
+// UNTIL_AI, now also preserved unmodified through the queue message
+// itself), AI Prompt/model/semantic policy, service area, LINE formatter/
+// policy, driverSummary, hourly reminder, TDX, CCTV, Shared Feed product
+// logic, and the Observatory page's own overall UI (only the outcome
+// vocabulary gained one new terminal state).
+//
+// See test/pbsAiQueueReliability.test.js for the full regression suite,
+// including the real EVENT_ID=11508290166-0 fixture, and this round's own
+// final report for the measured KV/Queue operation cost formulas.
+
 import { verifyDebugPushToken } from './debugPushAuth.js';
 import { normalizePbsEvent } from './normalize.js';
 import { runLineBroadcast } from '../traffic/broadcastPipeline.js';
@@ -313,7 +407,28 @@ export const IDEMPOTENCY_STATUS = { PROCESSING: 'PROCESSING', COMPLETED: 'COMPLE
 export const PROCESSING_STALE_MS = 60 * 1000;
 
 export const PBS_DEBUG_PUSH_LIFECYCLE_MODE = 'TRANSPORT_ACK_DECOUPLED_FROM_BUSINESS_PROCESSING';
-export const BACKGROUND_EXECUTION_MECHANISM = 'CTX_WAIT_UNTIL';
+// V2.3.0 — see this module's own header comment for the full incident and
+// design. ctx.waitUntil is no longer used to carry AI business processing
+// at all (retired, not merely "still allowed as a fallback") — a
+// Cloudflare Queue is now the reliable execution carrier.
+export const BACKGROUND_EXECUTION_MECHANISM = 'CLOUDFLARE_QUEUE';
+export const WAITUNTIL_AI_PROCESSING = 'RETIRED';
+export const QUEUE_ROLE = 'RELIABLE_AI_BUSINESS_PROCESSING';
+export const QUEUE_DELIVERY_MODEL = 'AT_LEAST_ONCE';
+export const BUSINESS_OUTCOME_MODEL = 'EFFECTIVELY_ONCE';
+
+// The Worker binding name this module expects for its Queue producer —
+// declared in wrangler.jsonc's own `queues.producers` block (the single
+// canonical config source, order section 十四 — never Dashboard-only).
+export const PBS_AI_QUEUE_BINDING_NAME = 'PBS_AI_QUEUE';
+
+// Bounded retry count for a transient AI_CALL_FAILED (order section 八:
+// "允許 Queue retry...但不要自行建立無限重試"). Matches wrangler.jsonc's
+// own queue consumer `max_retries` so this code's own bail-out (author a
+// deterministic PROCESSING_FAILED terminal state) fires at exactly the
+// boundary the platform would otherwise stop delivering at anyway —
+// never relies on an unconfigured platform DLQ to explain what happened.
+export const MAX_QUEUE_RETRIES = 3;
 
 let recentIdempotencyKeys = new Map(); // idempotencyKeyHash -> lastSeenAtEpochMs
 
@@ -428,6 +543,273 @@ async function markProcessingComplete(kv, kvKey, { firstAcceptedAt, requestId, a
     );
   } catch (err) {
     console.error(`[pbs-debug-push][idempotency] failed to mark COMPLETED keySuffix=${kvKey.slice(-16)}: ${err && err.message}`);
+  }
+}
+
+/**
+ * V2.2.0/V2.3.0 — a minimal "AI candidate"-shaped object built DIRECTLY
+ * from the raw Windows payload's `event` fields (never from
+ * normalizedEvent/candidate, which may not exist yet, or ever, for a
+ * given call site). Used for both the early Observatory PROCESSING_
+ * STARTED write (before anything that could throw) and a Queue Consumer's
+ * own terminal-failure write (where a real candidate may never have been
+ * built at all, e.g. if normalizePbsEvent itself threw). Never truncates/
+ * rewrites comment/sourceDetail — RAW_PBS_TEXT_POLICY.
+ */
+function buildPseudoCandidateFromRawEvent(event, generatedAt) {
+  return {
+    road: (event && event.road) || null,
+    direction: (event && event.direction) || null,
+    areaNm: (event && event.areaNm) || null,
+    comment: (event && event.comment) || '',
+    sourceDetail: (event && event.sourceDetail) || '',
+    longitude: event && typeof event.longitude === 'number' ? event.longitude : null,
+    latitude: event && typeof event.latitude === 'number' ? event.latitude : null,
+    generatedAt,
+  };
+}
+
+/**
+ * V2.2.0/V2.3.0 — the ONE place an Observatory record is built+written,
+ * shared by the early PROCESSING_STARTED write (HTTP ingress), the
+ * Queue Consumer's own final write, and its terminal-failure write.
+ * Best-effort, isolated — never affects the real AI/LINE outcome, which
+ * has already fully happened (or, for the early write, hasn't happened
+ * yet) by the time this is called.
+ */
+async function writeObservatoryRecord(env, { candidate, eventId, lifecycle, fingerprint, now, idempotencyKeyHash, ...outcomeFields }) {
+  try {
+    const record = buildAiObservatoryRecord({ candidate, eventId, lifecycle, fingerprint, now, ...outcomeFields });
+    await recordAiObservatoryEntry(env.TRAFFIC_KV, record, { taipeiDate: taipeiDateString(now), idempotencyKeyHash, now });
+  } catch (err) {
+    console.error(`[pbs-debug-push][ai-observatory] eventId=${eventId} lifecycle=${lifecycle} failed: ${err && err.message}`);
+  }
+}
+
+/**
+ * V2.3.0 (order section 五) — the exact payload a Queue Consumer needs to
+ * independently complete business processing, with zero dependency on the
+ * original HTTP request. RAW_PBS_TEXT_POLICY: `event` is copied verbatim
+ * (shallow clone, never re-derived/truncated/summarized) — comment/
+ * sourceDetail reach the Queue Consumer, and from there the AI prompt,
+ * byte-for-byte identical to what Windows sent, exactly as they already
+ * did via the old ctx.waitUntil closure (this is a relocation of an
+ * existing guarantee, not a new one).
+ */
+export function buildPbsAiQueueMessage({ source, eventId, lifecycle, fingerprint, generatedAt, event, requestId, idempotencyKeyHash, acceptedFirstAcceptedAt, acceptedAttemptCount }) {
+  return {
+    source,
+    eventId,
+    lifecycle,
+    fingerprint,
+    generatedAt,
+    requestId,
+    idempotencyKeyHash,
+    acceptedFirstAcceptedAt,
+    acceptedAttemptCount,
+    event: event && typeof event === 'object' ? { ...event } : {},
+  };
+}
+
+/**
+ * V2.3.0 — the SAME candidate/AI-decision/legacy/Observatory-final logic
+ * V2.1.0/V2.2.0 ran inside processAcceptedEvent's ctx.waitUntil closure,
+ * relocated here and parameterized by a Queue message instead of closed
+ * over the original HTTP request — REUSED, not reimplemented (order
+ * section 七's own explicit instruction). Called by handlePbsAiQueueBatch
+ * for every queue delivery (including redeliveries — see the idempotency
+ * re-check at the top, order section 七 items 2/8 and section 九).
+ *
+ * @returns {Promise<{ok: boolean, retry: boolean, outcome?: string, candidate?: object, error?: string, skipped?: boolean}>}
+ *   ok=true -> ack (terminal success, or already-completed skip).
+ *   ok=false, retry=true -> the caller should Queue-retry (bounded).
+ */
+export async function processQueuedPbsEvent(env, message, now = new Date()) {
+  const { eventId, lifecycle, fingerprint, generatedAt, event, idempotencyKeyHash, requestId, acceptedFirstAcceptedAt, acceptedAttemptCount } = message || {};
+  const kv = env.TRAFFIC_KV;
+  const kvKey = idempotencyKeyHash ? buildIdempotencyKvKey(idempotencyKeyHash) : null;
+  // KEY IDENTITY, not a business timestamp: the Observatory KV key is
+  // built from (taipeiDate(now), now.getTime(), idempotencyKeyHash) — the
+  // early PROCESSING_STARTED write (HTTP ingress) used the ORIGINAL
+  // accept-time `now`, so the final write here MUST reuse the exact same
+  // instant (reconstructed from `acceptedFirstAcceptedAt`, captured
+  // verbatim in the queue message) or it would create a SECOND KV entry
+  // instead of overwriting the first — see aiObservatoryIndex.js's own
+  // header comment for why this must stay identical. `now` itself (the
+  // real, current processing time, possibly seconds/minutes later) is
+  // still used for every actual business decision below (AI call,
+  // broadcast-hour gating, etc.) — only the Observatory record's own
+  // `timestamp` field and storage key intentionally stay anchored to
+  // accept-time, consistent with what that field has always meant
+  // end-to-end in this system.
+  const observatoryNow = acceptedFirstAcceptedAt ? new Date(acceptedFirstAcceptedAt) : now;
+
+  // order section 七 items 2/8, section 九 — a redelivered (AT_LEAST_ONCE)
+  // or genuinely-retried message whose earlier attempt already completed
+  // must skip business processing entirely: 0 additional AI calls, 0
+  // additional LINE attempts.
+  if (kv && kvKey) {
+    try {
+      const existingRaw = await kv.get(kvKey);
+      if (existingRaw) {
+        let existingRecord = null;
+        try {
+          existingRecord = JSON.parse(existingRaw);
+        } catch {
+          existingRecord = null;
+        }
+        if (existingRecord && existingRecord.status === IDEMPOTENCY_STATUS.COMPLETED) {
+          console.log(`[pbs-ai-queue] event=ALREADY_COMPLETED eventId=${eventId} lifecycle=${lifecycle}`);
+          return { ok: true, retry: false, skipped: true };
+        }
+      }
+    } catch (err) {
+      // fail OPEN — proceed with processing rather than silently dropping
+      // a real event because of a transient KV read hiccup.
+      console.error(`[pbs-ai-queue] eventId=${eventId} idempotency re-check failed (fail open, proceeding): ${err && err.message}`);
+    }
+  }
+
+  let candidate = null;
+  let observatoryOutcome;
+  try {
+    const rawRecord = buildRawPbsRecordFromPush({ eventId, generatedAt, event });
+    const normalizedEvent = normalizePbsEvent(rawRecord);
+
+    try {
+      if (isWindowsPbsAiCandidateEligible(normalizedEvent)) {
+        candidate = buildAiCandidate(normalizedEvent, { lifecycle, generatedAt });
+        console.log(
+          `[pbs-ai-queue][ai-candidate] event=AI_CANDIDATE_CREATED eventId=${eventId} lifecycle=${lifecycle} ` +
+            `mode=${PBS_AI_DECISION_MODE} eventType=${candidate.eventType} ` +
+            `locationQualitySufficient=${Boolean(candidate.locationQuality && candidate.locationQuality.sufficient)}`
+        );
+      } else {
+        console.log(`[pbs-ai-queue][ai-candidate] eventId=${eventId} lifecycle=${lifecycle} mode=${PBS_AI_DECISION_MODE} candidate=false reason=outside-service-area`);
+      }
+    } catch (err) {
+      console.error(`[pbs-ai-queue][ai-candidate] eventId=${eventId} lifecycle=${lifecycle} failed: ${err && err.message}`);
+    }
+
+    if (resolvePbsAiDecisionEnabled(env)) {
+      observatoryOutcome = await runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lifecycle, fingerprint, now });
+    } else {
+      // Reuses the EXACT SAME canonical Business Pipeline entry point
+      // traffic/scheduled.js's Cron path calls for every polled TDX/PBS
+      // event — never a second copy.
+      const lineSummary = await runLineBroadcast(env, {
+        allEvents: [normalizedEvent],
+        dedupeAvailable: true,
+        now,
+        dryRun: false,
+      });
+      let sharedFeedCommitted = false;
+      try {
+        const sharedFeedSummary = await runSharedFeedPersist(env, { completedProducts: lineSummary.completedProducts, now });
+        sharedFeedCommitted = Boolean(sharedFeedSummary.committed);
+      } catch (err) {
+        console.error(`[pbs-ai-queue][shared-feed] eventId=${eventId} failed: ${err && err.message}`);
+      }
+      console.log(
+        `[pbs-ai-queue][business-pipeline] eventId=${eventId} lifecycle=${lifecycle} ` +
+          `lineReady=${lineSummary.lineReady} broadcastRelevant=${lineSummary.broadcastRelevantCount} ` +
+          `pendingTargets=${lineSummary.pendingTargetCount} pushAttempted=${lineSummary.pushAttempted} ` +
+          `pushSucceeded=${lineSummary.pushSucceeded} sharedFeedCommitted=${sharedFeedCommitted}`
+      );
+      observatoryOutcome = {
+        outcome: AI_OUTCOME.AI_NOT_INVOKED_LEGACY_PATH,
+        lineAttempted: lineSummary.pushAttempted > 0,
+        lineSent: lineSummary.pushAttempted > 0 && lineSummary.pushSucceeded === lineSummary.pushAttempted,
+        sharedFeedPersisted: sharedFeedCommitted,
+      };
+    }
+  } catch (err) {
+    // A genuine failure to even reach a decision (e.g. a malformed queue
+    // message, or a total KV outage during normalize/candidate build) —
+    // order section 八/九: this IS "工作未可靠完成", so it's retryable,
+    // bounded by the caller's own MAX_QUEUE_RETRIES check.
+    console.error(`[pbs-ai-queue][business-pipeline] eventId=${eventId} lifecycle=${lifecycle} failed: ${err && err.message}`);
+    return { ok: false, retry: true, error: err && err.message };
+  }
+
+  // order section 八 — AI_CALL_FAILED (the call itself did not reliably
+  // complete: network/5xx/capacity/timeout/binding-missing) is retryable
+  // via Queue, bounded. Every OTHER outcome — including the EXISTING
+  // fail-closed AI_DECISION_INVALID (the call DID complete, with an
+  // invalid answer) — is terminal, exactly as V2.1.0/V2.2.0 already
+  // treated it; this round does not loosen that policy.
+  if (observatoryOutcome.outcome === AI_OUTCOME.AI_CALL_FAILED) {
+    await writeObservatoryRecord(env, { candidate, eventId, lifecycle, fingerprint, now: observatoryNow, idempotencyKeyHash, ...observatoryOutcome });
+    return { ok: false, retry: true, outcome: observatoryOutcome.outcome, candidate };
+  }
+
+  await writeObservatoryRecord(env, { candidate, eventId, lifecycle, fingerprint, now: observatoryNow, idempotencyKeyHash, ...observatoryOutcome });
+  await markProcessingComplete(kv, kvKey, { firstAcceptedAt: acceptedFirstAcceptedAt, requestId, attemptCount: acceptedAttemptCount, now: new Date() });
+  return { ok: true, retry: false, outcome: observatoryOutcome.outcome, candidate };
+}
+
+/**
+ * V2.3.0 — the Queue Consumer entry point (src/index.js's own `queue()`
+ * handler delegates here). One Worker invocation per batch; each message
+ * is individually ack'd or retried — never a whole-batch retry for one
+ * message's failure. `max_batch_size` is deliberately 1 in wrangler.jsonc
+ * (see that file's own comment) so in practice this loop runs once per
+ * invocation, but the loop itself makes no assumption about batch size.
+ */
+export async function handlePbsAiQueueBatch(batch, env) {
+  const now = new Date();
+  for (const message of batch.messages) {
+    const body = message.body || {};
+    const attempts = typeof message.attempts === 'number' ? message.attempts : 1;
+
+    let result;
+    try {
+      result = await processQueuedPbsEvent(env, body, now);
+    } catch (err) {
+      console.error(`[pbs-ai-queue] eventId=${body.eventId} unexpected consumer error: ${err && err.message}`);
+      result = { ok: false, retry: true, error: err && err.message };
+    }
+
+    if (result.ok) {
+      message.ack();
+      continue;
+    }
+
+    if (result.retry && attempts < MAX_QUEUE_RETRIES) {
+      console.log(`[pbs-ai-queue] event=RETRY eventId=${body.eventId} lifecycle=${body.lifecycle} attempts=${attempts} outcome=${result.outcome || result.error}`);
+      message.retry();
+      continue;
+    }
+
+    // order section 十 — retries exhausted (or a non-retryable failure on
+    // the last allowed attempt) and business processing STILL hasn't
+    // reliably completed. Author the terminal state ourselves — never
+    // leave this stuck at PROCESSING_STARTED/PROCESSING forever, and
+    // never depend on Cloudflare's own DLQ/drop behavior (which this
+    // repo does not configure) to explain what happened.
+    console.error(
+      `[pbs-ai-queue] event=PROCESSING_FAILED eventId=${body.eventId} lifecycle=${body.lifecycle} ` +
+        `attempts=${attempts} outcome=${result.outcome || result.error} — retries exhausted, marking terminal failure`
+    );
+    const kv = env.TRAFFIC_KV;
+    const kvKey = body.idempotencyKeyHash ? buildIdempotencyKvKey(body.idempotencyKeyHash) : null;
+    const finalCandidate = result.candidate || buildPseudoCandidateFromRawEvent(body.event, body.generatedAt);
+    // Same key-identity requirement as processQueuedPbsEvent's own
+    // observatoryNow — reuse the ORIGINAL accept-time so this terminal
+    // write overwrites the early PROCESSING_STARTED record instead of
+    // creating a second entry.
+    const observatoryNow = body.acceptedFirstAcceptedAt ? new Date(body.acceptedFirstAcceptedAt) : now;
+    await writeObservatoryRecord(env, {
+      candidate: finalCandidate,
+      eventId: body.eventId,
+      lifecycle: body.lifecycle,
+      fingerprint: body.fingerprint,
+      now: observatoryNow,
+      idempotencyKeyHash: body.idempotencyKeyHash,
+      outcome: AI_OUTCOME.PROCESSING_FAILED,
+    });
+    await markProcessingComplete(kv, kvKey, { firstAcceptedAt: body.acceptedFirstAcceptedAt, requestId: body.requestId, attemptCount: attempts, now });
+    message.ack();
   }
 }
 
@@ -675,6 +1057,14 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
  * auth — which HTTP methods a route accepts is not sensitive information
  * (unlike whether an admin page's CONTENT exists), so this can be a plain
  * routing-level answer, same as this project's public routes.
+ *
+ * V2.3.0 — `ctx` is kept in the signature for backward compatibility
+ * (src/index.js's fetch handler still forwards it) but is no longer used:
+ * AI business processing now runs via env.PBS_AI_QUEUE, not
+ * ctx.waitUntil() — order section 三's own "ctx.waitUntil() 不得再承載
+ * Workers AI inference/完整AI decision flow/LINE business flow" rule.
+ * queue.send() itself is awaited directly (a lightweight enqueue call,
+ * never the slow AI call this round exists to get OUT of the HTTP path).
  */
 export async function handlePbsDebugPush(request, env, now = new Date(), ctx) {
   if (request.method !== 'POST') {
@@ -864,197 +1254,64 @@ export async function handlePbsDebugPush(request, env, now = new Date(), ctx) {
   // runLineBroadcast (mirrors pbs/pipeline.js's own clearedEvents-never-
   // broadcast behavior — see this module's own header comment).
   //
-  // Failure isolation (order section 九): this whole block is wrapped so a
-  // Business Pipeline exception can NEVER crash this endpoint or the ACK
-  // back to Windows — logged only. Windows will naturally re-detect and
-  // re-push the same transition on its own next ~3-minute poll if the
-  // underlying PBS event is still present; no separate fallback-polling
-  // mechanism is introduced for this.
-  //
-  // V2.1.0 — this is now the exact unit of work handed to ctx.waitUntil()
-  // (see the dispatch right below this closure) instead of being awaited
-  // inline before the response. Nothing INSIDE this closure changed for
-  // V2.1.0 — same AI-or-legacy branch, same Observatory write, same
-  // failure isolation — only WHEN and HOW it runs changed.
-  const processAcceptedEvent = async () => {
-    // V2.2.0 (order section 一/九) — the EARLIEST possible Observatory
-    // write, before anything that could throw (buildRawPbsRecordFromPush/
-    // normalizePbsEvent/candidate build). Built straight from the raw
-    // Windows payload fields (never normalized/parsed) so this write does
-    // not depend on any of the parsing this closure is about to attempt —
-    // an event that crashes moments later, or whose ctx.waitUntil work is
-    // genuinely lost, still leaves ONE card behind (frozen at
-    // PROCESSING_STARTED) instead of being invisible on the Observatory
-    // page, which is exactly the gap this round's order exists to close.
-    // The FINAL write later in this closure reuses the identical (now,
-    // taipeiDate, idempotencyKeyHash) triple, so it overwrites this same
-    // KV key rather than creating a second entry — ONE extra KV put per
-    // accepted event total, not two separate records.
-    try {
-      const pseudoCandidate = {
-        road: (event && event.road) || null,
-        direction: (event && event.direction) || null,
-        areaNm: (event && event.areaNm) || null,
-        comment: (event && event.comment) || '',
-        sourceDetail: (event && event.sourceDetail) || '',
-        longitude: event && typeof event.longitude === 'number' ? event.longitude : null,
-        latitude: event && typeof event.latitude === 'number' ? event.latitude : null,
-        generatedAt,
-      };
-      const startedRecord = buildAiObservatoryRecord({
-        candidate: pseudoCandidate,
-        eventId,
-        lifecycle,
-        fingerprint,
-        now,
-        outcome: AI_OUTCOME.PROCESSING_STARTED,
-      });
-      await recordAiObservatoryEntry(env.TRAFFIC_KV, startedRecord, {
-        taipeiDate: taipeiDateString(now),
-        idempotencyKeyHash,
-        now,
-      });
-    } catch (err) {
-      console.error(`[pbs-debug-push][ai-observatory] eventId=${eventId} lifecycle=${lifecycle} early-write failed: ${err && err.message}`);
-    }
-
-    try {
-      const rawRecord = buildRawPbsRecordFromPush({ eventId, generatedAt, event });
-      const normalizedEvent = normalizePbsEvent(rawRecord);
-
-      // V1.9.9 Phase 2 (order section 一/二/三/四/六/七) — build the AI
-      // candidate preview once, regardless of whether AI decisions are
-      // active (see below). See src/pbs/aiCandidate.js's own header
-      // comment for the full design and exactly which existing hard rules
-      // this deliberately does NOT apply (event-type whitelist, LINE
-      // policy, location-quality hard-reject) versus which it still
-      // respects (service area — reusing the SAME canonical resolver,
-      // never a second implementation).
-      let candidate = null;
-      try {
-        if (isWindowsPbsAiCandidateEligible(normalizedEvent)) {
-          candidate = buildAiCandidate(normalizedEvent, { lifecycle, generatedAt });
-          console.log(
-            `[pbs-debug-push][ai-candidate] event=AI_CANDIDATE_CREATED eventId=${eventId} lifecycle=${lifecycle} ` +
-              `mode=${PBS_AI_DECISION_MODE} eventType=${candidate.eventType} ` +
-              `locationQualitySufficient=${Boolean(candidate.locationQuality && candidate.locationQuality.sufficient)}`
-          );
-        } else {
-          console.log(`[pbs-debug-push][ai-candidate] eventId=${eventId} lifecycle=${lifecycle} mode=${PBS_AI_DECISION_MODE} candidate=false reason=outside-service-area`);
-        }
-      } catch (err) {
-        console.error(`[pbs-debug-push][ai-candidate] eventId=${eventId} lifecycle=${lifecycle} failed: ${err && err.message}`);
-      }
-
-      // V1.9.9 Phase 3B (order section 十八) — the ONE branch point. When
-      // AI decisions are disabled (the safe default — see aiConfig.js's
-      // own comment), behavior is BYTE-IDENTICAL to V1.9.8/Phase 2: the
-      // legacy canonical Business Pipeline (runLineBroadcast) is the sole
-      // judge. When enabled, the NEW AI decision path (order section
-      // 八/九/十) runs INSTEAD of the legacy call for this event — never
-      // BOTH, which would risk a genuine double LINE push if both the old
-      // hard rules and the AI happened to approve the same event (order
-      // section 十二's own "避免同一事件有兩套裁判" reasoning applies here
-      // too, not just to AI-call failures).
-      let observatoryOutcome;
-      if (resolvePbsAiDecisionEnabled(env)) {
-        observatoryOutcome = await runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lifecycle, fingerprint, now });
-      } else {
-        // Reuses the EXACT SAME canonical Business Pipeline entry point
-        // traffic/scheduled.js's Cron path calls for every polled TDX/PBS
-        // event — see this module's own header comment. Every eligibility/
-        // service-area/location-quality/dedupe/incident-suppression/CCTV/
-        // LINE-push-policy/notified-state decision below is made by that
-        // SAME function, never a second copy.
-        const lineSummary = await runLineBroadcast(env, {
-          allEvents: [normalizedEvent],
-          dedupeAvailable: true,
-          now,
-          dryRun: false,
-        });
-        // Same reuse principle for the Shared Traffic Feed — the exact call
-        // traffic/scheduled.js makes immediately after its own
-        // runLineBroadcast, using the SAME lineSummary.completedProducts
-        // shape, so a Windows-originated PBS event keeps appearing in the
-        // Shared Feed after Cloudflare's own PBS polling retires (order
-        // section 八) exactly as it did before.
-        let sharedFeedCommitted = false;
-        try {
-          const sharedFeedSummary = await runSharedFeedPersist(env, { completedProducts: lineSummary.completedProducts, now });
-          sharedFeedCommitted = Boolean(sharedFeedSummary.committed);
-        } catch (err) {
-          console.error(`[pbs-debug-push][shared-feed] eventId=${eventId} failed: ${err && err.message}`);
-        }
-        console.log(
-          `[pbs-debug-push][business-pipeline] eventId=${eventId} lifecycle=${lifecycle} ` +
-            `lineReady=${lineSummary.lineReady} broadcastRelevant=${lineSummary.broadcastRelevantCount} ` +
-            `pendingTargets=${lineSummary.pendingTargetCount} pushAttempted=${lineSummary.pushAttempted} ` +
-            `pushSucceeded=${lineSummary.pushSucceeded} sharedFeedCommitted=${sharedFeedCommitted}`
-        );
-        observatoryOutcome = {
-          outcome: AI_OUTCOME.AI_NOT_INVOKED_LEGACY_PATH,
-          lineAttempted: lineSummary.pushAttempted > 0,
-          lineSent: lineSummary.pushAttempted > 0 && lineSummary.pushSucceeded === lineSummary.pushAttempted,
-          sharedFeedPersisted: sharedFeedCommitted,
-        };
-      }
-
-      // V2.0.1 (order section 一/三/四) — ONE thin AI Decision Observatory
-      // index record, written AFTER the outcome above is fully known —
-      // never a second AI call, never a guess. See aiObservatoryIndex.js's
-      // own header comment for why this is the minimum viable addition
-      // (existing KV records cannot answer "what happened to this event"
-      // for every outcome). Best-effort, isolated — a write failure here
-      // must never affect the real AI/LINE/Shared-Feed outcome above,
-      // which has already fully completed.
-      if (observatoryOutcome) {
-        try {
-          const record = buildAiObservatoryRecord({
-            candidate,
-            eventId,
-            lifecycle,
-            fingerprint,
-            now,
-            ...observatoryOutcome,
-          });
-          await recordAiObservatoryEntry(env.TRAFFIC_KV, record, {
-            taipeiDate: taipeiDateString(now),
-            idempotencyKeyHash,
-            now,
-          });
-        } catch (err) {
-          console.error(`[pbs-debug-push][ai-observatory] eventId=${eventId} lifecycle=${lifecycle} failed: ${err && err.message}`);
-        }
-      }
-    } catch (err) {
-      console.error(`[pbs-debug-push][business-pipeline] eventId=${eventId} lifecycle=${lifecycle} failed: ${err && err.message}`);
-    }
-    // V2.1.0 — business processing has now genuinely finished (success or
-    // an internally-handled failure above) — mark this idempotency record
-    // COMPLETED so a future transport duplicate never re-attempts it. See
-    // markProcessingComplete's own comment for why this is best-effort.
-    await markProcessingComplete(kv, kvKey, { firstAcceptedAt: acceptedFirstAcceptedAt, requestId, attemptCount: acceptedAttemptCount, now: new Date() });
-  };
-
+  // V2.3.0 — this block no longer runs AI business processing itself at
+  // all (not synchronously, not via ctx.waitUntil — see this module's own
+  // header comment for the real incident this retires waitUntil over).
+  // It only: writes the early Observatory PROCESSING_STARTED record
+  // (order section 六 step 6), then hands the event to the Cloudflare
+  // Queue (step 7) and reflects a fast, honest ACK (step 8/9) — "did
+  // Cloudflare durably enqueue this", never "did the AI finish deciding".
   if (!duplicate && lifecycle !== 'CLEARED') {
-    // V2.1.0 (order section 二/七) — hand off to ctx.waitUntil() so the
-    // Windows HTTP response never waits on AI/LINE completion; every
-    // existing unit test call site (no `ctx` argument) falls back to a
-    // direct `await`, preserving their exact synchronous-completion
-    // assertions. See this module's own header comment for the full
-    // reasoning and test/pbsDebugPushBackgroundProcessing.test.js for the
-    // dedicated regression coverage of both paths.
-    if (ctx && typeof ctx.waitUntil === 'function') {
-      ctx.waitUntil(processAcceptedEvent());
-    } else {
-      await processAcceptedEvent();
+    await writeObservatoryRecord(env, {
+      candidate: buildPseudoCandidateFromRawEvent(event, generatedAt),
+      eventId,
+      lifecycle,
+      fingerprint,
+      now,
+      idempotencyKeyHash,
+      outcome: AI_OUTCOME.PROCESSING_STARTED,
+    });
+
+    const queue = env[PBS_AI_QUEUE_BINDING_NAME];
+    if (!queue || typeof queue.send !== 'function') {
+      // Same "operator/deploy problem, fail closed" distinction as a
+      // missing PBS_DEBUG_PUSH_SECRET (order section 十四 — the queue
+      // resource/binding is a canonical repo-config concern, never a
+      // Dashboard-only assumption) — never silently claim the event was
+      // queued when it structurally could not have been.
+      console.error(`[pbs-debug-push][queue] eventId=${eventId} lifecycle=${lifecycle} failed: ${PBS_AI_QUEUE_BINDING_NAME} binding missing`);
+      return jsonResponse({ error: 'pbs_ai_queue_not_configured' }, 503);
     }
+
+    const queueMessage = buildPbsAiQueueMessage({
+      source,
+      eventId,
+      lifecycle,
+      fingerprint,
+      generatedAt,
+      event,
+      requestId,
+      idempotencyKeyHash,
+      acceptedFirstAcceptedAt,
+      acceptedAttemptCount,
+    });
+    try {
+      await queue.send(queueMessage);
+    } catch (err) {
+      // order section 六's own hard rule: must NEVER report "已成功接收並
+      // 排入處理" when the enqueue itself failed. The idempotency record
+      // already written above as PROCESSING recovers naturally via the
+      // EXISTING V2.1.0 PROCESSING_STALE_MS window (60s) once a retry
+      // lands after that — no new orphan-recovery mechanism was needed.
+      console.error(`[pbs-debug-push][queue] eventId=${eventId} lifecycle=${lifecycle} send failed: ${err && err.message}`);
+      return jsonResponse({ error: 'queue_send_failed' }, 503);
+    }
+    console.log(`[pbs-debug-push][queue] event=QUEUED eventId=${eventId} lifecycle=${lifecycle}`);
   } else if (!duplicate && lifecycle === 'CLEARED') {
     console.log(`[pbs-debug-push][business-pipeline] eventId=${eventId} lifecycle=CLEARED acknowledged=true routedToBroadcast=false`);
-    // CLEARED never performs async business processing — nothing for
-    // ctx.waitUntil to protect — so its own idempotency record can be
-    // marked COMPLETED immediately rather than sitting at PROCESSING
-    // until PROCESSING_STALE_MS passes for no reason.
+    // CLEARED never performs async business processing — nothing to
+    // enqueue — so its own idempotency record can be marked COMPLETED
+    // immediately rather than sitting at PROCESSING for no reason.
     await markProcessingComplete(kv, kvKey, { firstAcceptedAt: acceptedFirstAcceptedAt, requestId, attemptCount: acceptedAttemptCount, now });
   }
 

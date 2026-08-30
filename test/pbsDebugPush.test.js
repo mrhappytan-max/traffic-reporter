@@ -21,6 +21,7 @@ import assert from 'node:assert/strict';
 import worker from '../src/index.js';
 import {
   handlePbsDebugPush,
+  handlePbsAiQueueBatch,
   PBS_DEBUG_PUSH_PATH,
   PBS_DEBUG_PUSH_IDEMPOTENCY_MODE,
   PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY,
@@ -53,13 +54,51 @@ function countingKV() {
   };
 }
 
-function baseEnv(overrides = {}) {
+// V2.3.0 — a SELF-DRAINING fake Queue: `.send()` immediately drives the
+// REAL src/pbs/debugPush.js#handlePbsAiQueueBatch (including its own
+// bounded retry loop, up to MAX_QUEUE_RETRIES) against the message just
+// enqueued, so `await handlePbsDebugPush(...)` in this file's existing
+// tests still observes fully-completed business processing by the time
+// it returns — preserving every pre-V2.3.0 test's own synchronous-
+// completion assertions unchanged, while exercising the REAL Queue
+// Consumer logic (not a second, parallel implementation). This is a test
+// convenience, not a claim about real Cloudflare Queue latency — Queue
+// reliability/retry/duplicate-delivery semantics themselves are covered
+// on their own terms in test/pbsAiQueueReliability.test.js.
+function fakeQueue(env) {
   return {
+    async send(message) {
+      let attempts = 0;
+      for (;;) {
+        attempts += 1;
+        let acked = false;
+        let retried = false;
+        const message_ = {
+          body: message,
+          attempts,
+          ack() {
+            acked = true;
+          },
+          retry() {
+            retried = true;
+          },
+        };
+        await handlePbsAiQueueBatch({ messages: [message_] }, env);
+        if (acked || !retried || attempts >= 10) break;
+      }
+    },
+  };
+}
+
+function baseEnv(overrides = {}) {
+  const env = {
     PBS_DEBUG_PUSH_SECRET: SECRET,
     TRAFFIC_KV: countingKV(),
     LINE_CHANNEL_ACCESS_TOKEN: 'tok',
     ...overrides,
   };
+  if (!env.PBS_AI_QUEUE) env.PBS_AI_QUEUE = fakeQueue(env);
+  return env;
 }
 
 function validPayload(overrides = {}) {
@@ -660,15 +699,32 @@ test('routing: a similar-but-different path still 404s (no accidental prefix mat
 // final write — same single KV key both times (see aiObservatoryIndex.js
 // and debugPush.js's own comments for why the key stays identical), so
 // this is ONE extra write, never two separate index entries. Still ZERO
-// additional GETs. Measured exactly via this same mock, not guessed:
-//   N accepted events -> gets = 5*N (unchanged), puts = 4*N + 2
+// additional GETs at that point: puts = 4*N + 2, gets = 5*N.
+//
+// V2.3.0 (PBS AI Queue Reliability, order section 十二) keeps the PUT
+// formula IDENTICAL in the clean (no-retry) case — the SAME four writes,
+// just split across two Worker invocations (HTTP ingress writes
+// idempotency-PROCESSING + Observatory-PROCESSING_STARTED; the Queue
+// Consumer writes idempotency-COMPLETED + Observatory-final) —
+// EXTRA_KV_WRITES_PER_EVENT (vs V2.2.0) = 0. It DOES add exactly ONE GET
+// per event: processQueuedPbsEvent's own idempotency re-check (order
+// section 七/九 — "若已 COMPLETED，ACK queue message，不再叫 AI") reads the
+// idempotency record before doing any business processing, so a
+// redelivered/retried message can skip work it already finished. This
+// file's own `baseEnv()` fake Queue drives handlePbsAiQueueBatch
+// synchronously, so both the HTTP-ingress and Queue-Consumer costs are
+// captured in this one measurement. Measured exactly via this same mock,
+// not guessed:
+//   N accepted events -> gets = 6*N, puts = 4*N + 2
 //   (idempotency-PROCESSING=N + idempotency-COMPLETED=N +
 //   observatory-PROCESSING_STARTED=N + observatory-final=N, plus ONE
 //   incident-suppression-state write and ONE shared-feed write for the
-//   whole run). A run with real, broadcast-ELIGIBLE events (not this
-//   fixture) would additionally write line:notified-state and
-//   debug:broadcast-provenance:v1:* per successful push — see the
-//   dedicated V1.9.8 (9)/(12) tests below for that shape.
+//   whole run; gets = idempotency-accept-check=N + idempotency-queue-
+//   recheck=N + 4*N Business Pipeline reads). A run with real, broadcast-
+//   ELIGIBLE events (not this fixture) would additionally write
+//   line:notified-state and debug:broadcast-provenance:v1:* per
+//   successful push — see the dedicated V1.9.8 (9)/(12) tests below for
+//   that shape.
 
 function distinctPayloadForIndex(i) {
   return validPayload({ eventId: `PBS-COST-${i}`, fingerprint: `fp-cost-${i}`, requestId: `req-cost-${i}` });
@@ -682,10 +738,10 @@ for (const eventsPerDay of [10, 30, 100]) {
       const res = await handlePbsDebugPush(pushRequest({ body: distinctPayloadForIndex(i) }), env, NOW);
       assert.equal((await res.json()).accepted, true);
     }
-    REAL_CONSOLE_LOG(`[V2.2.0 KV cost] eventsPerDay=${eventsPerDay} kvGetCalls=${kv.getCalls} kvPutCalls=${kv.putCalls}`);
-    // V2.2.0 measured shape (0-broadcast-relevant fixture, see comment above):
+    REAL_CONSOLE_LOG(`[V2.3.0 KV cost] eventsPerDay=${eventsPerDay} kvGetCalls=${kv.getCalls} kvPutCalls=${kv.putCalls}`);
+    // V2.3.0 measured shape (0-broadcast-relevant fixture, see comment above):
     assert.equal(kv.putCalls, eventsPerDay * 4 + 2, 'N idempotency-PROCESSING + N idempotency-COMPLETED + N observatory-PROCESSING_STARTED + N observatory-final + 1 incident-suppression-state + 1 shared-feed (both WRITE_ON_CHANGE, once per run)');
-    assert.equal(kv.getCalls, eventsPerDay * 5, 'N idempotency reads + 4*N Business Pipeline reads (subscriptions/notified-state/incident-suppression/shared-feed) — observatory write adds 0 reads');
+    assert.equal(kv.getCalls, eventsPerDay * 6, 'N idempotency-accept reads + N idempotency-queue-recheck reads + 4*N Business Pipeline reads (subscriptions/notified-state/incident-suppression/shared-feed) — observatory write adds 0 reads');
   });
 }
 
@@ -744,13 +800,13 @@ const OUT_OF_AREA_COORDS = { longitude: 121.71801, latitude: 25.10288 }; // 八�
 test('V1.9.8 (1): valid Windows NEW -> Business Pipeline is invoked (log line present)', async () => {
   const env = baseEnv();
   await handlePbsDebugPush(pushRequest({ body: validPayload({ lifecycle: 'NEW', fingerprint: 'fp-v198-1' }) }), env, NOW);
-  assert.ok(logLines.some((l) => l.includes('[pbs-debug-push][business-pipeline]') && l.includes('lifecycle=NEW')));
+  assert.ok(logLines.some((l) => l.includes('[pbs-ai-queue][business-pipeline]') && l.includes('lifecycle=NEW')));
 });
 
 test('V1.9.8 (2): valid Windows UPDATED -> Business Pipeline is invoked (log line present)', async () => {
   const env = baseEnv();
   await handlePbsDebugPush(pushRequest({ body: validPayload({ lifecycle: 'UPDATED', fingerprint: 'fp-v198-2' }) }), env, NOW);
-  assert.ok(logLines.some((l) => l.includes('[pbs-debug-push][business-pipeline]') && l.includes('lifecycle=UPDATED')));
+  assert.ok(logLines.some((l) => l.includes('[pbs-ai-queue][business-pipeline]') && l.includes('lifecycle=UPDATED')));
 });
 
 test('V1.9.8 (3): valid confirmed CLEARED -> acknowledged, but NEVER routed to the Business Pipeline/broadcast', async () => {
@@ -771,7 +827,7 @@ test('V1.9.8 (4): a duplicate request never invokes the Business Pipeline a seco
   await handlePbsDebugPush(pushRequest({ body: payload }), env, NOW);
   logLines.length = 0; // reset capture — only care about the SECOND (duplicate) request now
   await handlePbsDebugPush(pushRequest({ body: { ...payload, requestId: 'req-v198-4-dup' } }), env, new Date(NOW.getTime() + 1000));
-  assert.ok(!logLines.some((l) => l.includes('[pbs-debug-push][business-pipeline]')), 'a duplicate must not invoke the Business Pipeline at all');
+  assert.ok(!logLines.some((l) => l.includes('[pbs-ai-queue][business-pipeline]')), 'a duplicate must not invoke the Business Pipeline at all');
 });
 
 // (5) invalid auth -> reject: see CASE D/E above. (6) invalid payload ->
@@ -781,7 +837,7 @@ test('V1.9.8 (4): a duplicate request never invokes the Business Pipeline a seco
 test('V1.9.8 (5/6): invalid auth / invalid payload never invoke the Business Pipeline', async () => {
   await handlePbsDebugPush(pushRequest({ token: null }), baseEnv(), NOW);
   await handlePbsDebugPush(pushRequest({ body: validPayload({ lifecycle: 'NOT_A_LIFECYCLE' }) }), baseEnv(), NOW);
-  assert.ok(!logLines.some((l) => l.includes('[pbs-debug-push][business-pipeline]')));
+  assert.ok(!logLines.some((l) => l.includes('[pbs-ai-queue][business-pipeline]')));
 });
 
 test('V1.9.8 (7): out-of-service-area event -> Business Pipeline runs, but 0 LINE push (service area gate, same canonical gate as polling)', async () => {
@@ -794,7 +850,7 @@ test('V1.9.8 (7): out-of-service-area event -> Business Pipeline runs, but 0 LIN
     NOW
   );
   assert.equal(res.status, 200); // fetch mock still throws-on-call (beforeEach default) — 0 fetch calls proves 0 push
-  const line = logLines.find((l) => l.includes('[pbs-debug-push][business-pipeline]'));
+  const line = logLines.find((l) => l.includes('[pbs-ai-queue][business-pipeline]'));
   assert.ok(line);
   assert.ok(line.includes('pushSucceeded=0'));
 });
@@ -809,7 +865,7 @@ test('V1.9.8 (8): meets the V1.5 whitelist but not the formal MAJOR_ACCIDENT_ONL
     NOW
   );
   assert.equal(res.status, 200); // fetch mock still throws-on-call — 0 fetch calls proves 0 push
-  const line = logLines.find((l) => l.includes('[pbs-debug-push][business-pipeline]'));
+  const line = logLines.find((l) => l.includes('[pbs-ai-queue][business-pipeline]'));
   assert.ok(line);
   assert.ok(line.includes('pushSucceeded=0'));
 });
@@ -828,7 +884,7 @@ test('V1.9.8 (9): meets the formal LINE policy (real accident, subscribed target
   assert.equal(res.status, 200);
   assert.equal(mockFetch.calls.length, 1, 'expected exactly 1 LINE push API call');
   assert.equal(mockFetch.calls[0].url, 'https://api.line.me/v2/bot/message/push');
-  const line = logLines.find((l) => l.includes('[pbs-debug-push][business-pipeline]'));
+  const line = logLines.find((l) => l.includes('[pbs-ai-queue][business-pipeline]'));
   assert.ok(line.includes('pushSucceeded=1'));
 });
 
@@ -917,9 +973,14 @@ test('KV cost quantification: duplicates (including repeated retries) never add 
     resetPbsDebugPushIdempotencyState(); // force each retry through the L2 KV path, not the L1 shortcut
     await handlePbsDebugPush(pushRequest({ body: { ...payload, requestId: `req-retry-${i}` } }), env, new Date(NOW.getTime() + (i + 1) * 1000));
   }
-  REAL_CONSOLE_LOG(`[V1.9.8 KV cost] scenario=retries retries=5 kvGetCalls=${kv.getCalls} kvPutCalls=${kv.putCalls}`);
+  REAL_CONSOLE_LOG(`[V2.3.0 KV cost] scenario=retries retries=5 kvGetCalls=${kv.getCalls} kvPutCalls=${kv.putCalls}`);
   assert.equal(kv.putCalls, putsAfterFirst, 'no number of retries for the same event may add ANY additional write — 0 second Business Pipeline pass');
-  assert.equal(kv.getCalls, 5 + 5, '1 first-accept scan (idempotency get + 4 Business Pipeline reads) + 1 idempotency get per duplicate retry (a duplicate never re-reads business state)');
+  // V2.3.0: the first accept's own Queue Consumer run adds ONE extra get
+  // (its own idempotency re-check, order section 七/九) on top of the
+  // pre-existing "idempotency get + 4 Business Pipeline reads" — every
+  // SUBSEQUENT duplicate is deduped entirely at the HTTP layer and never
+  // reaches the Queue/Consumer at all, so it still costs exactly 1 get.
+  assert.equal(kv.getCalls, 6 + 5, '1 first-accept scan (idempotency get + 4 Business Pipeline reads + 1 Queue Consumer idempotency re-check) + 1 idempotency get per duplicate retry (a duplicate never re-reads business state or reaches the Queue)');
 });
 
 // ============================================================================
@@ -946,7 +1007,7 @@ function otherComment() {
 }
 
 function aiCandidateLogLines(lines, eventId) {
-  return lines.filter((l) => l.includes('[pbs-debug-push][ai-candidate]') && l.includes(`eventId=${eventId}`));
+  return lines.filter((l) => l.includes('[pbs-ai-queue][ai-candidate]') && l.includes(`eventId=${eventId}`));
 }
 
 test('V1.9.9 (1): a NEW non-accident-type event still becomes an AI candidate — not eliminated before the candidate is built', async () => {
@@ -1046,7 +1107,7 @@ test('V1.9.9 (7): out-of-service-area event still does not become a candidate', 
     env,
     NOW
   );
-  const lines = logLines.filter((l) => l.includes('[pbs-debug-push][ai-candidate]') && l.includes('eventId=PBS-V199-7'));
+  const lines = logLines.filter((l) => l.includes('[pbs-ai-queue][ai-candidate]') && l.includes('eventId=PBS-V199-7'));
   assert.equal(lines.length, 1);
   assert.ok(lines[0].includes('candidate=false'));
   assert.ok(lines[0].includes('reason=outside-service-area'));
@@ -1054,12 +1115,12 @@ test('V1.9.9 (7): out-of-service-area event still does not become a candidate', 
 
 test('V1.9.9 (8): invalid auth -> reject, 0 AI candidate log lines', async () => {
   await handlePbsDebugPush(pushRequest({ token: null }), baseEnv(), NOW);
-  assert.equal(logLines.filter((l) => l.includes('[pbs-debug-push][ai-candidate]')).length, 0);
+  assert.equal(logLines.filter((l) => l.includes('[pbs-ai-queue][ai-candidate]')).length, 0);
 });
 
 test('V1.9.9 (9): invalid payload -> reject, 0 AI candidate log lines', async () => {
   await handlePbsDebugPush(pushRequest({ body: validPayload({ lifecycle: 'NOT_A_LIFECYCLE' }) }), baseEnv(), NOW);
-  assert.equal(logLines.filter((l) => l.includes('[pbs-debug-push][ai-candidate]')).length, 0);
+  assert.equal(logLines.filter((l) => l.includes('[pbs-ai-queue][ai-candidate]')).length, 0);
 });
 
 test('V1.9.9 (10): a duplicate payload does not produce a second AI candidate', async () => {

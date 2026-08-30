@@ -126,5 +126,54 @@
   // instead of only in the Dashboard).
   "ai": {
     "binding": "AI"
+  },
+  // V2.3.0 (PBS AI Queue Reliability) — the ONE Cloudflare Queue this
+  // project uses (order's own "只建立一條 Queue" rule — no separate PBS/
+  // AI/LINE/Observatory queues). Producer: src/pbs/debugPush.js's
+  // handlePbsDebugPush (POST /internal/pbs-debug-push). Consumer: the
+  // SAME traffic-reporter Worker's own `queue()` export (src/index.js) —
+  // no separate Worker/project, per the order's own "不要為此拆新專案".
+  //
+  // WHY THIS LIVES HERE, CANONICALLY (same reasoning as TRAFFIC_SOURCE_MODE/
+  // PBS_AI_DECISION_ENABLED's own comments above): Workers Builds treats
+  // this file as authoritative on every deploy. A Queue producer/consumer
+  // binding declared ONLY in the Dashboard would risk the exact same
+  // silent-drop failure mode those vars already suffered — this file is
+  // the ONE canonical source of truth for this binding, never the
+  // Dashboard.
+  //
+  // REAL QUEUE RESOURCE — NOT independently verifiable as already existing
+  // from this sandbox (no live Cloudflare API/Dashboard access; same
+  // structural limitation as every other "real Production state" fact
+  // this repo's own Engineering Memory already discloses honestly). If
+  // the queue named below does not yet exist in the real Cloudflare
+  // account, it must be created (e.g. `wrangler queues create
+  // pbs-ai-processing-queue`, or via the Dashboard) BEFORE this config can
+  // deploy successfully — see this round's own final report's
+  // BROWSER_ACTION_REQUIRED field.
+  "queues": {
+    "producers": [
+      {
+        "queue": "pbs-ai-processing-queue",
+        "binding": "PBS_AI_QUEUE"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "pbs-ai-processing-queue",
+        // Deliberately 1 — one Worker invocation per event keeps
+        // per-message ack/retry reasoning as simple as possible for this
+        // project's real traffic pattern (tens of events/day, never
+        // bursty) — order's own "不要過度設計" precedent, same reasoning
+        // this repo already applies to KV_ONLY_ATOMICITY.
+        "max_batch_size": 1,
+        // Matches src/pbs/debugPush.js's own exported MAX_QUEUE_RETRIES —
+        // that code's own bail-out (author a deterministic
+        // PROCESSING_FAILED terminal state) fires at exactly this
+        // boundary, so a real DLQ/drop from the platform is never relied
+        // upon to explain a final failure.
+        "max_retries": 3
+      }
+    ]
   }
 }

@@ -825,7 +825,140 @@
 // test/pbsAiObservatoryFourLayer.test.js for the dedicated 16-item
 // regression suite (order section 十二's own minimum list).
 
-export const APP_VERSION = 'V2.2.0';
+// V2.3.0 (2026-08-30) — PBS AI Queue Reliability: Cloudflare Queues
+// Replace ctx.waitUntil() As The AI Background-Execution Carrier. MINOR —
+// per this file's own versioning rule ("正式改變 AI business processing 的
+// 執行架構與可靠性模型" is a genuine arch-phase change, not a patch-sized
+// timeout tweak), not a change to AI semantic authority, the Windows PBS
+// filter, LINE policy, or the Observatory page's overall UI.
+//
+// REAL PRODUCTION INCIDENT this round exists to fix — a DIFFERENT failure
+// mode from the one V2.1.0 already closed: EVENT_ID=11508290166-0 reached
+// Cloudflare and started the Workers AI call successfully
+// (16:49:03.112), but the AI call itself did not return before
+// Cloudflare's own ctx.waitUntil() background-execution time budget
+// expired — entirely independent of Windows's own short HTTP timeout,
+// which V2.1.0's ctx.waitUntil() fix already solved. At 16:49:32.912 the
+// platform force-cancelled the whole task ("waitUntil() tasks did not
+// complete within the allowed time after invocation end and have been
+// cancelled"), permanently losing the AI decision and leaving the
+// idempotency record stuck at PROCESSING forever — AI_CALL_COMPLETED=NO,
+// AI_DECISION=NONE, LINE=NOT_EXECUTED, OBSERVATORY_FINAL=NONE.
+// REAL_INCIDENT_ROOT_CAUSE = WAITUNTIL_BACKGROUND_WINDOW_EXCEEDED.
+//
+// THE FIX — ctx.waitUntil() is RETIRED as an AI carrier entirely
+// (WAITUNTIL_AI_PROCESSING = 'RETIRED'), replaced by ONE Cloudflare Queue
+// (AI_BACKGROUND_EXECUTION = 'CLOUDFLARE_QUEUE', QUEUE_ROLE =
+// 'RELIABLE_AI_BUSINESS_PROCESSING') as the reliable execution carrier:
+//   - HTTP ingress (handlePbsDebugPush) now only: validates -> computes
+//     the transport idempotency key -> checks duplicate -> writes
+//     status=PROCESSING -> writes the early Observatory PROCESSING_STARTED
+//     record -> Queue.send() -> only on send SUCCESS does it ACK
+//     accepted:true. A Queue.send() failure returns a genuine transport
+//     failure (503 pbs_ai_queue_not_configured/queue_send_failed) — never
+//     "已成功接收並排入處理" when the event could not actually be handed
+//     off reliably. The existing PROCESSING_STALE_MS (60s) window recovers
+//     an orphaned PROCESSING record naturally — no new orphan-recovery
+//     mechanism was needed.
+//   - A genuinely separate Queue Consumer invocation (src/index.js's new
+//     `queue(batch, env, ctx)` export -> handlePbsAiQueueBatch ->
+//     processQueuedPbsEvent) owns ALL AI/LINE/Observatory-final work, with
+//     zero dependency on the original HTTP request or any ExecutionContext
+//     staying alive — REUSING (never re-implementing) the EXISTING
+//     buildAiCandidate, AI decision engine, AI decision cache,
+//     runAiApprovedPbsBroadcast, Observatory writer, transport idempotency,
+//     and LINE duplicate protection.
+//
+// RETRY POLICY — the order's own key design decision: AI_CALL_FAILED (the
+// Workers AI call itself did not reliably complete — network/5xx/
+// capacity/timeout/binding-missing) is now Queue-retryable, bounded by
+// MAX_QUEUE_RETRIES=3 (matches wrangler.jsonc's own `max_retries: 3`, so
+// this code's own deterministic bail-out fires before any unconfigured
+// platform DLQ/drop would). The EXISTING fail-closed AI_DECISION_INVALID
+// policy (the call DID complete, with a schema-invalid answer) is
+// deliberately left UNTOUCHED — never retried, terminal on the very first
+// attempt, exactly as V2.1.0/V2.2.0 already treated it. Only genuinely
+// "工作未可靠完成" cases retry; an invalid-but-completed answer is not
+// re-questioned.
+//
+// ONE NEW MINIMAL TERMINAL STATE — AI_OUTCOME.PROCESSING_FAILED, written
+// by the Queue Consumer only once MAX_QUEUE_RETRIES genuinely exhausts
+// without a reliable completion: marks idempotency COMPLETED (a
+// PERMANENTLY-failed event must never show PROCESSING forever) and acks
+// the message — authored deterministically by the consumer itself, never
+// left for an unconfigured Cloudflare DLQ/drop to silently explain. "使用
+// 最小新增狀態，不要建立大型狀態機" — one terminal state, not a state
+// machine.
+//
+// DUPLICATE PROTECTION — Cloudflare Queues delivery is AT_LEAST_ONCE
+// (QUEUE_DELIVERY_MODEL), never exactly-once; the required business
+// outcome is EFFECTIVELY_ONCE (BUSINESS_OUTCOME_MODEL): processQueuedPbsEvent
+// re-checks the idempotency record FIRST on every delivery — an
+// already-COMPLETED redelivery is acked and skipped immediately (0
+// additional AI calls, 0 additional LINE pushes), reusing the existing
+// transport idempotency record, AI decision cache, notified-state, and
+// incident suppression rather than a second duplicate-protection layer.
+//
+// OBSERVATORY KEY-IDENTITY FIX — a real bug found and fixed during this
+// round's own development, not anticipated in the initial design: because
+// the Queue Consumer runs as a genuinely separate invocation, its own
+// `now = new Date()` differs from the HTTP ingress's original accept-time
+// `now` — using it directly for the final Observatory write would create a
+// SECOND KV entry instead of overwriting the early PROCESSING_STARTED
+// record (breaking the V2.2.0 "same key overwrite" design). Fixed by
+// reconstructing `observatoryNow` from the queue message's own
+// `acceptedFirstAcceptedAt` field for BOTH Observatory writes, while
+// keeping the genuine current `now` for every real business-decision
+// (AI call, LINE broadcast-hour gating) and for markProcessingComplete's
+// own `completedAt` (which correctly reflects genuine completion time, not
+// accept time). See test/pbsDebugPushBackgroundProcessing.test.js's own
+// "observatoryNow key-identity regression guard" test.
+//
+// RAW_PBS_TEXT_POLICY = IMMUTABLE_END_TO_END_UNTIL_AI — unchanged this
+// round, re-verified: the queue message's own `event` field is a verbatim
+// shallow clone (buildPbsAiQueueMessage), never truncated/summarized/
+// rewritten/regenerated; parsed fields may be added alongside, never
+// replacing raw text.
+//
+// KV COST — measured, not estimated: puts = 4N + 2 (IDENTICAL to V2.2.0's
+// own formula — EXTRA_KV_WRITES_PER_EVENT vs V2.2.0 = 0, the same four
+// writes just split across two Worker invocations); gets = 6N (+1 per
+// event vs V2.2.0's 5N — the Queue Consumer's own idempotency re-check).
+// At 50/100/200 accepted events/day: 202/402/802 puts/day, 300/600/1200
+// gets/day, both comfortably under the Workers KV Free Plan's 1,000
+// writes/day budget. See test/pbsDebugPush.test.js's own KV cost
+// quantification tests.
+//
+// QUEUE COST (Cloudflare Queues operations, engineering estimate — no live
+// Cloudflare billing API access from this sandbox to verify against actual
+// account usage): a clean success is 1 write (Queue.send) + 1 read/ack
+// (Queue Consumer's single delivery) = 2 operations/event; an event that
+// exhausts all 3 retries is 1 write + 4 read attempts (3 retried + 1 final
+// ack) = 5 operations/event (worst case). At 50/100/200 events/day, even
+// the all-retries-exhausted worst case is 250/500/1000 operations/day —
+// comfortably under the documented 10,000/day free-tier operation budget;
+// real traffic (low volume, rare AI failures) sits far closer to the
+// 100/200/400 operations/day clean-success figure.
+//
+// EXPLICITLY UNCHANGED THIS ROUND: Windows PBS filter, Windows's own HTTP
+// timeout, PBS raw text content, AI prompt/model/semantic policy, service
+// area, LINE formatter, driverSummary, hourly reminder, TDX, CCTV, Shared
+// Feed product logic, LINE broadcast rules, and the Observatory page's
+// overall UI (only the HTTP-ingress -> AI work-carrying mechanism, and the
+// Observatory's outcome vocabulary gaining PROCESSING_FAILED, changed).
+//
+// See src/pbs/debugPush.js's own header comment for the full design,
+// test/pbsDebugPushBackgroundProcessing.test.js for HTTP-ingress-level
+// lifecycle-separation coverage (rewritten this round for the Queue
+// architecture), and the NEW test/pbsAiQueueReliability.test.js for
+// Queue-specific reliability coverage (bounded retry, AI_DECISION_INVALID
+// staying non-retryable, PROCESSING_FAILED, AT_LEAST_ONCE->EFFECTIVELY_ONCE
+// duplicate protection, RAW_PBS_TEXT_POLICY through the queue message, and
+// the real EVENT_ID=11508290166-0 incident regression fixture — a
+// controllable Promise stands in for a 30+ second AI delay, never a real
+// test sleep).
+
+export const APP_VERSION = 'V2.3.0';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,
