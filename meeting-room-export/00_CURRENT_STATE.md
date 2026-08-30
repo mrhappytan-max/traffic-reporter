@@ -9,20 +9,20 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V2.3.0（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | 9d4b45151086490f5210aa8b375f4e83394ad596 |
+| Current Version | V2.3.1（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | 6dc19a1ab3d44950136537e734804af517f21bb6 |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty (6 changed source file(s)) |
+| Source working tree | dirty (4 changed source file(s)) |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
 | Current Phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
 | Current Task | none（無進行中工作）。Latest completed task = DRIVE_SYNC_GOVERNANCE_V2，status = SEALED（前序 PBS_ACCIDENT_CCTV_ENRICHMENT_FIX、PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX、PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。雲端治理：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源，封版時只寫 GitHub、不要自己搬檔案到 Drive；GitHub → Drive 自動同步已由真人建置並實測通過（GitHub Actions，engineering-memory/ 為 canonical mirror source），GITHUB_TO_DRIVE_SYNC = PASS；不得人工補上傳，也不要重建那套自動同步。詳見 SYSTEM_STATE.json 的 cloudSyncGovernance。觀察中（非工作項，不是待辦）：一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數 |
-| Latest Completed Version | V2.3.0 |
+| Latest Completed Version | V2.3.1 |
 | Known Blocker | 無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md |
 | Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
 | Next Action | 無待辦。TDX 額度恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計） |
-| Export Generated At | 2026-08-30T03:09:25.094Z |
+| Export Generated At | 2026-08-30T03:58:36.640Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## V1.9.9 Phase 1 封版（2026-08-28，另一個 session 完成，本 Cloud Session 未參與，port 進本模板僅為維持 template↔engineering-memory 一致）
@@ -246,6 +246,37 @@ authority、Windows PBS filter、LINE policy、V2.1.0 的 ctx.waitUntil 架構�
 - 詳見 `03_ARCHITECTURE.md`／`PRODUCT_DECISIONS.md`／`07_KNOWN_ISSUES.md`。
   **下一個 Agent：不得接著開始「AI 一小時歷史上下文」、driverSummary、
   formatter 修正或其他功能。**
+
+## V2.3.1 封版（2026-08-30）— DIRECT_COORDINATE_MAP_FALLBACK（LINE 地圖座標直連 Hotfix）
+
+PATCH，formatter 行為修正，不改架構、不改 AI/Windows/Queue/LINE 政策。
+
+- 真實事件 `EVENT_ID=11508260158-0`（竹60線縣道，新竹縣尖石鄉坍方封路）：
+  PBS/Windows/Cloudflare 全程有效座標、AI 正常完成、LINE 已發送，但
+  **完全沒有地圖連結**
+- 根因：`messageFormat.js#buildRoadLines()` 的兩層地圖連結解析
+  （`resolveKmLocation`／`resolveCoordinateLocation`）都要求 `road`
+  先辨識成國道/省道格式才會使用座標；縣道/鄉道（如竹60）從未被本專案
+  僅有的國道(95016)/省道(7040)公里標資料集涵蓋，座標路徑因此在真正
+  使用座標前就被 road 判斷擋下
+- 修正：新增最後手段 `kmLocationResolver.js#buildDirectCoordinateMapUrl()`
+  ——重用既有 `buildMapUrl()`，直接以事件自身座標產生地圖連結，**不**
+  辨識道路、**不**查資料集、**不**猜測任何 road/sectionLabel/
+  locationLabel，只在既有兩層都失敗時才觸發，只影響「📍 地圖」那一行
+- 新增 `isValidRawCoordinate` 座標合法性把關：拒絕
+  null/undefined/NaN/Infinity/非數字型別/超出緯經度範圍/精確 (0,0)
+- `roadName.js`／`canonicalFreewayRoad`／`canonicalProvincialRoad`／
+  官方國道/省道資料集本身**完全未觸碰**；縣道/鄉道公里標資料工程
+  仍是刻意未開始的更大範圍問題
+- `APP_VERSION` 從 `V2.3.0` 升為 `V2.3.1`
+- 新增 13 項測試（`test/pbsCoordinateDirectMapFallback.test.js`，含真實
+  事件端對端 fixture，road 全程維持真實值「新竹縣-尖石鄉」，未硬編碼
+  「竹60」），既有 KM/座標解析測試檔重跑不變、全數通過，全量迴歸
+  1718/1684/34，NEW FAILURES=0（僅跑一次）
+- 本輪**未觸碰**：AI Prompt/model、Windows PBS filter、Queue、LINE
+  廣播政策、Observatory 架構、TDX、CCTV
+- 詳見 `07_KNOWN_ISSUES.md`／`kmLocationResolver.js`（`buildDirectCoordinateMapUrl`
+  自身 header comment）的完整記錄
 
 ## V2.3.0 封版（2026-08-30）— PBS AI Queue Reliability，Cloudflare Queues 取代 ctx.waitUntil
 

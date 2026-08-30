@@ -39,10 +39,10 @@
     "openStructuralQuestion": "TWO trees currently hold the same canonical content: engineering-memory/ (what the mirror syncs) and meeting-room-export/ (what scripts/export-meeting-room.mjs generates). They are kept in step by hand today, which is exactly the drift risk this governance exists to prevent. Needs a human decision: either point the generator at engineering-memory/, or retire one tree. NOT decided unilaterally."
   },
   "git": {
-    "sourceMainHead": "9d4b45151086490f5210aa8b375f4e83394ad596",
+    "sourceMainHead": "6dc19a1ab3d44950136537e734804af517f21bb6",
     "sourceMainHeadResolvedFrom": "origin/main",
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
-    "sourceWorkingTree": "dirty (6 changed source file(s))",
+    "sourceWorkingTree": "dirty (4 changed source file(s))",
     "selfReferenceNote": "sourceMainHead is the official main commit this snapshot DESCRIBES; exportArtifactCommit is the commit that CONTAINS this artifact and is intentionally never equal to it. Requiring the two to match would create a Git self-reference loop (every export changes the file, which changes the commit, which invalidates the recorded head). sourceMainHead is read from origin/main and is therefore stable across re-runs and across whichever branch the export was generated on.",
     "checkoutNote": "The transient checkout (branch/HEAD/date) this export happened to run from is deliberately NOT recorded here. It changes on every commit and would make every release look like a content change, defeating delta sync; it also says nothing about the snapshot itself. The snapshot is identified by sourceMainHead alone. Local sync evidence in .engineering/ still records the checkout for auditing.",
     "workingTreeNote": "sourceWorkingTree excludes meeting-room-export/, which this generator dirties by definition; it answers 'is the source tree clean', not 'did the export just write files'."
@@ -247,29 +247,33 @@
     }
   },
   "taskSeal": {
-    "task": "PBS_AI_QUEUE_RELIABILITY_V2_3_0",
+    "task": "DIRECT_COORDINATE_MAP_FALLBACK_V2_3_1",
     "status": "SEALED",
     "sealedAt": "2026-08-30",
-    "sealedBy": "human directive (路況工程部｜V2.3.0 正式施工令｜PBS AI Queue Reliability｜Cloudflare Queues 可靠背景處理)",
-    "releaseVersion": "V2.3.0",
-    "previousVersion": "V2.2.0",
-    "nature": "MINOR — 正式改變AI business processing的執行架構與可靠性模型，非timeout patch。",
-    "realIncident": "EVENT_ID=11508290166-0：Workers AI呼叫成功啟動（16:49:03.112）但在ctx.waitUntil()自身背景執行時間預算到期前未回傳，16:49:32.912平台強制取消整個task，AI決策永久遺失，冪等記錄卡死PROCESSING。REAL_INCIDENT_ROOT_CAUSE=WAITUNTIL_BACKGROUND_WINDOW_EXCEEDED（與V2.1.0修的是不同一種失敗模式）。",
-    "architectureChange": "WAITUNTIL_AI_PROCESSING=RETIRED，AI_BACKGROUND_EXECUTION=CLOUDFLARE_QUEUE，QUEUE_ROLE=RELIABLE_AI_BUSINESS_PROCESSING。唯一一個Cloudflare Queue（pbs-ai-processing-queue／binding PBS_AI_QUEUE，wrangler.jsonc為唯一正典設定）：HTTP ingress只驗證/寫冪等PROCESSING/寫Observatory PROCESSING_STARTED/Queue.send()，只有send成功才ACK；獨立Queue Consumer（src/index.js新增queue() export）承接全部AI/LINE/Observatory-final工作，重用既有AI candidate/decision engine/cache/LINE廣播/Observatory writer。",
-    "retryPolicy": "AI_CALL_FAILED現在可Queue重試，MAX_QUEUE_RETRIES=3；既有AI_DECISION_INVALID fail-closed政策維持不變，絕不重試。新增唯一最小終態AI_OUTCOME.PROCESSING_FAILED（重試耗盡後由Consumer寫入，標記冪等COMPLETED，永不卡死PROCESSING）。",
-    "duplicateProtection": "QUEUE_DELIVERY_MODEL=AT_LEAST_ONCE，BUSINESS_OUTCOME_MODEL=EFFECTIVELY_ONCE：已COMPLETED的重複遞送直接ack略過，0額外AI呼叫/LINE推播。",
-    "observatoryKeyFix": "開發期間發現並修正：Queue Consumer自己的now與HTTP ingress原始接受時間不同，改從queue message的acceptedFirstAcceptedAt重建observatoryNow供兩次Observatory寫入共用同一把KV key，真實now仍用於所有業務決策與completedAt。",
-    "kvCost": "puts=4N+2（與V2.2.0完全相同公式，0額外寫入/事件），gets=6N（+1/事件，Consumer冪等re-check）。",
-    "queueCost": "工程估算：成功2 operations/事件，重試耗盡最差5 operations/事件；50/100/200 events/day最差情況250/500/1000次，遠低於官方文件10,000/日免費額度。",
-    "scopeDiscipline": "未觸碰Windows PBS filter、Windows自身HTTP timeout、PBS原始文字、AI Prompt/model/semantic policy、service area、LINE formatter、driverSummary、hourly reminder、TDX、CCTV、Shared Feed、LINE廣播規則、Observatory頁面整體UI。",
+    "sealedBy": "human directive (路況工程部｜LINE 地圖座標直連 Hotfix 施工令)",
+    "releaseVersion": "V2.3.1",
+    "previousVersion": "V2.3.0",
+    "nature": "PATCH — formatter 行為修正，不改架構、不改 AI/Windows/Queue/LINE 政策。",
+    "realIncident": "EVENT_ID=11508260158-0：竹60線（縣道）新竹縣尖石鄉坍方封路事件。PBS/Windows/Cloudflare全程保留有效x1/y1座標，AI正常完成，LINE已發送，但完全沒有Google Maps連結。",
+    "rootCause": "messageFormat.js#buildRoadLines()的兩層地圖連結解析（resolveKmLocation道路+KM路徑、resolveCoordinateLocation座標路徑）都要求event.road先被canonicalFreewayRoad()/canonicalProvincialRoad()辨識成國道/省道格式才會使用座標。竹60線等縣道/鄉道從未被本專案僅有的官方國道(95016)/省道(7040)公里標資料集涵蓋，座標路徑因此在真正比對座標之前就被road判斷擋下，有效座標被完全捨棄。",
+    "fix": "新增一層最後手段（僅在既有兩層都失敗後才觸發）：kmLocationResolver.js新匯出buildDirectCoordinateMapUrl(latitude, longitude)，重用既有buildMapUrl()直接以事件自身座標產生地圖連結，不辨識道路、不查資料集、不猜測任何road/sectionLabel/locationLabel，只決定地圖那一行有沒有連結。新增isValidRawCoordinate()座標合法性把關：拒絕null/undefined/NaN/Infinity/非數字型別/超出緯經度合法範圍/精確(0,0)null island。",
+    "scopeDiscipline": "roadName.js、canonicalFreewayRoad、canonicalProvincialRoad、官方國道/省道資料集本身完全未觸碰；縣道/鄉道公里標資料工程仍是刻意未開始的更大範圍問題。未觸碰：AI Prompt/model、Windows PBS filter、Queue、LINE廣播政策、Observatory架構、TDX、CCTV。RAW_PBS_TEXT_POLICY不受影響——只讀event.latitude/event.longitude，從不寫入或重新解讀。",
     "testEvidence": {
-      "newTests": "test/pbsAiQueueReliability.test.js（7項，含真實事故EVENT_ID=11508290166-0迴歸fixture，可控制Promise模擬延遲非真實sleep），test/pbsDebugPushBackgroundProcessing.test.js改寫5項過時ctx.waitUntil測試（3項既有測試保留），全部首次執行即PASS。",
-      "fullRegression": "1705項/1671 pass/34 fail，與V2.2.0基準以failure名稱集合對照確認NEW FAILURES=0，僅跑一次。"
+      "newTests": "test/pbsCoordinateDirectMapFallback.test.js（13項：拒絕輸入型態單元測試、CASE 1-6、真實EVENT_ID=11508260158-0端對端迴歸fixture，road全程維持真實值「新竹縣-尖石鄉」未硬編碼竹60），全部首次執行即PASS。",
+      "existingTestsUnchanged": "test/kmLocationResolver.test.js、test/messageFormat.test.js、test/kmLocationMessageIntegration.test.js、test/broadcastProvenanceKmLocation.test.js全部重跑不變，全數通過，證實既有國道/省道KM解析行為零回歸。",
+      "fullRegression": "1718項/1684 pass/34 fail，與V2.3.0基準以failure名稱集合對照確認NEW FAILURES=0，僅跑一次。"
     },
-    "browserActionRequired": "YES — 真實Cloudflare Queue資源（pbs-ai-processing-queue）需在Dashboard或以wrangler queues create建立，本sandbox無即時Cloudflare API/Dashboard存取權限驗證或建立，不得假設已存在，不得宣稱Production-ready。",
-    "readerNote": "完成後STOP。下一個Agent須先確認Cloudflare Queue資源已建立並驗證，不得直接開始「AI一小時歷史上下文」、driverSummary、formatter修正、查修頁UI改版或其他功能。"
+    "readerNote": "完成後STOP。不得開始縣道／鄉道公里標資料工程；不得接著開始「AI一小時歷史上下文」、driverSummary、Observatory查修頁UI改版或其他功能。"
   },
   "taskSealHistory": [
+    {
+      "task": "PBS_AI_QUEUE_RELIABILITY_V2_3_0",
+      "status": "SEALED",
+      "sealedAt": "2026-08-30",
+      "releaseVersion": "V2.3.0",
+      "sealCommit": "850f5fa",
+      "summary": "PBS AI Queue Reliability：真實事故EVENT_ID=11508290166-0（ctx.waitUntil()自身背景執行時間預算到期，AI決策永久遺失，REAL_INCIDENT_ROOT_CAUSE=WAITUNTIL_BACKGROUND_WINDOW_EXCEEDED）。ctx.waitUntil()全面退休做為AI背景執行載體，改用唯一一個Cloudflare Queue（pbs-ai-processing-queue）：HTTP ingress只驗證/寫冪等/Queue.send()，獨立Queue Consumer承接全部AI/LINE/Observatory-final工作。AI_CALL_FAILED可Queue重試（MAX_QUEUE_RETRIES=3），既有AI_DECISION_INVALID fail-closed政策不變。新增PROCESSING_FAILED終態。QUEUE_DELIVERY_MODEL=AT_LEAST_ONCE、BUSINESS_OUTCOME_MODEL=EFFECTIVELY_ONCE。修正Observatory KV key重複bug（observatoryNow重建）。KV puts=4N+2（與V2.2.0相同）、gets=6N。7項新測試，1705/1671/34，NEW FAILURES=0。BROWSER_ACTION_REQUIRED=YES（真實Queue資源未驗證存在）。完整記錄見06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V2.3.0條目。"
+    },
     {
       "task": "AI_DECISION_OBSERVATORY_FOUR_LAYER_EVENT_LIFECYCLE_V2_2_0",
       "status": "SEALED",
@@ -362,38 +366,9 @@
       "task": "CCTV_QUAD_PREPARE_TIMEOUT_OBSERVABILITY_V1_9_0",
       "status": "SEALED",
       "sealedAt": "2026-08-26",
-      "sealedBy": "human directive (路況工程部 V1.9.0 高優先補充令｜先找 Root Cause，禁止先加 Retry)",
       "releaseVersion": "V1.9.0",
-      "realWorldTrigger": "2026-08-26 09:20 國3南向96K+700事故：event 進 Shared Feed、withImage=0、CCTV prepare 完全沒有 completion log。09:30（下一個 Cron tick）同一事件重跑：candidates=1、eligible=1、attempted=1、attached=1，quad image 成功。",
-      "rootCause": "以程式碼檢視＋7項決定性測試確認（非推測）：cctv/dynamicCollage.js 的 quad（事故）路徑完全沒有 stage 追蹤機制——動態路肩單鏡頭路徑早就有（timeoutStage），quad 路徑的 prepare-timeout 從未帶過 stage、部分影格數、或任何部分計時。因此任一次真實的外部延遲（frame fetch／JPEG compose／R2 publish——三者皆已證實共用同一個 4000ms budget）在 09:20 都是結構性地不可見：不是記錄漏了，是根本沒有東西在記錄。",
-      "whatWasNotClaimed": "09:20 當下具體是哪一段外部 I/O 慢（frame fetch？compose？R2？）——當時的 Pipeline Trace 沒有 stage 級別資料（正是本輪要補的缺口），所以這個特定歸因無法從既有證據回推，本輪誠實地不予斷言。",
-      "provenByDeterministicTests": {
-        "FRAME_FETCH_MODE": "PARALLEL（Promise.all，4支候選同時發起，實測 start 時間差 <100ms）",
-        "SLOW_CAMERA_CAN_BLOCK_ALL": "YES——單一慢/永遠不回的候選會拖住整批 compose，因為 Promise.all 等所有4支都 settle，每支各自的 timeout 都源自同一個剩餘 budget",
-        "BUDGET_SCOPE": "frame-fetch、collage compose、R2 publish 三者共用同一個 4000ms budget，不是分開計時",
-        "TIMEOUT_ABORTS_UNDERLYING_WORK": "NO——outer race 逾時後，背景中的 work 不會被中止，會自行跑完（受限於自己的 stage timeout），結果被安全丟棄"
-      },
-      "fix": "cctv/dynamicCollage.js 的 prepareCctvImageWork 比照單鏡頭路徑加上 stageTracker，在 metadata/camera-selection/frame-fetch/r2-publish 四個邊界記錄進度；composeCollageFromCandidates（hsinchuCctvProbe.js）額外回報 frameFetchElapsedMs/collageElapsedMs/successfulFrameCount/failedFrameCount；broadcastPipeline.js 在三個既有呼叫點把 7 個新欄位接進 Pipeline Trace（pipelineTrace.js 的 buildTraceEntry 白名單）。全部欄位皆為純數字，測試 G 鎖定絕不含 stream URL／candidate record／frame bytes。",
-      "retryRequired": "NO——本輪沒有新增任何 retry、第二輪 fetch、fallback，也沒有調整 4000ms 這個數字。",
-      "antiDeathSpiral": {
-        "MAX_FRAME_FETCH_PER_EVENT": "4（QUADRANTS.length，固定常數，本輪未變動）",
-        "MAX_RETRY_PER_EVENT": "0（prepareCctvImageForEvent 每個事件每輪恰好呼叫一次，無迴圈、無第二次呼叫）",
-        "cronNeverStuck": "outer withTimeout race 保證呼叫端一定在 budgetMs 內被釋放，不受背景工作影響（測試B/C再次證實）；src/index.js 的 scheduled() 用 ctx.waitUntil(runScheduledTdxSync(...)) 包住整輪，沒有任何東西把被丟棄的逾時 work 串接上去，一旦這輪本身的 promise settle，isolate 對那個被丟棄的 straggler 沒有進一步保活義務，而 straggler 自己每個階段都有時間上限（KV get／每支 frame fetch 的 AbortSignal.timeout／in-process JPEG codec／單次 R2 PUT），不可能無限跑下去"
-      },
-      "testResult": "npm test 共 1286 項；NEW FAILURES = 0（同一輪 git stash -u 對照乾淨 checkout，38 項既有失敗完全相同）。新增 test/cctvQuadPrepareForensics.test.js 8 項（A-G）全數通過，其中一項時序敏感測試連續跑 8 次驗證非 flake。",
-      "canonicalVersionSource": "src/version.js 的 APP_VERSION 已 bump 為 V1.9.0（三段式版本治理生效後第一個正式版本，patch-level 起點）——與本次修復同一個 commit。",
-      "githubSeal": "PASS",
-      "githubEngineeringMemory": "SEALED",
-      "claudeDriveUpload": "NO",
-      "doNotMisread": [
-        "不要以為 09:20 的具體慢在哪一段已被證實——只有『沒有 stage 追蹤』這個結構性缺陷被證實，具體外部歸因誠實地標示為無法回推。",
-        "不要把這次修復理解成加了 retry 或加大了 timeout——RETRY_REQUIRED = NO，4000ms 完全未變動。",
-        "不要把 timeoutStage='frame-fetch' 誤解為『一定是頻寬慢』——它涵蓋 frame fetch 與 compose 兩個子步驟（同一個 await 內，無法從外部進一步拆分），已在程式註解與測試裡誠實揭露這個粒度限制。",
-        "不要因為看到『slow camera 拖住整批』就去改 Promise.all 為 Promise.allSettled——extractFirstJpegFrame 本來就從不 throw，改了也不會改變行為，不是真正的修法。",
-        "不要對 Google Drive 做任何寫入——Claude 唯讀，GitHub 是唯一正式寫入來源。"
-      ],
-      "openFollowUp": "若未來想進一步優化『3支已成功、1支還在等』這種情境（讓已成功的3支不必等到第4支逾時才組圖），這是一個真實存在、但本輪未實作的可能優化——因為呼叫端的 outer race 早已保證不影響 LINE 文字準時推播，這個優化只影響『能不能在還有一點剩餘時間時多組出一張3/4的圖』，屬於錦上添花而非本輪已證實的 Root Cause 範圍，留待有實際 Production 證據支持時再處理。",
-      "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
+      "sealCommit": "3af5c8b",
+      "summary": "CCTV 事故（quad）prepare-timeout 可觀測性：09:20 國3南向96K+700事故進Shared Feed無圖且無completion log，09:30重跑成功。根因（7項決定性測試證實，非推測）：quad路徑完全沒有stage追蹤（動態路肩單鏡頭路徑早就有），任何真實外部延遲在timeoutStage上一律null。修復：quad路徑加stageTracker，成功/失敗/timeout皆留下metadataElapsedMs/frameFetchElapsedMs/collageElapsedMs/successfulFrameCount/failedFrameCount/r2PublishElapsedMs/timeoutStage。RETRY_REQUIRED=NO，未新增retry、未調整4000ms budget。FRAME_FETCH_MODE=PARALLEL，單一慢鏡頭會拖住整批compose，compose與R2 publish共用同一budget，timeout不中止背景工作。8項新測試（cctvQuadPrepareForensics.test.js），1286項/NEW FAILURES=0。09:20當下具體哪段I/O慢誠實列為無法回溯。完整記錄見06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V1.9.0條目。"
     },
     {
       "task": "THREE_PART_VERSIONING_TRANSITION",
@@ -593,7 +568,7 @@
   ],
   "version": {
     "packageJsonVersion": "0.1.0",
-    "latestCompleted": "V2.3.0",
+    "latestCompleted": "V2.3.1",
     "canonicalSource": "src/version.js 的 APP_VERSION — 唯一權威。packageJsonVersion 是 npm 套件版本（0.1.0），與產品版本線無關，不要混用。"
   },
   "production": {
@@ -616,8 +591,8 @@
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-08-30T03:09:25.094Z",
-    "sourceMainHead": "9d4b45151086490f5210aa8b375f4e83394ad596",
+    "generatedAt": "2026-08-30T03:58:36.640Z",
+    "sourceMainHead": "6dc19a1ab3d44950136537e734804af517f21bb6",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
     "historyDir": "_history"

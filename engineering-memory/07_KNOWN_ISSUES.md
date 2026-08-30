@@ -564,6 +564,14 @@ PBS 閘門排除仍視為有意義。fixture 實測 QUIET/NORMAL/HIGH writes/day
 
 **狀態：`HUMAN_REPORTED_NOT_INDEPENDENTLY_VERIFIED`。** 人類回報：Windows PBS 本機篩選舊邏輯先套用 `isAccident()` 事故關鍵字語意閘門，才進新竹縣市地理判斷，導致非事故型事件（落石／坍方／封路／施工／積水等）即使位於新竹縣市仍可能在 Windows 端被直接丟棄，從未進入 Cloudflare/AI。回報修正：移除 `isAccident()` 語意閘門，改用 point-in-polygon（data.gov.tw dataset 7442 縣市界線）取代原本的矩形邊界，新竹市/縣**所有**事件類型皆納入候選，語意判斷完全交給 AI；同批資料驗證回報 `BEFORE_KEEP_COUNT=11 → AFTER_KEEP_COUNT=29`（找回 18 筆），`TESTS=124 passed/0 failed`。**本 Cloud Session 的獨立查證**：目前 `main`／本分支的 `pbs-relay/src/localPrototype.js` 仍保留 `isAccident()` 並仍作為候選閘門使用（見該檔第 56/108 行），`pbs-relay/` 完整 git 歷史（含 `feature/pbs-local-edge-filter-prototype` 分支）中**未找到**對應此修正的 commit，故無法核對回報的 point-in-polygon 實作、dataset 7442 引用或 11→29/124 測試數字。與既有 `PBS Windows Local Edge Debug Push Integration`（V1.9.6）記錄採同一誠實原則：**本節只記錄「人類回報了什麼」，不代表本 Session 已驗證程式碼或測試結果為真**——待對應 commit 出現於本 repo（或人類提供可核對的 diff/測試輸出）後，下一輪應改記為已驗證版本，並同步更新 `pbs-relay/` 程式碼本身（本輪禁止修改）。
 
+## 修正紀錄｜V2.3.1 — DIRECT_COORDINATE_MAP_FALLBACK（LINE 地圖座標直連 Hotfix）（2026-08-30）
+
+**真實事件**：`EVENT_ID=11508260158-0`，竹60線（縣道）新竹縣尖石鄉坍方封路事件。PBS／Windows／Cloudflare 全程保留有效 x1/y1 座標，AI 正常完成，LINE 已發送，但**完全沒有 Google Maps 連結**。**根因**（同日先行完成的唯讀查核已確認）：`messageFormat.js#buildRoadLines()` 的兩層地圖連結解析（`resolveKmLocation` 道路+KM 路徑、`resolveCoordinateLocation` 座標路徑）都要求 `event.road` 先被 `canonicalFreewayRoad()`／`canonicalProvincialRoad()` 辨識成「國道X號」或「台X線」才會使用座標——竹60線這類縣道／鄉道從未被本專案僅有的官方國道（95016）／省道（7040）公里標資料集涵蓋，座標路徑因此在真正比對座標之前就被 road 判斷擋下，有效座標被完全捨棄。
+
+**修正**：新增一層**最後手段**（僅在既有兩層都失敗後才觸發）：`kmLocationResolver.js` 新匯出 `buildDirectCoordinateMapUrl(latitude, longitude)`，直接重用既有 `buildMapUrl()` 產生 `📍 地圖 https://maps.google.com/?q=lat,lon`，**不辨識道路、不查資料集、不猜測 sectionLabel/locationLabel/鄉道名稱/公里位置**——只決定地圖那一行有沒有連結，不影響上方文字。座標合法性把關（`isValidRawCoordinate`）：拒絕 null/undefined/NaN/Infinity/非數字型別/超出緯經度合法範圍/精確 (0,0)「null island」。`roadName.js`／`canonicalFreewayRoad`／`canonicalProvincialRoad`／官方資料集本身皆**未觸碰**——縣道/鄉道公里標資料工程仍是刻意未開始的更大範圍問題。
+
+新增 `test/pbsCoordinateDirectMapFallback.test.js`（13 項：拒絕輸入型態單元測試、CASE 1-6、含真實 `EVENT_ID=11508260158-0` 端對端 fixture，road 全程維持「新竹縣-尖石鄉」，未硬編碼「竹60」）；既有 KM/座標解析測試檔全數重跑不變、全部通過，證實零回歸。全量迴歸 1718/1684/34，NEW FAILURES=0。`APP_VERSION` V2.3.0→V2.3.1（PATCH）。本輪**未觸碰**：AI Prompt/model、Windows PBS filter、Queue、LINE 廣播政策、Observatory 架構、TDX、CCTV，亦未開始縣道／鄉道公里標資料工程。詳見 `kmLocationResolver.js` 的 `buildDirectCoordinateMapUrl` 自身 header comment。
+
 ## 修正紀錄｜V2.3.0 — PBS AI Queue Reliability，Cloudflare Queues 取代 ctx.waitUntil（2026-08-30）
 
 **真實 Production 事故**（與 V2.1.0 修的是不同一種失敗模式）：`EVENT_ID=11508290166-0` 成功抵達 Cloudflare 並啟動 Workers AI 呼叫（16:49:03.112），但 AI 呼叫本身在 Cloudflare 自己的 `ctx.waitUntil()` 背景執行時間預算到期前未能回傳——與 Windows 自身的短 HTTP timeout（V2.1.0 已解決）完全無關的另一種限制。16:49:32.912 平台強制取消整個 task（"waitUntil() tasks did not complete within the allowed time after invocation end and have been cancelled"），AI 決策永久遺失，冪等紀錄卡死在 `PROCESSING`。`REAL_INCIDENT_ROOT_CAUSE = WAITUNTIL_BACKGROUND_WINDOW_EXCEEDED`。
@@ -733,44 +741,11 @@ test.js` 8 項全新＋既有 KV 成本量化測試公式由 `puts=2N+2` 更新�
 `COMPLETED`），全部首次執行即 PASS；全量迴歸 1681/1647/34，與 V2.0.2
 基準以 failure 名稱集合對照確認 NEW FAILURES=0，僅跑一次。
 
-## 修正紀錄｜V2.0.2 Config Drift Hotfix — PBS_AI_DECISION_ENABLED canonical deployment（2026-08-29）
+## 修正紀錄｜V2.0.2 Config Drift Hotfix — PBS_AI_DECISION_ENABLED canonical deployment（2026-08-29，壓縮摘要）
 
-**CONFIG_DRIFT_INCIDENT**：GPT Work 在 Cloudflare Dashboard 手動設定
-`PBS_AI_DECISION_ENABLED="true"` 後，被後續一次 GitHub main → Workers
-Builds → wrangler deploy 悄悄移除／覆寫——根因與 `TRAFFIC_SOURCE_MODE`
-既有註解記載的機制完全相同：Workers Builds 每次部署都把 `wrangler.jsonc`
-視為權威來源，Dashboard-only 的值撐不過下一次 deploy。`AI switch` 只存在
-於 Dashboard、不在 repo canonical configuration，因此每次 repo
-deployment 都可能把 AI 悄悄關掉，而沒有任何人真的改過這個開關。17:49
-台68事件發生時 AI switch 已被 deployment 移除，**該筆不算真實 AI 判讀
-事件**（由legacy路徑決定，非Workers AI）。
+**一句話**：GPT Work 在 Dashboard 手動設定 `PBS_AI_DECISION_ENABLED="true"` 後被下一次 `wrangler deploy` 悄悄移除（Workers Builds 每次部署都把 `wrangler.jsonc` 視為權威來源，與 `TRAFFIC_SOURCE_MODE` 既有機制相同）——17:49 台68事件當時 AI switch 已被移除，該筆非真實 AI 判讀事件。修正：`wrangler.jsonc` 的 `vars` 正式宣告 `"PBS_AI_DECISION_ENABLED": "true"`（字串），`PBS_AI_DECISION_ENABLED_SOURCE=WRANGLER_CANONICAL_VAR`，`DASHBOARD_ONLY_AI_SWITCH=RETIRED`，未加 `keep_vars`。新增 `checkPbsAiDecisionEnabledVar()` regression guard。10 項新測試，1549/1516/33，NEW FAILURES=0。`APP_VERSION` V2.0.1→V2.0.2（PATCH）。
 
-**修正**：`wrangler.jsonc` 的 `vars` 區塊正式宣告
-`"PBS_AI_DECISION_ENABLED": "true"`（必須是字串，Cloudflare 一律以字串
-注入 Variable，`resolvePbsAiDecisionEnabled()` 自 V1.9.9 Phase 3D 起已
-支援此形式）。**正式決策**：`PBS_AI_DECISION_ENABLED_SOURCE =
-WRANGLER_CANONICAL_VAR`，`DASHBOARD_ONLY_AI_SWITCH = RETIRED`——Dashboard
-不再作為此 Variable 的長期權威來源。**未新增** `keep_vars`（會讓
-Dashboard-only 設定繼續漂移，與本輪目標「repo config authoritative」
-相反）。新增 regression guard：`scripts/check-deployment-policy.mjs` 的
-`checkPbsAiDecisionEnabledVar()`（`npm run check:deployment-policy` 現在
-會在有人未來不小心刪掉這個 var 時立即失敗，而非讓 Production AI 默默
-退回 FALSE）。
-
-本輪**未觸碰**：AI Prompt、AI model、`aiDecisionEngine.js`、
-`aiConfig.js` resolver 語意、Windows PBS filter、service area、
-lifecycle、message formatter、driverSummary、LINE policy、Shared Feed、
-CCTV、hourly reminder。未新增任何 Secret 至 `wrangler.jsonc` vars（測試
-直接斷言）。`APP_VERSION` 從 `V2.0.1` 升為 `V2.0.2`（PATCH，config
-correctness fix，不改 AI semantic behavior）。新增 10 項測試
-（`test/pbsAiConfigDriftHotfixV202.test.js`），全部首次執行即 PASS；
-全量迴歸 1549/1516/33，NEW FAILURES=0（僅跑一次）。
-
-**另記已知問題（本輪不修）**：
-`PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER` —— LINE
-訊息格式化目前不會把 PBS comment 原文中的精確交流道／匝道文字（例如
-「近竹科匝道」）帶出來顯示，即使來源 comment 已經包含這個資訊。與本輪
-config drift 修正無關，刻意不在本輪處理，避免同時改動兩個不相關問題。
+**另記已知問題（本輪不修，仍未解決）**：`PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER`——LINE 訊息格式化仍不會把 PBS comment 原文中的精確交流道／匝道文字（例如「近竹科匝道」）帶出來顯示，即使來源 comment 已含此資訊。與 V2.3.1 的 `DIRECT_COORDINATE_MAP_FALLBACK`（見下方，同樣源自「comment 原文有資訊、結構化欄位沒有」這一類根因）相關但非同一問題——V2.3.1 只補了地圖連結，comment 內的精確地標文字本身仍未被 formatter 使用，此已知問題依然開放。
 
 ## 修正紀錄｜V2.0.1 — AI Decision Observatory（2026-08-29，壓縮摘要）
 

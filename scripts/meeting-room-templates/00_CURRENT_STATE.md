@@ -247,6 +247,37 @@ authority、Windows PBS filter、LINE policy、V2.1.0 的 ctx.waitUntil 架構�
   **下一個 Agent：不得接著開始「AI 一小時歷史上下文」、driverSummary、
   formatter 修正或其他功能。**
 
+## V2.3.1 封版（2026-08-30）— DIRECT_COORDINATE_MAP_FALLBACK（LINE 地圖座標直連 Hotfix）
+
+PATCH，formatter 行為修正，不改架構、不改 AI/Windows/Queue/LINE 政策。
+
+- 真實事件 `EVENT_ID=11508260158-0`（竹60線縣道，新竹縣尖石鄉坍方封路）：
+  PBS/Windows/Cloudflare 全程有效座標、AI 正常完成、LINE 已發送，但
+  **完全沒有地圖連結**
+- 根因：`messageFormat.js#buildRoadLines()` 的兩層地圖連結解析
+  （`resolveKmLocation`／`resolveCoordinateLocation`）都要求 `road`
+  先辨識成國道/省道格式才會使用座標；縣道/鄉道（如竹60）從未被本專案
+  僅有的國道(95016)/省道(7040)公里標資料集涵蓋，座標路徑因此在真正
+  使用座標前就被 road 判斷擋下
+- 修正：新增最後手段 `kmLocationResolver.js#buildDirectCoordinateMapUrl()`
+  ——重用既有 `buildMapUrl()`，直接以事件自身座標產生地圖連結，**不**
+  辨識道路、**不**查資料集、**不**猜測任何 road/sectionLabel/
+  locationLabel，只在既有兩層都失敗時才觸發，只影響「📍 地圖」那一行
+- 新增 `isValidRawCoordinate` 座標合法性把關：拒絕
+  null/undefined/NaN/Infinity/非數字型別/超出緯經度範圍/精確 (0,0)
+- `roadName.js`／`canonicalFreewayRoad`／`canonicalProvincialRoad`／
+  官方國道/省道資料集本身**完全未觸碰**；縣道/鄉道公里標資料工程
+  仍是刻意未開始的更大範圍問題
+- `APP_VERSION` 從 `V2.3.0` 升為 `V2.3.1`
+- 新增 13 項測試（`test/pbsCoordinateDirectMapFallback.test.js`，含真實
+  事件端對端 fixture，road 全程維持真實值「新竹縣-尖石鄉」，未硬編碼
+  「竹60」），既有 KM/座標解析測試檔重跑不變、全數通過，全量迴歸
+  1718/1684/34，NEW FAILURES=0（僅跑一次）
+- 本輪**未觸碰**：AI Prompt/model、Windows PBS filter、Queue、LINE
+  廣播政策、Observatory 架構、TDX、CCTV
+- 詳見 `07_KNOWN_ISSUES.md`／`kmLocationResolver.js`（`buildDirectCoordinateMapUrl`
+  自身 header comment）的完整記錄
+
 ## V2.3.0 封版（2026-08-30）— PBS AI Queue Reliability，Cloudflare Queues 取代 ctx.waitUntil
 
 MINOR，正式改變 AI business processing 的執行架構與可靠性模型，非
