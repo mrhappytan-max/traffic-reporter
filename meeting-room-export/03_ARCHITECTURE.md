@@ -4,7 +4,111 @@
 
 本檔案以 `src/` 實際模組結構整理，非憑記憶重寫。模組清單於 export 產生時由腳本重新掃描 `src/` 目錄核對（見本檔末尾「模組清單（自動掃描）」），若與下方敘述不符，以自動掃描結果與程式碼本身為準,並視為文件 Drift。
 
-## V2.2.0 — AI Decision Observatory 四層事件生命週期查修頁（本輪，2026-08-29）
+## V2.3.0 — PBS AI Queue Reliability：Cloudflare Queues 取代 ctx.waitUntil（2026-08-30）
+
+**真實 Production 事故**（與 V2.1.0 修的是不同一種失敗模式）：`EVENT_ID=
+11508290166-0` 成功抵達 Cloudflare 並啟動 Workers AI 呼叫
+（16:49:03.112），但呼叫本身在 `ctx.waitUntil()` 自己的背景執行時間
+預算到期前未能回傳——與 Windows 自身的短 HTTP timeout（V2.1.0 已解決）
+完全無關的另一種限制。16:49:32.912 平台強制取消整個 task（"waitUntil()
+tasks did not complete within the allowed time after invocation end and
+have been cancelled"），AI 決策永久遺失，冪等紀錄卡死 `PROCESSING`。
+`REAL_INCIDENT_ROOT_CAUSE = WAITUNTIL_BACKGROUND_WINDOW_EXCEEDED`。
+
+**架構變更**：`ctx.waitUntil()` 全面退休做為 AI 背景執行載體
+（`WAITUNTIL_AI_PROCESSING = 'RETIRED'`），改用**唯一一個** Cloudflare
+Queue（`pbs-ai-processing-queue`／binding `PBS_AI_QUEUE`）：
+
+```
+Windows 送出事件
+    ↓
+Cloudflare：auth → 驗證 → 冪等 accept（寫入 status=PROCESSING）
+    → Observatory 早期寫入（PROCESSING_STARTED）
+    ↓
+Queue.send() —— 只有 send 成功才 ACK「已收件」
+    ↓                                    ↓
+Windows 收到回應，不需等待               Queue Consumer（獨立 invocation，
+                                          與原始 HTTP request/ctx 完全無關）：
+                                          AI candidate → AI 決策
+                                          → LINE/Shared Feed → Observatory
+                                          最終寫入 → status=COMPLETED
+```
+
+`AI_BACKGROUND_EXECUTION = 'CLOUDFLARE_QUEUE'`，`QUEUE_ROLE =
+'RELIABLE_AI_BUSINESS_PROCESSING'`。`wrangler.jsonc` 的 `queues` 區塊為
+**唯一正典設定來源**（沿用 `TRAFFIC_SOURCE_MODE`／
+`PBS_AI_DECISION_ENABLED` 既有的 anti-drift 慣例，絕非 Dashboard-only）。
+Producer = 這個 Worker 自己的 HTTP ingress（`handlePbsDebugPush`）；
+Consumer = 同一個 Worker 的新 `queue(batch, env, ctx)` export——**沒有
+第二個 Worker 專案**。`Queue.send()` 失敗時絕不回報 `accepted:true`（回
+真實 503），既有 `PROCESSING_STALE_MS`（60 秒）自然復原孤兒 PROCESSING
+記錄，未新增第二套 orphan-recovery 機制。
+
+**重試邊界（本輪關鍵設計決策）**：`AI_CALL_FAILED`（呼叫本身未可靠完成
+——網路／5xx／容量／timeout／binding missing）現在可 Queue 重試，
+`MAX_QUEUE_RETRIES = 3`（與 `wrangler.jsonc` 的 `max_retries: 3` 一致，
+確保本身的確定性終止邏輯先於任何未設定的平台 DLQ／drop 生效）。**既有**
+`AI_DECISION_INVALID`（呼叫已完成但答案格式無效）fail-closed 政策
+**完全不放寬**——絕不重試，第一次嘗試即為終態，與 V2.1.0／V2.2.0 完全
+相同。只有真正「工作未可靠完成」的情況才重試，不對已完成但無效的答案
+重新提問。
+
+**新終態**：`AI_OUTCOME.PROCESSING_FAILED`——重試耗盡後由 Queue
+Consumer 自己寫入，同時標記冪等 `COMPLETED`（永久失敗的事件絕不能一直
+顯示 PROCESSING），並 ack 該 message，不依賴未設定的 Cloudflare
+DLQ／drop 靜默解釋。「使用最小新增狀態，不建立大型狀態機」——只有這一個
+新終態。
+
+**重複遞送保護**：`QUEUE_DELIVERY_MODEL = 'AT_LEAST_ONCE'`（Cloudflare
+Queues 本身保證），業務結果要求 `BUSINESS_OUTCOME_MODEL =
+'EFFECTIVELY_ONCE'`：`processQueuedPbsEvent` 每次遞送**第一步**都先重新
+檢查冪等記錄，已 `COMPLETED` 的重複遞送直接 ack 略過（0 額外 AI 呼叫、0
+額外 LINE 推播），重用既有 transport idempotency／AI decision cache／
+notified-state／incident suppression，未新增第二套去重機制。
+
+**Observatory KV key-identity 修正**（開發期間測試驅動發現，非原始設計
+預期）：Queue Consumer 是獨立 invocation，自己的 `now = new Date()` 與
+HTTP ingress 原始接受時間不同，若直接沿用會讓最終寫入建立**第二筆** KV
+紀錄，而非覆寫早期 `PROCESSING_STARTED` 紀錄（打破 V2.2.0 的「同一把
+key 覆寫」設計）。修正：從 queue message 自帶的 `acceptedFirstAcceptedAt`
+重建 `observatoryNow`，**只**供兩次 Observatory 寫入的 KV key 使用；
+真實當下 `now` 仍完整保留給所有真正的業務決策（AI 呼叫、LINE 播報時段
+閘門）與 `markProcessingComplete` 的 `completedAt`（正確反映真實完成
+時間，非接受時間）。
+
+`RAW_PBS_TEXT_POLICY = IMMUTABLE_END_TO_END_UNTIL_AI`（V2.1.0 命名）不變
+——queue message 的 `event` 欄位為原始物件的逐字淺拷貝
+（`buildPbsAiQueueMessage`），從未截斷／摘要／改寫／重新生成。
+
+**成本**：KV 實測 `puts = 4N + 2`（與 V2.2.0 完全相同公式，額外 0 次
+寫入／事件——四筆寫入只是拆到兩次 Worker invocation），`gets = 6N`
+（+1／事件，Queue Consumer 自己的冪等 re-check）。Queue operations
+工程估算（sandbox 無即時 Cloudflare 帳單存取）：成功事件 2 次
+operation（1 send + 1 consume-ack），重試耗盡最差情況 5 次 operation
+（1 send + 4 次 consume attempt）；50/100/200 events/day 最差情況分別
+250/500/1000 次，遠低於官方文件 10,000/日免費額度。
+
+**本輪未觸碰**：Windows PBS filter、Windows 自身 HTTP timeout、PBS
+原始文字內容、AI Prompt／model／semantic policy、service area、LINE
+formatter、driverSummary、hourly reminder、TDX、CCTV、Shared Feed
+product logic、LINE 廣播規則、Observatory 頁面**整體** UI（只有
+HTTP-ingress → AI 工作載體機制，以及 Observatory 的 outcome 詞彙新增
+`PROCESSING_FAILED`，有變動）。
+
+**`BROWSER_ACTION_REQUIRED = YES`**：真實 Cloudflare Queue 資源
+（`pbs-ai-processing-queue`）需要在 Cloudflare Dashboard 或以
+`wrangler queues create pbs-ai-processing-queue` 建立——本 sandbox 無
+即時 Cloudflare API／Dashboard 存取權限，**不得假設資源已存在**，也
+**不得**宣稱 Production-ready，需待真人／Claude Browser 完成建立與
+驗證後才能視為完整生效。
+
+詳見 `src/pbs/debugPush.js` 的完整 module comment、
+`test/pbsDebugPushBackgroundProcessing.test.js`（HTTP-ingress 層生命週期
+分離）、`test/pbsAiQueueReliability.test.js`（Queue 可靠性、重試邊界、
+真實事故迴歸 fixture）、`07_KNOWN_ISSUES.md`／`PRODUCT_DECISIONS.md` 的
+完整記錄。
+
+## V2.2.0 — AI Decision Observatory 四層事件生命週期查修頁（2026-08-29）
 
 把 `/admin/pbs-ai-observatory-view` 從單一 AI-outcome 列表升級為
 **四層事件生命週期檢視**，直接對應 V2.1.0 剛正式命名的四層架構角色：

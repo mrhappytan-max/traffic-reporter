@@ -9,20 +9,20 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V2.2.0（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | 0fb1946d2da141cb20e86b97463919368268ca38 |
+| Current Version | V2.3.0（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | 48df7294c0657a1a5db572daf93d9f3b77b97fd7 |
 | Source main HEAD resolved from | origin/main |
 | Source working tree | dirty (6 changed source file(s)) |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
 | Current Phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
 | Current Task | none（無進行中工作）。Latest completed task = DRIVE_SYNC_GOVERNANCE_V2，status = SEALED（前序 PBS_ACCIDENT_CCTV_ENRICHMENT_FIX、PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX、PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。雲端治理：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源，封版時只寫 GitHub、不要自己搬檔案到 Drive；GitHub → Drive 自動同步已由真人建置並實測通過（GitHub Actions，engineering-memory/ 為 canonical mirror source），GITHUB_TO_DRIVE_SYNC = PASS；不得人工補上傳，也不要重建那套自動同步。詳見 SYSTEM_STATE.json 的 cloudSyncGovernance。觀察中（非工作項，不是待辦）：一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數 |
-| Latest Completed Version | V2.2.0 |
+| Latest Completed Version | V2.3.0 |
 | Known Blocker | 無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md |
 | Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
 | Next Action | 無待辦。TDX 額度恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計） |
-| Export Generated At | 2026-08-29T03:39:54.097Z |
+| Export Generated At | 2026-08-30T02:20:54.605Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## V1.9.9 Phase 1 封版（2026-08-28，另一個 session 完成，本 Cloud Session 未參與，port 進本模板僅為維持 template↔engineering-memory 一致）
@@ -246,6 +246,59 @@ authority、Windows PBS filter、LINE policy、V2.1.0 的 ctx.waitUntil 架構�
 - 詳見 `03_ARCHITECTURE.md`／`PRODUCT_DECISIONS.md`／`07_KNOWN_ISSUES.md`。
   **下一個 Agent：不得接著開始「AI 一小時歷史上下文」、driverSummary、
   formatter 修正或其他功能。**
+
+## V2.3.0 封版（2026-08-30）— PBS AI Queue Reliability，Cloudflare Queues 取代 ctx.waitUntil
+
+MINOR，正式改變 AI business processing 的執行架構與可靠性模型，非
+timeout patch。真實 Production 事故（與 V2.1.0 不同一種失敗模式）：
+`EVENT_ID=11508290166-0` 成功啟動 Workers AI 呼叫，但呼叫本身在
+`ctx.waitUntil()` 自己的背景執行時間預算到期前未回傳，平台強制取消整個
+task，AI 決策永久遺失，冪等記錄卡死 `PROCESSING`。
+`REAL_INCIDENT_ROOT_CAUSE = WAITUNTIL_BACKGROUND_WINDOW_EXCEEDED`。
+
+- `ctx.waitUntil()` 全面退休做為 AI 背景執行載體
+  （`WAITUNTIL_AI_PROCESSING = RETIRED`），改用唯一一個 Cloudflare Queue
+  （`pbs-ai-processing-queue`／binding `PBS_AI_QUEUE`，`wrangler.jsonc`
+  唯一正典設定，`AI_BACKGROUND_EXECUTION = CLOUDFLARE_QUEUE`）
+- HTTP ingress 只驗證／寫冪等 PROCESSING／寫 Observatory
+  `PROCESSING_STARTED`／`Queue.send()`，只有 send 成功才 ACK
+  `accepted:true`——send 失敗回真實 503，絕不假報已接收
+- 獨立 Queue Consumer（`src/index.js` 新增 `queue()` export）承接全部
+  AI／LINE／Observatory-final 工作，重用（非重造）既有 AI candidate／
+  decision engine／cache／LINE 廣播／Observatory writer
+- `AI_CALL_FAILED`（呼叫本身未可靠完成）現在可 Queue 重試，
+  `MAX_QUEUE_RETRIES = 3`；既有 `AI_DECISION_INVALID` fail-closed
+  政策**維持不變**，絕不重試
+- 新增唯一最小終態 `AI_OUTCOME.PROCESSING_FAILED`（重試耗盡後由
+  Consumer 自己寫入，標記冪等 `COMPLETED`，永不卡死 PROCESSING）
+- `QUEUE_DELIVERY_MODEL = AT_LEAST_ONCE`，
+  `BUSINESS_OUTCOME_MODEL = EFFECTIVELY_ONCE`：已 `COMPLETED` 的重複
+  遞送直接 ack 略過，0 額外 AI 呼叫／LINE 推播
+- 開發期間發現並修正一個 Observatory KV key 重複 bug：改從 queue
+  message 的 `acceptedFirstAcceptedAt` 重建 `observatoryNow` 供兩次
+  Observatory 寫入共用同一把 key
+- `RAW_PBS_TEXT_POLICY = IMMUTABLE_END_TO_END_UNTIL_AI` 不變
+- KV 成本實測：`puts = 4N + 2`（與 V2.2.0 相同，0 額外寫入），
+  `gets = 6N`（+1／事件，Consumer 冪等 re-check）
+- Queue 成本工程估算：成功 2 operations／事件，重試耗盡最差
+  5 operations／事件，50/100/200 events/day 最差情況 250/500/1000，
+  遠低於官方文件 10,000/日免費額度
+- `APP_VERSION` 從 `V2.2.0` 升為 `V2.3.0`
+- 新增 `test/pbsAiQueueReliability.test.js`（含真實事故
+  `EVENT_ID=11508290166-0` 迴歸 fixture，可控制 Promise 模擬延遲，非
+  真實 sleep），改寫 5 項過時 `ctx.waitUntil` 測試，全量迴歸
+  1705/1671/34，NEW FAILURES=0（僅跑一次）
+- 本輪**未觸碰**：Windows PBS filter、Windows 自身 HTTP timeout、PBS
+  原始文字、AI Prompt/model/semantic policy、service area、LINE
+  policy/formatter、Shared Feed、CCTV、TDX、driverSummary、hourly
+  reminder、Observatory 頁面整體 UI
+- `BROWSER_ACTION_REQUIRED = YES`：真實 Cloudflare Queue 資源
+  （`pbs-ai-processing-queue`）需在 Dashboard／`wrangler queues create`
+  建立，本 sandbox 無法驗證或建立，**不得假設已存在**
+- 詳見 `03_ARCHITECTURE.md`／`PRODUCT_DECISIONS.md`／`07_KNOWN_ISSUES.md`。
+  **下一個 Agent：先確認 Cloudflare Queue 資源已建立並驗證，不得直接
+  開始「AI 一小時歷史上下文」、driverSummary、formatter 修正、查修頁
+  UI 改版或其他功能。**
 
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
 

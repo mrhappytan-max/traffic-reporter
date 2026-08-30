@@ -552,50 +552,25 @@ PBS 閘門排除仍視為有意義。fixture 實測 QUIET/NORMAL/HIGH writes/day
 目標。NEW FAILURES=0（1339 項）。完整記錄 → `SYSTEM_STATE.json.taskSeal`；版本列 →
 `06_VERSION_HISTORY.md` V1.9.3。
 
-## 修正紀錄｜Windows → Cloudflare Debug-only Push Endpoint（V1.9.5）（2026-08-27）
+## 修正紀錄｜Windows → Cloudflare Debug-only Push Endpoint（V1.9.5）（2026-08-27，壓縮摘要）
 
-新增 `POST /internal/pbs-debug-push`（`src/pbs/debugPush.js`＋`src/pbs/debugPushAuth.js`）。本輪只證明一條鏈：Windows PBS Local Monitor 發出最小事件 payload → Cloudflare 驗證身份 → 驗證資料格式 → 做冪等判斷 → 寫 Workers Logs → 回 ACK。**`WINDOWS_PUSH_ENABLED = NO`**——本輪未讓 Windows 真的發送任何真實事件，也**未**整合進正式 Pipeline／Production PBS 接管，只建立接收端。
+**一句話**：新增 `POST /internal/pbs-debug-push`，本輪只證明一條鏈（Windows 發 payload → Cloudflare 驗身份／格式／冪等 → 寫 log → ACK），`WINDOWS_PUSH_ENABLED=NO`，未整合進正式 Pipeline。身份驗證用獨立 Secret `PBS_DEBUG_PUSH_SECRET`（雜湊常數時間比對，證實不回退到 `PBS_RELAY_TOKEN`／`ADMIN_PASSWORD`／任何 LINE/TDX secret，未設定=503、錯誤=401，secret 不外洩）。Payload 白名單校驗＋16 KiB 上限。**結構性 debug-only 邊界**：`debugPush.js` 完全不 import LINE/CCTV/Shared Feed/Pipeline Trace/`pbs/lifecycle.js`/`pbs/pipeline.js` 任一模組，也不觸碰 `env.TRAFFIC_KV`——不是旗標而是沒有 import path。冪等判斷本輪刻意**不**加 KV 寫入，改用 per-isolate 記憶體 fingerprint Map，誠實回報 `NOT_PERSISTENT`（V1.9.7 後補上持久層，見下）。33 項新測試，NEW FAILURES=0。部署後 Claude Browser 驗證、Windows 端接 client 皆待真人授權，本輪未把 secret 交給 Windows。
 
-**身份驗證**：獨立 Secret `PBS_DEBUG_PUSH_SECRET`，`Authorization: Bearer <secret>`（沿用 `traffic/sharedFeedHandler.js` 既有的 `TRAFFIC_FEED_SECRET` header 慣例，而非發明第三種），以雜湊後常數時間比對驗證（與 `security/adminAuth.js` 的 `credentialMatches` 同技術，非單純 `!==`）。專門測試證實**不會**回退到 `PBS_RELAY_TOKEN`（既有、不相關的 Cloudflare→Windows PULL 憑證）、`ADMIN_PASSWORD`，或任何 LINE／TDX secret——即使呼叫端剛好用了其中一個當作 token 也一律 401。secret 未設定 = 503（fail closed，與 `TRAFFIC_FEED_SECRET` 同樣的「未設定是維運問題」區分）；token 缺失或錯誤 = 401。secret 本身確認不出現在 Workers Logs 或任何 response body（專門測試鎖定）。
+## 修正紀錄｜Pipeline Trace 讀取效能優化（V1.9.4）（2026-08-27，壓縮摘要）
 
-**Payload Schema**：必填 `generatedAt`／`source`（僅接受 `'pbs'`）／`eventId`／`lifecycle`（僅接受 `NEW`／`UPDATED`／`CLEARED`）／`fingerprint`／`requestId`，皆需為非空字串；`generatedAt` 須為可解析時間。`event` 為選填物件，白名單只讀取 `road`／`areaNm`／`direction`／`comment`／`longitude`／`latitude`／`sourceDetail`（僅供 log 使用，不要求額外欄位、多餘欄位直接忽略不拒絕）。Body 大小上限 16 KiB——遠大於單一事件所需（幾個短字串加兩個數字），遠小於整包約 1000 筆 PBS raw feed 所需，故不可能誤收後者。
+**一句話**：真人在 Production 實測 `/admin/pipeline-trace`／`-view` TTFB ≈59.1s（其餘頁面 <1s）。Root cause：舊 `collectFlattenedTraceEntries` 不論有無篩選一律循序解碼到 `MAX_ENTRIES_SCANNED`(500) 筆才套 `limit`。修正為 `scanTraceEntriesProgressively`：無篩選提前停止（500筆/limit60 → 只 60 次 `kv.get()`）＋有篩選漸進式掃描（首輪 `boundedLimit+20`，之後 ×2，上限仍 500）＋同輪內固定 20 筆一批 `Promise.all` 並行。V1/V2 schema 並存策略不變，兩前綴 `kv.list()` 改並行。新增可觀測性欄位（讀既有已算出的數字，零新增 KV 寫入）。23 項新測試，NEW FAILURES=0。未觸碰寫入路徑／PBS 排程閘門／Health Snapshot／LINE／CCTV／TDX／Cron 頻率。
 
-**Debug-only 邊界（結構性，非執行期旗標）**：`src/pbs/debugPush.js` 完全不 import `line/`、`cctv/`、`traffic/sharedFeed(Handler)?.js`、`traffic/incidentSuppression.js`、`traffic/notified.js`、`traffic/broadcastProvenance.js`、`traffic/pipelineTrace.js`，或 `pbs/lifecycle.js`／`pbs/pipeline.js` 任何一個模組，也完全不觸碰 `env.TRAFFIC_KV`（或任何其他 binding）——沒有 import path 通往 LINE／CCTV／Shared Feed／Pipeline Trace／任何正式 KV 寫入，不是靠可能被忘記關閉的旗標。
+## 修正紀錄｜V2.3.0 — PBS AI Queue Reliability，Cloudflare Queues 取代 ctx.waitUntil（2026-08-30）
 
-**冪等判斷**：Cloudflare Workers isolate 無法可靠跨 request 去重（同一個事件的兩次請求可能落在不同 isolate），本輪依施工令自身明確指示**不**為此新增任何 KV 寫入，改採 per-isolate 記憶體內 fingerprint Map（10 分鐘視窗、上限 500 筆防止無界成長）做 best-effort 判斷，誠實回報 `PBS_DEBUG_PUSH_IDEMPOTENCY_MODE = 'NOT_PERSISTENT'`——不假裝有跨 isolate／跨部署重啟的持久保證。
+**真實 Production 事故**（與 V2.1.0 修的是不同一種失敗模式）：`EVENT_ID=11508290166-0` 成功抵達 Cloudflare 並啟動 Workers AI 呼叫（16:49:03.112），但 AI 呼叫本身在 Cloudflare 自己的 `ctx.waitUntil()` 背景執行時間預算到期前未能回傳——與 Windows 自身的短 HTTP timeout（V2.1.0 已解決）完全無關的另一種限制。16:49:32.912 平台強制取消整個 task（"waitUntil() tasks did not complete within the allowed time after invocation end and have been cancelled"），AI 決策永久遺失，冪等紀錄卡死在 `PROCESSING`。`REAL_INCIDENT_ROOT_CAUSE = WAITUNTIL_BACKGROUND_WINDOW_EXCEEDED`。
 
-**測試**：新增 33 項（`test/pbsDebugPush.test.js`），涵蓋施工令 CASE A–R（正確 secret×NEW/UPDATED/CLEARED、無 secret、錯 secret、GET 方法、無效 JSON、`source≠pbs`、無效 lifecycle、缺 eventId、缺 fingerprint、過大 body、確認不呼叫 LINE/CCTV、確認不寫 Shared Feed/notified-state/Pipeline Trace、確認零 Production business KV 寫入）以及額外的 auth 防回退、secret 不外洩、冪等行為、index.js routing 整合測試。以 counting mock 直接確認 NEW／UPDATED／CLEARED 三種情境下 `fetch` 呼叫與 KV `get`／`put` 呼叫皆為 **0** 次。既有測試套件無 NEW FAILURES：1385 項／1352 pass／33 fail，與變更前基線（1352/1319/33）的失敗清單逐項比對完全相同。
+**修正**：`ctx.waitUntil()` 全面**退休**做為 AI 背景執行載體（`WAITUNTIL_AI_PROCESSING='RETIRED'`），改用**唯一一個** Cloudflare Queue（`pbs-ai-processing-queue`，binding `PBS_AI_QUEUE`，`wrangler.jsonc` 為唯一正典設定來源）：HTTP ingress（`handlePbsDebugPush`）只驗證／寫冪等 PROCESSING／寫 Observatory `PROCESSING_STARTED`／`Queue.send()`，**只有 send 成功才 ACK** `accepted:true`（send 失敗回傳真實 503，絕不假報已接收）；獨立的 Queue Consumer（`src/index.js` 新增 `queue()` export → `handlePbsAiQueueBatch` → `processQueuedPbsEvent`）承接全部 AI／LINE／Observatory-final 工作，與原始 HTTP request／`ctx` 完全無關，且**重用**（非重造）既有 AI candidate／decision engine／cache／LINE 廣播／Observatory writer。
 
-**部署後的下一步（尚未開始，需真人另行授權）**：Claude Browser 對已部署的 endpoint 做唯讀／安全驗證；之後才由 GPT／Windows 端新增 Debug Push client。本輪**未**把 secret 發給 Windows，**未**啟用真實推送。
+**重試邊界（本輪關鍵設計）**：`AI_CALL_FAILED`（呼叫本身未可靠完成——網路／5xx／容量／timeout）現在可 Queue 重試，`MAX_QUEUE_RETRIES=3`；**既有** `AI_DECISION_INVALID`（呼叫已完成但答案格式無效）fail-closed 政策**維持不變**——絕不重試，第一次嘗試即為終態，不放寬「重新問 AI」。新增唯一一個最小終態 `AI_OUTCOME.PROCESSING_FAILED`（重試耗盡後由 Consumer 自己寫入，標記冪等 `COMPLETED`，絕不讓事件永遠卡在 PROCESSING，也不依賴未設定的 Cloudflare DLQ 靜默解釋）。Queue 遞送為 `AT_LEAST_ONCE`（`QUEUE_DELIVERY_MODEL`），業務結果要求 `EFFECTIVELY_ONCE`（`BUSINESS_OUTCOME_MODEL`）：已 `COMPLETED` 的重複遞送直接 ack 略過，0 次額外 AI 呼叫／LINE 推播。
 
-**本輪未觸碰**：LINE、CCTV、Shared Feed、正式 Pipeline、正式 KV business event state、既有 PBS 30 分鐘輪詢閘門（V1.9.3 不變）、TDX、Cron、Windows Prototype 與其 `feature/pbs-local-edge-filter-prototype` 分支（未 merge，未讀取，未修改）。
+**開發期間發現並修正的一個 Observatory KV key 重複 bug**（非原始設計預期，測試驅動發現）：Queue Consumer 是獨立 invocation，自己的 `now` 與 HTTP ingress 原始接受時間不同，若直接沿用會讓最終寫入建立第二筆 KV 紀錄而非覆寫早期 `PROCESSING_STARTED` 紀錄。修正：從 queue message 自帶的 `acceptedFirstAcceptedAt` 重建 `observatoryNow`，專供兩次 Observatory 寫入的 KV key 使用，同時保留真實當下 `now` 給所有真正的業務決策（AI 呼叫、LINE 播報時段閘門）與 `markProcessingComplete` 的 `completedAt`。
 
-## 修正紀錄｜Pipeline Trace 讀取效能優化（V1.9.4）（2026-08-27）
-
-V1.9.3 上線後真人回報全站 timeout（另立查修令調查，結論與程式碼無關、sandbox 無法連
-Production，見該輪報告），隨後真人在 Production 實測：`/`≈0.8s／`/version`≈0.4s／
-`/health`≈0.75s，但 `/admin/pipeline-trace`／`-view` TTFB 皆 ≈59.1s。Root Cause（讀程式碼
-確認，非猜測）：`listPipelineTrace` 舊 `collectFlattenedTraceEntries` 一律循序解碼到
-`MAX_ENTRIES_SCANNED`(500) 筆才套用 `limit`(預設60)，不論有無篩選——無篩選的「最新60筆」
-頁面每次都要付 500 次循序 KV 往返。
-
-修正：新函式 `scanTraceEntriesProgressively` 合併三刀：(1) 提前停止——無篩選時解碼滿
-`boundedLimit` 即停（實測 500 把 key／limit 60 → 只 60 次 `kv.get()`，原本 500 次）；
-(2) 漸進式掃描——有篩選時以「輪」為單位，第一輪目標=`boundedLimit+NO_FILTER_SCAN_BUFFER`
-(20)，之後每輪 ×`PROGRESSIVE_SCAN_GROWTH_FACTOR`(2)，上限仍是 `MAX_ENTRIES_SCANNED`，絕不
-一開始就固定掃 500；(3) 有界並行讀取——同輪內 `kv.get()` 改固定 `PARALLEL_GET_BATCH_SIZE`
-(20) 筆一批 `Promise.all` 並行、批間循序，絕非整輪一次性 `Promise.all`（20 為實測挑選，
-本專案原無既有 KV/Workers 併發上限，落在施工令建議 20–30 區間中段）。V1／V2 並存策略不變
-（V1 仍不刪除不遷移、靠 24h TTL 過期），兩前綴 `kv.list()` 改為並行。新增可觀測性（讀既有
-已算出的數字，**零新增 KV 寫入**）：API／HTML 皆新增 `kvListCalls`／`kvGetCalls`／
-`v1KeysScanned`／`v2BatchKeysScanned`／`v1KeyCount`／`v2BatchKeyCount`／`entriesDecoded`／
-`entriesMatched`／`readDurationMs`，連同原本存在但從未回傳的 `scannedKeyCount`／
-`totalKeyCount`／`scanTruncated`。新增 23 項測試（`test/pipelineTraceReadPerformance.test.js`，
-CASE A-I 決定性 fixture）。NEW FAILURES=0（1352 項／1319 pass／33 fail，失敗清單與變更前
-基線逐項相同）。未觸碰：Pipeline Trace 寫入路徑、V1.9.3 PBS 排程閘門、Health Snapshot、
-Windows Prototype、LINE、CCTV、TDX、Cron 頻率。Production 驗證：見
-`SYSTEM_STATE.json.taskSealHistory` 的 V1.9.4 紀錄（sandbox 無法連 Production，誠實標記
-`NOT_OBSERVED`）。
+`RAW_PBS_TEXT_POLICY=IMMUTABLE_END_TO_END_UNTIL_AI` 不變：queue message 的 `event` 為原始物件的逐字淺拷貝。**KV 成本**（實測）：`puts=4N+2`（與 V2.2.0 完全相同，0 額外寫入／事件），`gets=6N`（+1／事件，Consumer 自己的冪等 re-check）。**Queue 成本**（工程估算，sandbox 無即時 Cloudflare 帳單存取）：成功事件 2 次 operation（1 send + 1 consume-ack），重試耗盡的最差情況 5 次 operation（1 send + 4 次 consume attempt）；50/100/200 事件/日最差情況分別為 250/500/1000 次，遠低於官方文件 10,000/日免費額度。新增 `test/pbsAiQueueReliability.test.js`（含真實事故 `EVENT_ID=11508290166-0` 迴歸 fixture，用可控制 Promise 模擬 30+ 秒 AI 延遲，非真實 30 秒 sleep），改寫 `test/pbsDebugPushBackgroundProcessing.test.js` 5 項過時 `ctx.waitUntil` 前提測試。全套測試 1705 項／1671 pass／34 fail，失敗清單與既有基準線逐項相同（NEW_FAILURES=0）。`APP_VERSION`：V2.2.0 → V2.3.0（MINOR）。本輪未觸碰：Windows PBS filter、Windows 自身 HTTP timeout、PBS 原始文字、AI prompt/model/semantic policy、service area、LINE formatter、driverSummary、hourly reminder、TDX、CCTV、Shared Feed、LINE 廣播規則、Observatory 頁面整體 UI。`BROWSER_ACTION_REQUIRED`：真實 Cloudflare Queue 資源（`pbs-ai-processing-queue`）需要在 Cloudflare Dashboard／`wrangler queues create` 建立——本 sandbox 無即時 Cloudflare API/Dashboard 存取權限驗證或建立，不可假設已存在。
 
 ## 修正紀錄｜V2.2.0 — AI Decision Observatory 四層事件生命週期（2026-08-29）
 

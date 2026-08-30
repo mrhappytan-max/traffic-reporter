@@ -39,7 +39,7 @@
     "openStructuralQuestion": "TWO trees currently hold the same canonical content: engineering-memory/ (what the mirror syncs) and meeting-room-export/ (what scripts/export-meeting-room.mjs generates). They are kept in step by hand today, which is exactly the drift risk this governance exists to prevent. Needs a human decision: either point the generator at engineering-memory/, or retire one tree. NOT decided unilaterally."
   },
   "git": {
-    "sourceMainHead": "0fb1946d2da141cb20e86b97463919368268ca38",
+    "sourceMainHead": "48df7294c0657a1a5db572daf93d9f3b77b97fd7",
     "sourceMainHeadResolvedFrom": "origin/main",
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
     "sourceWorkingTree": "dirty (6 changed source file(s))",
@@ -232,27 +232,37 @@
     "AI_CANDIDATE_PIPELINE": "PREPARED_NOT_ACTIVE — V1.9.9 Phase 2: src/pbs/aiCandidate.js builds a minimal AI candidate for every accepted NEW/UPDATED Windows event, parallel to (never gating) the unchanged runLineBroadcast() call. Observability-only; no AI model called, no KV read/write for the reserved AI_DECISION_CACHE_KV_PREFIX yet."
   },
   "taskSeal": {
-    "task": "AI_DECISION_OBSERVATORY_FOUR_LAYER_EVENT_LIFECYCLE_V2_2_0",
+    "task": "PBS_AI_QUEUE_RELIABILITY_V2_3_0",
     "status": "SEALED",
-    "sealedAt": "2026-08-29",
-    "sealedBy": "human directive (路況工程部｜第二階段正式施工令｜V2.1.x/V2.2.0候選｜AI Decision Observatory 四層查修頁改版)",
-    "releaseVersion": "V2.2.0",
-    "previousVersion": "V2.1.0",
-    "nature": "MINOR — backward-compatible observability/UI擴充，不改AI semantic authority、Windows PBS filter、LINE policy、V2.1.0的ctx.waitUntil架構。",
-    "fourLayerPage": "/admin/pbs-ai-observatory-view 升級為①PBS/Windows ②Cloudflare ③AI ④LINE四層檢視，各層獨立顯示成功/未執行/失敗/未知，頂部flow strip一眼看出卡在哪層。",
-    "rawTextVisible": "commentSummary（原截斷120字）退休為rawComment/rawSourceDetail，完整未截斷儲存，與road/direction/areaNm/displayKM等解析欄位獨立標示絕不合併。",
-    "failureEventVisibility": "processAcceptedEvent現在於處理一開始即寫入AI_OUTCOME.PROCESSING_STARTED記錄（取自Windows原始payload，寫在任何可能throw之前），既有最終寫入之後原地覆寫同一把KV key（idempotencyKeyHash+taipeiDate+接受當下now三者相同）——ctx.waitUntil背景處理中途crash或未跑完的事件不再完全消失，凍結在PROCESSING_STARTED仍有一張卡可查。",
-    "kvCost": "EXTRA_KV_WRITES_PER_ACCEPTED_EVENT=1（實測）。KV_BASELINE_FORMULA(V2.1.0)=puts=3N+2，KV_NEW_FORMULA(本輪)=puts=4N+2。50/100/200 events/day分別202/402/802 puts/day，遠低於Workers KV Free Plan每日1,000次額度。",
-    "reuseExistingDataFirst": "Cloudflare層狀態即時讀取既有V2.1.0 transport idempotency記錄（computeIdempotencyKeyHash/buildIdempotencyKvKey自debugPush.js匯出重用，非第二套hash實作）；AI層notify/impact/reason/confidence仍即時讀取既有aiDecisionCache，未重複儲存，零新增KV prefix。",
-    "zeroSideEffects": "開啟/重新整理/搜尋/篩選本頁仍0次Workers AI呼叫、0次KV寫入（僅新增每列transport-idempotency-status讀取，讀取不受此限制）。",
-    "scopeDiscipline": "未觸碰Windows PBS filter/relay transport、V2.1.0 ctx.waitUntil架構、AI Prompt/model/semantic policy、service area、LINE policy/formatter、Shared Feed、CCTV、TDX、driverSummary、hourly reminder，以及「同一事故一小時內」AI語意上下文功能（刻意未實作）。",
+    "sealedAt": "2026-08-30",
+    "sealedBy": "human directive (路況工程部｜V2.3.0 正式施工令｜PBS AI Queue Reliability｜Cloudflare Queues 可靠背景處理)",
+    "releaseVersion": "V2.3.0",
+    "previousVersion": "V2.2.0",
+    "nature": "MINOR — 正式改變AI business processing的執行架構與可靠性模型，非timeout patch。",
+    "realIncident": "EVENT_ID=11508290166-0：Workers AI呼叫成功啟動（16:49:03.112）但在ctx.waitUntil()自身背景執行時間預算到期前未回傳，16:49:32.912平台強制取消整個task，AI決策永久遺失，冪等記錄卡死PROCESSING。REAL_INCIDENT_ROOT_CAUSE=WAITUNTIL_BACKGROUND_WINDOW_EXCEEDED（與V2.1.0修的是不同一種失敗模式）。",
+    "architectureChange": "WAITUNTIL_AI_PROCESSING=RETIRED，AI_BACKGROUND_EXECUTION=CLOUDFLARE_QUEUE，QUEUE_ROLE=RELIABLE_AI_BUSINESS_PROCESSING。唯一一個Cloudflare Queue（pbs-ai-processing-queue／binding PBS_AI_QUEUE，wrangler.jsonc為唯一正典設定）：HTTP ingress只驗證/寫冪等PROCESSING/寫Observatory PROCESSING_STARTED/Queue.send()，只有send成功才ACK；獨立Queue Consumer（src/index.js新增queue() export）承接全部AI/LINE/Observatory-final工作，重用既有AI candidate/decision engine/cache/LINE廣播/Observatory writer。",
+    "retryPolicy": "AI_CALL_FAILED現在可Queue重試，MAX_QUEUE_RETRIES=3；既有AI_DECISION_INVALID fail-closed政策維持不變，絕不重試。新增唯一最小終態AI_OUTCOME.PROCESSING_FAILED（重試耗盡後由Consumer寫入，標記冪等COMPLETED，永不卡死PROCESSING）。",
+    "duplicateProtection": "QUEUE_DELIVERY_MODEL=AT_LEAST_ONCE，BUSINESS_OUTCOME_MODEL=EFFECTIVELY_ONCE：已COMPLETED的重複遞送直接ack略過，0額外AI呼叫/LINE推播。",
+    "observatoryKeyFix": "開發期間發現並修正：Queue Consumer自己的now與HTTP ingress原始接受時間不同，改從queue message的acceptedFirstAcceptedAt重建observatoryNow供兩次Observatory寫入共用同一把KV key，真實now仍用於所有業務決策與completedAt。",
+    "kvCost": "puts=4N+2（與V2.2.0完全相同公式，0額外寫入/事件），gets=6N（+1/事件，Consumer冪等re-check）。",
+    "queueCost": "工程估算：成功2 operations/事件，重試耗盡最差5 operations/事件；50/100/200 events/day最差情況250/500/1000次，遠低於官方文件10,000/日免費額度。",
+    "scopeDiscipline": "未觸碰Windows PBS filter、Windows自身HTTP timeout、PBS原始文字、AI Prompt/model/semantic policy、service area、LINE formatter、driverSummary、hourly reminder、TDX、CCTV、Shared Feed、LINE廣播規則、Observatory頁面整體UI。",
     "testEvidence": {
-      "newTests": "16項：test/pbsAiObservatoryFourLayer.test.js，涵蓋order十二全部20項最低要求，全部首次執行即PASS。",
-      "fullRegression": "1697項/1663 pass/34 fail，與V2.1.0基準以failure名稱集合對照確認NEW FAILURES=0，僅跑一次。"
+      "newTests": "test/pbsAiQueueReliability.test.js（7項，含真實事故EVENT_ID=11508290166-0迴歸fixture，可控制Promise模擬延遲非真實sleep），test/pbsDebugPushBackgroundProcessing.test.js改寫5項過時ctx.waitUntil測試（3項既有測試保留），全部首次執行即PASS。",
+      "fullRegression": "1705項/1671 pass/34 fail，與V2.2.0基準以failure名稱集合對照確認NEW FAILURES=0，僅跑一次。"
     },
-    "readerNote": "完成後STOP。不得接著開始「AI一小時歷史上下文」、driverSummary、formatter修正或其他功能。"
+    "browserActionRequired": "YES — 真實Cloudflare Queue資源（pbs-ai-processing-queue）需在Dashboard或以wrangler queues create建立，本sandbox無即時Cloudflare API/Dashboard存取權限驗證或建立，不得假設已存在，不得宣稱Production-ready。",
+    "readerNote": "完成後STOP。下一個Agent須先確認Cloudflare Queue資源已建立並驗證，不得直接開始「AI一小時歷史上下文」、driverSummary、formatter修正、查修頁UI改版或其他功能。"
   },
   "taskSealHistory": [
+    {
+      "task": "AI_DECISION_OBSERVATORY_FOUR_LAYER_EVENT_LIFECYCLE_V2_2_0",
+      "status": "SEALED",
+      "sealedAt": "2026-08-29",
+      "releaseVersion": "V2.2.0",
+      "sealCommit": "33ba1e6",
+      "summary": "AI Decision Observatory四層事件生命週期：/admin/pbs-ai-observatory-view升級為①PBS/Windows②Cloudflare③AI④LINE四層檢視，各層獨立顯示成功/未執行/失敗/未知，頂部flow strip一眼看出卡在哪層。commentSummary（原截斷120字）退休為rawComment/rawSourceDetail，完整未截斷儲存。processAcceptedEvent於處理一開始即寫入AI_OUTCOME.PROCESSING_STARTED記錄，既有最終寫入之後原地覆寫同一把KV key——停滯/crash事件不再完全消失。EXTRA_KV_WRITES_PER_ACCEPTED_EVENT=1，puts=4N+2。REUSE_EXISTING_DATA_FIRST全程遵守，零新增KV prefix。16項新測試，1697/1663/34，NEW FAILURES=0。完整記錄見06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V2.2.0條目。"
+    },
     {
       "task": "TRANSPORT_ACK_DECOUPLED_FROM_BUSINESS_PROCESSING_V2_1_0",
       "status": "SEALED",
@@ -568,7 +578,7 @@
   ],
   "version": {
     "packageJsonVersion": "0.1.0",
-    "latestCompleted": "V2.2.0",
+    "latestCompleted": "V2.3.0",
     "canonicalSource": "src/version.js 的 APP_VERSION — 唯一權威。packageJsonVersion 是 npm 套件版本（0.1.0），與產品版本線無關，不要混用。"
   },
   "production": {
@@ -591,8 +601,8 @@
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-08-29T03:39:54.097Z",
-    "sourceMainHead": "0fb1946d2da141cb20e86b97463919368268ca38",
+    "generatedAt": "2026-08-30T02:20:54.605Z",
+    "sourceMainHead": "48df7294c0657a1a5db572daf93d9f3b77b97fd7",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
     "historyDir": "_history"

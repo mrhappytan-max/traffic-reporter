@@ -247,6 +247,59 @@ authority、Windows PBS filter、LINE policy、V2.1.0 的 ctx.waitUntil 架構�
   **下一個 Agent：不得接著開始「AI 一小時歷史上下文」、driverSummary、
   formatter 修正或其他功能。**
 
+## V2.3.0 封版（2026-08-30）— PBS AI Queue Reliability，Cloudflare Queues 取代 ctx.waitUntil
+
+MINOR，正式改變 AI business processing 的執行架構與可靠性模型，非
+timeout patch。真實 Production 事故（與 V2.1.0 不同一種失敗模式）：
+`EVENT_ID=11508290166-0` 成功啟動 Workers AI 呼叫，但呼叫本身在
+`ctx.waitUntil()` 自己的背景執行時間預算到期前未回傳，平台強制取消整個
+task，AI 決策永久遺失，冪等記錄卡死 `PROCESSING`。
+`REAL_INCIDENT_ROOT_CAUSE = WAITUNTIL_BACKGROUND_WINDOW_EXCEEDED`。
+
+- `ctx.waitUntil()` 全面退休做為 AI 背景執行載體
+  （`WAITUNTIL_AI_PROCESSING = RETIRED`），改用唯一一個 Cloudflare Queue
+  （`pbs-ai-processing-queue`／binding `PBS_AI_QUEUE`，`wrangler.jsonc`
+  唯一正典設定，`AI_BACKGROUND_EXECUTION = CLOUDFLARE_QUEUE`）
+- HTTP ingress 只驗證／寫冪等 PROCESSING／寫 Observatory
+  `PROCESSING_STARTED`／`Queue.send()`，只有 send 成功才 ACK
+  `accepted:true`——send 失敗回真實 503，絕不假報已接收
+- 獨立 Queue Consumer（`src/index.js` 新增 `queue()` export）承接全部
+  AI／LINE／Observatory-final 工作，重用（非重造）既有 AI candidate／
+  decision engine／cache／LINE 廣播／Observatory writer
+- `AI_CALL_FAILED`（呼叫本身未可靠完成）現在可 Queue 重試，
+  `MAX_QUEUE_RETRIES = 3`；既有 `AI_DECISION_INVALID` fail-closed
+  政策**維持不變**，絕不重試
+- 新增唯一最小終態 `AI_OUTCOME.PROCESSING_FAILED`（重試耗盡後由
+  Consumer 自己寫入，標記冪等 `COMPLETED`，永不卡死 PROCESSING）
+- `QUEUE_DELIVERY_MODEL = AT_LEAST_ONCE`，
+  `BUSINESS_OUTCOME_MODEL = EFFECTIVELY_ONCE`：已 `COMPLETED` 的重複
+  遞送直接 ack 略過，0 額外 AI 呼叫／LINE 推播
+- 開發期間發現並修正一個 Observatory KV key 重複 bug：改從 queue
+  message 的 `acceptedFirstAcceptedAt` 重建 `observatoryNow` 供兩次
+  Observatory 寫入共用同一把 key
+- `RAW_PBS_TEXT_POLICY = IMMUTABLE_END_TO_END_UNTIL_AI` 不變
+- KV 成本實測：`puts = 4N + 2`（與 V2.2.0 相同，0 額外寫入），
+  `gets = 6N`（+1／事件，Consumer 冪等 re-check）
+- Queue 成本工程估算：成功 2 operations／事件，重試耗盡最差
+  5 operations／事件，50/100/200 events/day 最差情況 250/500/1000，
+  遠低於官方文件 10,000/日免費額度
+- `APP_VERSION` 從 `V2.2.0` 升為 `V2.3.0`
+- 新增 `test/pbsAiQueueReliability.test.js`（含真實事故
+  `EVENT_ID=11508290166-0` 迴歸 fixture，可控制 Promise 模擬延遲，非
+  真實 sleep），改寫 5 項過時 `ctx.waitUntil` 測試，全量迴歸
+  1705/1671/34，NEW FAILURES=0（僅跑一次）
+- 本輪**未觸碰**：Windows PBS filter、Windows 自身 HTTP timeout、PBS
+  原始文字、AI Prompt/model/semantic policy、service area、LINE
+  policy/formatter、Shared Feed、CCTV、TDX、driverSummary、hourly
+  reminder、Observatory 頁面整體 UI
+- `BROWSER_ACTION_REQUIRED = YES`：真實 Cloudflare Queue 資源
+  （`pbs-ai-processing-queue`）需在 Dashboard／`wrangler queues create`
+  建立，本 sandbox 無法驗證或建立，**不得假設已存在**
+- 詳見 `03_ARCHITECTURE.md`／`PRODUCT_DECISIONS.md`／`07_KNOWN_ISSUES.md`。
+  **下一個 Agent：先確認 Cloudflare Queue 資源已建立並驗證，不得直接
+  開始「AI 一小時歷史上下文」、driverSummary、formatter 修正、查修頁
+  UI 改版或其他功能。**
+
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
 
 **開工前先寫下 `CURRENT_VERSION` 與 `TARGET_VERSION`**，並確認 TARGET 是 CURRENT 的合法下一版。
