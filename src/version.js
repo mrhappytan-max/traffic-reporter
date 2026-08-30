@@ -958,7 +958,63 @@
 // controllable Promise stands in for a 30+ second AI delay, never a real
 // test sleep).
 
-export const APP_VERSION = 'V2.3.0';
+// V2.3.1 (2026-08-30) — DIRECT_COORDINATE_MAP_FALLBACK hotfix. PATCH —
+// formatter behavior fix, does not change AI semantic authority, Windows
+// PBS filter, road-name parsing, or the official government KM-marker
+// datasets.
+//
+// Real incident: EVENT_ID=11508260158-0 — a 竹60線 (county road)
+// landslide-closure event in 新竹縣尖石鄉. PBS/Windows/Cloudflare all
+// carried valid raw x1/y1 coordinates the whole way through, AI decided
+// normally, LINE sent — but the pushed message had NO Google Maps link
+// at all. Root cause (found via a dedicated read-only forensic pass this
+// same day): src/traffic/messageFormat.js#buildRoadLines() tries two
+// resolution tiers for a map link — resolveKmLocation() (road+KM) and
+// resolveCoordinateLocation() (coordinate) — and BOTH require
+// event.road to canonicalize to a recognized 國道/省道 name
+// (canonicalFreewayRoad/canonicalProvincialRoad) before EITHER will even
+// attempt to use a coordinate. A county/township road like 竹60線 never
+// can, since this project only ever bundled official freeway (95016) and
+// provincial (7040) KM-marker datasets — never county/township ones. The
+// coordinate fallback therefore discarded a perfectly valid coordinate
+// purely because the ROAD wasn't recognized, not because the coordinate
+// itself was bad.
+//
+// FIX — one new, additive LAST-resort tier, reached only when both
+// existing resolution paths have already failed: src/traffic/
+// kmLocationResolver.js#buildDirectCoordinateMapUrl(latitude, longitude)
+// reuses the EXISTING buildMapUrl() short-form-URL builder directly
+// against the event's own raw coordinates, with NO road recognition, NO
+// dataset lookup, and NO location/section label of any kind attached —
+// it decides only whether the trailing "📍 地圖" line gets a pin, never
+// what the label line above it says. VALID_COORDINATES_REQUIRED: finite
+// numbers only, within real latitude/longitude range, and never the
+// exact (0,0) "null island" sentinel (never a genuine Taiwan location) —
+// isValidRawCoordinate() rejects null/undefined/NaN/Infinity/strings/
+// out-of-range/(0,0) uniformly, same fail-closed-by-construction
+// discipline kmLocationResolver.js's other resolvers already follow.
+//
+// EXPLICITLY UNCHANGED THIS ROUND (verified, not just claimed): roadName.js
+// (normalizePbsRoad, unchanged), roadIdentity.js
+// (canonicalFreewayRoad/canonicalProvincialRoad, unchanged), the bundled
+// freeway/provincial KM-marker datasets (no county/township data added —
+// that remains a separate, larger data-engineering question this round
+// deliberately does not start), AI Prompt/model, Windows PBS filter,
+// Queue, LINE broadcast policy, Observatory architecture, TDX, CCTV.
+// RAW_PBS_TEXT_POLICY = IMMUTABLE_END_TO_END_UNTIL_AI unaffected — this
+// fallback only ever reads event.latitude/event.longitude (already
+// mapped byte-for-byte from PBS's own x1/y1 since V2.1.0's own raw-text
+// re-verification), never writes or reinterprets them.
+//
+// See src/traffic/kmLocationResolver.js's own buildDirectCoordinateMapUrl
+// header comment for the full root-cause writeup and
+// test/pbsCoordinateDirectMapFallback.test.js for the full regression
+// suite (unit coverage for every rejected-input shape, CASE 1-6 per the
+// order's own targeted list, and the real EVENT_ID=11508260158-0
+// end-to-end regression fixture — proving the fix without ever hardcoding
+// "竹60" into any expected road/label text).
+
+export const APP_VERSION = 'V2.3.1';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

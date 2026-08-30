@@ -95,6 +95,66 @@ function buildMapUrl(lat, lng) {
   return `https://maps.google.com/?q=${lat.toFixed(5)},${lng.toFixed(5)}`;
 }
 
+// 2026-08-30 — DIRECT_COORDINATE_MAP_FALLBACK hotfix (order:
+// PBS_COORDINATE_DIRECT_MAP_FALLBACK). Real incident: EVENT_ID=
+// 11508260158-0, a 竹60線 (county road) landslide-closure event in
+// 新竹縣尖石鄉 — PBS/Windows/Cloudflare all carried valid raw x1/y1
+// coordinates the whole way through, but the LINE message had NO map
+// link at all, because BOTH resolveKmLocation() (road+KM path) and
+// resolveCoordinateLocation() (coordinate path, above) require the
+// event's `road` to canonicalize to a recognized 國道/省道 name before
+// either one will even attempt a dataset lookup — a county/township road
+// like 竹60 never can, since this project only bundles official
+// freeway (95016) and provincial (7040) KM-marker datasets, never
+// county/township ones. The coordinate fallback above therefore
+// discarded a perfectly valid coordinate purely because the ROAD wasn't
+// recognized, not because the coordinate itself was bad.
+//
+// This is a map-LINK-only escape hatch, added as messageFormat.js's own
+// LAST resort (only reached once both resolveKmLocation and
+// resolveCoordinateLocation have already failed) — it deliberately does
+// NOT attempt to name a place, resolve a road, or produce a
+// locationLabel/sectionLabel: an unrecognized road still shows no
+// location text, exactly as before this round (order section 一's own
+// explicit boundary — "不得藉此猜測 road/sectionLabel/locationLabel/
+// 鄉道名稱/公里位置"). It only decides whether the trailing "📍 地圖" line
+// gets a pin at all.
+//
+// VALID_COORDINATES_REQUIRED (order section 二): finite numbers only,
+// within real latitude/longitude range, and never the exact (0,0) "null
+// island" sentinel a missing/placeholder GPS field sometimes carries —
+// none of those are a genuine location, so none may produce a map link.
+const MIN_LATITUDE = -90;
+const MAX_LATITUDE = 90;
+const MIN_LONGITUDE = -180;
+const MAX_LONGITUDE = 180;
+
+function isValidRawCoordinate(lat, lng) {
+  if (typeof lat !== 'number' || typeof lng !== 'number') return false;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  if (lat < MIN_LATITUDE || lat > MAX_LATITUDE) return false;
+  if (lng < MIN_LONGITUDE || lng > MAX_LONGITUDE) return false;
+  if (lat === 0 && lng === 0) return false; // never a real Taiwan location — treated as missing
+  return true;
+}
+
+/**
+ * DIRECT_COORDINATE_MAP_FALLBACK — the event's own raw latitude/longitude,
+ * straight into the same short-form Google Maps URL every other
+ * resolution tier already produces (`buildMapUrl`), with NO road
+ * recognition, NO dataset lookup, and NO label of any kind attached.
+ * Returns null for anything that isn't a genuinely valid coordinate pair
+ * — never guesses, never partially trusts a malformed value.
+ *
+ * @param {number} latitude
+ * @param {number} longitude
+ * @returns {string|null}
+ */
+export function buildDirectCoordinateMapUrl(latitude, longitude) {
+  if (!isValidRawCoordinate(latitude, longitude)) return null;
+  return buildMapUrl(latitude, longitude);
+}
+
 function buildProvincialLabel(point) {
   if (point.label) return point.label;
   return [point.county, point.township, point.village].filter(Boolean).join('');

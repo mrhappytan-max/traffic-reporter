@@ -51,10 +51,18 @@
 //   4. raw KM (unchanged, second line)
 //   5. nothing (bare road+direction only — never an invented address)
 // A Google Maps URL (📍 地圖 ...) is a SEPARATE, additional trailing line
-// — shown whenever resolveKmLocation() produced a coordinate, regardless
-// of which tier above won the label line. It never duplicates label text
-// by construction: only one tier's TEXT is ever shown as the label, and
-// the map line is a link, not text repeated from elsewhere.
+// — shown whenever resolveKmLocation() or resolveCoordinateLocation()
+// produced a coordinate, regardless of which tier above won the label
+// line, OR (2026-08-30, DIRECT_COORDINATE_MAP_FALLBACK hotfix) when
+// neither did but the event still carries a valid raw coordinate — see
+// buildRoadLines()'s own comment and kmLocationResolver.js's
+// buildDirectCoordinateMapUrl for why: those two resolvers both require
+// a recognized 國道/省道 road name before they'll use a coordinate at
+// all, which a county/township road (e.g. 竹60線) never satisfies. The
+// map line is never affected by, and never affects, which tier above
+// wins the label — it never duplicates label text by construction: only
+// one tier's TEXT is ever shown as the label, and the map line is a
+// link, not text repeated from elsewhere.
 // Deliberately NEVER extended to PBS's own `event.location` (areaNm) —
 // that field is already covered by V1.8.5.1's own explicit "KM must win
 // over a route-name-shaped location string" regression test, which this
@@ -62,7 +70,7 @@
 // file's own test suite).
 
 import { getRoadShortName, getRoadSectionLabel } from './roadSectionLabel.js';
-import { resolveKmLocation, resolveCoordinateLocation } from './kmLocationResolver.js';
+import { resolveKmLocation, resolveCoordinateLocation, buildDirectCoordinateMapUrl } from './kmLocationResolver.js';
 import { DEFAULT_CONGESTION_SEVERITY } from './congestionSeverity.js';
 import { detectNonCollisionAnomaly } from './anomalyClassification.js';
 
@@ -326,7 +334,25 @@ function buildRoadLines(event) {
     (coordinateResolution && coordinateResolution.resolved && coordinateResolution) ||
     null;
   const resolverLabel = resolution ? resolution.locationLabel : null;
-  const mapUrl = resolution ? resolution.mapUrl || null : null;
+  let mapUrl = resolution ? resolution.mapUrl || null : null;
+
+  // 2026-08-30 — DIRECT_COORDINATE_MAP_FALLBACK hotfix (order:
+  // PBS_COORDINATE_DIRECT_MAP_FALLBACK). Real incident: EVENT_ID=
+  // 11508260158-0 — a 竹60線 (county road) event carried valid PBS
+  // x1/y1 coordinates the whole way through, but got NO map link at
+  // all, because both resolution paths above require `event.road` to
+  // canonicalize to a recognized 國道/省道 name before either will even
+  // look at the coordinate — a county/township road never can (see
+  // kmLocationResolver.js's own header comment on buildDirectCoordinateMapUrl
+  // for the full root cause). This is the LAST resort, reached only when
+  // neither existing path produced a mapUrl: it never touches
+  // resolverLabel/sectionLabel/firstLine (computed below, independent of
+  // mapUrl) — an unrecognized road still shows no location text, exactly
+  // as before this round. Only whether the trailing "📍 地圖" line gets a
+  // pin can change.
+  if (!mapUrl) {
+    mapUrl = buildDirectCoordinateMapUrl(event.latitude, event.longitude);
+  }
 
   // Tier 1 (source's own human text) beats tier 2 (official KM Location
   // Resolver) beats tier 3 (curated 國1/國3 anchor table) — only fall
