@@ -17,8 +17,8 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | 48df7294c0657a1a5db572daf93d9f3b77b97fd7 |
-| Snapshot generated at | 2026-08-30T02:20:54.605Z |
+| Source main HEAD | 9d4b45151086490f5210aa8b375f4e83394ad596 |
+| Snapshot generated at | 2026-08-30T03:09:25.094Z |
 | Source working tree | dirty (6 changed source file(s)) |
 | Current version | V2.3.0 |
 | Current phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
@@ -138,6 +138,20 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 | `GET /version` | **唯一公開**、無需認證的版本端點（5 個欄位白名單） |
 
 `GET /cctv/image/:id` 是另一個刻意公開的路由（LINE 伺服器要能抓圖），安全性靠 128-bit 不可猜 id + 程式強制的 15 分鐘到期檢查。
+
+## 補登（2026-08-30）— Windows PBS Geographic Filter Repair ＋ V2.3.0 Production 驗收回報（DOCUMENTATION ONLY）
+
+人類回報兩項 2026-08-30 完成的修正：(1) Windows PBS 本機篩選移除 `isAccident()`
+事故語意閘門，改用 point-in-polygon（data.gov.tw dataset 7442）取代原矩形邊界，
+新竹市/縣所有事件類型皆納入候選（回報 `11→29`，找回 18 筆，`124 tests
+passed/0 failed`）；(2) V2.3.0 已由 Production 真實事件驗收完成。**本 Cloud
+Session 獨立查證**：`pbs-relay/` 目前仍保留 `isAccident()` 且無對應 commit，
+V2.3.0 的 Production Queue 資源狀態也無可核對證據——兩項均記錄為人類回報、
+本 Session 未獨立驗證，完整記錄與查證細節見 `00_CURRENT_STATE.md`／
+`07_KNOWN_ISSUES.md` 的對應段落。責任邊界回報版本（供對照，未新增或修改角色
+定義）：Windows=Geography Only，Cloudflare=Ingress/Transport/Orchestration，
+Queue=Reliable Background Processing，AI=Semantic Decision Authority，
+LINE=Delivery Only。
 
 ## Windows PBS Production Ingress（V1.9.8，2026-08-28，main／ACTIVE／Production）
 

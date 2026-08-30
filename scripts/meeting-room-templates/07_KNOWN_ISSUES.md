@@ -560,6 +560,10 @@ PBS 閘門排除仍視為有意義。fixture 實測 QUIET/NORMAL/HIGH writes/day
 
 **一句話**：真人在 Production 實測 `/admin/pipeline-trace`／`-view` TTFB ≈59.1s（其餘頁面 <1s）。Root cause：舊 `collectFlattenedTraceEntries` 不論有無篩選一律循序解碼到 `MAX_ENTRIES_SCANNED`(500) 筆才套 `limit`。修正為 `scanTraceEntriesProgressively`：無篩選提前停止（500筆/limit60 → 只 60 次 `kv.get()`）＋有篩選漸進式掃描（首輪 `boundedLimit+20`，之後 ×2，上限仍 500）＋同輪內固定 20 筆一批 `Promise.all` 並行。V1/V2 schema 並存策略不變，兩前綴 `kv.list()` 改並行。新增可觀測性欄位（讀既有已算出的數字，零新增 KV 寫入）。23 項新測試，NEW FAILURES=0。未觸碰寫入路徑／PBS 排程閘門／Health Snapshot／LINE／CCTV／TDX／Cron 頻率。
 
+## 補登紀錄｜WINDOWS_PBS_GEOGRAPHIC_FILTER_REPAIR（2026-08-30，人類回報，本 Cloud Session 未獨立驗證）
+
+**狀態：`HUMAN_REPORTED_NOT_INDEPENDENTLY_VERIFIED`。** 人類回報：Windows PBS 本機篩選舊邏輯先套用 `isAccident()` 事故關鍵字語意閘門，才進新竹縣市地理判斷，導致非事故型事件（落石／坍方／封路／施工／積水等）即使位於新竹縣市仍可能在 Windows 端被直接丟棄，從未進入 Cloudflare/AI。回報修正：移除 `isAccident()` 語意閘門，改用 point-in-polygon（data.gov.tw dataset 7442 縣市界線）取代原本的矩形邊界，新竹市/縣**所有**事件類型皆納入候選，語意判斷完全交給 AI；同批資料驗證回報 `BEFORE_KEEP_COUNT=11 → AFTER_KEEP_COUNT=29`（找回 18 筆），`TESTS=124 passed/0 failed`。**本 Cloud Session 的獨立查證**：目前 `main`／本分支的 `pbs-relay/src/localPrototype.js` 仍保留 `isAccident()` 並仍作為候選閘門使用（見該檔第 56/108 行），`pbs-relay/` 完整 git 歷史（含 `feature/pbs-local-edge-filter-prototype` 分支）中**未找到**對應此修正的 commit，故無法核對回報的 point-in-polygon 實作、dataset 7442 引用或 11→29/124 測試數字。與既有 `PBS Windows Local Edge Debug Push Integration`（V1.9.6）記錄採同一誠實原則：**本節只記錄「人類回報了什麼」，不代表本 Session 已驗證程式碼或測試結果為真**——待對應 commit 出現於本 repo（或人類提供可核對的 diff/測試輸出）後，下一輪應改記為已驗證版本，並同步更新 `pbs-relay/` 程式碼本身（本輪禁止修改）。
+
 ## 修正紀錄｜V2.3.0 — PBS AI Queue Reliability，Cloudflare Queues 取代 ctx.waitUntil（2026-08-30）
 
 **真實 Production 事故**（與 V2.1.0 修的是不同一種失敗模式）：`EVENT_ID=11508290166-0` 成功抵達 Cloudflare 並啟動 Workers AI 呼叫（16:49:03.112），但 AI 呼叫本身在 Cloudflare 自己的 `ctx.waitUntil()` 背景執行時間預算到期前未能回傳——與 Windows 自身的短 HTTP timeout（V2.1.0 已解決）完全無關的另一種限制。16:49:32.912 平台強制取消整個 task（"waitUntil() tasks did not complete within the allowed time after invocation end and have been cancelled"），AI 決策永久遺失，冪等紀錄卡死在 `PROCESSING`。`REAL_INCIDENT_ROOT_CAUSE = WAITUNTIL_BACKGROUND_WINDOW_EXCEEDED`。
@@ -570,7 +574,7 @@ PBS 閘門排除仍視為有意義。fixture 實測 QUIET/NORMAL/HIGH writes/day
 
 **開發期間發現並修正的一個 Observatory KV key 重複 bug**（非原始設計預期，測試驅動發現）：Queue Consumer 是獨立 invocation，自己的 `now` 與 HTTP ingress 原始接受時間不同，若直接沿用會讓最終寫入建立第二筆 KV 紀錄而非覆寫早期 `PROCESSING_STARTED` 紀錄。修正：從 queue message 自帶的 `acceptedFirstAcceptedAt` 重建 `observatoryNow`，專供兩次 Observatory 寫入的 KV key 使用，同時保留真實當下 `now` 給所有真正的業務決策（AI 呼叫、LINE 播報時段閘門）與 `markProcessingComplete` 的 `completedAt`。
 
-`RAW_PBS_TEXT_POLICY=IMMUTABLE_END_TO_END_UNTIL_AI` 不變：queue message 的 `event` 為原始物件的逐字淺拷貝。**KV 成本**（實測）：`puts=4N+2`（與 V2.2.0 完全相同，0 額外寫入／事件），`gets=6N`（+1／事件，Consumer 自己的冪等 re-check）。**Queue 成本**（工程估算，sandbox 無即時 Cloudflare 帳單存取）：成功事件 2 次 operation（1 send + 1 consume-ack），重試耗盡的最差情況 5 次 operation（1 send + 4 次 consume attempt）；50/100/200 事件/日最差情況分別為 250/500/1000 次，遠低於官方文件 10,000/日免費額度。新增 `test/pbsAiQueueReliability.test.js`（含真實事故 `EVENT_ID=11508290166-0` 迴歸 fixture，用可控制 Promise 模擬 30+ 秒 AI 延遲，非真實 30 秒 sleep），改寫 `test/pbsDebugPushBackgroundProcessing.test.js` 5 項過時 `ctx.waitUntil` 前提測試。全套測試 1705 項／1671 pass／34 fail，失敗清單與既有基準線逐項相同（NEW_FAILURES=0）。`APP_VERSION`：V2.2.0 → V2.3.0（MINOR）。本輪未觸碰：Windows PBS filter、Windows 自身 HTTP timeout、PBS 原始文字、AI prompt/model/semantic policy、service area、LINE formatter、driverSummary、hourly reminder、TDX、CCTV、Shared Feed、LINE 廣播規則、Observatory 頁面整體 UI。`BROWSER_ACTION_REQUIRED`：真實 Cloudflare Queue 資源（`pbs-ai-processing-queue`）需要在 Cloudflare Dashboard／`wrangler queues create` 建立——本 sandbox 無即時 Cloudflare API/Dashboard 存取權限驗證或建立，不可假設已存在。
+`RAW_PBS_TEXT_POLICY=IMMUTABLE_END_TO_END_UNTIL_AI` 不變：queue message 的 `event` 為原始物件的逐字淺拷貝。**KV 成本**（實測）：`puts=4N+2`（與 V2.2.0 完全相同，0 額外寫入／事件），`gets=6N`（+1／事件，Consumer 自己的冪等 re-check）。**Queue 成本**（工程估算，sandbox 無即時 Cloudflare 帳單存取）：成功事件 2 次 operation（1 send + 1 consume-ack），重試耗盡的最差情況 5 次 operation（1 send + 4 次 consume attempt）；50/100/200 事件/日最差情況分別為 250/500/1000 次，遠低於官方文件 10,000/日免費額度。新增 `test/pbsAiQueueReliability.test.js`（含真實事故 `EVENT_ID=11508290166-0` 迴歸 fixture，用可控制 Promise 模擬 30+ 秒 AI 延遲，非真實 30 秒 sleep），改寫 `test/pbsDebugPushBackgroundProcessing.test.js` 5 項過時 `ctx.waitUntil` 前提測試。全套測試 1705 項／1671 pass／34 fail，失敗清單與既有基準線逐項相同（NEW_FAILURES=0）。`APP_VERSION`：V2.2.0 → V2.3.0（MINOR）。本輪未觸碰：Windows PBS filter、Windows 自身 HTTP timeout、PBS 原始文字、AI prompt/model/semantic policy、service area、LINE formatter、driverSummary、hourly reminder、TDX、CCTV、Shared Feed、LINE 廣播規則、Observatory 頁面整體 UI。`BROWSER_ACTION_REQUIRED`：真實 Cloudflare Queue 資源（`pbs-ai-processing-queue`）需要在 Cloudflare Dashboard／`wrangler queues create` 建立——本 sandbox 無即時 Cloudflare API/Dashboard 存取權限驗證或建立，不可假設已存在。**2026-08-30 補記**：另一份人類回報稱「V2.3.0 已由 Production 真實事件驗收完成」，但本 Session 未取得可核對證據（真實 Observatory 記錄／Queue 資源存在確認），故本欄位維持原狀，不逕自改記為已驗證——待證據提供後再更新。
 
 ## 修正紀錄｜V2.2.0 — AI Decision Observatory 四層事件生命週期（2026-08-29）
 
@@ -768,52 +772,25 @@ correctness fix，不改 AI semantic behavior）。新增 10 項測試
 「近竹科匝道」）帶出來顯示，即使來源 comment 已經包含這個資訊。與本輪
 config drift 修正無關，刻意不在本輪處理，避免同時改動兩個不相關問題。
 
-## 修正紀錄｜V2.0.1 — AI Decision Observatory（2026-08-29）
+## 修正紀錄｜V2.0.1 — AI Decision Observatory（2026-08-29，壓縮摘要）
 
-PATCH，Production observability/diagnostic UI 修正，不改 AI semantic authority。
-新 Admin 頁 `GET /admin/pbs-ai-observatory-view`（`src/pbs/aiObservatoryView.js`）
-回答「PBS 原文→AI 判斷→AI 理由→最終結果」，READ ONLY OBSERVABILITY：開啟／
-重新整理／搜尋一律 0 次 Workers AI 呼叫（`test/aiObservatoryView.test.js` 直接量
-測 mocked AI adapter 呼叫次數操作前後不變）。盤點既有資料後確認無法零額外
-KV 寫入：`aiDecisionCache.js` content-addressed 無法列舉事件；idempotency KV
-無 PBS 欄位；`AI_CALL_FAILED`／`AI_DECISION_INVALID`／`SERVICE_AREA_EXCLUDED`／
-legacy-path 完全無持久記錄（僅 console.log）。新增最小 thin index
-`src/pbs/aiObservatoryIndex.js`（`debug:pbs-ai-observatory-index:v1:*`，48h
-TTL），每個真正被接受（非重複）事件 +1 KV write（+0 額外讀取），刻意不重複儲存
-notify/impact/reason/confidence——頁面渲染時直接讀既有 `aiDecisionCache` 記錄，
-`reason` 保證是當時真正的 AI 輸出，絕不重新生成（測試直接證明：mock 第二次呼叫
-會回傳不同 reason，頁面仍顯示第一次的真實值，且 AI 總呼叫次數維持 1）。重複事件
-維持 0 額外寫入，頁面「重複事件」篩選誠實說明架構限制而非顯示誤導性空結果。KV
-成本：`puts = 2N + 2`（較 V1.9.8 的 `N + 2` 多 1 次/事件），`gets` 不變。查修頁
-語義全面改為 V2.x vocabulary（AI：建議通報／AI：不需主動通報／AI：判讀失敗，
-安全不通報／服務區域外／AI 未判讀），絕不使用舊版 `不符合播報資格`（那是
-`pipelineTraceView.js` 的 TDX/legacy 硬規則語意）。`APP_VERSION` V2.0.0→V2.0.1。
-新增 22 項測試，全量迴歸 1539/1506/33，NEW FAILURES=0（僅跑一次）。本輪未觸碰：
-AI Prompt、model、notify/impact/confidence 語意、service area、lifecycle、
-idempotency、LINE quota、CCTV、Shared Feed policy。`FIRST_REAL_AI_EVENT`
-仍 `WAITING`；`AI_DRIVER_SUMMARY = FUTURE_CANDIDATE`（僅記錄產品候選方向，
-未實作、未修改 Prompt、未新增 schema）。**不要誤讀**：「重複事件」篩選目前
-永遠回傳 0 筆（非 bug）——重複到達的事件在 transport idempotency 層就被攔截，
-從未產生新的 observatory 記錄；如需查重複到達次數請查 Workers Logs 的
-`duplicate=true`。
+**一句話**：新 Admin 頁 `GET /admin/pbs-ai-observatory-view` 答「PBS 原文→AI 判斷
+→理由→結果」，READ ONLY（開啟/整理/搜尋 0 次 AI 呼叫）。盤點後確認無法零額外
+KV 寫入，新增最小 thin index `aiObservatoryIndex.js`（48h TTL），每接受事件 +1
+write／+0 read，notify/impact/reason/confidence 刻意不重複儲存、頁面即時讀既有
+`aiDecisionCache`（`reason` 保證非重新生成）。KV：`puts=2N+2`。查修頁語義全面改
+V2.x vocabulary，絕不用舊版「不符合播報資格」。22 項新測試，1539/1506/33，NEW
+FAILURES=0。「重複事件」篩選永遠回傳 0 筆非 bug——duplicate 在 transport
+idempotency 層就被攔截，從未產生 observatory 記錄。
 
-## 修正紀錄｜V2.0.0 MILESTONE — Windows PBS + Workers AI 架構封版（2026-08-28）
+## 修正紀錄｜V2.0.0 MILESTONE — Windows PBS + Workers AI 架構封版（2026-08-28，壓縮摘要）
 
-重大架構里程碑封版，非新功能開發。APP_VERSION 從 `V1.9.9` bump 為 `V2.0.0`
-（架構世代更換等級的不相容變更，見 `06_VERSION_HISTORY.md`／
-`02_PROJECT_HANDOFF.md` 的完整記錄），本輪未修改任何 runtime 決策邏輯。誠實
-保留兩項既有已知限制，未在本輪解決：
-
-1. **`FIRST_REAL_AI_EVENT = WAITING`**——真實 Production PBS 事件走完 Windows →
-   Cloudflare → Workers AI → LINE 完整路徑的觀察證據尚未取得。這是下一個
-   observational milestone，不是 V2.0.0 封版 blocker，也不是程式缺陷；
-   `AI_BINDING=ACTIVE`／`AI_DECISION=ACTIVE` 為 GPT Work 回報，本 Session 未
-   獨立驗證（sandbox 網路政策封鎖 Production 網域與 Dashboard）。
-2. **Persistent idempotency atomicity 限制**（V1.9.7 既有已知限制，未變動）：
-   `KV_ONLY_ATOMICITY = NOT_SUFFICIENT`——KV 無 compare-and-swap，理論上仍存在
-   極窄 race window，`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY = PARTIAL`（非
-   atomic exactly-once 保證）。完整分析見下方「Persistent PBS Debug Push
-   Idempotency（V1.9.7）」記錄，含為何不引入 Durable Object 的理由。
+重大架構里程碑封版，非新功能開發，`APP_VERSION` V1.9.9→V2.0.0，本輪未改任何
+runtime 決策邏輯。誠實保留兩項既有已知限制：(1) `FIRST_REAL_AI_EVENT=WAITING`
+——真實事件走完 Windows→Cloudflare→Workers AI→LINE 完整路徑的觀察證據尚未取得
+（下個 observational milestone，非 blocker；`AI_BINDING`/`AI_DECISION`=ACTIVE
+為 GPT Work 回報，本 Session 未獨立驗證）；(2) `KV_ONLY_ATOMICITY=NOT_SUFFICIENT`
+（V1.9.7 既有限制不變，`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY=PARTIAL`）。
 
 ## 修正紀錄｜V1.9.9 Phase 3D Hotfix — Cloudflare 字串布林解析（2026-08-28，壓縮摘要）
 

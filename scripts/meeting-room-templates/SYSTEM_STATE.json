@@ -231,6 +231,21 @@
     "readerNote": "V1.9.8起，這是正式Production架構的一部分，不再只是治理封版記錄：Windows是fast detector/edge filter，Cloudflare是Traffic Producer/Business Authority，LINE最終播報與否的判斷仍完全由Cloudflare既有規則決定。下一個Agent：不要自行開始V1.9.9；不要擴大LINE policy（MAJOR_ACCIDENT_ONLY等既有規則不變）；不要處理台61/台15全線封閉產品政策；不要新增Durable Object；不要進行與PBS/LINE無關的架構重構；不要修改Windows Secret或Task Scheduler；不要碰本機Prototype runtime。",
     "AI_CANDIDATE_PIPELINE": "PREPARED_NOT_ACTIVE — V1.9.9 Phase 2: src/pbs/aiCandidate.js builds a minimal AI candidate for every accepted NEW/UPDATED Windows event, parallel to (never gating) the unchanged runLineBroadcast() call. Observability-only; no AI model called, no KV read/write for the reserved AI_DECISION_CACHE_KV_PREFIX yet."
   },
+  "documentationAddenda20260830": {
+    "task": "WINDOWS_PBS_GEOGRAPHIC_FILTER_ENGINEERING_MEMORY",
+    "nature": "DOCUMENTATION_ONLY — 本輪未修改任何 Windows/Cloudflare/Queue/AI/LINE 程式碼或 Production 設定。",
+    "windowsPbsGeographicFilterRepair": {
+      "status": "HUMAN_REPORTED_NOT_INDEPENDENTLY_VERIFIED",
+      "humanReportedClaim": "isAccident() 事故語意閘門已從 Windows 本機篩選移除，改用 point-in-polygon（data.gov.tw dataset 7442 新竹市/縣界線）取代原矩形邊界，所有新竹事件類型皆納入候選；同批資料驗證回報 beforeKeepCount=11、afterKeepCount=29（找回18筆）、tests=124 passed/0 failed。",
+      "independentVerification": "本 Cloud Session 檢查 pbs-relay/src/localPrototype.js（第56/108行）與 pbs-relay/ 全部 git 歷史（含 feature/pbs-local-edge-filter-prototype 分支），isAccident() 目前仍存在且仍作為候選閘門使用，未找到對應此修正的 commit——上述回報數字無法核對，故不記錄為已驗證事實。",
+      "nextStep": "待對應 commit 出現於本 repo 或提供可核對的 diff/測試輸出後，下一輪應將此狀態升級為已驗證版本，並同步更新程式碼本身（本輪禁止修改）。"
+    },
+    "v230ProductionValidationClaim": {
+      "humanReportedClaim": "V2.3.0 已由 Production 真實事件驗收完成。",
+      "conflictWithPriorSeal": "本 taskSeal（PBS_AI_QUEUE_RELIABILITY_V2_3_0）已誠實記錄 browserActionRequired=YES 且 Production Queue 資源狀態 UNKNOWN；本次回報未附可核對證據（真實 EVENT_ID／Observatory 記錄／Queue 資源存在確認）。",
+      "decision": "維持原 taskSeal 的 browserActionRequired 記錄不變，不逕自因人類陳述覆寫為已驗證——待證據後再更新。"
+    }
+  },
   "taskSeal": {
     "task": "PBS_AI_QUEUE_RELIABILITY_V2_3_0",
     "status": "SEALED",

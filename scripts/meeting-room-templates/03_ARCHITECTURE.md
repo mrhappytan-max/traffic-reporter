@@ -4,6 +4,24 @@
 
 本檔案以 `src/` 實際模組結構整理，非憑記憶重寫。模組清單於 export 產生時由腳本重新掃描 `src/` 目錄核對（見本檔末尾「模組清單（自動掃描）」），若與下方敘述不符，以自動掃描結果與程式碼本身為準,並視為文件 Drift。
 
+## 補登（2026-08-30）— Windows PBS Geographic Filter Repair（人類回報，本 Cloud Session 未獨立驗證，程式碼本輪未變更）
+
+人類回報 Windows PBS 本機篩選（`pbs-relay/`）已將 `isAccident()` 事故語意
+閘門移除，改用 point-in-polygon（data.gov.tw dataset 7442 新竹市/縣界線）
+取代原矩形邊界，讓 Windows 恢復為純地理層（`WINDOWS_ROLE =
+HSINCHU_PBS_FILTER_AND_RELAY`，V2.1.0 命名的角色邊界不變，只是回報「執行上
+更貼近該角色定義」）——若屬實，新竹市/縣所有事件類型（不只事故）皆會進入
+候選，語意判斷完全交給 AI 層。**本 Session 獨立查證**：目前 `main`／本分支
+`pbs-relay/src/localPrototype.js` 第 56／108 行仍保留並使用 `isAccident()`
+作為候選閘門，`pbs-relay/` 全部 git 歷史（含 `feature/pbs-local-edge-
+filter-prototype`）未找到對應此修正的 commit。本節僅記錄「人類回報了什
+麼」，**不代表** point-in-polygon 實作、dataset 7442 引用或回報的
+11→29／124 測試數字已被本 Session 驗證為真——狀態標記
+`HUMAN_REPORTED_NOT_INDEPENDENTLY_VERIFIED`，完整記錄見
+`07_KNOWN_ISSUES.md` 對應段落。本輪（DOCUMENTATION ONLY 施工令）明確禁止
+修改 `pbs-relay/` 程式碼，故上方模組清單／架構圖若與此回報不一致，以自動
+掃描結果與程式碼本身為準。
+
 ## V2.3.0 — PBS AI Queue Reliability：Cloudflare Queues 取代 ctx.waitUntil（2026-08-30）
 
 **真實 Production 事故**（與 V2.1.0 修的是不同一種失敗模式）：`EVENT_ID=

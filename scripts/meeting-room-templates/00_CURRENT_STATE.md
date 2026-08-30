@@ -300,6 +300,33 @@ task，AI 決策永久遺失，冪等記錄卡死 `PROCESSING`。
   開始「AI 一小時歷史上下文」、driverSummary、formatter 修正、查修頁
   UI 改版或其他功能。**
 
+## 補登（2026-08-30）— Windows PBS Geographic Filter Repair（人類回報，未獨立驗證）＋ V2.3.0 Production 驗收回報
+
+**性質：DOCUMENTATION ONLY，本輪未修改任何 Windows／Cloudflare／Queue／AI 程式碼。**
+
+- `WINDOWS_PBS_GEOGRAPHIC_FILTER_REPAIR`：人類回報 Windows 舊邏輯先套用
+  `isAccident()` 事故語意閘門才進新竹地理判斷，導致非事故型新竹事件（落石／
+  坍方／封路／施工／積水）可能在 Windows 端被直接丟棄；回報修正為移除該語意
+  閘門，改用 point-in-polygon（data.gov.tw dataset 7442）取代原矩形邊界，新竹
+  市/縣所有事件類型皆納入候選，語意判斷完全交給 AI；回報 `11→29`（找回 18
+  筆）、`124 tests passed/0 failed`。**本 Session 獨立查證**：目前
+  `pbs-relay/src/localPrototype.js` 仍保留 `isAccident()` 且仍在候選路徑上，
+  `pbs-relay/` 全部 git 歷史（含 prototype 分支）未見對應 commit，故上述具體
+  數字**未經本 Session 驗證**——記錄為 `HUMAN_REPORTED_NOT_INDEPENDENTLY_
+  VERIFIED`，詳見 `07_KNOWN_ISSUES.md` 對應段落。
+- `V2.3.0_PRODUCTION_VALIDATION`：人類回報「V2.3.0 已由 Production 真實事件
+  驗收完成」，與本 Session 上一輪誠實回報的 `BROWSER_ACTION_REQUIRED = YES`
+  （Cloudflare Queue 資源狀態 UNKNOWN）並存但未附可核對證據，本欄位維持
+  `BROWSER_ACTION_REQUIRED = YES` 不變，待證據後再更新——**不得**僅因人類
+  陳述就將先前誠實記錄的「未驗證」逕自改記為「已驗證」。
+- 責任邊界（人類回報版本，供對照）：Windows=Geography Only，
+  Cloudflare=Ingress/Transport/Orchestration，Queue=Reliable Background
+  Processing，AI=Semantic Decision Authority，LINE=Delivery Only——與
+  V2.1.0 正式命名的四層架構角色邊界一致，未新增或修改角色定義本身。
+- 下一個 Agent：若要實際落地 Windows Geographic Filter 修正，須先在
+  `pbs-relay/` 產生對應 commit 並可獨立驗證測試結果，才能把上方標記從
+  `HUMAN_REPORTED_NOT_INDEPENDENTLY_VERIFIED` 升級為已驗證版本。
+
 ## 版本規則（開工前必讀，2026-08-25 起永久生效）
 
 **開工前先寫下 `CURRENT_VERSION` 與 `TARGET_VERSION`**，並確認 TARGET 是 CURRENT 的合法下一版。
