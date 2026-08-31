@@ -247,6 +247,40 @@ authority、Windows PBS filter、LINE policy、V2.1.0 的 ctx.waitUntil 架構�
   **下一個 Agent：不得接著開始「AI 一小時歷史上下文」、driverSummary、
   formatter 修正或其他功能。**
 
+## V2.3.2 封版（2026-08-30）— CCTV_PRODUCTION_IMAGE_DIAGNOSTIC_REPAIR（診斷工具修復）
+
+PATCH，診斷工具修復，非 CCTV 產品功能，不改 PBS/Windows/Queue/AI/LINE/Observatory 主流程。
+
+- 真實事件 `EVENT_ID=11508310005-5`（LINE 送達的 CCTV 圖片破圖）：唯一能直接
+  驗證「剛 publish 完的 `/cctv/image/:id` 是否立即 200+JPEG」的工具
+  `GET /admin/cctv-hsinchu-publish-test` 本身無法使用——依賴只有
+  `/admin/cctv-hsinchu-probe` 才能重建的 `CANDIDATES_KEY`，該 probe 會
+  發起真實 TDX 呼叫，在 `TRAFFIC_SOURCE_MODE=PBS_ONLY` 下不可為診斷消耗
+- 修正：改從同一份 `cctv:freeway-metadata:v1` 攝影機清單快取（真實事故
+  動態播報路徑早已 cache-only 讀取、從不碰 TDX）取得候選——新函式
+  `composeCollageFromFreewayMetadata()` 串接 `readFreewayCctvMetadataCache()`
+  （cache-only，空 KV 退回官方 NFB 內建清單 1943 筆真實記錄，實測固定
+  測試點涵蓋 4 象限中 3 個）→ `selectFourQuadrantCandidates()`（既有
+  fixed-target admin probe 同一函式同一預設值，未新增鏡頭排序政策）→
+  `composeCollageFromCandidates()`（本專案所有 collage 路徑共用核心）
+- `TDX_CALLS_PER_TEST = 0`，測試直接驗證（無 fetch 觸及
+  tdx.transportdata.tw），非僅推論 import graph
+- 新增 `step` 欄位區分失敗成因：`METADATA_CACHE_MISSING`／
+  `NO_CCTV_CANDIDATES`／`SNAPSHOT_FETCH_FAILED`／`COMPOSE_FAILED`（兩者
+  以 `composeCollageFromCandidates()` 新增純累加欄位
+  `anyFrameFetchSucceeded` 區分，沿用 V1.9.0 同一函式已建立的
+  「on every outcome」慣例，對既有呼叫端零行為變化）／`R2_PUBLISH_FAILED`
+- 成功回應補齊 `status`/`published`/`contentType`/`bytes`/`createdAt`/
+  `expiresAt`/`imageUrl`（`createdAt` 自 V1.8.4 起就有算但從未回傳）
+- `APP_VERSION` 從 `V2.3.1` 升為 `V2.3.2`
+- 新增/改寫 22 項測試（`test/cctvImagePublish.test.js`），全量迴歸
+  1722/1688/34，NEW FAILURES=0（僅跑一次）
+- 本輪**未觸碰**：PBS、Windows filter、Cloudflare Queue、AI 決策路徑、
+  正式 LINE 廣播、CCTV 鏡頭排序政策、真實事故 CCTV 選鏡/計時/預算邏輯
+  本身、Shared Feed、TDX 本身運作、Google Maps、Observatory 主流程；
+  `/admin/cctv-hsinchu-collage`（CANDIDATES_KEY）未受影響
+- 詳見 `07_KNOWN_ISSUES.md`／`hsinchuCctvProbe.js` 的完整記錄
+
 ## V2.3.1 封版（2026-08-30）— DIRECT_COORDINATE_MAP_FALLBACK（LINE 地圖座標直連 Hotfix）
 
 PATCH，formatter 行為修正，不改架構、不改 AI/Windows/Queue/LINE 政策。

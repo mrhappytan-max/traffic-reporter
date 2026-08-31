@@ -39,7 +39,7 @@
     "openStructuralQuestion": "TWO trees currently hold the same canonical content: engineering-memory/ (what the mirror syncs) and meeting-room-export/ (what scripts/export-meeting-room.mjs generates). They are kept in step by hand today, which is exactly the drift risk this governance exists to prevent. Needs a human decision: either point the generator at engineering-memory/, or retire one tree. NOT decided unilaterally."
   },
   "git": {
-    "sourceMainHead": "6dc19a1ab3d44950136537e734804af517f21bb6",
+    "sourceMainHead": "806e322775609fc322d60138c75c56fd78136a79",
     "sourceMainHeadResolvedFrom": "origin/main",
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
     "sourceWorkingTree": "dirty (4 changed source file(s))",
@@ -247,25 +247,32 @@
     }
   },
   "taskSeal": {
-    "task": "DIRECT_COORDINATE_MAP_FALLBACK_V2_3_1",
+    "task": "CCTV_PRODUCTION_IMAGE_DIAGNOSTIC_REPAIR_V2_3_2",
     "status": "SEALED",
-    "sealedAt": "2026-08-30",
-    "sealedBy": "human directive (路況工程部｜LINE 地圖座標直連 Hotfix 施工令)",
-    "releaseVersion": "V2.3.1",
-    "previousVersion": "V2.3.0",
-    "nature": "PATCH — formatter 行為修正，不改架構、不改 AI/Windows/Queue/LINE 政策。",
-    "realIncident": "EVENT_ID=11508260158-0：竹60線（縣道）新竹縣尖石鄉坍方封路事件。PBS/Windows/Cloudflare全程保留有效x1/y1座標，AI正常完成，LINE已發送，但完全沒有Google Maps連結。",
-    "rootCause": "messageFormat.js#buildRoadLines()的兩層地圖連結解析（resolveKmLocation道路+KM路徑、resolveCoordinateLocation座標路徑）都要求event.road先被canonicalFreewayRoad()/canonicalProvincialRoad()辨識成國道/省道格式才會使用座標。竹60線等縣道/鄉道從未被本專案僅有的官方國道(95016)/省道(7040)公里標資料集涵蓋，座標路徑因此在真正比對座標之前就被road判斷擋下，有效座標被完全捨棄。",
-    "fix": "新增一層最後手段（僅在既有兩層都失敗後才觸發）：kmLocationResolver.js新匯出buildDirectCoordinateMapUrl(latitude, longitude)，重用既有buildMapUrl()直接以事件自身座標產生地圖連結，不辨識道路、不查資料集、不猜測任何road/sectionLabel/locationLabel，只決定地圖那一行有沒有連結。新增isValidRawCoordinate()座標合法性把關：拒絕null/undefined/NaN/Infinity/非數字型別/超出緯經度合法範圍/精確(0,0)null island。",
-    "scopeDiscipline": "roadName.js、canonicalFreewayRoad、canonicalProvincialRoad、官方國道/省道資料集本身完全未觸碰；縣道/鄉道公里標資料工程仍是刻意未開始的更大範圍問題。未觸碰：AI Prompt/model、Windows PBS filter、Queue、LINE廣播政策、Observatory架構、TDX、CCTV。RAW_PBS_TEXT_POLICY不受影響——只讀event.latitude/event.longitude，從不寫入或重新解讀。",
+    "sealedAt": "2026-08-31",
+    "sealedBy": "human directive (路況播報員｜CCTV 測試工具修復施工令)",
+    "releaseVersion": "V2.3.2",
+    "previousVersion": "V2.3.1",
+    "nature": "PATCH — 診斷工具修復，不改架構、不改PBS/Windows/Queue/AI/LINE/CCTV相機排序/真實事故CCTV邏輯。",
+    "realIncident": "EVENT_ID=11508310005-5：GET /admin/cctv-hsinchu-publish-test在PBS_ONLY環境下無法產生測試圖片——舊版唯一候選相機來源是CANDIDATES_KEY，該key僅由/admin/cctv-hsinchu-probe寫入，而該端點會發起真實TDX API呼叫，在TRAFFIC_SOURCE_MODE=PBS_ONLY下被禁止，此診斷工具因此在PBS-only環境下形同失效。",
+    "rootCause": "handleHsinchuCctvPublishTest()舊版從未重用既有cctv:freeway-metadata:v1快取（readFreewayCctvMetadataCache），只認CANDIDATES_KEY，造成診斷工具與PBS_ONLY政策互斥。",
+    "fix": "新增composeCollageFromFreewayMetadata(env, codecOverride)：改由readFreewayCctvMetadataCache(env.TRAFFIC_KV)取得候選相機（快取缺失時既有BUNDLED_INVENTORY_RECORDS靜態備援自動生效），呼叫既有selectFourQuadrantCandidates()/composeCollageFromCandidates()/publishCollageImage()，全程0次TDX呼叫。新增明確分階段失敗代號：METADATA_CACHE_MISSING/NO_CCTV_CANDIDATES/SNAPSHOT_FETCH_FAILED/COMPOSE_FAILED/R2_PUBLISH_FAILED，靠composeCollageFromCandidates()新增的additive欄位anyFrameFetchSucceeded區分SNAPSHOT_FETCH_FAILED與COMPOSE_FAILED。publishCollageImage()回傳值新增createdAt（原本已內部計算但從未回傳）。",
+    "scopeDiscipline": "composeCollageFromCache()（CANDIDATES_KEY版）與/admin/cctv-hsinchu-collage端點刻意保留未動。未觸碰：PBS、Windows filter、Cloudflare Queue、AI、真實LINE廣播、CCTV相機排序政策、真實事故CCTV邏輯、Shared Feed、TDX真實邏輯、Google Maps、Observatory主流程。composeCollageFromCandidates()共用核心（唯一frame-fetch/compose orchestration）未新增第二條分歧路徑。",
     "testEvidence": {
-      "newTests": "test/pbsCoordinateDirectMapFallback.test.js（13項：拒絕輸入型態單元測試、CASE 1-6、真實EVENT_ID=11508260158-0端對端迴歸fixture，road全程維持真實值「新竹縣-尖石鄉」未硬編碼竹60），全部首次執行即PASS。",
-      "existingTestsUnchanged": "test/kmLocationResolver.test.js、test/messageFormat.test.js、test/kmLocationMessageIntegration.test.js、test/broadcastProvenanceKmLocation.test.js全部重跑不變，全數通過，證實既有國道/省道KM解析行為零回歸。",
-      "fullRegression": "1718項/1684 pass/34 fail，與V2.3.0基準以failure名稱集合對照確認NEW FAILURES=0，僅跑一次。"
+      "newTests": "test/cctvImagePublish.test.js全面重寫（22項，原15項）：CASE 1真實情境（TRAFFIC_KV全空、僅靠bundled fallback仍成功發布、0次TDX）、METADATA_CACHE_MISSING/NO_CCTV_CANDIDATES/SNAPSHOT_FETCH_FAILED/COMPOSE_FAILED/R2_PUBLISH_FAILED各自獨立驗證、TDX_CALLS_PER_TEST=0直接斷言(seenUrls不含tdx.transportdata.tw)、CASE 7驗證從未觸發PBS/AI/Queue/LINE廣播(fetch呼叫不含api.line.me)。",
+      "fullRegression": "1722項/1688 pass/34 fail，與V2.3.0基準34項failure名稱集合對照確認NEW FAILURES=0，僅跑一次。"
     },
-    "readerNote": "完成後STOP。不得開始縣道／鄉道公里標資料工程；不得接著開始「AI一小時歷史上下文」、driverSummary、Observatory查修頁UI改版或其他功能。"
+    "readerNote": "完成後STOP。不得自行開始Browser測試；不得擴大為完整observability重構；不得擴充CCTV產品功能。"
   },
   "taskSealHistory": [
+    {
+      "task": "DIRECT_COORDINATE_MAP_FALLBACK_V2_3_1",
+      "status": "SEALED",
+      "sealedAt": "2026-08-30",
+      "releaseVersion": "V2.3.1",
+      "sealCommit": "070a0f4",
+      "summary": "Direct Coordinate Map Fallback：真實事故EVENT_ID=11508260158-0（竹60線縣道坍方封路事件，PBS/Windows/Cloudflare全程保留有效座標、AI/LINE均正常，但完全沒有Google Maps連結，因縣道/鄉道從未被國道/省道公里標資料集涵蓋，座標路徑在比對座標前就被road判斷擋下）。kmLocationResolver.js新增最後手段buildDirectCoordinateMapUrl(latitude, longitude)，僅在既有兩層道路/座標解析都失敗後才觸發，重用既有buildMapUrl()直接以事件座標產生地圖連結；isValidRawCoordinate()把關非法座標。縣道/鄉道公里標資料工程仍未開始，屬刻意範圍外。13項新測試，1718/1684/34，NEW FAILURES=0。完整記錄見06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V2.3.1條目。"
+    },
     {
       "task": "PBS_AI_QUEUE_RELIABILITY_V2_3_0",
       "status": "SEALED",
@@ -568,7 +575,7 @@
   ],
   "version": {
     "packageJsonVersion": "0.1.0",
-    "latestCompleted": "V2.3.1",
+    "latestCompleted": "V2.3.2",
     "canonicalSource": "src/version.js 的 APP_VERSION — 唯一權威。packageJsonVersion 是 npm 套件版本（0.1.0），與產品版本線無關，不要混用。"
   },
   "production": {
@@ -591,8 +598,8 @@
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-08-30T03:58:36.640Z",
-    "sourceMainHead": "6dc19a1ab3d44950136537e734804af517f21bb6",
+    "generatedAt": "2026-08-31T04:04:09.166Z",
+    "sourceMainHead": "806e322775609fc322d60138c75c56fd78136a79",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
     "historyDir": "_history"
