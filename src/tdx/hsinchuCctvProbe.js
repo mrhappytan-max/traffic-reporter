@@ -29,22 +29,49 @@
 //     reasoning. If the candidates KV is absent/expired, responds with a
 //     clear "CCTV candidate cache unavailable" message rather than
 //     silently calling TDX to repopulate it.
-//   - GET /admin/cctv-hsinchu-publish-test — V1.8.4: composes the same
-//     collage (via the shared composeCollageFromCache — never a
-//     second, divergent orchestration path) and publishes the JPEG to
-//     R2 (env.CCTV_IMAGES — see cctv/publishedImage.js's module comment
-//     for why R2, not KV: strong read-after-write consistency, needed
+//   - GET /admin/cctv-hsinchu-publish-test — V1.8.4, REPAIRED 2026-08-30
+//     (CCTV_PRODUCTION_IMAGE_DIAGNOSTIC_REPAIR — real incident
+//     EVENT_ID=11508310005-5: LINE delivered a broken image, and this
+//     was the one diagnostic tool that could have directly verified
+//     "does /cctv/image/:id genuinely return 200+JPEG right after
+//     publish" — but it depended on CANDIDATES_KEY, a cache ONLY
+//     /admin/cctv-hsinchu-probe can (re)populate, and that probe makes a
+//     real TDX API call, which this project's own TRAFFIC_SOURCE_MODE=
+//     PBS_ONLY governance forbids spending on a diagnostic run). Now
+//     composes from the SAME cctv:freeway-metadata:v1 inventory cache
+//     the real per-accident dynamic broadcast path already reads
+//     cache-only (see cctv/freewayCctvMetadataCache.js and
+//     cctv/dynamicCollage.js) — composeCollageFromFreewayMetadata below
+//     calls readFreewayCctvMetadataCache (never TDX) +
+//     selectFourQuadrantCandidates (the SAME quadrant-selection function
+//     the fixed-target admin probe path already uses, at its own fixed
+//     TARGET_ROAD_ID/TARGET_KM defaults — no new selection policy) +
+//     the SAME composeCollageFromCandidates fetch/compose core every
+//     other collage path already shares (never a second, divergent
+//     orchestration path) — then publishes the JPEG to R2
+//     (env.CCTV_IMAGES — see cctv/publishedImage.js's module comment for
+//     why R2, not KV: strong read-after-write consistency, needed
 //     because a future LINE push could fetch the URL from a different
 //     Cloudflare location almost immediately) under a fresh opaque id,
 //     returning a short-lived public HTTPS URL a future LINE Messaging
-//     API call could use directly. 0 TDX calls, same guarantee as the
-//     collage endpoint above. Never calls LINE. CCTV candidate storage
-//     (CANDIDATES_KEY below) is unaffected — it stays on TRAFFIC_KV; only
-//     published-image storage uses R2. See cctv/publishedImage.js's
-//     module comment for the public GET /cctv/image/:id read path this
-//     feeds — that route lives in a separate module and is deliberately
-//     NOT in ADMIN_PATHS, since LINE's servers cannot carry our Basic
-//     Auth.
+//     API call could use directly. TDX_CALLS_PER_TEST = 0 — this
+//     handler's own import graph never reaches getAccessToken/
+//     fetchTdxJson, same structural guarantee the frame/collage
+//     endpoints above already rely on. Never calls PBS, the AI decision
+//     path, the Queue, or LINE. CCTV candidate storage (CANDIDATES_KEY
+//     below) is entirely unrelated to this endpoint now — it stays on
+//     TRAFFIC_KV, read only by the fixed-target probe/collage pair
+//     above; published-image storage uses R2. See
+//     cctv/publishedImage.js's module comment for the public GET
+//     /cctv/image/:id read path this feeds — that route lives in a
+//     separate module and is deliberately NOT in ADMIN_PATHS, since
+//     LINE's servers cannot carry our Basic Auth. On any failure, the
+//     JSON response's own `step` field distinguishes exactly which stage
+//     failed (METADATA_CACHE_MISSING / NO_CCTV_CANDIDATES /
+//     SNAPSHOT_FETCH_FAILED / COMPOSE_FAILED / R2_PUBLISH_FAILED) —
+//     never a single opaque "CCTV candidate cache unavailable" for every
+//     possible cause, which was the old failure mode's own diagnostic
+//     dead end.
 //
 // V1.7 CCTV 四象限選鏡規則 / 4-camera cross-direction search — RATIFIED,
 // see PROJECT_HANDOFF.md section 14 for the full rationale. Supersedes
@@ -107,7 +134,7 @@ import { parseKM } from '../traffic/roadSectionLabel.js';
 import { toTaipeiParts } from '../traffic/broadcastHours.js';
 import { composeQuadrantCollage } from '../cctv/collage.js';
 import { publishCollageImage } from '../cctv/publishedImage.js';
-import { writeFreewayCctvMetadataCache } from '../cctv/freewayCctvMetadataCache.js';
+import { writeFreewayCctvMetadataCache, readFreewayCctvMetadataCache } from '../cctv/freewayCctvMetadataCache.js';
 
 // cctv/jpegCodecWorker.js does a top-level `import ... from '*.wasm'` —
 // the only WASM-loading mechanism Cloudflare Workers actually supports
@@ -1183,7 +1210,18 @@ export async function composeCollageFromCandidates(candidates, headerLines, { ta
   const attemptedCandidateCount = candidates.filter((c) => c !== null).length;
   const successfulFrameCount = result.filledCount ?? 0;
   const failedFrameCount = attemptedCandidateCount - successfulFrameCount;
-  const timing = { frameFetchElapsedMs, collageElapsedMs, successfulFrameCount, failedFrameCount };
+  // 2026-08-30 — CCTV_PRODUCTION_IMAGE_DIAGNOSTIC_REPAIR: ADDITIVE only,
+  // on every outcome (same "on every outcome" convention V1.9.0's own
+  // timing fields above already established) — reuses `anyFetchedOk`
+  // (already computed above for codec-loading) rather than recomputing
+  // anything. Distinguishes "not even one candidate frame was fetched at
+  // all" from "frames were fetched but every one failed to decode/
+  // compose" — a distinction no existing caller of this function needed
+  // before (all three either only care about the final ok/fail, or
+  // already have their own frame-level detail from `cells`), but the new
+  // diagnostic publish-test endpoint below does, to report a specific
+  // failed STEP rather than one opaque reason for every possible cause.
+  const timing = { frameFetchElapsedMs, collageElapsedMs, successfulFrameCount, failedFrameCount, anyFrameFetchSucceeded: anyFetchedOk };
 
   if (!result.ok) {
     return { ok: false, reason: 'no-frames', message: 'No CCTV footage available for any quadrant.', ...timing };
@@ -1205,49 +1243,119 @@ export async function handleHsinchuCctvCollage(env, codecOverride) {
   });
 }
 
-// --- V1.8.4: publish the composed collage to a short-lived, opaque,
-// unauthenticated public URL (see cctv/publishedImage.js) — a future
-// LINE Messaging API image message can reference the URL directly
-// without ever carrying our Admin Basic Auth (LINE cannot attach it).
-// Admin-Auth-gated (see index.js's ADMIN_PATHS) — this endpoint does NOT
-// call LINE and does NOT trigger a TDX probe; it only composes (0 TDX
-// calls, same guarantee as /admin/cctv-hsinchu-collage above, via the
-// shared composeCollageFromCache) and publishes to R2 (env.CCTV_IMAGES).
-// Fail-closed at every stage, per instruction ("不發布 URL" / "不要建立
-// 假 image entry"): a missing CCTV_IMAGES binding, 0 usable frames, an
-// encode failure, or an R2 write failure all end in a JSON error
-// response, never a URL.
+// --- 2026-08-30 (CCTV_PRODUCTION_IMAGE_DIAGNOSTIC_REPAIR) — the
+// TDX-free composer the publish-test endpoint below now uses. Same
+// three ingredients every other collage path in this file already uses,
+// just sourced from the freeway metadata CACHE instead of the fixed-
+// target admin probe's own CANDIDATES_KEY:
+//   1. readFreewayCctvMetadataCache — cache-only, never TDX (see
+//      cctv/freewayCctvMetadataCache.js; falls back to the bundled
+//      official inventory if KV has nothing, so this step can only
+//      genuinely fail if even that bundle were empty).
+//   2. selectFourQuadrantCandidates — the SAME quadrant-selection
+//      function the fixed-target admin probe path uses, at its own
+//      TARGET_ROAD_ID/TARGET_ROAD_NAME_PATTERN/TARGET_KM defaults (國道1號
+//      82K+100) — no new selection policy, no camera-ranking change.
+//   3. composeCollageFromCandidates — the SAME frame-fetch/compose core
+//      every collage path (fixed-target probe, this endpoint, and the
+//      real per-accident dynamic broadcast path) already shares.
 //
-// `codecOverride` is the same TEST-ONLY parameter composeCollageFromCache
-// takes (see its own doc comment) — threaded through so tests can supply
-// test/testJpegCodec.js's Node-compatible codec instead of hitting the
-// real `.wasm` import, which plain Node cannot load.
+// Returns a `step` on every failure so the caller can report EXACTLY
+// which stage failed, never one opaque message for every possible cause
+// — see this file's own module comment on why that mattered for
+// EVENT_ID=11508310005-5's own diagnosis.
+//
+// @returns {Promise<{ok:true, bytes:ArrayBuffer, contentType:'image/jpeg'}|
+//   {ok:false, step:'METADATA_CACHE_MISSING'|'NO_CCTV_CANDIDATES'|'SNAPSHOT_FETCH_FAILED'|'COMPOSE_FAILED', message:string}>}
+export async function composeCollageFromFreewayMetadata(env, codecOverride) {
+  const records = await readFreewayCctvMetadataCache(env.TRAFFIC_KV);
+  if (!records) {
+    // Structurally possible (a caller with no TRAFFIC_KV binding at all
+    // still gets the bundled inventory — see readFreewayCctvMetadataCache
+    // — so this only fires if even that bundle were empty, which should
+    // never happen in practice) but handled explicitly rather than
+    // falling through to a less specific failure, same fail-closed
+    // discipline the rest of this module already follows.
+    return { ok: false, step: 'METADATA_CACHE_MISSING', message: 'Freeway CCTV metadata cache unavailable (no KV record and no bundled fallback).' };
+  }
+
+  const candidates = selectFourQuadrantCandidates(records);
+  if (candidates.every((c) => c === null)) {
+    return { ok: false, step: 'NO_CCTV_CANDIDATES', message: 'No eligible CCTV candidates found for the fixed test target (國1 82K+100).' };
+  }
+
+  const composed = await composeCollageFromCandidates(candidates, buildCollageHeaderLines(new Date()), { codecOverride });
+  if (!composed.ok) {
+    // anyFrameFetchSucceeded (see composeCollageFromCandidates' own
+    // ADDITIVE field above) is what actually tells these two apart: no
+    // candidate frame fetched at all vs. frames fetched fine but every
+    // one failed to decode/compose.
+    const step = composed.anyFrameFetchSucceeded ? 'COMPOSE_FAILED' : 'SNAPSHOT_FETCH_FAILED';
+    return { ok: false, step, message: composed.message };
+  }
+
+  return { ok: true, bytes: composed.bytes, contentType: composed.contentType };
+}
+
+const PUBLISH_TEST_FAILURE_STATUS = {
+  METADATA_CACHE_MISSING: 404,
+  NO_CCTV_CANDIDATES: 404,
+  SNAPSHOT_FETCH_FAILED: 502,
+  COMPOSE_FAILED: 502,
+  R2_PUBLISH_FAILED: 502,
+};
+
+// --- V1.8.4, REPAIRED 2026-08-30: publish the composed collage to a
+// short-lived, opaque, unauthenticated public URL (see
+// cctv/publishedImage.js) — a future LINE Messaging API image message
+// can reference the URL directly without ever carrying our Admin Basic
+// Auth (LINE cannot attach it). Admin-Auth-gated (see index.js's
+// ADMIN_PATHS) — this endpoint does NOT call LINE, does NOT trigger PBS/
+// the AI decision path/the Queue, and does NOT trigger a TDX probe; it
+// only composes (0 TDX calls — see composeCollageFromFreewayMetadata
+// above's own comment for why) and publishes to R2 (env.CCTV_IMAGES).
+// Fail-closed at every stage, per instruction ("不發布 URL" / "不要建立
+// 假 image entry"): a missing CCTV_IMAGES binding, a missing/empty
+// metadata cache, 0 eligible candidates, 0 usable frames, an encode
+// failure, or an R2 write failure all end in a JSON error response with
+// a specific `step`, never a URL and never one opaque message for every
+// possible cause.
+//
+// `codecOverride` is the same TEST-ONLY parameter
+// composeCollageFromFreewayMetadata takes (see its own doc comment) —
+// threaded through so tests can supply test/testJpegCodec.js's
+// Node-compatible codec instead of hitting the real `.wasm` import,
+// which plain Node cannot load.
 export async function handleHsinchuCctvPublishTest(env, request, codecOverride) {
   // Fail fast, BEFORE composing (which fetches up to 4 CCTV frames) —
   // if there's nowhere to publish to, there's no point spending those
-  // fetches. Same fail-closed reasoning as composeCollageFromCache's own
-  // TRAFFIC_KV check.
+  // fetches. Same fail-closed reasoning as every other stage below.
   if (env.CCTV_IMAGES === undefined) {
-    return jsonResponse({ status: 'error', message: 'CCTV_IMAGES (R2) binding not configured.' }, 503);
+    return jsonResponse({ status: 'error', step: 'R2_PUBLISH_FAILED', message: 'CCTV_IMAGES (R2) binding not configured.' }, 503);
   }
 
-  const composed = await composeCollageFromCache(env, codecOverride);
+  const composed = await composeCollageFromFreewayMetadata(env, codecOverride);
   if (!composed.ok) {
-    return jsonResponse({ status: 'error', message: composed.message }, COMPOSE_FAILURE_STATUS[composed.reason] ?? 502);
+    return jsonResponse({ status: 'error', step: composed.step, message: composed.message }, PUBLISH_TEST_FAILURE_STATUS[composed.step] ?? 502);
   }
 
-  const published = await publishCollageImage(env.CCTV_IMAGES, composed.bytes);
+  const now = new Date();
+  const published = await publishCollageImage(env.CCTV_IMAGES, composed.bytes, now);
   if (!published.ok) {
-    return jsonResponse({ status: 'error', message: 'Failed to publish image to R2.' }, 502);
+    return jsonResponse({ status: 'error', step: 'R2_PUBLISH_FAILED', message: 'Failed to publish image to R2.' }, 502);
   }
 
   const origin = new URL(request.url).origin;
   return jsonResponse(
     {
+      status: 'ok',
       published: true,
-      imageUrl: `${origin}/cctv/image/${published.id}`,
+      contentType: composed.contentType,
+      bytes: published.sizeBytes,
+      createdAt: published.createdAt,
+      expiresAt: published.expiresAt,
       expiresIn: published.expiresIn,
-      sizeBytes: published.sizeBytes,
+      imageUrl: `${origin}/cctv/image/${published.id}`,
     },
     200
   );

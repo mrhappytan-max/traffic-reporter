@@ -1014,7 +1014,78 @@
 // end-to-end regression fixture — proving the fix without ever hardcoding
 // "竹60" into any expected road/label text).
 
-export const APP_VERSION = 'V2.3.1';
+// V2.3.2 (2026-08-30) — CCTV_PRODUCTION_IMAGE_DIAGNOSTIC_REPAIR. PATCH —
+// diagnostic tool hotfix, not a CCTV product feature round.
+//
+// Real incident: EVENT_ID=11508310005-5 — LINE delivered a broken CCTV
+// image (see this same day's own read-only spec-compliance investigation
+// for the full symptom writeup). The ONE tool that could directly verify
+// "does /cctv/image/:id genuinely return 200+JPEG right after publish"
+// — GET /admin/cctv-hsinchu-publish-test — was itself unusable: it
+// depended on CANDIDATES_KEY, populated only by /admin/cctv-hsinchu-probe,
+// which makes a real TDX API call — forbidden while this project's own
+// TRAFFIC_SOURCE_MODE=PBS_ONLY governance is in effect. Running the one
+// diagnostic that could have helped would have meant spending TDX quota
+// on a diagnostic run, which this round's own order explicitly refused
+// to allow.
+//
+// FIX — the publish-test endpoint now composes from the SAME
+// cctv:freeway-metadata:v1 inventory cache the real per-accident dynamic
+// broadcast path already reads cache-only (never TDX): new
+// composeCollageFromFreewayMetadata() (src/tdx/hsinchuCctvProbe.js)
+// chains readFreewayCctvMetadataCache() (cache-only; falls back to the
+// bundled official NFB inventory — 1943 real records — when KV has
+// nothing, so this tool works even on a brand-new deploy that never ran
+// the probe) -> selectFourQuadrantCandidates() (the SAME quadrant-
+// selection function the fixed-target admin probe already uses, at its
+// own existing TARGET_ROAD_ID/TARGET_KM defaults — no new camera-ranking
+// policy) -> composeCollageFromCandidates() (the SAME frame-fetch/
+// compose core every collage path in this project already shares —
+// never a second, divergent orchestration path). TDX_CALLS_PER_TEST = 0,
+// verified directly (no fetch call in any test ever reaches
+// tdx.transportdata.tw), not just inferred from import-graph absence.
+//
+// FAILURE TAXONOMY — the old tool's single "CCTV candidate cache
+// unavailable" message for every possible cause was itself a diagnostic
+// dead end. The repaired endpoint's JSON error response now carries a
+// `step` field distinguishing exactly which stage failed:
+// METADATA_CACHE_MISSING (structurally near-unreachable given the
+// bundled fallback, but handled explicitly, same fail-closed discipline
+// this module already follows elsewhere) / NO_CCTV_CANDIDATES (metadata
+// present, no eligible camera for the fixed test target) /
+// SNAPSHOT_FETCH_FAILED (no candidate frame ever fetched successfully —
+// covers both network failure and a response with no complete JPEG
+// SOI...EOI marker pair at all) / COMPOSE_FAILED (a frame WAS fetched
+// with a structurally-complete marker pair but the real decoder still
+// failed on it — a genuinely different failure a network-level retry
+// could never fix) / R2_PUBLISH_FAILED. Success responses now also
+// return every field the order required: status/published/contentType/
+// bytes/createdAt/expiresAt/imageUrl — `createdAt` was computed by
+// publishCollageImage() since V1.8.4 but never actually returned until
+// now (purely additive; every existing caller still destructures only
+// what it already used).
+//
+// EXPLICITLY UNCHANGED THIS ROUND: PBS, the Windows filter, the
+// Cloudflare Queue, the AI decision path, real LINE broadcast, CCTV
+// camera-ranking policy, the real per-accident CCTV logic itself
+// (dynamicCollage.js's own selection/timing/budget behavior — this
+// round's only additive change to shared infrastructure is a new
+// `anyFrameFetchSucceeded` field on composeCollageFromCandidates'
+// return value, computed from a value that function already calculated,
+// on every outcome, exactly the same "ADDITIVE instrumentation only"
+// convention V1.9.0 already established in this same function — zero
+// behavior change for any existing caller), Shared Feed, TDX's own
+// runtime, Google Maps, and the Observatory's main pipeline. This tool
+// is admin-diagnostic-only — verified directly (test/cctvImagePublish.test.js's
+// own CASE 7) that a successful run never calls PBS, the AI decision
+// path, the Queue, or LINE.
+//
+// See src/tdx/hsinchuCctvProbe.js's own module comment (the
+// /admin/cctv-hsinchu-publish-test section) for the full design and
+// test/cctvImagePublish.test.js for the regression suite (22 tests,
+// including the order's own CASE 1/2/3/4/5/6/7 targeted list).
+
+export const APP_VERSION = 'V2.3.2';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,
