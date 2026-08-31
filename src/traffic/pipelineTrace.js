@@ -379,7 +379,7 @@ export function buildTraceEntry({
   // selectedCamera above.
   frameFetchDurationMs = null, // number | null — ms extractFirstJpegFrame's fetch+body-read took, when it was reached
   r2PublishDurationMs = null, // number | null — ms publishCollageImage's R2 PUT took, when it was reached
-  timeoutStage = null, // 'metadata' | 'candidate-selection' | 'frame-fetch' | 'r2-publish' | null — which stage was in flight when this attempt's budget ran out (only set on a 'prepare-timeout' outcome)
+  timeoutStage = null, // 'metadata' | 'candidate-selection' | 'frame-fetch' | 'r2-publish' | 'r2-readback' | null — which stage was in flight when this attempt's budget ran out (only set on a 'prepare-timeout' outcome; 'r2-readback' added 2026-08-31, CCTV_R2_READBACK_VERIFY_BEFORE_LINE)
   // V1.9.0 (root-cause forensics, 國3 96K+700 2026-08-26) — the QUAD
   // (accident) path's own stage-level breakdown, only ever set by
   // cctv/dynamicCollage.js's prepareCctvImageWork (via its stageTracker

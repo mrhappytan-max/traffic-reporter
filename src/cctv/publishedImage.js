@@ -137,6 +137,49 @@ export async function publishCollageImage(bucket, jpegBytes, now = new Date()) {
 }
 
 /**
+ * 2026-08-31 — CCTV_R2_READBACK_VERIFY_BEFORE_LINE. A dedicated,
+ * INTERNAL R2 read-back check — never an HTTP GET to this Worker's own
+ * public endpoint — called by cctv/dynamicCollage.js immediately after
+ * publishCollageImage() succeeds, before that image's URL is ever handed
+ * to a LINE image message. Deliberately separate from readPublishedImage
+ * (the public-read path's helper, above): that function also enforces
+ * the 15-minute expiry/best-effort-delete policy, which is irrelevant
+ * here (this is checked seconds after publish, never expired yet) and
+ * would only add an unrelated failure mode to a check whose one job is
+ * "did the object we JUST wrote actually land correctly."
+ *
+ * Verifies exactly three things, no more (order section 三 — "不要新增
+ * 大型 schema"): (1) the object round-trips via bucket.get without
+ * throwing and without coming back null/missing, (2) its stored
+ * Content-Type is really 'image/jpeg' (not silently something else or
+ * absent), (3) its bytes are non-empty. Any other failure (a thrown
+ * error at any step) is treated the same as a definite miss — fail
+ * closed, never optimistic.
+ *
+ * @param {{get: Function}} bucket - env.CCTV_IMAGES
+ * @param {string} id - the opaque id publishCollageImage just returned
+ * @returns {Promise<{ok:true}|{ok:false, reason:'r2-readback-failed'}>}
+ */
+export async function verifyPublishedImageReadable(bucket, id) {
+  try {
+    const object = await bucket.get(objectKeyForId(id));
+    if (!object) return { ok: false, reason: 'r2-readback-failed' };
+
+    const contentType = object.httpMetadata && object.httpMetadata.contentType;
+    if (contentType !== 'image/jpeg') return { ok: false, reason: 'r2-readback-failed' };
+
+    const bytes = await object.arrayBuffer();
+    if (!bytes || bytes.byteLength === 0) return { ok: false, reason: 'r2-readback-failed' };
+
+    return { ok: true };
+  } catch {
+    // fail closed — an R2 read error is exactly as untrustworthy as a
+    // confirmed-bad read, never treated as "probably fine."
+    return { ok: false, reason: 'r2-readback-failed' };
+  }
+}
+
+/**
  * Read-only. Returns null on ANY miss — invalid id shape, never
  * published, expired, or an R2 error — never throws, and never lets the
  * caller distinguish those cases from each other (handlePublicCctvImage

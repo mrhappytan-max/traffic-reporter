@@ -1085,7 +1085,59 @@
 // test/cctvImagePublish.test.js for the regression suite (22 tests,
 // including the order's own CASE 1/2/3/4/5/6/7 targeted list).
 
-export const APP_VERSION = 'V2.3.2';
+// V2.3.3 — CCTV_R2_READBACK_VERIFY_BEFORE_LINE. A prior read-only audit
+// (CCTV_IMAGE_READY_BEFORE_LINE_PUSH_AUDIT) traced the real AI-approved
+// broadcast path function-by-function — handlePbsAiQueueBatch -> AI
+// decision -> runAiApprovedPbsBroadcast -> prepareCctvImageForEvent ->
+// composeQuadrantCollage -> publishCollageImage -> R2 bucket.put ->
+// publicImageUrl -> LINE pushMessage — and confirmed the await chain was
+// already safe end-to-end: R2 put is fully awaited before the public URL
+// is ever built, no void promise/Promise.race/ctx.waitUntil skips any of
+// it, and LINE only ever pushes after both. That audit could NOT,
+// however, conclusively explain a real reported broken-image incident
+// from application-level timing alone (LINE's own remote-fetch behavior
+// is outside this codebase's visibility).
+//
+// Rather than continue open-ended forensics into LINE's own side, this
+// round adds one deterministic guarantee this codebase CAN own: after
+// publishCollageImage() succeeds, the exact object just written is read
+// back internally (a plain R2 GET on env.CCTV_IMAGES — never an HTTP
+// call to this Worker's own public /cctv/image/:id endpoint) and
+// confirmed non-empty with Content-Type image/jpeg BEFORE its URL is
+// ever returned to a caller — new
+// src/cctv/publishedImage.js#verifyPublishedImageReadable(). A failed
+// read-back (object missing, 0 bytes, wrong content type, or the R2 GET
+// itself throwing) is a new fail-closed reason, 'r2-readback-failed',
+// given the exact same treatment as every other CCTV failure this
+// codebase already has: text-only this tick, never a retry, never a
+// second publish attempt, never withholding the accident text itself.
+//
+// Wired into BOTH call sites that publish a CCTV image to R2 — the quad
+// (accident) path (dynamicCollage.js#prepareCctvImageWork) and the
+// single-camera (dynamic-shoulder) path
+// (dynamicCollage.js#prepareSingleCctvImageWork) — since both publish
+// via the exact same publishCollageImage() and both feed the exact same
+// downstream LINE image-message construction; leaving one path
+// unprotected would have left the identical defect class half-fixed.
+//
+// EXPLICITLY UNCHANGED THIS ROUND (order section 八): the 15-minute
+// published-image TTL, the previewImageUrl/originalContentUrl design,
+// CCTV camera-selection strategy, the four-quadrant layout, image
+// dimensions/JPEG quality, the LINE push model (still one payload,
+// text+image together), AI Prompt/model, the Cloudflare Queue, Windows
+// PBS, TDX, and Google Maps. The existing await ORDER (R2 put -> public
+// URL -> LINE push) is untouched — this round only adds one more
+// awaited step between "R2 put succeeded" and "imageUrl returned",
+// never reorders anything that existed before it. The known 15-minute
+// TTL question from the prior audit remains a separate, explicitly
+// out-of-scope reliability topic.
+//
+// 8 new/extended tests across test/dynamicCollage.test.js (CASE 1-5 and
+// 7/8, the quad path) and test/dynamicShoulder.test.js (19b, the single-
+// camera path's equivalent of CASE 2) — see those files for the order's
+// own CASE numbering. TDX_CALL_CHANGE=0 (verified directly — the new
+// read-back is a single bucket.get(), never a fetch()).
+export const APP_VERSION = 'V2.3.3';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

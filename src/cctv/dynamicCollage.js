@@ -74,13 +74,38 @@
 // an unsupported/unresolvable road, a missing CCTV_IMAGES/TRAFFIC_KV
 // binding, an unavailable metadata cache, zero matching cameras, all 4
 // frame fetches failing, a JPEG decode/compose failure, an R2 publish
-// failure, OR exceeding the hard time budget (see CCTV_PREPARE_BUDGET_MS
-// below) are ALL just "this accident doesn't get a CCTV image this
-// tick" — never a reason to withhold the accident text itself, never a
-// reason to mark the event failed, never a retry-with-delay. See
-// broadcastPipeline.js for how a {ok:false} result here maps to a
-// plain text-only LINE push, functionally identical to V1.8.4-and-
+// failure, a failed post-publish R2 read-back (see
+// 'r2-readback-failed' below), OR exceeding the hard time budget (see
+// CCTV_PREPARE_BUDGET_MS below) are ALL just "this accident doesn't get
+// a CCTV image this tick" — never a reason to withhold the accident text
+// itself, never a reason to mark the event failed, never a retry-with-
+// delay. See broadcastPipeline.js for how a {ok:false} result here maps
+// to a plain text-only LINE push, functionally identical to V1.8.4-and-
 // earlier's only-ever-text behavior.
+//
+// 2026-08-31 — CCTV_R2_READBACK_VERIFY_BEFORE_LINE. A prior read-only
+// audit (CCTV_IMAGE_READY_BEFORE_LINE_PUSH_AUDIT) confirmed this
+// module's own await chain was already safe end-to-end — R2 put is
+// fully awaited, the public URL is only ever built from a resolved
+// publish, and the LINE push happens strictly after — so a real-world
+// broken-image report could NOT be conclusively explained by an
+// application-level race. Rather than continue open-ended forensics
+// into LINE's own remote-fetch behavior (outside this codebase's
+// visibility), this round adds one deterministic guarantee this
+// codebase CAN own: after publishCollageImage() succeeds, the exact
+// object just written is read back internally (R2 GET, never an HTTP
+// call to this Worker's own public endpoint — see
+// publishedImage.js#verifyPublishedImageReadable) and confirmed
+// non-empty with Content-Type image/jpeg BEFORE imageUrl is ever
+// returned to a caller. A failed read-back is 'r2-readback-failed' —
+// exactly the same fail-closed, text-only-this-tick treatment as every
+// other reason above, never a retry, never a second publish attempt.
+// This does not change WHY an image might still, rarely, fail to render
+// on LINE's own side (e.g. the pre-existing 15-minute published-image
+// TTL — see 07_KNOWN_ISSUES.md — is a separate, explicitly out-of-scope
+// concern this round does not touch); it only guarantees this codebase
+// never hands LINE a URL for an object that isn't verifiably readable
+// the moment it was published.
 //
 // CORRECTION (post-review, two Production blockers fixed):
 //
@@ -145,7 +170,7 @@ import {
   extractFirstJpegFrame,
 } from '../tdx/hsinchuCctvProbe.js';
 import { resolveRoadKey, parseKM } from '../traffic/roadSectionLabel.js';
-import { publishCollageImage } from './publishedImage.js';
+import { publishCollageImage, verifyPublishedImageReadable } from './publishedImage.js';
 import { readFreewayCctvMetadataCache } from './freewayCctvMetadataCache.js';
 import { isCctvImageEnabled } from '../traffic/sourceMode.js';
 
@@ -446,6 +471,7 @@ function snapshotStageTiming(stageTracker) {
     successfulFrameCount,
     failedFrameCount,
     r2PublishElapsedMs,
+    r2ReadbackElapsedMs,
   } = stageTracker;
   return {
     metadataElapsedMs,
@@ -455,6 +481,11 @@ function snapshotStageTiming(stageTracker) {
     successfulFrameCount,
     failedFrameCount,
     r2PublishElapsedMs,
+    // 2026-08-31 — CCTV_R2_READBACK_VERIFY_BEFORE_LINE: additive only,
+    // same "on every outcome" convention every other stage-timing field
+    // here already follows (see V1.9.0's own note above) — undefined
+    // whenever the readback stage was never reached, never fabricated.
+    r2ReadbackElapsedMs,
   };
 }
 
@@ -543,6 +574,21 @@ async function prepareCctvImageWork(env, eligibility, runCache, codecOverride, d
   const published = await publishCollageImage(env.CCTV_IMAGES, composed.bytes);
   if (stageTracker) stageTracker.r2PublishElapsedMs = Date.now() - r2PublishStartedAt;
   if (!published.ok) return { ok: false, reason: 'r2-publish-failed', ...snapshotStageTiming(stageTracker) };
+
+  // 2026-08-31 — CCTV_R2_READBACK_VERIFY_BEFORE_LINE. R2's own
+  // read-after-write consistency guarantee (see publishedImage.js's own
+  // correction note) means this SHOULD always succeed immediately after
+  // a successful put — but "should" is exactly the gap a real broken-
+  // image incident could hide in. Read the object back HERE, before this
+  // function is ever allowed to hand imageUrl to a caller: R2 GET
+  // success + Content-Type really 'image/jpeg' + non-empty bytes. Only
+  // this write's own object is checked — no CCTV selection/compose logic
+  // above is touched, no extra TDX/frame-fetch/LINE call is made.
+  if (stageTracker) stageTracker.stage = 'r2-readback';
+  const r2ReadbackStartedAt = Date.now();
+  const readback = await verifyPublishedImageReadable(env.CCTV_IMAGES, published.id);
+  if (stageTracker) stageTracker.r2ReadbackElapsedMs = Date.now() - r2ReadbackStartedAt;
+  if (!readback.ok) return { ok: false, reason: 'r2-readback-failed', ...snapshotStageTiming(stageTracker) };
 
   // V57: imageExpiresAt comes straight from the R2 object's own
   // customMetadata (publishedImage.js), never recomputed here — a
@@ -633,6 +679,20 @@ async function prepareSingleCctvImageWork(env, eligibility, runCache, deadlineAt
   const r2PublishDurationMs = Date.now() - r2PublishStartedAt;
   if (!published.ok) return { ok: false, reason: 'r2-publish-failed', frameFetchDurationMs, r2PublishDurationMs };
 
+  // 2026-08-31 — CCTV_R2_READBACK_VERIFY_BEFORE_LINE. Same internal R2
+  // read-back check as the quad path above (see prepareCctvImageWork's
+  // own comment and publishedImage.js#verifyPublishedImageReadable) —
+  // this path publishes to the SAME R2 bucket via the SAME
+  // publishCollageImage(), feeds the SAME LINE image-message construction
+  // in broadcastPipeline.js/aiApprovedPbsBroadcast.js, so it gets the
+  // same guarantee: no imageUrl is ever returned for an object that
+  // didn't round-trip.
+  if (stageTracker) stageTracker.stage = 'r2-readback';
+  const r2ReadbackStartedAt = Date.now();
+  const readback = await verifyPublishedImageReadable(env.CCTV_IMAGES, published.id);
+  const r2ReadbackDurationMs = Date.now() - r2ReadbackStartedAt;
+  if (!readback.ok) return { ok: false, reason: 'r2-readback-failed', frameFetchDurationMs, r2PublishDurationMs, r2ReadbackDurationMs };
+
   return {
     ok: true,
     imageUrl: publicImageUrl(env, published.id),
@@ -644,6 +704,7 @@ async function prepareSingleCctvImageWork(env, eligibility, runCache, deadlineAt
     // V1.8.7.3 — stage-level timing, see this function's own comment above.
     frameFetchDurationMs,
     r2PublishDurationMs,
+    r2ReadbackDurationMs,
   };
 }
 

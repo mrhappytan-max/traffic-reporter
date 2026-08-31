@@ -149,19 +149,24 @@ function createMockKV() {
   };
 }
 
-function r2Bucket({ failPut } = {}) {
+// `getOverride` — see test/dynamicCollage.test.js's own copy of this
+// helper for the full comment: used by the CCTV_R2_READBACK_VERIFY_
+// BEFORE_LINE test below to simulate a failed post-publish read-back on
+// the single (dynamic-shoulder) strategy path, without touching put().
+function r2Bucket({ failPut, getOverride } = {}) {
   const store = new Map();
   return {
     store,
     async put(key, value, options = {}) {
       if (failPut) throw new Error('R2 write outage');
       const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
-      store.set(key, { value: bytes, customMetadata: options.customMetadata || {} });
+      store.set(key, { value: bytes, customMetadata: options.customMetadata || {}, httpMetadata: options.httpMetadata || {} });
     },
     async get(key) {
+      if (getOverride) return getOverride(key, store);
       const entry = store.get(key);
       if (!entry) return null;
-      return { customMetadata: entry.customMetadata, async arrayBuffer() { return entry.value.buffer; } };
+      return { customMetadata: entry.customMetadata, httpMetadata: entry.httpMetadata, async arrayBuffer() { return entry.value.buffer; } };
     },
     async delete(key) {
       store.delete(key);
@@ -486,6 +491,32 @@ test('19. successful single-camera publish writes EXACTLY ONE R2 object, with th
   assert.equal(cctv.selectedCamera, 'CCTV-92@92K+000');
   const stored = [...bucket.store.values()][0];
   assert.deepEqual([...stored.value], [...frameBytes]); // byte-identical — never decoded/re-encoded/composed
+});
+
+// CCTV_R2_READBACK_VERIFY_BEFORE_LINE (2026-08-31) — the single (dynamic-
+// shoulder) strategy publishes to the SAME R2 bucket via the SAME
+// publishCollageImage(), so it gets the SAME internal read-back guarantee
+// as the quad (accident) path — see test/dynamicCollage.test.js's own
+// CASE 1-8 for the full set; this is the single-strategy equivalent of
+// CASE 2 (R2 get returns null after a successful put), covering the
+// OTHER call site of publishedImage.js#verifyPublishedImageReadable.
+test('19b. single-camera path: R2 put succeeds but the read-back misses (R2 get returns null) -> r2-readback-failed, text only, never a broken image', async () => {
+  const kv = createMockKV();
+  const records = [cctvRecord({ CCTVID: 'CCTV-92', RoadDirection: 'S', LocationMile: '92K+000' })];
+  await seedMetadataCache(kv, records);
+  const frameBytes = await makeSolidJpeg(4, 4, [11, 21, 31]);
+  const { fetchFn } = makeFrameFetch({ frameJpeg: frameBytes });
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const bucket = r2Bucket({ getOverride: async () => null });
+  const env = { TRAFFIC_KV: kv, CCTV_IMAGES: bucket };
+  const cctv = await prepareCctvImageForEvent(env, shoulderEvent('OPEN'), {}, TEST_CODEC, CCTV_PREPARE_BUDGET_MS);
+
+  assert.equal(cctv.ok, false);
+  assert.equal(cctv.reason, 'r2-readback-failed');
+  assert.equal(cctv.imageUrl, undefined);
+  assert.equal(bucket.store.size, 1, 'the object really was written — this is the NEW read-back check, not a publish regression');
 });
 
 // =======================================================================

@@ -112,12 +112,12 @@ function r2Bucket({ failOnPutIndices = new Set() } = {}) {
       putCallIndex += 1;
       if (failOnPutIndices.has(idx)) throw new Error('R2 write outage (selective, test-only)');
       const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
-      store.set(key, { value: bytes, customMetadata: options.customMetadata || {} });
+      store.set(key, { value: bytes, customMetadata: options.customMetadata || {}, httpMetadata: options.httpMetadata || {} });
     },
     async get(key) {
       const entry = store.get(key);
       if (!entry) return null;
-      return { customMetadata: entry.customMetadata, async arrayBuffer() { return entry.value.buffer; } };
+      return { customMetadata: entry.customMetadata, httpMetadata: entry.httpMetadata, async arrayBuffer() { return entry.value.buffer; } };
     },
     async delete(key) {
       store.delete(key);

@@ -38,19 +38,30 @@ function kv(initial) {
   };
 }
 
-function r2Bucket({ failPut } = {}) {
+// `getOverride`, when given, replaces get()'s entire behavior — used by
+// the CCTV_R2_READBACK_VERIFY_BEFORE_LINE test cases below to simulate a
+// post-publish read-back that misses/returns empty bytes/reports the
+// wrong content type/throws, without touching put() at all (production
+// only ever calls get() once per publish, from the new read-back check —
+// see publishedImage.js#verifyPublishedImageReadable). `httpMetadata` is
+// now stored/returned the same way `customMetadata` already was — real
+// R2 does this too, and publishCollageImage always passes
+// `httpMetadata: { contentType: 'image/jpeg' }`, so every existing test
+// using the DEFAULT (no getOverride) behavior keeps passing unchanged.
+function r2Bucket({ failPut, getOverride } = {}) {
   const store = new Map();
   return {
     store,
     async put(key, value, options = {}) {
       if (failPut) throw new Error('R2 write outage');
       const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
-      store.set(key, { value: bytes, customMetadata: options.customMetadata || {} });
+      store.set(key, { value: bytes, customMetadata: options.customMetadata || {}, httpMetadata: options.httpMetadata || {} });
     },
     async get(key) {
+      if (getOverride) return getOverride(key, store);
       const entry = store.get(key);
       if (!entry) return null;
-      return { customMetadata: entry.customMetadata, async arrayBuffer() { return entry.value.buffer; } };
+      return { customMetadata: entry.customMetadata, httpMetadata: entry.httpMetadata, async arrayBuffer() { return entry.value.buffer; } };
     },
     async delete(key) {
       store.delete(key);
@@ -485,6 +496,117 @@ test('4. the deadline having already passed by the time R2 publish is reached ->
   assert.equal(result.ok, false);
   assert.ok(['prepare-timeout', 'no-frames'].includes(result.reason), `expected a fail-closed reason, got ${result.reason}`);
   assert.equal(bucket.store.size, 0, 'no R2 object should ever have been written once the deadline had passed');
+});
+
+// =======================================================================
+// CCTV_R2_READBACK_VERIFY_BEFORE_LINE (2026-08-31) — CASE 1-8 per the
+// order's own numbering. Covers the quad (accident) path; the single
+// (dynamic-shoulder) path gets the same treatment inside
+// prepareSingleCctvImageWork (test/dynamicShoulder.test.js has its own
+// CASE 1/6-equivalent coverage — same publishCollageImage +
+// verifyPublishedImageReadable call pair, not duplicated here).
+// =======================================================================
+
+test('CASE 1: R2 put success + R2 get success + bytes>0 + image/jpeg -> imageUrl returned, LINE image allowed', async () => {
+  const env = baseEnv({ TRAFFIC_KV: kv({ [FREEWAY_METADATA_KEY]: metadataEnvelope(ALL_RECORDS) }) });
+  const { fetchFn } = makeFrameFetch({ frameJpeg: await makeSolidJpeg(80, 60, [11, 22, 33]) });
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const result = await prepareCctvImageForEvent(env, accidentEvent(), {}, TEST_CODEC);
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.ok(typeof result.imageUrl === 'string' && result.imageUrl.length > 0);
+  assert.equal(typeof result.r2ReadbackElapsedMs, 'number', 'read-back stage timing must be reported on the success path');
+});
+
+test('CASE 2: R2 put success, R2 get returns null -> r2-readback-failed, text only', async () => {
+  const bucket = r2Bucket({ getOverride: async () => null });
+  const env = baseEnv({ TRAFFIC_KV: kv({ [FREEWAY_METADATA_KEY]: metadataEnvelope(ALL_RECORDS) }), CCTV_IMAGES: bucket });
+  const { fetchFn } = makeFrameFetch({ frameJpeg: await makeSolidJpeg(80, 60, [12, 22, 32]) });
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const result = await prepareCctvImageForEvent(env, accidentEvent(), {}, TEST_CODEC);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'r2-readback-failed');
+  assert.equal(result.imageUrl, undefined, 'a failed read-back must never hand back a URL');
+  // The object really was written — this proves the failure is the
+  // NEW read-back check, not a regression in publishCollageImage itself.
+  assert.equal(bucket.store.size, 1);
+});
+
+test('CASE 3: R2 put success, R2 get returns 0 bytes -> r2-readback-failed, text only', async () => {
+  const bucket = r2Bucket({
+    getOverride: async (key, store) => {
+      const entry = store.get(key);
+      if (!entry) return null;
+      return { customMetadata: entry.customMetadata, httpMetadata: entry.httpMetadata, async arrayBuffer() { return new ArrayBuffer(0); } };
+    },
+  });
+  const env = baseEnv({ TRAFFIC_KV: kv({ [FREEWAY_METADATA_KEY]: metadataEnvelope(ALL_RECORDS) }), CCTV_IMAGES: bucket });
+  const { fetchFn } = makeFrameFetch({ frameJpeg: await makeSolidJpeg(80, 60, [13, 23, 33]) });
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const result = await prepareCctvImageForEvent(env, accidentEvent(), {}, TEST_CODEC);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'r2-readback-failed');
+});
+
+test('CASE 4: R2 put success, read-back reports the wrong content type -> r2-readback-failed, text only', async () => {
+  const bucket = r2Bucket({
+    getOverride: async (key, store) => {
+      const entry = store.get(key);
+      if (!entry) return null;
+      return { customMetadata: entry.customMetadata, httpMetadata: { contentType: 'application/octet-stream' }, async arrayBuffer() { return entry.value.buffer; } };
+    },
+  });
+  const env = baseEnv({ TRAFFIC_KV: kv({ [FREEWAY_METADATA_KEY]: metadataEnvelope(ALL_RECORDS) }), CCTV_IMAGES: bucket });
+  const { fetchFn } = makeFrameFetch({ frameJpeg: await makeSolidJpeg(80, 60, [14, 24, 34]) });
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const result = await prepareCctvImageForEvent(env, accidentEvent(), {}, TEST_CODEC);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'r2-readback-failed');
+});
+
+test('CASE 5: R2 read-back throws -> fail closed, text only (never treated as "probably fine")', async () => {
+  const bucket = r2Bucket({
+    getOverride: async () => {
+      throw new Error('R2 get outage');
+    },
+  });
+  const env = baseEnv({ TRAFFIC_KV: kv({ [FREEWAY_METADATA_KEY]: metadataEnvelope(ALL_RECORDS) }), CCTV_IMAGES: bucket });
+  const { fetchFn } = makeFrameFetch({ frameJpeg: await makeSolidJpeg(80, 60, [15, 25, 35]) });
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const result = await prepareCctvImageForEvent(env, accidentEvent(), {}, TEST_CODEC);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'r2-readback-failed');
+});
+
+test('CASE 7/8: read-back adds 0 extra TDX calls and never touches AI/Queue/PBS/LINE text logic (the only new I/O is one internal R2 GET, no HTTP fetch to this Worker\'s own /cctv/image/:id endpoint)', async () => {
+  const env = baseEnv({ TRAFFIC_KV: kv({ [FREEWAY_METADATA_KEY]: metadataEnvelope(ALL_RECORDS) }) });
+  const { fetchFn, hits } = makeFrameFetch({ frameJpeg: await makeSolidJpeg(80, 60, [16, 26, 36]) });
+  priorFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+
+  const result = await prepareCctvImageForEvent(env, accidentEvent(), {}, TEST_CODEC);
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  // makeFrameFetch's own fetchFn throws loudly on any non-freeway.gov.tw
+  // URL (see its own comment) — 4 quadrant frame fetches, exactly, and
+  // `hits.other` staying 0 proves no TDX/LINE/self-HTTP call was made by
+  // the new read-back step (verifyPublishedImageReadable is a plain
+  // bucket.get(), never a fetch()).
+  assert.equal(hits.other, 0, 'no TDX, LINE, or self-HTTP call from the read-back step');
 });
 
 test('CCTV_PREPARE_BUDGET_MS (the real production default) is 4000ms', async () => {
