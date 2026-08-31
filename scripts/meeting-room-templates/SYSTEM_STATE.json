@@ -247,24 +247,32 @@
     }
   },
   "taskSeal": {
-    "task": "CCTV_PRODUCTION_IMAGE_DIAGNOSTIC_REPAIR_V2_3_2",
+    "task": "CCTV_R2_READBACK_VERIFY_BEFORE_LINE_V2_3_3",
     "status": "SEALED",
     "sealedAt": "2026-08-31",
-    "sealedBy": "human directive (路況播報員｜CCTV 測試工具修復施工令)",
-    "releaseVersion": "V2.3.2",
-    "previousVersion": "V2.3.1",
-    "nature": "PATCH — 診斷工具修復，不改架構、不改PBS/Windows/Queue/AI/LINE/CCTV相機排序/真實事故CCTV邏輯。",
-    "realIncident": "EVENT_ID=11508310005-5：GET /admin/cctv-hsinchu-publish-test在PBS_ONLY環境下無法產生測試圖片——舊版唯一候選相機來源是CANDIDATES_KEY，該key僅由/admin/cctv-hsinchu-probe寫入，而該端點會發起真實TDX API呼叫，在TRAFFIC_SOURCE_MODE=PBS_ONLY下被禁止，此診斷工具因此在PBS-only環境下形同失效。",
-    "rootCause": "handleHsinchuCctvPublishTest()舊版從未重用既有cctv:freeway-metadata:v1快取（readFreewayCctvMetadataCache），只認CANDIDATES_KEY，造成診斷工具與PBS_ONLY政策互斥。",
-    "fix": "新增composeCollageFromFreewayMetadata(env, codecOverride)：改由readFreewayCctvMetadataCache(env.TRAFFIC_KV)取得候選相機（快取缺失時既有BUNDLED_INVENTORY_RECORDS靜態備援自動生效），呼叫既有selectFourQuadrantCandidates()/composeCollageFromCandidates()/publishCollageImage()，全程0次TDX呼叫。新增明確分階段失敗代號：METADATA_CACHE_MISSING/NO_CCTV_CANDIDATES/SNAPSHOT_FETCH_FAILED/COMPOSE_FAILED/R2_PUBLISH_FAILED，靠composeCollageFromCandidates()新增的additive欄位anyFrameFetchSucceeded區分SNAPSHOT_FETCH_FAILED與COMPOSE_FAILED。publishCollageImage()回傳值新增createdAt（原本已內部計算但從未回傳）。",
-    "scopeDiscipline": "composeCollageFromCache()（CANDIDATES_KEY版）與/admin/cctv-hsinchu-collage端點刻意保留未動。未觸碰：PBS、Windows filter、Cloudflare Queue、AI、真實LINE廣播、CCTV相機排序政策、真實事故CCTV邏輯、Shared Feed、TDX真實邏輯、Google Maps、Observatory主流程。composeCollageFromCandidates()共用核心（唯一frame-fetch/compose orchestration）未新增第二條分歧路徑。",
+    "sealedBy": "human directive (路況播報員｜CCTV R2 Read-Back Reliability Hotfix)",
+    "releaseVersion": "V2.3.3",
+    "previousVersion": "V2.3.2",
+    "nature": "PATCH — 可靠性加強，不改架構、不改15分鐘TTL、不改LINE Push模型、不改CCTV選鏡策略。",
+    "background": "上一輪唯讀查核（CCTV_IMAGE_READY_BEFORE_LINE_PUSH_AUDIT）逐函式追蹤真實AI-approved廣播路徑（handlePbsAiQueueBatch→AI decision→runAiApprovedPbsBroadcast→prepareCctvImageForEvent→composeQuadrantCollage→publishCollageImage→R2 bucket.put→publicImageUrl→LINE pushMessage），確認await鏈本身已安全：R2 put完整await、public URL只在R2 put成功後才建構、LINE push一律晚於兩者。但該查核無法用應用層時序缺陷解釋一筆真實回報的破圖事故（LINE端遠端抓取行為不在本repo可視範圍）。",
+    "decision": "停止對LINE端行為的無止盡追查，改為新增本codebase真正能自己保證的一件事——CCTV圖片成功寫入R2後，Cloudflare自己再讀一次確認圖片真的可讀，通過才把imageUrl交給LINE。",
+    "fix": "新增src/cctv/publishedImage.js#verifyPublishedImageReadable(bucket, id)：純內部R2 GET（絕非對本Worker自己public endpoint發HTTP），確認物件存在、Content-Type確實為image/jpeg、bytes非空；任一失敗或GET本身拋出例外，一律視為讀回失敗。接上src/cctv/dynamicCollage.js兩個既有R2發布點——prepareCctvImageWork（quad/事故路徑）與prepareSingleCctvImageWork（single/動態路肩路徑），兩者共用同一個publishCollageImage()、也共用同一套下游LINE image message組裝，因此同步保護，不留下半修的缺口。新失敗代號r2-readback-failed，與既有所有CCTV失敗原因採完全相同的fail-closed處理：文字照常送、圖片跳過、不重試、不重新publish、不影響事故文字本身。",
+    "scopeDiscipline": "明確未觸碰：15分鐘published-image TTL、previewImageUrl/originalContentUrl架構、CCTV選鏡策略、四象限版面、圖片尺寸/JPEG quality、LINE Push單一payload模型、AI Prompt/Model、Cloudflare Queue、Windows PBS、TDX、Google Maps；既有await順序（R2 put→public URL→LINE push）本身未重排，只在「R2 put成功」與「imageUrl回傳」之間多插入一個新的await步驟。TDX_CALL_CHANGE=0（新讀回只是一次bucket.get()，非fetch()）。TTL問題仍是獨立、本輪刻意不處理的可靠性議題。",
     "testEvidence": {
-      "newTests": "test/cctvImagePublish.test.js全面重寫（22項，原15項）：CASE 1真實情境（TRAFFIC_KV全空、僅靠bundled fallback仍成功發布、0次TDX）、METADATA_CACHE_MISSING/NO_CCTV_CANDIDATES/SNAPSHOT_FETCH_FAILED/COMPOSE_FAILED/R2_PUBLISH_FAILED各自獨立驗證、TDX_CALLS_PER_TEST=0直接斷言(seenUrls不含tdx.transportdata.tw)、CASE 7驗證從未觸發PBS/AI/Queue/LINE廣播(fetch呼叫不含api.line.me)。",
-      "fullRegression": "1722項/1688 pass/34 fail，與V2.3.0基準34項failure名稱集合對照確認NEW FAILURES=0，僅跑一次。"
+      "newTests": "test/dynamicCollage.test.js新增CASE 1-5、7/8（共6項，quad路徑：成功／get回null／bytes=0／content-type錯誤／get拋出例外／0額外TDX呼叫），test/dynamicShoulder.test.js新增19b（single路徑的CASE 2對應版本）。另有9個既有測試檔的r2Bucket() mock補上httpMetadata傳遞（與真實R2行為一致——publishCollageImage一律傳httpMetadata:{contentType:'image/jpeg'}，mock先前未保存此欄位，補上後所有既有成功案例維持原本行為不變）。",
+      "fullRegression": "1729項/1695 pass/34 fail，與既有34項基準以failure名稱集合對照確認NEW FAILURES=0，僅跑一次。"
     },
-    "readerNote": "完成後STOP。不得自行開始Browser測試；不得擴大為完整observability重構；不得擴充CCTV產品功能。"
+    "readerNote": "完成後STOP。不得繼續追查LINE remote fetch；不得修改15分鐘TTL/previewImageUrl架構/CCTV選鏡策略/四象限版面/圖片尺寸/JPEG quality/LINE Push模型/AI Prompt/Model/Queue/Windows PBS/TDX/Google Maps。"
   },
   "taskSealHistory": [
+    {
+      "task": "CCTV_PRODUCTION_IMAGE_DIAGNOSTIC_REPAIR_V2_3_2",
+      "status": "SEALED",
+      "sealedAt": "2026-08-31",
+      "releaseVersion": "V2.3.2",
+      "sealCommit": "4e9cce2",
+      "summary": "CCTV Production Image Diagnostic Repair：真實事件EVENT_ID=11508310005-5（GET /admin/cctv-hsinchu-publish-test在PBS_ONLY環境下無法產生測試圖片——舊版唯一候選相機來源CANDIDATES_KEY僅由會發起真實TDX呼叫的/admin/cctv-hsinchu-probe寫入，在TRAFFIC_SOURCE_MODE=PBS_ONLY下不可用）。新增composeCollageFromFreewayMetadata()改由readFreewayCctvMetadataCache(env.TRAFFIC_KV)取得候選相機（快取缺失時BUNDLED_INVENTORY_RECORDS靜態備援自動生效），呼叫既有selectFourQuadrantCandidates()/composeCollageFromCandidates()/publishCollageImage()，全程0次TDX呼叫。新增分階段失敗代號METADATA_CACHE_MISSING/NO_CCTV_CANDIDATES/SNAPSHOT_FETCH_FAILED/COMPOSE_FAILED/R2_PUBLISH_FAILED。composeCollageFromCache()（CANDIDATES_KEY版）與/admin/cctv-hsinchu-collage端點刻意保留未動。22項測試（原15項），1722/1688/34，NEW FAILURES=0。完整記錄見06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V2.3.2條目。"
+    },
     {
       "task": "DIRECT_COORDINATE_MAP_FALLBACK_V2_3_1",
       "status": "SEALED",

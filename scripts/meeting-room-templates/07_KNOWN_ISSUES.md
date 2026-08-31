@@ -530,6 +530,18 @@ PBS 閘門排除仍視為有意義。fixture 實測 QUIET/NORMAL/HIGH writes/day
 
 **狀態：`HUMAN_REPORTED_NOT_INDEPENDENTLY_VERIFIED`。** 人類回報：Windows PBS 本機篩選舊邏輯先套用 `isAccident()` 事故關鍵字語意閘門，才進新竹縣市地理判斷，導致非事故型事件（落石／坍方／封路／施工／積水等）即使位於新竹縣市仍可能在 Windows 端被直接丟棄，從未進入 Cloudflare/AI。回報修正：移除 `isAccident()` 語意閘門，改用 point-in-polygon（data.gov.tw dataset 7442 縣市界線）取代原本的矩形邊界，新竹市/縣**所有**事件類型皆納入候選，語意判斷完全交給 AI；同批資料驗證回報 `BEFORE_KEEP_COUNT=11 → AFTER_KEEP_COUNT=29`（找回 18 筆），`TESTS=124 passed/0 failed`。**本 Cloud Session 的獨立查證**：目前 `main`／本分支的 `pbs-relay/src/localPrototype.js` 仍保留 `isAccident()` 並仍作為候選閘門使用（見該檔第 56/108 行），`pbs-relay/` 完整 git 歷史（含 `feature/pbs-local-edge-filter-prototype` 分支）中**未找到**對應此修正的 commit，故無法核對回報的 point-in-polygon 實作、dataset 7442 引用或 11→29/124 測試數字。與既有 `PBS Windows Local Edge Debug Push Integration`（V1.9.6）記錄採同一誠實原則：**本節只記錄「人類回報了什麼」，不代表本 Session 已驗證程式碼或測試結果為真**——待對應 commit 出現於本 repo（或人類提供可核對的 diff/測試輸出）後，下一輪應改記為已驗證版本，並同步更新 `pbs-relay/` 程式碼本身（本輪禁止修改）。
 
+## 修正紀錄｜V2.3.3 — CCTV_R2_READBACK_VERIFY_BEFORE_LINE（2026-08-31）
+
+**背景**：先前一輪唯讀查核（`CCTV_IMAGE_READY_BEFORE_LINE_PUSH_AUDIT`）逐函式追蹤真實 AI-approved 廣播路徑（`handlePbsAiQueueBatch → AI decision → runAiApprovedPbsBroadcast → prepareCctvImageForEvent → composeQuadrantCollage → publishCollageImage → R2 bucket.put → publicImageUrl → LINE pushMessage`），確認 await 鏈本身已經安全：R2 put 完整 await、public URL 只在 R2 put 成功後才建構、LINE push 一律晚於兩者。但該查核**無法**用應用層時序缺陷解釋一筆真實回報的破圖事故（LINE 端遠端抓取行為不在本 repo 可視範圍內）。
+
+**決策**：停止對 LINE 端行為的無止盡追查，改為新增本 codebase 真正能自己保證的一件事——CCTV 圖片成功寫入 R2 後，Cloudflare 自己再讀一次確認圖片真的可讀，通過才把 imageUrl 交給 LINE。
+
+**修正**：新增 `src/cctv/publishedImage.js#verifyPublishedImageReadable(bucket, id)`——純內部 R2 GET（絕非對本 Worker 自己 public endpoint 發 HTTP 請求），確認：(1) 物件存在、(2) Content-Type 確實為 `image/jpeg`、(3) bytes 非空；任一失敗或 GET 本身拋出例外，一律視為讀回失敗。接上 `src/cctv/dynamicCollage.js` 兩個既有 R2 發布點——`prepareCctvImageWork`（quad／事故路徑）與 `prepareSingleCctvImageWork`（single／動態路肩路徑），兩者共用同一個 `publishCollageImage()`、也共用同一套下游 LINE image message 組裝，因此同步保護，不留下半修的缺口。新失敗代號 `r2-readback-failed`，與既有所有 CCTV 失敗原因採**完全相同**的 fail-closed 處理：文字照常送、圖片跳過、不重試、不重新 publish、不影響事故文字本身。
+
+**明確未觸碰**：15 分鐘 published-image TTL、previewImageUrl／originalContentUrl 架構、CCTV 選鏡策略、四象限版面、圖片尺寸／JPEG quality、LINE Push 單一 payload 模型、AI Prompt／Model、Cloudflare Queue、Windows PBS、TDX、Google Maps；既有 await 順序（R2 put → public URL → LINE push）本身未重排，只在「R2 put 成功」與「imageUrl 回傳」之間多插入一個新的 await 步驟。`TDX_CALL_CHANGE=0`（新讀回只是一次 `bucket.get()`，非 `fetch()`）。TTL 問題仍是獨立、本輪刻意不處理的可靠性議題。
+
+**測試**：`test/dynamicCollage.test.js` 新增 CASE 1-5、7/8（共 6 項，quad 路徑：成功／get 回 null／bytes=0／content-type 錯誤／get 拋出例外／0 額外 TDX 呼叫），`test/dynamicShoulder.test.js` 新增 19b（single 路徑的 CASE 2 對應版本）。另有 9 個既有測試檔的 `r2Bucket()` mock 補上 `httpMetadata` 傳遞（與真實 R2 行為一致——`publishCollageImage` 一律傳 `httpMetadata:{contentType:'image/jpeg'}`，mock 先前未保存此欄位，補上後所有既有成功案例維持原本行為不變）。全量迴歸 1729/1695/34，與既有 34 項基準以 failure 名稱集合對照確認 NEW FAILURES=0，僅跑一次。`APP_VERSION` V2.3.2→V2.3.3（PATCH）。
+
 ## 修正紀錄｜V2.3.2 — CCTV_PRODUCTION_IMAGE_DIAGNOSTIC_REPAIR（診斷工具修復）（2026-08-30）
 
 **真實事件**：`EVENT_ID=11508310005-5`，LINE 送達的 CCTV 圖片破圖。唯一能直接驗證「剛 publish 完的 `/cctv/image/:id` 是否真的立即 200+JPEG」的診斷工具——`GET /admin/cctv-hsinchu-publish-test`——本身無法使用：它依賴只有 `/admin/cctv-hsinchu-probe` 才能重新產生的 `CANDIDATES_KEY` 快取，而該 probe 會發起真實 TDX API 呼叫，在 `TRAFFIC_SOURCE_MODE=PBS_ONLY` 下不可為了診斷而消耗。
@@ -633,89 +645,9 @@ commit `7acb82a`；Cloudflare Worker Version ID `defc1da4-6328-47ce-82c6-
 81082519bc2`，Windows `TrafficReporter-PBS-LocalMonitor`已重啟為Running
 （人類回報，本Session未獨立驗證）。
 
-## 修正紀錄｜V2.1.0 — Transport Ack Decoupled From Business Processing（2026-08-29）
+## 修正紀錄｜V2.1.0 — Transport Ack Decoupled From Business Processing（2026-08-29，壓縮摘要）
 
-**INCIDENT**：真實 Production 事故。2 筆 NEW 事件成功走完 Windows relay →
-Worker ingress → service area → `AI_CALL_STARTED`，但 Windows 自身 5 秒
-HTTP timeout 觸發時，`POST /internal/pbs-debug-push` 的 handler 仍在
-`await` 真正的 Workers AI 呼叫。因為那段工作從未交給
-`ctx.waitUntil()`，Cloudflare Workers runtime 在 client（Windows）斷線
-時直接取消了仍在執行中的 handler——AI 判斷、LINE 結果、Observatory 記錄
-全部沒有完成（`Cloudflare outcome = canceled`，`AI decision complete =
-0`）。Windows 自己的 client-side retry 隨後發現冪等記錄早已寫入（**本輪
-之前**：於 business processing 開始「之前」就寫入完成），被永久視為
-`duplicate`，AI 決策從此再也沒有機會重跑，Observatory 也沒有任何紀錄。
-
-**ROOT CAUSE**：`transport received`（Cloudflare 是否已持久接收這個
-transition）與 `business processing completed`（AI 是否已判讀完成）在
-本輪之前是同一件事——回應本身要等 AI 判讀完成才送出，冪等記錄卻在 AI
-判讀「開始之前」就已寫入。兩者混為一談，導致 Windows 的短 timeout 可以
-直接跟 Workers AI 的真實延遲賽跑，一旦輸了，冪等機制反而變成永久卡死
-的原因，而非保護機制。
-
-**修正（兩部分，缺一不可）**：
-
-1. **背景執行**：`src/index.js` 的 `fetch` handler 現在接收並轉傳
-   `ctx`；`src/pbs/debugPush.js` 把真正被接受（非重複）的 NEW/UPDATED
-   事件之 business processing（AI-or-legacy 路徑＋Observatory 記錄）交給
-   `ctx.waitUntil()`，不再於回應前 inline `await`。Windows 收到的 HTTP
-   回應現在只代表「Cloudflare 是否已持久接收」，不再代表「AI 是否判讀
-   完成」——Windows 自己的短 timeout 因此結構上無法再與 Workers AI 賽跑。
-   `ctx` 是新增的第 4 個 optional 參數（接在既有 `now` 之後），既有全部
-   單元測試呼叫點完全不受影響，缺少 `ctx` 時 fallback 為直接 `await`，
-   行為與本輪之前逐位元組相同（見
-   `test/pbsDebugPushBackgroundProcessing.test.js` 的「no ctx argument」
-   測試）。
-2. **兩階段冪等標記**：KV 冪等記錄新增 `status: 'PROCESSING' |
-   'COMPLETED'`。接受當下寫入 `PROCESSING`，business processing 真正
-   完成後（成功或內部已妥善處理的失敗，皆算「完成」）才改寫為
-   `COMPLETED`。仍在 `PROCESSING_STALE_MS`（60 秒——遠大於真實 Workers
-   AI 呼叫的量測耗時，遠小於 Windows 自身約 3 分鐘的自然重新輪詢間隔）
-   之內的新鮮 `PROCESSING` 記錄，retry 仍視為 `duplicate`（信任原本受
-   `ctx.waitUntil()` 保護的那次嘗試會自己跑完，不重新觸發 AI）；超過
-   60 秒的過期 `PROCESSING` 記錄（極少數情況——原本那次嘗試根本沒被
-   排程到，例如 isolate 在 `ctx.waitUntil()` 排程前就被回收，**不是**
-   本輪已修正的 client timeout 那種情況），retry 才不視為 `duplicate`，
-   真正重新嘗試 business processing（`attemptCount` 遞增，供未來診斷）。
-   沒有 `status` 欄位的舊制記錄、或 `status=COMPLETED` 的記錄，一律仍
-   視為 `duplicate`，與本輪之前行為相容。
-
-**刻意不採用的方案**：Cloudflare Queue（order 本身：「不要先引入
-Queue，除非現有 Worker lifecycle 無法可靠完成」——`ctx.waitUntil` 已是
-既有 Worker lifecycle 原語，足以解決本次已確認的失效模式）；Durable
-Object（沿用本專案既有 `KV_ONLY_ATOMICITY` 註解「不要過度設計」的
-先例——真正需要解決的風險是「執行被取消」，不是「兩個真正同時的請求」，
-一個有界的 KV staleness window 已是最小可行修正）。
-
-**再次驗證（非重新實作）**：PBS 原始 `comment`／`sourceDetail` 是否逐字
-完整送進真正的 AI prompt——`buildRawPbsRecordFromPush`／
-`normalizePbsEvent`／`buildAiCandidate`／`buildAiUserPrompt` 本輪**一行
-未改**；以真實事件 `EVENT_ID=11508280025-5`、
-`comment="東向近竹科匝道有A3交通事故"` 執行真正的函式鏈路（非猜測）確認
-`FULL_PBS_TEXT_REACHES_AI = YES`，逐字元相同。另唯讀盤點
-`pbs-relay/` 的 NEW/UPDATED/CLEARED 分類邏輯（`localPrototype.js` 的
-`fingerprintEvent`／變更分類），確認完全以內容 fingerprint 比對驅動，
-**不存在**任何「同一事故一小時內」語意抑制規則——沒有東西需要移除，
-未違反新四層架構邊界。
-
-**正式寫入新架構原則**：`WINDOWS_ROLE = HSINCHU_PBS_FILTER_AND_RELAY`、
-`CLOUDFLARE_ROLE = INGRESS_STATE_CONTEXT_AND_AI_ORCHESTRATION`、
-`AI_ROLE = SEMANTIC_DECISION_AUTHORITY`、`LINE_ROLE = DELIVERY_ONLY`、
-`RAW_PBS_TEXT_POLICY = IMMUTABLE_END_TO_END_UNTIL_AI`——原始文字不得在
-PBS → Windows → Cloudflare → AI 之間被改寫或刪減；額外解析欄位
-（`normalizedRoad`／`resolvedArea`／`displayKM`／`locationQuality` 等）
-必須是額外欄位，不得覆蓋 raw 原文。詳見 `03_ARCHITECTURE.md`。
-
-本輪**未觸碰**：AI Prompt、AI model、`aiDecisionEngine.js`／
-`aiConfig.js` resolver 語意、Windows PBS filter、service area、
-lifecycle 分類、message formatter、driverSummary、hourly reminder、
-CCTV、TDX、查修頁 UI（列為第二階段，本輪刻意不做）。`APP_VERSION` 從
-`V2.0.2` 升為 `V2.1.0`（MINOR——正式資料流／責任邊界調整，非單純
-timeout patch）。新增 9 項測試（`test/pbsDebugPushBackgroundProcessing.
-test.js` 8 項全新＋既有 KV 成本量化測試公式由 `puts=2N+2` 更新為
-`puts=3N+2`——冪等記錄現在每個已接受事件寫入兩次：`PROCESSING` 再
-`COMPLETED`），全部首次執行即 PASS；全量迴歸 1681/1647/34，與 V2.0.2
-基準以 failure 名稱集合對照確認 NEW FAILURES=0，僅跑一次。
+**一句話**：真實 Production 事故——Windows 自身 5 秒 HTTP timeout 在 Cloudflare 仍 `await` 真正 Workers AI 呼叫時觸發，因為那段工作從未交給 `ctx.waitUntil()`，client 斷線時 handler 直接被取消，AI 判斷／LINE／Observatory 全部沒完成，冪等記錄卻已提前寫入，永久擋下 retry。修正兩部分：(1) `src/index.js` 的 `fetch` handler 轉傳 `ctx`，`debugPush.js` 把 business processing 交給 `ctx.waitUntil()`，HTTP 回應只代表「已持久接收」不再代表「AI 已判讀完成」；(2) KV 冪等記錄新增兩階段標記 `PROCESSING`/`COMPLETED`，`PROCESSING_STALE_MS=60秒` 容許復原重跑。同時正式寫入四層架構角色邊界：`WINDOWS_ROLE`/`CLOUDFLARE_ROLE`/`AI_ROLE`/`LINE_ROLE`/`RAW_PBS_TEXT_POLICY=IMMUTABLE_END_TO_END_UNTIL_AI`（詳見 `03_ARCHITECTURE.md`）。以真實事件 `EVENT_ID=11508280025-5` 再次驗證 PBS 原文逐字完整送進 AI prompt。9 項新測試，1681/1647/34，NEW FAILURES=0。`APP_VERSION` V2.0.2→V2.1.0（MINOR）。此輪的 `ctx.waitUntil()` 架構本身後來被 V2.3.0 的 Cloudflare Queue 取代（見上方 V2.3.0 條目）——歷史修正仍成立，僅承載機制已演進。
 
 ## 修正紀錄｜V2.0.2 Config Drift Hotfix — PBS_AI_DECISION_ENABLED canonical deployment（2026-08-29，壓縮摘要）
 

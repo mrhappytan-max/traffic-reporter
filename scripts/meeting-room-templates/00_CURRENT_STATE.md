@@ -247,6 +247,40 @@ authority、Windows PBS filter、LINE policy、V2.1.0 的 ctx.waitUntil 架構�
   **下一個 Agent：不得接著開始「AI 一小時歷史上下文」、driverSummary、
   formatter 修正或其他功能。**
 
+## V2.3.3 封版（2026-08-31）— CCTV_R2_READBACK_VERIFY_BEFORE_LINE
+
+PATCH，可靠性加強，不改架構、不改 15 分鐘 TTL、不改 LINE Push 模型、不改 CCTV 選鏡策略。
+
+- 上一輪唯讀查核（`CCTV_IMAGE_READY_BEFORE_LINE_PUSH_AUDIT`）逐函式追蹤真實
+  AI-approved 廣播路徑，確認 await 鏈本身已安全（R2 put 完整 await → public
+  URL 只在 put 成功後建構 → LINE push 一律最晚），但無法用應用層時序缺陷
+  解釋一筆真實回報的破圖事故（LINE 端遠端抓取行為不在本 repo 可視範圍）
+- 決策：停止對 LINE 端行為的無止盡追查，改為新增本 codebase 真正能自己
+  保證的一件事——CCTV 圖片成功寫入 R2 後，Cloudflare 自己再讀一次確認
+  圖片真的可讀，通過才把 imageUrl 交給 LINE
+- 新函式 `publishedImage.js#verifyPublishedImageReadable(bucket, id)`：
+  純內部 R2 GET（絕非對本 Worker 自己 public endpoint 發 HTTP），確認
+  物件存在、Content-Type 確實為 `image/jpeg`、bytes 非空；任一失敗或
+  GET 本身拋出例外，一律視為讀回失敗
+- 接上 `dynamicCollage.js` 兩個既有 R2 發布點——`prepareCctvImageWork`
+  （quad／事故）與 `prepareSingleCctvImageWork`（single／動態路肩）——
+  兩者共用同一個 `publishCollageImage()`、也共用同一套下游 LINE image
+  message 組裝，同步保護，不留半修缺口
+- 新失敗代號 `r2-readback-failed`，與既有所有 CCTV 失敗原因採完全相同
+  的 fail-closed 處理：文字照常送、圖片跳過、不重試、不重新 publish
+- `TDX_CALL_CHANGE = 0`（新讀回只是一次 `bucket.get()`，非 `fetch()`）
+- `APP_VERSION` 從 `V2.3.2` 升為 `V2.3.3`
+- 新增/擴充 8 項測試（`test/dynamicCollage.test.js` CASE 1-5/7-8 六項、
+  `test/dynamicShoulder.test.js` 19b 一項），另有 9 個既有測試檔的
+  `r2Bucket()` mock 補上 `httpMetadata` 傳遞（與真實 R2 行為一致，既有
+  成功案例行為不變），全量迴歸 1729/1695/34，NEW FAILURES=0（僅跑一次）
+- 本輪**未觸碰**：15 分鐘 published-image TTL、previewImageUrl／
+  originalContentUrl 架構、CCTV 選鏡策略、四象限版面、圖片尺寸／JPEG
+  quality、LINE Push 單一 payload 模型、AI Prompt／Model、Cloudflare
+  Queue、Windows PBS、TDX、Google Maps；既有 await 順序本身未重排，
+  只在「R2 put 成功」與「imageUrl 回傳」之間多插入一個新的 await 步驟
+- 詳見 `07_KNOWN_ISSUES.md`／`dynamicCollage.js`／`publishedImage.js` 的完整記錄
+
 ## V2.3.2 封版（2026-08-30）— CCTV_PRODUCTION_IMAGE_DIAGNOSTIC_REPAIR（診斷工具修復）
 
 PATCH，診斷工具修復，非 CCTV 產品功能，不改 PBS/Windows/Queue/AI/LINE/Observatory 主流程。
