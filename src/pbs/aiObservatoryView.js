@@ -62,8 +62,24 @@ const OUTCOME_META = {
   // AI_CALL_FAILED (a single attempt's call didn't complete) — this means
   // retries were exhausted and processing is now definitively terminal.
   [AI_OUTCOME.PROCESSING_FAILED]: { emoji: '❌', label: 'AI／背景處理最終失敗（已重試仍未完成）', cls: 'warn' },
+  // V2.4.3 (order section 七/八/十) — cancelled before any further AI call
+  // because PBS itself has since confirmed the event is over (a later,
+  // separate CLEARED push) — distinct from every failure outcome above:
+  // this was never a failure, it is a stale retry correctly stood down.
+  [AI_OUTCOME.STALE_AFTER_CLEARED]: { emoji: '⏹️', label: '事件已解除，取消舊 AI 重試', cls: 'info' },
 };
-function outcomeMeta(outcome) {
+// V2.4.3 (order section 十) — timeout variants of the two outcomes that
+// can carry `record.timedOut`. Kept as SEPARATE lookup entries rather
+// than mutating OUTCOME_META in place, so the base table above stays the
+// exact same shape/keys it always has (every other reader of OUTCOME_META,
+// if one is ever added, still sees the plain outcome->meta mapping).
+const TIMEOUT_OUTCOME_META = {
+  [AI_OUTCOME.AI_CALL_FAILED]: { emoji: '⏱️', label: 'AI：逾時，安全不通報（會重試）', cls: 'warn' },
+  [AI_OUTCOME.PROCESSING_FAILED]: { emoji: '⏱️', label: 'AI／背景處理最終失敗（連續逾時，已重試仍未完成）', cls: 'warn' },
+};
+function outcomeMeta(record) {
+  const outcome = record && record.outcome;
+  if (record && record.timedOut && TIMEOUT_OUTCOME_META[outcome]) return TIMEOUT_OUTCOME_META[outcome];
   return OUTCOME_META[outcome] || { emoji: 'ℹ️', label: outcome || '未知', cls: 'unknown' };
 }
 
@@ -79,6 +95,9 @@ const STATUS_FILTER_OPTIONS = [
   ['AI_NOT_INVOKED_LEGACY_PATH', '尚未判讀'],
   [AI_OUTCOME.PROCESSING_STARTED, '處理中／未完成'],
   [AI_OUTCOME.PROCESSING_FAILED, '背景處理最終失敗'],
+  // V2.4.3 (order section 七/八) — its own filter entry, never folded into
+  // AI_FAILED: a stale-cancelled retry was never a failure at all.
+  [AI_OUTCOME.STALE_AFTER_CLEARED, '事件已解除（取消重試）'],
   ['DUPLICATE', '重複事件'],
 ];
 function matchesStatusFilter(record, statusFilter) {
@@ -181,6 +200,11 @@ function deriveAiStageFlags(outcome) {
   if (outcome === AI_OUTCOME.PROCESSING_STARTED) return { candidateCreated: null, aiCallStarted: null };
   if (outcome === AI_OUTCOME.SERVICE_AREA_EXCLUDED) return { candidateCreated: false, aiCallStarted: false };
   if (outcome === AI_OUTCOME.AI_NOT_INVOKED_LEGACY_PATH) return { candidateCreated: true, aiCallStarted: false };
+  // V2.4.3 — cancelled BEFORE any candidate/AI work this attempt (see
+  // processQueuedPbsEvent's own comment: the stale-cleared check runs
+  // ahead of candidate building) — a PRIOR attempt may have reached AI,
+  // but that is not what this record now represents.
+  if (outcome === AI_OUTCOME.STALE_AFTER_CLEARED) return { candidateCreated: false, aiCallStarted: false };
   // PROCESSING_FAILED: retries were genuinely attempted, so a candidate
   // and at least one AI call attempt did happen — just never reliably
   // completed.
@@ -210,6 +234,8 @@ function lineNotAttemptedReason(record) {
       return '既有規則判定不符合播報資格';
     case AI_OUTCOME.PROCESSING_FAILED:
       return '背景處理已重試仍未能可靠完成，安全不通報';
+    case AI_OUTCOME.STALE_AFTER_CLEARED:
+      return '事件已解除，已取消後續 AI 重試';
     default:
       return 'UNKNOWN / NOT RECORDED';
   }
@@ -235,6 +261,7 @@ function layerStatusForAi(record) {
       return 'pending';
     case AI_OUTCOME.SERVICE_AREA_EXCLUDED:
     case AI_OUTCOME.AI_NOT_INVOKED_LEGACY_PATH:
+    case AI_OUTCOME.STALE_AFTER_CLEARED:
       return 'none';
     case AI_OUTCOME.AI_CALL_FAILED:
     case AI_OUTCOME.AI_DECISION_INVALID:
@@ -347,7 +374,7 @@ function lineSummaryBadge(record) {
 }
 
 function renderRow(record, decision, idem, now) {
-  const meta = outcomeMeta(record.outcome);
+  const meta = outcomeMeta(record);
   const timeLabel = formatTaipeiListTime(record.timestamp, now);
   const impactBadge = decision ? `<span class="badge badge-impact">${escapeHtml(decision.impact)}</span>` : '';
   return `

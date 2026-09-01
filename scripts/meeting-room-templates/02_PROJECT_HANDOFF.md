@@ -575,6 +575,36 @@ CLOUDFLARE_QUEUE`。V2.2.0 把查修頁升級為四層事件生命週期檢視�
 V2.3.2／V2.3.3 是三個連續 PATCH（LINE 地圖座標直連 fallback、CCTV
 診斷工具修復、CCTV R2 讀回驗證），皆未改架構本身。
 
+## V2.4.3 — AI_TIMEOUT_AND_STALE_RETRY_RELIABILITY_FIX（2026-09-01，同日稍晚，加在下方 V2.4.2 之上）
+
+**接手現在必須知道的是**：
+
+1. **AI 呼叫現在有 45 秒 fail-fast timeout**：`src/pbs/aiDecisionEngine.js`
+   的 `AI_CALL_TIMEOUT_MS = 45000`。此前完全沒有 app-level timeout，真實
+   Production 曾實測一次 AI 呼叫卡住約 236 秒（"3046: Request timeout"，
+   平台側行為，非本專案設定）。是 caller-side `Promise.race`，非確認
+   底層真正取消（無即時 Cloudflare binding 文件可查證）——但因
+   `callWorkersAi` 本身零 side effect，背景殘留呼叫不會造成重複
+   LINE/KV write，安全。
+2. **CLEARED 現在會取消舊事件的 stale retry**：新增
+   `debug:pbs-event-cleared:v1:<source>:<eventId>` KV marker（48h
+   TTL）。若一個 NEW/UPDATED 事件的 Queue retry 還在進行中，PBS 又送來
+   同一 eventId 的 CLEARED，下一次 retry 會直接停止（0 再呼叫 AI、0
+   LINE），新 terminal outcome `AI_OUTCOME.STALE_AFTER_CLEARED`。
+3. **Observatory 新增 `timedOut` 欄位**：查修頁現在能區分「AI：逾時」
+   與「事件已解除，取消舊 AI 重試」，不再全部顯示為「背景處理失敗」。
+4. **`EVENT_ID 11509010029-5` 這筆歷史事件本身**：機制面問題（timeout
+   無上限、CLEARED 不會取消 stale retry）已修正；但這筆特定歷史事件的
+   確切失敗階段本 session 仍**無法獨立查證**（無 Cloudflare Worker
+   Logs 存取權限），未臆測 root cause。
+5. **Retry 次數與既有邏輯不變**：`MAX_QUEUE_RETRIES` 仍為 3，未因這次
+   事故無限增加；Cloudflare Queue 既有 retry delay 判斷已足夠，未新增
+   backoff 邏輯。AI failure 仍 fail-closed，未新增任何 hard-coded
+   notify 或 legacy fallback。
+
+完整文字記錄與 CASE 1-12 全文 → `06_VERSION_HISTORY.md`／
+`07_KNOWN_ISSUES.md`／`test/v243AiTimeoutAndStaleRetryReliability.test.js`。
+
 ## V2.4.2 — PBS_AI_LINE_INFORMATION_FIDELITY_AND_POLICY_FIX（2026-09-01，同日稍晚，加在下方 V2.4.1 之上——三層開關現況/incidentSuppression 修正/啟用來源說明皆不變，本節只新增本輪的變更）
 
 **接手現在必須知道的是**：

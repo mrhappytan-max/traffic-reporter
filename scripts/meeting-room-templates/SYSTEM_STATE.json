@@ -659,6 +659,15 @@
       "fixApplied": false,
       "followUp": "需 Claude Browser/Dashboard 讀取真實 Worker Logs"
     },
-    "verification": "test/v242InformationFidelityAndPolicy.test.js CASE1-12(16項)全過；full regression 1790 tests NEW_FAILURES=0；deployment-policy/wrangler dry-run PASS。"
+    "verification": "test/v242InformationFidelityAndPolicy.test.js CASE1-12(16項)全過；full regression 1790 tests NEW_FAILURES=0；deployment-policy/wrangler dry-run PASS。",
+    "supersededBy": "V2_4_3_AI_TIMEOUT_AND_STALE_RETRY_RELIABILITY_FIX (2026-09-01, same day)"
+  },
+  "V2_4_3_AI_TIMEOUT_AND_STALE_RETRY_RELIABILITY_FIX": {
+    "completedAt": "2026-09-01",
+    "trigger": "EVENT_ID 11509010029-5：3次AI attempt各約236秒逾時；CLEARED到達時舊retry未停止。",
+    "rootCauseInvestigation": "callWorkersAi原無timeout；236秒/3046為PLATFORM側，無即時文件確認。",
+    "fix1_failFastTimeout": "AI_CALL_TIMEOUT_MS=45000，caller-side Promise.race；callWorkersAi零side effect故安全；retry不變。",
+    "verification": "CASE1-12全過；迴歸1802 tests NEW_FAILURES=0。",
+    "fixes": "FIX1: AI_CALL_TIMEOUT_MS=45000, Promise.race fail-fast, zero side-effect safe. FIX2: debug:pbs-event-cleared:v1 marker -> STALE_AFTER_CLEARED outcome, reuses existing idempotency COMPLETED."
   }
 }

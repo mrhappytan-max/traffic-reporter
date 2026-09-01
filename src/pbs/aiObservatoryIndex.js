@@ -91,6 +91,16 @@ const MAX_ENTRIES_SCANNED = 300;
 // outcome): PROCESSING_FAILED means retries were exhausted and business
 // processing must stop, terminal, ack'd — never left stuck at
 // PROCESSING_STARTED forever.
+// V2.4.3 (order section 七/八) — STALE_AFTER_CLEARED: a NEW/UPDATED Queue
+// message whose event has since been confirmed CLEARED by a later,
+// separate CLEARED push (see debugPush.js's own `readPbsEventClearedAt`/
+// `recordPbsEventCleared`) is cancelled BEFORE any further AI call —
+// never retried, terminal, ACK'd. Deliberately a NEW, distinct outcome
+// value (never reusing AI_CALL_FAILED/PROCESSING_FAILED) because it is
+// reached and returned BEFORE the Queue Consumer's own AI_CALL_FAILED
+// retry-eligibility check ever runs (see processQueuedPbsEvent's own
+// comment) — it can never be mistaken for something that should still be
+// retried.
 export const AI_OUTCOME = {
   PROCESSING_STARTED: 'PROCESSING_STARTED',
   PROCESSING_FAILED: 'PROCESSING_FAILED',
@@ -100,6 +110,7 @@ export const AI_OUTCOME = {
   AI_DECISION_INVALID: 'AI_DECISION_INVALID',
   AI_NOTIFY_TRUE: 'AI_NOTIFY_TRUE',
   AI_NOTIFY_FALSE: 'AI_NOTIFY_FALSE',
+  STALE_AFTER_CLEARED: 'STALE_AFTER_CLEARED',
 };
 
 function safeErrorMessage(err) {
@@ -169,6 +180,14 @@ export function buildAiObservatoryRecord({
   primarySource = null,
   lastNotifiedAt = null,
   memoryWrite = false,
+  // V2.4.3 (order section 十) — true ONLY for the new application-level
+  // fail-fast timeout path (aiDecisionEngine.js's own AI_CALL_TIMEOUT_MS)
+  // — never set for any other AI_CALL_FAILED cause (missing binding, a
+  // genuine env.AI.run() rejection). Lets the Observatory view show
+  // "AI 逾時" distinctly from a generic failure, on both a mid-retry
+  // AI_CALL_FAILED record and a fully-exhausted PROCESSING_FAILED one —
+  // see aiObservatoryView.js's own outcomeMeta().
+  timedOut = false,
 }) {
   return {
     timestamp: now.toISOString(),
@@ -198,6 +217,7 @@ export function buildAiObservatoryRecord({
     primarySource,
     lastNotifiedAt,
     memoryWrite: Boolean(memoryWrite),
+    timedOut: Boolean(timedOut),
   };
 }
 

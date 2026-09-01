@@ -530,19 +530,21 @@ PBS 閘門排除仍視為有意義。fixture 實測 QUIET/NORMAL/HIGH writes/day
 
 **狀態：`HUMAN_REPORTED_NOT_INDEPENDENTLY_VERIFIED`。** 人類回報：Windows PBS 本機篩選舊邏輯先套用 `isAccident()` 事故關鍵字語意閘門，才進新竹縣市地理判斷，導致非事故型事件（落石／坍方／封路／施工／積水等）即使位於新竹縣市仍可能在 Windows 端被直接丟棄，從未進入 Cloudflare/AI。回報修正：移除 `isAccident()` 語意閘門，改用 point-in-polygon（data.gov.tw dataset 7442 縣市界線）取代原本的矩形邊界，新竹市/縣**所有**事件類型皆納入候選，語意判斷完全交給 AI；同批資料驗證回報 `BEFORE_KEEP_COUNT=11 → AFTER_KEEP_COUNT=29`（找回 18 筆），`TESTS=124 passed/0 failed`。**本 Cloud Session 的獨立查證**：目前 `main`／本分支的 `pbs-relay/src/localPrototype.js` 仍保留 `isAccident()` 並仍作為候選閘門使用（見該檔第 56/108 行），`pbs-relay/` 完整 git 歷史（含 `feature/pbs-local-edge-filter-prototype` 分支）中**未找到**對應此修正的 commit，故無法核對回報的 point-in-polygon 實作、dataset 7442 引用或 11→29/124 測試數字。與既有 `PBS Windows Local Edge Debug Push Integration`（V1.9.6）記錄採同一誠實原則：**本節只記錄「人類回報了什麼」，不代表本 Session 已驗證程式碼或測試結果為真**——待對應 commit 出現於本 repo（或人類提供可核對的 diff/測試輸出）後，下一輪應改記為已驗證版本，並同步更新 `pbs-relay/` 程式碼本身（本輪禁止修改）。
 
+## 修正紀錄｜V2.4.3 — AI_TIMEOUT_AND_STALE_RETRY_RELIABILITY_FIX（2026-09-01，壓縮摘要）
+
+**背景**：`EVENT_ID 11509010029-5` 3次AI attempt各約236秒後"3046逾時"，LINE未發送；attempt2執行中PBS另送CLEARED，舊NEW retry未停止仍呼叫AI。**根因**：`aiDecisionEngine.js#callWorkersAi` 原無app-level timeout——236秒/"3046"為PLATFORM側（Workers AI binding）行為，非repo設定，無即時文件可外部確認；該事件payload無異常跡象，`FAILED_EVENT_PAYLOAD_ABNORMAL=NOT_VERIFIABLE`，未裁剪資料。
+
+**FIX 1**：新增 `AI_CALL_TIMEOUT_MS=45000`（order建議30-60秒中點，工程判斷），caller-side `Promise.race` fail-fast——真正取消未經確認，但`callWorkersAi`零side effect故安全；retry次數/delay不變。**FIX 2**：新增 `debug:pbs-event-cleared:v1` KV marker(48h TTL)，NEW/UPDATED attempt前檢查clearedAt晚於generatedAt即取消——新outcome `STALE_AFTER_CLEARED`，沿用既有idempotency COMPLETED狀態，不觸碰notified-state。**Observability**：新增`timedOut`欄位，查修頁區分「AI：逾時」與「事件已解除」。
+
+**未觸碰**：LINE formatter、V2.4.2政策、TDX、Memory、CCTV、R2、NOTIFY開關；AI failure仍fail-closed。**測試**：CASE1-12全過，迴歸1802 tests NEW_FAILURES=0。`APP_VERSION` V2.4.2→V2.4.3（PATCH）。
+
 ## 修正紀錄｜V2.4.2 — PBS_AI_LINE_INFORMATION_FIDELITY_AND_POLICY_FIX（2026-09-01，壓縮摘要）
 
-**背景**：Production 審查發現：坍方事件 AI `reason` 正確理解「道路阻斷、多車受困」，LINE 卻只剩「請留意路況」；明確事故因「短時間壅堵機率大」判 `notify=false`；單純車多判 `notify=true` 洗版。另有輪胎皮/掉落物被擋、`EVENT_ID 11509010029-5`（國3 81.3K 追撞）LINE 未發送。
+**背景**：坍方事件 AI `reason` 正確理解「道路阻斷、多車受困」，LINE 卻只剩「請留意路況」；明確事故判 `notify=false`；單純車多判 `notify=true` 洗版。**根因**：`messageFormat.js#formatEventMessage` 固定依 type 選字，從未讀 `event.description`／`sourceDetail`，儘管 AI 已完整看到兩者；與 `PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER` 同根因。
 
-**根因**：`INFORMATION_LOSS_FILE = messageFormat.js`／`FUNCTION = formatEventMessage`——固定依 type 選字，從未讀 `event.description`／`sourceDetail`，儘管 AI（`aiCandidate.js`）已完整看到兩者；`reason` 從未傳入此函式。與已記錄的 `PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER` 同一根因。
+**FIX A**：`messageFormat.js` 新增3條增量行——PBS comment摘要(`source==='pbs'`限定,60字上限)、「通報：XXX」、「⚠️封閉N車道」。**FIX B**：`aiDecisionEngine.js` SYSTEM_PROMPT重寫(schema不變)：改為「值不值得提前知道」——事故notify=true不需證壅塞/風險notify=true即使未壅塞/單純車多notify=false。**FIX C（`EVENT_ID 11509010029-5`）**：發現LINE未發送，本輪僅唯讀調查，未做reliability修正——見下方 V2.4.3 章節（同日稍晚，已修正機制面問題）。
 
-**FIX A（LINE 保真）**：`messageFormat.js` 新增三條純增量行：PBS comment 摘要（`source==='pbs'`限定，上限60字，去除重複KM——TDX `Description` 仍不整段貼上）、「通報：XXX」（`sourceDetail`）、「⚠️ 封閉N車道」（`blockedLanes`）。
-
-**FIX B（AI 政策）**：僅改寫 `aiDecisionEngine.js` 的 `SYSTEM_PROMPT` 文字（schema/cache/呼叫端不變）：核心問題從「會不會壅塞」改為「值不值得提前知道」——明確事故→`notify=true`不需先證壅塞；預防性風險（掉落物/輪胎皮/坍方/落石）→`notify=true`即使未壅塞；單純車多→`notify=false`避免洗版。
-
-**FIX C（`EVENT_ID 11509010029-5`）**：Queue retry 架構正常（`MAX_QUEUE_RETRIES=3`，同 `wrangler.jsonc`）；此歷史事件確切失敗階段**無法獨立查證**（無 Worker Logs 權限）——**未做任何 reliability 程式碼變更**，待 Claude Browser/Dashboard 查真實 Log。**未觸碰**：TDX Queue/Memory/Cron/CCTV/R2/service area/AI model/`locationQuality.js`；`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED` 維持`"true"`。
-
-**測試**：新增 `test/v242InformationFidelityAndPolicy.test.js`（CASE 1-12，16 項全過）；1 項既有 fixture 更新期望值（記錄新的正確行為，非迴歸）。全量迴歸 1790 tests，`NEW_FAILURES=0`。`check:deployment-policy` PASS；`wrangler dry-run` 確認四開關不變。`APP_VERSION` V2.4.1→V2.4.2（MINOR）。
+**測試**：`test/v242InformationFidelityAndPolicy.test.js` CASE1-12全過。全量迴歸1790 tests NEW_FAILURES=0。`APP_VERSION` V2.4.1→V2.4.2（MINOR）。
 
 ## 修正紀錄｜V2.4.0 — TDX_FREEWAY_PROVINCIAL_TO_UNIFIED_AI_PIPELINE（2026-09-01，Phase B）
 
@@ -665,7 +667,7 @@ commit `7acb82a`；Cloudflare Worker Version ID `defc1da4-6328-47ce-82c6-
 
 **一句話**：GPT Work 在 Dashboard 手動設定 `PBS_AI_DECISION_ENABLED="true"` 後被下一次 `wrangler deploy` 悄悄移除（Workers Builds 每次部署都把 `wrangler.jsonc` 視為權威來源，與 `TRAFFIC_SOURCE_MODE` 既有機制相同）——17:49 台68事件當時 AI switch 已被移除，該筆非真實 AI 判讀事件。修正：`wrangler.jsonc` 的 `vars` 正式宣告 `"PBS_AI_DECISION_ENABLED": "true"`（字串），`PBS_AI_DECISION_ENABLED_SOURCE=WRANGLER_CANONICAL_VAR`，`DASHBOARD_ONLY_AI_SWITCH=RETIRED`，未加 `keep_vars`。新增 `checkPbsAiDecisionEnabledVar()` regression guard。10 項新測試，1549/1516/33，NEW FAILURES=0。`APP_VERSION` V2.0.1→V2.0.2（PATCH）。
 
-**另記已知問題**：`PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER`——LINE 訊息格式化不會把 PBS comment 原文中的精確交流道／匝道文字帶出來顯示。與 V2.3.1 的 `DIRECT_COORDINATE_MAP_FALLBACK`（同樣源自「comment 有資訊、結構化欄位沒有」根因）相關但非同一問題。**RESOLVED_V2_4_2**——見本檔案「V2.4.2」章節。
+**另記已知問題**：`PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER`。**RESOLVED_V2_4_2**——見「V2.4.2」章節。
 
 ## 修正紀錄｜V2.0.1 — AI Decision Observatory（2026-08-29，壓縮摘要）
 

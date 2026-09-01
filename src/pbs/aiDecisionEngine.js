@@ -266,26 +266,96 @@ export function validateAiDecisionResponse(rawText, { expectMemoryFields = false
   return { ok: true, decision };
 }
 
+// V2.4.3 — V2_4_3_AI_TIMEOUT_AND_STALE_RETRY_RELIABILITY_FIX (order
+// section 五). Production evidence (EVENT_ID 11509010029-5, 2026-09-01):
+// three consecutive Workers AI attempts each ran ~236 seconds
+// (235877ms/235829ms/235621ms) before rejecting with "3046: Request
+// timeout" — this repo had NO application-level timeout of any kind
+// (confirmed by reading this function before this round: a bare `await
+// env.AI.run(...)`, no AbortController/AbortSignal/Promise.race) — so
+// that ~236s ceiling and error code are platform-side (Workers AI
+// binding), not anything this repo's own code configured. Three retries
+// at that pace cost ~12 minutes end to end for one event, unacceptable
+// for real-time traffic — order's own fail-fast requirement.
+//
+// TIMEOUT VALUE — order's own suggested 30-60s evaluation window;
+// 45000ms (midpoint) chosen as a documented ENGINEERING JUDGMENT, not a
+// measured value: this repo has no recorded telemetry for a genuinely
+// SUCCESSFUL AI call's typical latency (every real Production sample
+// with timing evidence this round is a FAILURE, ~236s each) — the model
+// itself ('@cf/zai-org/glm-4.7-flash', a "flash"-class model) answers a
+// short, fixed small JSON schema from a short prompt, which should
+// normally complete in low single-digit seconds; 45s leaves generous
+// headroom above that expectation while cutting a genuine platform-side
+// stall down from ~236s/attempt to a bounded, retry-friendly window.
+//
+// SAFETY OF A CALLER-SIDE RACE (order's own explicit warning: "不得做表
+// 面 Promise.race timeout 但背景 AI 仍持續執行造成隱形資源浪費/重複 side
+// effect") — this session has NO way to independently confirm whether
+// env.AI.run() honors any cancellation signal (no live Cloudflare
+// binding docs access from this sandbox); TRUE underlying cancellation
+// is therefore NOT confirmed, and is reported honestly as such in this
+// round's own final report. This is still safe to ship: this function
+// has ZERO side effects of its own — no KV/LINE/CCTV write happens
+// inside callWorkersAi or inside env.AI.run() itself (see this module's
+// own header comment — this is "ZERO LINE/CCTV/Shared Feed side
+// effects" territory). A slow call that keeps running in the background
+// after this function has already returned AI_CALL_FAILED has nothing
+// left to do with its eventual result: nothing downstream ever awaits or
+// reads it, so a late resolution can never produce a duplicate LINE push
+// or a duplicate KV write. The only real cost of no true cancellation is
+// continued platform-side compute on Cloudflare's own inference backend
+// (a resource question, not a correctness/duplicate-side-effect one),
+// which this repo cannot control from application code either way.
+export const AI_CALL_TIMEOUT_MS = 45000;
+
 /**
  * Calls Workers AI exactly once (no retry — order section 十二: "第一版
  * 保持簡單...不得做複雜retry queue"; a bounded single retry was
  * considered and deliberately not added — see this round's own final
  * report for the reasoning). Never throws — every failure mode (missing
- * binding, network/runtime error, HTTP-shaped error from env.AI.run)
- * becomes a uniform {ok:false} so the caller's fail-closed policy is the
- * ONLY branch that ever decides what happens next.
+ * binding, network/runtime error, HTTP-shaped error from env.AI.run,
+ * application-level fail-fast timeout) becomes a uniform {ok:false} so
+ * the caller's fail-closed policy is the ONLY branch that ever decides
+ * what happens next. `timedOut:true` is set ONLY for the new V2.4.3
+ * fail-fast path (never for a genuine env.AI.run() rejection) — purely
+ * additive observability, read by debugPush.js's Observatory recording,
+ * never by any retry-eligibility decision (AI_CALL_FAILED itself is
+ * unchanged and still the one signal the Queue Consumer's retry check
+ * uses — see that module's own comment).
  */
-async function callWorkersAi(env, candidate, { recentIncidentContext = [] } = {}) {
+async function callWorkersAi(env, candidate, { recentIncidentContext = [], aiCallTimeoutMs = AI_CALL_TIMEOUT_MS } = {}) {
   if (!env || !env.AI || typeof env.AI.run !== 'function') {
     return { ok: false, reason: 'AI_CALL_FAILED', detail: 'ai-binding-missing' };
   }
   const request = buildAiRequest(candidate, { recentIncidentContext });
+  // See this module's own V2.4.3 comment above for the full safety
+  // analysis. `.catch(() => {})` on the raw call promise prevents an
+  // unhandled-rejection warning if it loses the race and later rejects
+  // on its own — its outcome, success or failure, is simply discarded
+  // once the timeout has already been returned to the caller.
+  const aiCallPromise = env.AI.run(request.model, request.input);
+  aiCallPromise.catch(() => {});
+  let timeoutHandle;
+  const timeoutPromise = new Promise((resolve) => {
+    timeoutHandle = setTimeout(() => resolve({ __v243TimedOut: true }), aiCallTimeoutMs);
+  });
   try {
-    const result = await env.AI.run(request.model, request.input);
-    const rawText = extractAiResponseText(result);
-    return { ok: true, rawText, usage: result && typeof result === 'object' ? result.usage : undefined };
+    const raced = await Promise.race([aiCallPromise, timeoutPromise]);
+    if (raced && raced.__v243TimedOut) {
+      return {
+        ok: false,
+        reason: 'AI_CALL_FAILED',
+        detail: `application-level fail-fast timeout after ${aiCallTimeoutMs}ms (underlying Workers AI call may still be running server-side; see this module's own V2.4.3 comment)`,
+        timedOut: true,
+      };
+    }
+    const rawText = extractAiResponseText(raced);
+    return { ok: true, rawText, usage: raced && typeof raced === 'object' ? raced.usage : undefined };
   } catch (err) {
     return { ok: false, reason: 'AI_CALL_FAILED', detail: err && err.message ? err.message : 'unknown-error' };
+  } finally {
+    clearTimeout(timeoutHandle);
   }
 }
 
@@ -320,7 +390,7 @@ async function callWorkersAi(env, candidate, { recentIncidentContext = [] } = {}
  *   usage?: object,
  * }>}
  */
-export async function resolveAiDecision(env, candidate, { eventId, fingerprint }, now = new Date(), { recentIncidentContext = [] } = {}) {
+export async function resolveAiDecision(env, candidate, { eventId, fingerprint }, now = new Date(), { recentIncidentContext = [], aiCallTimeoutMs = AI_CALL_TIMEOUT_MS } = {}) {
   const startedAt = Date.now();
   const kv = env && env.TRAFFIC_KV;
   const expectMemoryFields = Array.isArray(recentIncidentContext) && recentIncidentContext.length > 0;
@@ -333,9 +403,18 @@ export async function resolveAiDecision(env, candidate, { eventId, fingerprint }
     return { source: 'cache-hit', ok: true, decision: cached.decision, durationMs: Date.now() - startedAt };
   }
 
-  const aiResult = await callWorkersAi(env, candidate, { recentIncidentContext });
+  const aiResult = await callWorkersAi(env, candidate, { recentIncidentContext, aiCallTimeoutMs });
   if (!aiResult.ok) {
-    return { source: 'ai-call', ok: false, reason: aiResult.reason, detail: aiResult.detail, durationMs: Date.now() - startedAt };
+    // V2.4.3 — `timedOut` forwarded unchanged when present (the fail-fast
+    // path only); omitted otherwise, exactly as before this round.
+    return {
+      source: 'ai-call',
+      ok: false,
+      reason: aiResult.reason,
+      detail: aiResult.detail,
+      durationMs: Date.now() - startedAt,
+      ...(aiResult.timedOut ? { timedOut: true } : {}),
+    };
   }
 
   const validation = validateAiDecisionResponse(aiResult.rawText, { expectMemoryFields });

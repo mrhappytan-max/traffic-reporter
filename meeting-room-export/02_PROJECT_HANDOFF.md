@@ -17,10 +17,10 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | 051211ae361f35dc3a68ef452bbe0716c6b5ff57 |
-| Snapshot generated at | 2026-09-01T16:07:52.641Z |
-| Source working tree | dirty (1 changed source file(s)) |
-| Current version | V2.4.2 |
+| Source main HEAD | 292db715dd381253ff0b887ad5a4dbfffbd0c60f |
+| Snapshot generated at | 2026-09-01T17:14:24.412Z |
+| Source working tree | dirty (13 changed source file(s)) |
+| Current version | V2.4.3 |
 | Current phase | Production maintenance｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 正式重新接入統一 Queue/AI/Memory pipeline，Phase A/B/C 全部完成，Phase C（TDX 正式 LINE 通知）已於 2026-09-01 由明確人類授權啟用（V2_4_1_PRODUCTION_NOTIFY_CANONICAL_RECONCILIATION）。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡的舊限制已由本輪授權解除（TRAFFIC_SOURCE_MODE 本身仍為 PBS_ONLY，TDX 透過三個獨立 granular switch 疊加啟用，見 SYSTEM_STATE.json） |
 
 `Source main HEAD` 是這份快照所描述的正式 main commit（取自 `origin/main`），**不是**包含本檔案自己的那個 commit——兩者刻意分開，避免 Git 自我參照循環。詳見 `SYSTEM_STATE.json` 的 `sourceMainHead` / `exportArtifactCommit`。
@@ -98,7 +98,7 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 | 欄位 | 值 |
 |---|---|
-| Latest completed | V2.4.2 |
+| Latest completed | V2.4.3 |
 | package.json version | 0.1.0 |
 | Production status | DEPLOYED |
 | Production verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
@@ -107,7 +107,7 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 ## Current known issues
 
-- **Known blocker**：無 blocker。第一筆真實 TDX 觸發的正式 LINE 通知尚未取得現場證據確認端對端成功——REAL_WORLD_CONFIRMATION_PENDING，非缺陷，僅觀察中。EVENT_ID 11509010029-5（國3 81.3K 追撞，2026-09-01）LINE 未發送——Queue retry 架構正常（MAX_QUEUE_RETRIES=3，同 wrangler.jsonc），確切失敗階段本 session 無法獨立查證（無 Worker Logs 權限），未臆測、未改 retry 邏輯。既有額度限制（TDX API、LINE OA）非本專案缺陷。還原程序見 07_KNOWN_ISSUES.md（TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 改回 false 即可關閉，FETCH/QUEUE 可繼續 true）
+- **Known blocker**：無 blocker。第一筆真實 TDX LINE 通知尚未取得現場證據——REAL_WORLD_CONFIRMATION_PENDING，非缺陷。AI 呼叫已有 45 秒 fail-fast timeout（V2.4.3），CLEARED 會取消舊事件 stale retry，此類長時間卡住問題已從機制上修正；EVENT_ID 11509010029-5 該筆歷史事件本身的確切失敗階段仍無法獨立查證（無 Worker Logs 權限），未臆測。還原程序見 07_KNOWN_ISSUES.md
 - **Real-world confirmation**：REAL_WORLD_CONFIRMATION_PENDING
 - **既有測試失敗基準線**：`npm test` 共 1272 項，其中穩定 38 項為已知失敗（2 項 `pbs-relay/tests/*` 缺 `pbs-relay/src/cache.js`；**33 項過期斷言**——動態路肩推播關閉、PBS 成為 CCTV 可信來源之後未同步更新的測試，是目前最大的一筆技術債，待獨立施工令；3 項 wall-clock 相依的 `healthQuotaDashboard`，會隨日期自然增加）。**注意：舊版文件宣稱那 13 項是「Workers-only `.wasm` codec 在沙盒無法載入」，這是錯的 Root Cause——真正原因是沙盒 `node_modules` 不完整、`@jsquash/jpeg` 沒安裝；裝了之後那些檔案全部可以執行，並揭露上述 33 項過期斷言。**出現這 18 項以外的新失敗才算真正回歸，且**判斷回歸一律以同一輪 `git stash -u` 對照為準**；逐項清單、`deploymentPolicyAndVerify` 第 12 項的「尚未 push 必失敗」現象，以及 `deploymentStatus` 那項只在全套執行時偶發的雜訊，都見 `07_KNOWN_ISSUES.md`。
 - **Dashboard-only 事實永遠無法從程式驗證**：Production branch 指向、真實 Cron 排程、Secret 值是否正確、Build 歷史——只能由真人開 Dashboard 確認。
@@ -575,6 +575,36 @@ CLOUDFLARE_QUEUE`。V2.2.0 把查修頁升級為四層事件生命週期檢視�
 V2.3.2／V2.3.3 是三個連續 PATCH（LINE 地圖座標直連 fallback、CCTV
 診斷工具修復、CCTV R2 讀回驗證），皆未改架構本身。
 
+## V2.4.3 — AI_TIMEOUT_AND_STALE_RETRY_RELIABILITY_FIX（2026-09-01，同日稍晚，加在下方 V2.4.2 之上）
+
+**接手現在必須知道的是**：
+
+1. **AI 呼叫現在有 45 秒 fail-fast timeout**：`src/pbs/aiDecisionEngine.js`
+   的 `AI_CALL_TIMEOUT_MS = 45000`。此前完全沒有 app-level timeout，真實
+   Production 曾實測一次 AI 呼叫卡住約 236 秒（"3046: Request timeout"，
+   平台側行為，非本專案設定）。是 caller-side `Promise.race`，非確認
+   底層真正取消（無即時 Cloudflare binding 文件可查證）——但因
+   `callWorkersAi` 本身零 side effect，背景殘留呼叫不會造成重複
+   LINE/KV write，安全。
+2. **CLEARED 現在會取消舊事件的 stale retry**：新增
+   `debug:pbs-event-cleared:v1:<source>:<eventId>` KV marker（48h
+   TTL）。若一個 NEW/UPDATED 事件的 Queue retry 還在進行中，PBS 又送來
+   同一 eventId 的 CLEARED，下一次 retry 會直接停止（0 再呼叫 AI、0
+   LINE），新 terminal outcome `AI_OUTCOME.STALE_AFTER_CLEARED`。
+3. **Observatory 新增 `timedOut` 欄位**：查修頁現在能區分「AI：逾時」
+   與「事件已解除，取消舊 AI 重試」，不再全部顯示為「背景處理失敗」。
+4. **`EVENT_ID 11509010029-5` 這筆歷史事件本身**：機制面問題（timeout
+   無上限、CLEARED 不會取消 stale retry）已修正；但這筆特定歷史事件的
+   確切失敗階段本 session 仍**無法獨立查證**（無 Cloudflare Worker
+   Logs 存取權限），未臆測 root cause。
+5. **Retry 次數與既有邏輯不變**：`MAX_QUEUE_RETRIES` 仍為 3，未因這次
+   事故無限增加；Cloudflare Queue 既有 retry delay 判斷已足夠，未新增
+   backoff 邏輯。AI failure 仍 fail-closed，未新增任何 hard-coded
+   notify 或 legacy fallback。
+
+完整文字記錄與 CASE 1-12 全文 → `06_VERSION_HISTORY.md`／
+`07_KNOWN_ISSUES.md`／`test/v243AiTimeoutAndStaleRetryReliability.test.js`。
+
 ## V2.4.2 — PBS_AI_LINE_INFORMATION_FIDELITY_AND_POLICY_FIX（2026-09-01，同日稍晚，加在下方 V2.4.1 之上——三層開關現況/incidentSuppression 修正/啟用來源說明皆不變，本節只新增本輪的變更）
 
 **接手現在必須知道的是**：
@@ -758,7 +788,7 @@ branch／不要退休輪詢／不要開始 V1.9.8」等禁令已被上方 V1.9.8
 
 ## Next action
 
-無待辦。觀察中：第一筆真實 TDX 觸發的正式 LINE 通知，取得現場證據後回頭確認 端對端成功／CCTV（Freeway 限定）／Observatory 記錄完整；EVENT_ID 11509010029-5 需要 Claude Browser／Cloudflare Dashboard 讀取真實 Worker Logs 才能確認確切失敗階段與 root cause，屆時才決定是否需要最小 reliability 修正；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計）。緊急關閉 TDX 正式通知只需將 TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 改回 false，FETCH/QUEUE 可繼續 true，不需 rollback 整套程式
+無待辦。觀察中：第一筆真實 TDX LINE 通知取得證據後回頭確認端對端成功／AI timeout 是否曾實際觸發；一個月後依 ineligibleByReason 數據決定是否收緊主動播報政策。緊急關閉 TDX 正式通知只需 TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 改回 false，FETCH/QUEUE 可繼續 true
 
 ## Full history location
 

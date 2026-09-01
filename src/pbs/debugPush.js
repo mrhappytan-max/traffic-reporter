@@ -555,6 +555,67 @@ async function markProcessingComplete(kv, kvKey, { firstAcceptedAt, requestId, a
   }
 }
 
+// V2.4.3 — V2_4_3_AI_TIMEOUT_AND_STALE_RETRY_RELIABILITY_FIX (order
+// section 七/八). Production evidence: while EVENT_ID 11509010029-5's
+// original NEW attempt was still on its 2nd of 3 Queue retries, PBS
+// separately pushed a CLEARED for the SAME eventId (16:21:01, mid-retry)
+// — but the original NEW/UPDATED retry chain kept re-attempting AI on
+// its own stale snapshot regardless, with no way to know the event was
+// already over.
+//
+// A CLEARED push never itself reaches PBS_AI_QUEUE (see the HTTP ingress
+// handler's own CLEARED branch below — it is acknowledged and completed
+// immediately, no Queue message, no AI call) — so there is no Queue-level
+// mechanism that would let a still-retrying NEW/UPDATED message discover
+// a LATER CLEARED on its own. This is the minimal fix: a tiny, dedicated,
+// per-(source,eventId) KV marker — NOT the idempotency record (whose key
+// is scoped to one specific lifecycle+fingerprint, so it structurally
+// cannot answer "has ANY later CLEARED happened for this eventId") and
+// NOT a new state machine — written only when a CLEARED push is
+// genuinely, non-duplicate accepted, read once at the top of
+// processQueuedPbsEvent before any candidate/AI work for a NEW/UPDATED
+// message. Same 48h TTL as transport idempotency (IDEMPOTENCY_TTL_
+// SECONDS) — this marker never needs to outlive that window either.
+export const PBS_EVENT_CLEARED_KV_PREFIX = 'debug:pbs-event-cleared:v1';
+
+function buildPbsEventClearedKvKey(source, eventId) {
+  return `${PBS_EVENT_CLEARED_KV_PREFIX}:${source}:${eventId}`;
+}
+
+/**
+ * Best-effort, never throws — a failed write here only means a future
+ * stale retry might not get cancelled (degrades to today's pre-V2.4.3
+ * behavior for that one event), never a correctness hazard for anything
+ * that has already happened.
+ */
+async function recordPbsEventCleared(kv, { source, eventId, clearedAt }) {
+  if (!kv || !eventId || !clearedAt) return;
+  try {
+    await kv.put(buildPbsEventClearedKvKey(source, eventId), JSON.stringify({ clearedAt }), { expirationTtl: IDEMPOTENCY_TTL_SECONDS });
+  } catch (err) {
+    console.error(`[pbs-debug-push][cleared-marker] eventId=${eventId} failed to record CLEARED: ${err && err.message}`);
+  }
+}
+
+/**
+ * Fail-open on any KV outage/parse error (returns null) — a transient
+ * read failure must never block a genuine NEW/UPDATED retry from
+ * proceeding; it only means this round's stale-cancel optimization
+ * doesn't fire for that one attempt, never that a real event gets
+ * silently dropped.
+ */
+async function readPbsEventClearedAt(kv, source, eventId) {
+  if (!kv || !eventId) return null;
+  try {
+    const raw = await kv.get(buildPbsEventClearedKvKey(source, eventId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed.clearedAt === 'string' ? parsed.clearedAt : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * V2.2.0/V2.3.0 — a minimal "AI candidate"-shaped object built DIRECTLY
  * from the raw Windows payload's `event` fields (never from
@@ -633,7 +694,7 @@ export function buildPbsAiQueueMessage({ source, eventId, lifecycle, fingerprint
  *   ok=true -> ack (terminal success, or already-completed skip).
  *   ok=false, retry=true -> the caller should Queue-retry (bounded).
  */
-export async function processQueuedPbsEvent(env, message, now = new Date()) {
+export async function processQueuedPbsEvent(env, message, now = new Date(), { aiCallTimeoutMs } = {}) {
   const { source = 'pbs', eventId, lifecycle, fingerprint, generatedAt, event, idempotencyKeyHash, requestId, acceptedFirstAcceptedAt, acceptedAttemptCount } = message || {};
   const kv = env.TRAFFIC_KV;
   const kvKey = idempotencyKeyHash ? buildIdempotencyKvKey(idempotencyKeyHash) : null;
@@ -679,6 +740,42 @@ export async function processQueuedPbsEvent(env, message, now = new Date()) {
     }
   }
 
+  // V2.4.3 (order section 七/八) — if PBS has SINCE confirmed this same
+  // eventId is CLEARED (a separate, later push — see debugPush.js's own
+  // CLEARED-branch write of this marker), this NEW/UPDATED message is
+  // stale: never call AI again, never push LINE, terminal ACK. Only a
+  // CLEARED strictly AFTER this message's own `generatedAt` counts —
+  // order section 七's own scenario (CLEARED arrives mid-retry, after the
+  // NEW was originally generated) — a CLEARED from BEFORE this message
+  // was generated would mean a genuinely new re-occurrence, which must
+  // still be judged normally. CLEARED itself never reaches this Queue at
+  // all (see the HTTP ingress handler's own CLEARED branch), so this
+  // check can never accidentally cancel a CLEARED message processing
+  // itself. TDX has no CLEARED lifecycle (tdxQueueIngress.js's own
+  // comment) — this marker is never written for a TDX-origin eventId, so
+  // this is a guaranteed no-op there.
+  if (lifecycle !== 'CLEARED') {
+    const clearedAt = await readPbsEventClearedAt(kv, source, eventId);
+    if (clearedAt && generatedAt && new Date(clearedAt).getTime() > new Date(generatedAt).getTime()) {
+      console.log(
+        `[pbs-ai-queue] event=STALE_AFTER_CLEARED eventId=${eventId} lifecycle=${lifecycle} ` +
+          `clearedAt=${clearedAt} messageGeneratedAt=${generatedAt} — cancelling further AI retry, 0 LINE`
+      );
+      await writeObservatoryRecord(env, {
+        candidate: buildPseudoCandidateFromRawEvent(event, generatedAt),
+        eventId,
+        lifecycle,
+        fingerprint,
+        now: observatoryNow,
+        idempotencyKeyHash,
+        source,
+        outcome: AI_OUTCOME.STALE_AFTER_CLEARED,
+      });
+      await markProcessingComplete(kv, kvKey, { firstAcceptedAt: acceptedFirstAcceptedAt, requestId, attemptCount: acceptedAttemptCount, now });
+      return { ok: true, retry: false, outcome: AI_OUTCOME.STALE_AFTER_CLEARED, staleAfterCleared: true };
+    }
+  }
+
   let candidate = null;
   let observatoryOutcome;
   try {
@@ -711,7 +808,7 @@ export async function processQueuedPbsEvent(env, message, now = new Date()) {
     }
 
     if (resolvePbsAiDecisionEnabled(env)) {
-      observatoryOutcome = await runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lifecycle, fingerprint, now, source });
+      observatoryOutcome = await runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lifecycle, fingerprint, now, source, aiCallTimeoutMs });
     } else if (source !== 'pbs') {
       // V2.4.0 — order section 四: LEGACY_TDX_LINE_PIPELINE =
       // RETIRED_FOR_ROADEVENT. A TDX-origin message must NEVER fall back
@@ -776,7 +873,10 @@ export async function processQueuedPbsEvent(env, message, now = new Date()) {
   // treated it; this round does not loosen that policy.
   if (observatoryOutcome.outcome === AI_OUTCOME.AI_CALL_FAILED) {
     await writeObservatoryRecord(env, { candidate, eventId, lifecycle, fingerprint, now: observatoryNow, idempotencyKeyHash, source, ...observatoryOutcome });
-    return { ok: false, retry: true, outcome: observatoryOutcome.outcome, candidate };
+    // V2.4.3 — `timedOut` forwarded so a terminal PROCESSING_FAILED write
+    // (if retries later exhaust — see handlePbsAiQueueBatch) can still
+    // show it was a timeout, not just "background processing failed".
+    return { ok: false, retry: true, outcome: observatoryOutcome.outcome, candidate, timedOut: observatoryOutcome.timedOut === true };
   }
 
   await writeObservatoryRecord(env, { candidate, eventId, lifecycle, fingerprint, now: observatoryNow, idempotencyKeyHash, source, ...observatoryOutcome });
@@ -798,16 +898,31 @@ export async function processQueuedPbsEvent(env, message, now = new Date()) {
  * message's failure. `max_batch_size` is deliberately 1 in wrangler.jsonc
  * (see that file's own comment) so in practice this loop runs once per
  * invocation, but the loop itself makes no assumption about batch size.
+ *
+ * `aiCallTimeoutMs`/`now` (V2.4.3) — BOTH TEST-ONLY: src/index.js's real
+ * `queue()` handler always calls this with 2 arguments, so Production
+ * always uses aiDecisionEngine.js's own AI_CALL_TIMEOUT_MS default AND
+ * the real current wall-clock instant, exactly as before this round.
+ * `aiCallTimeoutMs` exists so test/*.js can exercise the real fail-fast/
+ * bounded-retry/exhaustion path end to end without a real multi-second
+ * wait per attempt. `now` exists so a queue-level test isn't at the mercy
+ * of the real wall-clock instant the suite happens to run at (this
+ * function's own business-hours/broadcast-window decision was already
+ * wall-clock-real-time-coupled before this round; several existing tests
+ * already accept that as pre-existing, environment-dependent flakiness —
+ * this override doesn't change PRODUCTION behavior at all, it only lets a
+ * NEW deterministic test choose its own instant, same idiom as every
+ * other `now` parameter already threaded through this file).
  */
-export async function handlePbsAiQueueBatch(batch, env) {
-  const now = new Date();
+export async function handlePbsAiQueueBatch(batch, env, { aiCallTimeoutMs, now } = {}) {
+  const resolvedNow = now || new Date();
   for (const message of batch.messages) {
     const body = message.body || {};
     const attempts = typeof message.attempts === 'number' ? message.attempts : 1;
 
     let result;
     try {
-      result = await processQueuedPbsEvent(env, body, now);
+      result = await processQueuedPbsEvent(env, body, resolvedNow, { aiCallTimeoutMs });
     } catch (err) {
       console.error(`[pbs-ai-queue] eventId=${body.eventId} unexpected consumer error: ${err && err.message}`);
       result = { ok: false, retry: true, error: err && err.message };
@@ -841,7 +956,7 @@ export async function handlePbsAiQueueBatch(batch, env) {
     // observatoryNow — reuse the ORIGINAL accept-time so this terminal
     // write overwrites the early PROCESSING_STARTED record instead of
     // creating a second entry.
-    const observatoryNow = body.acceptedFirstAcceptedAt ? new Date(body.acceptedFirstAcceptedAt) : now;
+    const observatoryNow = body.acceptedFirstAcceptedAt ? new Date(body.acceptedFirstAcceptedAt) : resolvedNow;
     await writeObservatoryRecord(env, {
       candidate: finalCandidate,
       eventId: body.eventId,
@@ -850,8 +965,13 @@ export async function handlePbsAiQueueBatch(batch, env) {
       now: observatoryNow,
       idempotencyKeyHash: body.idempotencyKeyHash,
       outcome: AI_OUTCOME.PROCESSING_FAILED,
+      // V2.4.3 (order section 十) — carried from the LAST attempt's own
+      // outcome so a fully-exhausted "all 3 attempts timed out" run is
+      // still distinguishable from a generic background failure, even
+      // though this terminal write is the one record that survives.
+      timedOut: result.timedOut === true,
     });
-    await markProcessingComplete(kv, kvKey, { firstAcceptedAt: body.acceptedFirstAcceptedAt, requestId: body.requestId, attemptCount: attempts, now });
+    await markProcessingComplete(kv, kvKey, { firstAcceptedAt: body.acceptedFirstAcceptedAt, requestId: body.requestId, attemptCount: attempts, now: resolvedNow });
     message.ack();
   }
 }
@@ -1028,7 +1148,7 @@ function buildRawPbsRecordFromPush({ eventId, generatedAt, event }) {
 // write, Observatory logging) runs for real either way — order section
 // 二十's own "觀察：AI decision / sameIncident / materialChange / Memory"
 // requires the full pipeline to genuinely execute, not a stub.
-async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lifecycle, fingerprint, now, source = 'pbs' }) {
+async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lifecycle, fingerprint, now, source = 'pbs', aiCallTimeoutMs }) {
   if (!candidate) {
     // Outside the service area — already logged by the caller
     // (candidate=false reason=outside-service-area). No AI call, no LINE.
@@ -1063,7 +1183,14 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
 
   let aiResult;
   try {
-    aiResult = await resolveAiDecision(env, candidate, { eventId, fingerprint }, now, { recentIncidentContext: memoryCandidates });
+    // V2.4.3 — `aiCallTimeoutMs` is TEST-ONLY plumbing (see
+    // processQueuedPbsEvent/handlePbsAiQueueBatch's own comment): omitted
+    // in every real call site, so resolveAiDecision falls back to its own
+    // AI_CALL_TIMEOUT_MS default — zero behavior change to Production.
+    aiResult = await resolveAiDecision(env, candidate, { eventId, fingerprint }, now, {
+      recentIncidentContext: memoryCandidates,
+      ...(aiCallTimeoutMs !== undefined ? { aiCallTimeoutMs } : {}),
+    });
   } catch (err) {
     console.error(`[pbs-debug-push][ai-decision] event=AI_CALL_FAILED eventId=${eventId} lifecycle=${lifecycle} detail=${err && err.message}`);
     return { outcome: AI_OUTCOME.AI_CALL_FAILED, cacheStatus: 'MISS' }; // fail closed — no LINE, no fallback to the legacy hard-rule decision (order section 十二)
@@ -1077,14 +1204,21 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
 
   if (!aiResult.ok) {
     console.log(
-      `[pbs-debug-push][ai-decision] event=${aiResult.reason} eventId=${eventId} lifecycle=${lifecycle} ` +
+      `[pbs-debug-push][ai-decision] event=${aiResult.timedOut ? 'AI_CALL_FAILED_TIMEOUT' : aiResult.reason} eventId=${eventId} lifecycle=${lifecycle} ` +
         `detail=${aiResult.detail || ''} durationMs=${aiResult.durationMs}`
     );
     // aiResult.reason is already 'AI_CALL_FAILED' or 'AI_DECISION_INVALID'
-    // — the SAME closed vocabulary AI_OUTCOME uses, never re-mapped.
+    // — the SAME closed vocabulary AI_OUTCOME uses, never re-mapped (the
+    // log line above additionally distinguishes AI_CALL_FAILED_TIMEOUT
+    // for a human reading Workers Logs, but the STORED/returned `outcome`
+    // stays exactly `AI_CALL_FAILED` — order section 十: observability
+    // only, never a second outcome the Queue Consumer's retry check would
+    // need to also recognize). `timedOut` is forwarded purely for the
+    // Observatory record (order section 十's own minimal-field ask) — see
+    // aiObservatoryIndex.js's own `timedOut` field.
     // V2.4.0 — memory is NOT touched here: an unvalidated/failed decision
     // has nothing trustworthy to record.
-    return { outcome: aiResult.reason, cacheStatus };
+    return { outcome: aiResult.reason, cacheStatus, ...(aiResult.timedOut ? { timedOut: true } : {}) };
   }
 
   console.log(`[pbs-debug-push][ai-decision] event=AI_DECISION_VALID eventId=${eventId} lifecycle=${lifecycle}`);
@@ -1509,6 +1643,17 @@ export async function handlePbsDebugPush(request, env, now = new Date(), ctx) {
     // enqueue — so its own idempotency record can be marked COMPLETED
     // immediately rather than sitting at PROCESSING for no reason.
     await markProcessingComplete(kv, kvKey, { firstAcceptedAt: acceptedFirstAcceptedAt, requestId, attemptCount: acceptedAttemptCount, now });
+    // V2.4.3 (order section 七/八) — record this eventId as cleared, keyed
+    // by `generatedAt` (the push's OWN reported instant, not Cloudflare's
+    // receipt time — consistent with how this project already trusts
+    // Windows/PBS's own reported timing elsewhere). A still-retrying NEW/
+    // UPDATED Queue message for the SAME eventId checks this marker
+    // before its next AI attempt — see processQueuedPbsEvent's own
+    // comment. Only ever written for source==='pbs' in practice (TDX has
+    // no CLEARED lifecycle at all — see tdxQueueIngress.js's own
+    // comment), but this is source-scoped generically, not gated, so it
+    // is simply inert for any future source that never sends CLEARED.
+    await recordPbsEventCleared(kv, { source, eventId, clearedAt: generatedAt });
   }
 
   // Response schema deliberately UNCHANGED from V1.9.5/V1.9.7 (Windows

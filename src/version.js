@@ -1374,7 +1374,98 @@
 // anchors, AI-reason-never-overrides-facts, TDX shared-formatter
 // regression) and 07_KNOWN_ISSUES.md for the EVENT_ID 11509010029-5
 // investigation record.
-export const APP_VERSION = 'V2.4.2';
+// V2.4.3 (2026-09-01) — V2_4_3_AI_TIMEOUT_AND_STALE_RETRY_RELIABILITY_FIX.
+// PATCH — a genuine reliability fix, not an architecture/feature round.
+//
+// TRIGGER — real Production evidence, EVENT_ID 11509010029-5 (國3 81.3K
+// multi-vehicle collision, 2026-09-01 16:14:50): three consecutive
+// Workers AI attempts each ran ~236 seconds (235877ms/235829ms/
+// 235621ms) before rejecting with "3046: Request timeout" — LINE never
+// sent, ~12 minutes end to end. Separately, while attempt 2 was still
+// running, PBS pushed a CLEARED for the SAME eventId (16:21:01) — but the
+// original NEW retry chain kept re-attempting AI on its own stale
+// snapshot regardless, with no way to discover the event was already
+// over.
+//
+// ROOT-CAUSE INVESTIGATION (read-only, before any code change) —
+// AI_CALL_FILE = src/pbs/aiDecisionEngine.js, AI_CALL_FUNCTION =
+// callWorkersAi (called from resolveAiDecision). Confirmed by reading
+// the code, not guessed: this repo had NO application-level timeout of
+// any kind (no AbortController/AbortSignal/Promise.race — a bare `await
+// env.AI.run(...)`) — so the ~236s ceiling and "3046" error code are
+// PLATFORM-side (the Workers AI binding itself), not anything this repo
+// configured; this session has no live Cloudflare docs/Dashboard access
+// to independently confirm the exact platform mechanism behind error
+// 3046 beyond that structural fact (a clean, catchable rejection with
+// duration data intact — not an isolate-kill shape). The failed event's
+// own AI candidate payload showed no evidence of an abnormally large
+// description/payload (a normal-length PBS comment); FAILED_EVENT_
+// PAYLOAD_ABNORMAL = NOT_VERIFIABLE (no raw payload/log capture
+// available to this session) — no data was trimmed or altered on that
+// basis.
+//
+// FIX 1 — application-level fail-fast timeout (src/pbs/aiDecisionEngine.js).
+// New AI_CALL_TIMEOUT_MS = 45000 (order's own suggested 30-60s evaluation
+// window, midpoint — a documented engineering judgment: no recorded
+// telemetry for a genuinely SUCCESSFUL call's latency exists in this
+// repo, only failure samples; the model is a "flash"-class model
+// answering a short fixed JSON schema, which should normally complete in
+// low single-digit seconds). Implemented as a caller-side Promise.race —
+// TRUE underlying cancellation of the Workers AI request is NOT
+// confirmed (no live binding docs access) and is reported honestly as
+// such, but this is safe regardless: callWorkersAi has ZERO side effects
+// of its own, so an abandoned slow call has nothing left to do with its
+// eventual result — no duplicate LINE, no duplicate KV write is
+// possible. AI_CALL_FAILED (the existing, retry-eligible outcome) is
+// completely unchanged as the retry signal; `timedOut:true` is purely
+// additive observability, threaded through resolveAiDecision ->
+// debugPush.js's runAiDecisionPath/processQueuedPbsEvent/
+// handlePbsAiQueueBatch -> the Observatory record (both a mid-retry
+// AI_CALL_FAILED record and the terminal PROCESSING_FAILED record after
+// exhaustion). Retry count/backoff themselves are UNCHANGED
+// (MAX_QUEUE_RETRIES stays 3 — order's own "不得 3次→10次"; Cloudflare
+// Queue's existing retry delay was judged sufficient, no new backoff
+// logic added).
+//
+// FIX 2 — CLEARED cancels a stale NEW/UPDATED retry (src/pbs/debugPush.js).
+// A CLEARED push never itself reaches the AI Queue (acknowledged/
+// completed immediately at HTTP ingress, unchanged) — so a still-
+// retrying NEW/UPDATED message had no way to discover a LATER CLEARED
+// for the same eventId. New minimal, dedicated per-(source,eventId) KV
+// marker (`debug:pbs-event-cleared:v1:*`, 48h TTL, same as transport
+// idempotency) — written only when a CLEARED push is itself genuinely
+// accepted; read once at the top of processQueuedPbsEvent, before any
+// candidate/AI work, for every NEW/UPDATED message. A marker strictly
+// AFTER the message's own `generatedAt` means the event is confirmed
+// over: 0 further AI calls, 0 LINE, a new terminal AI_OUTCOME.
+// STALE_AFTER_CLEARED (never reusing AI_CALL_FAILED/PROCESSING_FAILED —
+// this was never a failure). The existing idempotency record is marked
+// COMPLETED via the SAME pre-existing markProcessingComplete() (never a
+// new idempotency status value) — transport layer says "done", business
+// layer (Observatory) says "why": minimal, clear, no larger state
+// machine. Never touches notified-state/lastNotifiedAt/incident-
+// suppression (the function returns before any of that runs) — order
+// section 八's own "不得把 NEW 錯誤標成已通知" holds structurally, not by
+// convention.
+//
+// OBSERVABILITY (order section 十, minimal fields only, no Observatory UI
+// rewrite) — aiObservatoryIndex.js's buildAiObservatoryRecord gains one
+// new boolean field, `timedOut`; aiObservatoryView.js distinguishes "AI：
+// 逾時" from a generic failure (both mid-retry and the final exhausted
+// state) and shows STALE_AFTER_CLEARED as "⏹️ 事件已解除，取消舊 AI 重試" —
+// never folded into the generic failure bucket.
+//
+// EXPLICITLY UNCHANGED THIS ROUND (order's own "不得重新修改" list): LINE
+// formatter, the V2.4.2 accident/hazard/congestion notify policy, TDX
+// fetch, Recent Incident Memory, the 10-minute collision window, CCTV,
+// R2, and TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED (stays "true"). AI
+// failure still fails CLOSED — no hard-coded notify, no fallback to the
+// legacy broadcastRules path, exactly as before.
+//
+// See test/v243AiTimeoutAndStaleRetryReliability.test.js for the order's
+// own CASE 1-12 acceptance suite and 07_KNOWN_ISSUES.md for the full
+// investigation record.
+export const APP_VERSION = 'V2.4.3';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

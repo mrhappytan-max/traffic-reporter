@@ -28,6 +28,7 @@ import {
   KV_ONLY_ATOMICITY,
   IDEMPOTENCY_KV_PREFIX,
   IDEMPOTENCY_TTL_SECONDS,
+  PBS_EVENT_CLEARED_KV_PREFIX,
   WINDOWS_PBS_PRODUCTION_INGRESS,
   PRODUCTION_BUSINESS_PIPELINE_INTEGRATION,
   resetPbsDebugPushIdempotencyState,
@@ -351,15 +352,19 @@ test('CASE R (V1.9.7, UNCHANGED by V1.9.8): a DUPLICATE request never touches AN
   assert.deepEqual(keysAfterDuplicate, keysAfterFirst, 'a duplicate must add ZERO new KV keys of any kind — 0 second Business Pipeline pass');
 });
 
-test('CASE R2 (V1.9.8): a CLEARED push still writes ONLY the debug idempotency prefix — never reaches the Business Pipeline at all', async () => {
+test('CASE R2 (V1.9.8/V2.4.3): a CLEARED push still writes ONLY debug-scoped prefixes — never reaches the Business Pipeline at all', async () => {
   const kv = countingKV();
   const env = baseEnv({ TRAFFIC_KV: kv });
   await handlePbsDebugPush(pushRequest({ body: validPayload({ lifecycle: 'CLEARED', fingerprint: 'fp-cleared-boundary' }) }), env, NOW);
   const businessPrefixes = ['traffic:shared-feed', 'line:notified-state', 'line:incident-suppression-state', 'debug:pipeline-trace', 'pbs:lifecycle-state'];
+  // V2.4.3 — a CLEARED push now ALSO records the stale-retry-cancellation
+  // marker (order section 七/八) alongside the pre-existing idempotency
+  // key — still debug-scoped, still never a business-prefixed key.
+  const debugPrefixes = [IDEMPOTENCY_KV_PREFIX, PBS_EVENT_CLEARED_KV_PREFIX];
   const keys = [...kv.store.keys()];
-  assert.ok(keys.length > 0, 'expected the debug idempotency prefix to have written something');
+  assert.ok(keys.length > 0, 'expected at least the debug idempotency prefix to have written something');
   for (const key of keys) {
-    assert.ok(key.startsWith(IDEMPOTENCY_KV_PREFIX), `unexpected non-debug-prefix key written for a CLEARED push: ${key}`);
+    assert.ok(debugPrefixes.some((p) => key.startsWith(p)), `unexpected non-debug-prefix key written for a CLEARED push: ${key}`);
     assert.ok(!businessPrefixes.some((p) => key.startsWith(p)), `a business-prefixed key was written for a CLEARED push: ${key}`);
   }
 });
@@ -738,10 +743,15 @@ for (const eventsPerDay of [10, 30, 100]) {
       const res = await handlePbsDebugPush(pushRequest({ body: distinctPayloadForIndex(i) }), env, NOW);
       assert.equal((await res.json()).accepted, true);
     }
-    REAL_CONSOLE_LOG(`[V2.3.0 KV cost] eventsPerDay=${eventsPerDay} kvGetCalls=${kv.getCalls} kvPutCalls=${kv.putCalls}`);
-    // V2.3.0 measured shape (0-broadcast-relevant fixture, see comment above):
+    REAL_CONSOLE_LOG(`[V2.4.3 KV cost] eventsPerDay=${eventsPerDay} kvGetCalls=${kv.getCalls} kvPutCalls=${kv.putCalls}`);
+    // V2.3.0 measured shape (0-broadcast-relevant fixture, see comment above).
+    // V2.4.3 (order section 七/八) adds exactly ONE further GET per event —
+    // processQueuedPbsEvent's own readPbsEventClearedAt check (never a
+    // write; the CLEARED-cancels-stale-retry marker is only WRITTEN when a
+    // CLEARED push is itself accepted, which this fixture's NEW-only
+    // events never are) — puts stay IDENTICAL to V2.3.0.
     assert.equal(kv.putCalls, eventsPerDay * 4 + 2, 'N idempotency-PROCESSING + N idempotency-COMPLETED + N observatory-PROCESSING_STARTED + N observatory-final + 1 incident-suppression-state + 1 shared-feed (both WRITE_ON_CHANGE, once per run)');
-    assert.equal(kv.getCalls, eventsPerDay * 6, 'N idempotency-accept reads + N idempotency-queue-recheck reads + 4*N Business Pipeline reads (subscriptions/notified-state/incident-suppression/shared-feed) — observatory write adds 0 reads');
+    assert.equal(kv.getCalls, eventsPerDay * 7, 'N idempotency-accept reads + N idempotency-queue-recheck reads + N stale-after-cleared-marker reads + 4*N Business Pipeline reads (subscriptions/notified-state/incident-suppression/shared-feed) — observatory write adds 0 reads');
   });
 }
 
@@ -973,14 +983,17 @@ test('KV cost quantification: duplicates (including repeated retries) never add 
     resetPbsDebugPushIdempotencyState(); // force each retry through the L2 KV path, not the L1 shortcut
     await handlePbsDebugPush(pushRequest({ body: { ...payload, requestId: `req-retry-${i}` } }), env, new Date(NOW.getTime() + (i + 1) * 1000));
   }
-  REAL_CONSOLE_LOG(`[V2.3.0 KV cost] scenario=retries retries=5 kvGetCalls=${kv.getCalls} kvPutCalls=${kv.putCalls}`);
+  REAL_CONSOLE_LOG(`[V2.4.3 KV cost] scenario=retries retries=5 kvGetCalls=${kv.getCalls} kvPutCalls=${kv.putCalls}`);
   assert.equal(kv.putCalls, putsAfterFirst, 'no number of retries for the same event may add ANY additional write — 0 second Business Pipeline pass');
   // V2.3.0: the first accept's own Queue Consumer run adds ONE extra get
   // (its own idempotency re-check, order section 七/九) on top of the
   // pre-existing "idempotency get + 4 Business Pipeline reads" — every
   // SUBSEQUENT duplicate is deduped entirely at the HTTP layer and never
   // reaches the Queue/Consumer at all, so it still costs exactly 1 get.
-  assert.equal(kv.getCalls, 6 + 5, '1 first-accept scan (idempotency get + 4 Business Pipeline reads + 1 Queue Consumer idempotency re-check) + 1 idempotency get per duplicate retry (a duplicate never re-reads business state or reaches the Queue)');
+  // V2.4.3 adds ONE further get to that SAME first-accept Queue Consumer
+  // pass (readPbsEventClearedAt, order section 七/八) — a duplicate still
+  // never reaches the Queue at all, so its own per-retry cost is unchanged.
+  assert.equal(kv.getCalls, 7 + 5, '1 first-accept scan (idempotency get + 4 Business Pipeline reads + 1 Queue Consumer idempotency re-check + 1 stale-after-cleared-marker read) + 1 idempotency get per duplicate retry (a duplicate never re-reads business state or reaches the Queue)');
 });
 
 // ============================================================================
