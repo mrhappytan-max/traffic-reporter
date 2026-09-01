@@ -144,7 +144,15 @@
     // LINE push in this version of the code (see debugPush.js's own
     // V2.4.0 comment on why Phase C requires a future CODE change, not a
     // config flip) — this switch alone can only ever reach Phase B.
-    "TDX_ROADEVENT_QUEUE_INGRESS_ENABLED": "false",
+    //
+    // V2_4_0_PHASE_B_QUEUE_OBSERVE_ENABLE (2026-09-01): flipped on.
+    // AI OBSERVE ONLY — a genuinely new/updated TDX Freeway/Highway
+    // RoadEvent now reaches PBS_AI_QUEUE and the shared AI engine, with
+    // Recent Incident Memory context. TDX LINE/CCTV/R2 stay structurally
+    // blocked (runAiApprovedPbsBroadcast's suppressLineNotify check now
+    // runs BEFORE CCTV preparation, not just before the LINE push — see
+    // that function's own V2_4_0_PHASE_B_QUEUE_OBSERVE_ENABLE comment).
+    "TDX_ROADEVENT_QUEUE_INGRESS_ENABLED": "true",
     // TDX_CCTV_METADATA_REFRESH_ENABLED — independent of the two switches
     // above: may /admin/cctv-hsinchu-probe actually call TDX to refresh
     // cctv:freeway-metadata:v1. CCTV metadata refresh stays manual/

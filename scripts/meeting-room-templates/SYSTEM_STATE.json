@@ -602,6 +602,17 @@
     "TDX_ROADEVENT_FETCH_ENABLED": "true",
     "TDX_ROADEVENT_QUEUE_INGRESS_ENABLED": "false",
     "TDX_CCTV_METADATA_REFRESH_ENABLED": "false",
-    "note": "FETCH ONLY. Queue ingress stays false -- a fetched TDX event is never enqueued, never reaches AI, never LINE (debugPush.js suppressLineNotify unchanged). No APP_VERSION bump (config-only enablement of already-built V2.4.0)."
+    "note": "FETCH ONLY. Queue ingress stays false -- a fetched TDX event is never enqueued, never reaches AI, never LINE (debugPush.js suppressLineNotify unchanged). No APP_VERSION bump (config-only enablement of already-built V2.4.0).",
+    "supersededBy": "V2_4_0_PHASE_B_QUEUE_OBSERVE_ENABLE (2026-09-01)"
+  },
+  "V2_4_0_PHASE_B_QUEUE_OBSERVE_ENABLE": {
+    "enabledAt": "2026-09-01",
+    "CURRENT_RUNTIME_PHASE": "PHASE_B_QUEUE_OBSERVE",
+    "TDX_ROADEVENT_FETCH_ENABLED": "true",
+    "TDX_ROADEVENT_QUEUE_INGRESS_ENABLED": "true",
+    "TDX_CCTV_METADATA_REFRESH_ENABLED": "false",
+    "TDX_LINE_STRUCTURALLY_BLOCKED": "YES (debugPush.js suppressLineNotify hardcoded true for source freeway/highway, unchanged)",
+    "TDX_CCTV_STRUCTURALLY_BLOCKED": "YES (fixed this round -- runAiApprovedPbsBroadcast now checks suppressLineNotify BEFORE CCTV prepare/R2 publish, not just before the LINE push)",
+    "note": "AI OBSERVE ONLY. A genuinely new/updated TDX Freeway/Highway RoadEvent now reaches PBS_AI_QUEUE and the shared AI engine with Recent Incident Memory context; duplicates still never enqueue. TDX-origin notify:true never produces LINE, CCTV prepare, or R2 publish -- all three are blocked before they can run, not merely because AI happened to say notify:false. PBS pipeline unchanged (source=pbs is never suppressed). No APP_VERSION bump (config-only enablement of already-built V2.4.0 code plus one safety-tightening fix in aiApprovedPbsBroadcast.js)."
   }
 }

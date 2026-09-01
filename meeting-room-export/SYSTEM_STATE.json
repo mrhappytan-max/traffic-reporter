@@ -39,10 +39,10 @@
     "openStructuralQuestion": "TWO trees currently hold the same canonical content: engineering-memory/ (what the mirror syncs) and meeting-room-export/ (what scripts/export-meeting-room.mjs generates). They are kept in step by hand today, which is exactly the drift risk this governance exists to prevent. Needs a human decision: either point the generator at engineering-memory/, or retire one tree. NOT decided unilaterally."
   },
   "git": {
-    "sourceMainHead": "6a57f855b41c56be1b14a612a14d693d3606ab4b",
+    "sourceMainHead": "630cfeb363ecc808db5b9d67c89e5e1907cd61fb",
     "sourceMainHeadResolvedFrom": "origin/main",
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
-    "sourceWorkingTree": "dirty (2 changed source file(s))",
+    "sourceWorkingTree": "dirty (4 changed source file(s))",
     "selfReferenceNote": "sourceMainHead is the official main commit this snapshot DESCRIBES; exportArtifactCommit is the commit that CONTAINS this artifact and is intentionally never equal to it. Requiring the two to match would create a Git self-reference loop (every export changes the file, which changes the commit, which invalidates the recorded head). sourceMainHead is read from origin/main and is therefore stable across re-runs and across whichever branch the export was generated on.",
     "checkoutNote": "The transient checkout (branch/HEAD/date) this export happened to run from is deliberately NOT recorded here. It changes on every commit and would make every release look like a content change, defeating delta sync; it also says nothing about the snapshot itself. The snapshot is identified by sourceMainHead alone. Local sync evidence in .engineering/ still records the checkout for auditing.",
     "workingTreeNote": "sourceWorkingTree excludes meeting-room-export/, which this generator dirties by definition; it answers 'is the source tree clean', not 'did the export just write files'."
@@ -565,8 +565,8 @@
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-09-01T07:27:10.018Z",
-    "sourceMainHead": "6a57f855b41c56be1b14a612a14d693d3606ab4b",
+    "generatedAt": "2026-09-01T09:26:06.184Z",
+    "sourceMainHead": "630cfeb363ecc808db5b9d67c89e5e1907cd61fb",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
     "historyDir": "_history"
@@ -602,6 +602,17 @@
     "TDX_ROADEVENT_FETCH_ENABLED": "true",
     "TDX_ROADEVENT_QUEUE_INGRESS_ENABLED": "false",
     "TDX_CCTV_METADATA_REFRESH_ENABLED": "false",
-    "note": "FETCH ONLY. Queue ingress stays false -- a fetched TDX event is never enqueued, never reaches AI, never LINE (debugPush.js suppressLineNotify unchanged). No APP_VERSION bump (config-only enablement of already-built V2.4.0)."
+    "note": "FETCH ONLY. Queue ingress stays false -- a fetched TDX event is never enqueued, never reaches AI, never LINE (debugPush.js suppressLineNotify unchanged). No APP_VERSION bump (config-only enablement of already-built V2.4.0).",
+    "supersededBy": "V2_4_0_PHASE_B_QUEUE_OBSERVE_ENABLE (2026-09-01)"
+  },
+  "V2_4_0_PHASE_B_QUEUE_OBSERVE_ENABLE": {
+    "enabledAt": "2026-09-01",
+    "CURRENT_RUNTIME_PHASE": "PHASE_B_QUEUE_OBSERVE",
+    "TDX_ROADEVENT_FETCH_ENABLED": "true",
+    "TDX_ROADEVENT_QUEUE_INGRESS_ENABLED": "true",
+    "TDX_CCTV_METADATA_REFRESH_ENABLED": "false",
+    "TDX_LINE_STRUCTURALLY_BLOCKED": "YES (debugPush.js suppressLineNotify hardcoded true for source freeway/highway, unchanged)",
+    "TDX_CCTV_STRUCTURALLY_BLOCKED": "YES (fixed this round -- runAiApprovedPbsBroadcast now checks suppressLineNotify BEFORE CCTV prepare/R2 publish, not just before the LINE push)",
+    "note": "AI OBSERVE ONLY. A genuinely new/updated TDX Freeway/Highway RoadEvent now reaches PBS_AI_QUEUE and the shared AI engine with Recent Incident Memory context; duplicates still never enqueue. TDX-origin notify:true never produces LINE, CCTV prepare, or R2 publish -- all three are blocked before they can run, not merely because AI happened to say notify:false. PBS pipeline unchanged (source=pbs is never suppressed). No APP_VERSION bump (config-only enablement of already-built V2.4.0 code plus one safety-tightening fix in aiApprovedPbsBroadcast.js)."
   }
 }

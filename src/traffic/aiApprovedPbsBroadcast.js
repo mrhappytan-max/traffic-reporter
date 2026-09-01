@@ -88,20 +88,35 @@ function eventKeyOf(event) {
  *   that this function needed ZERO logic fork to also serve TDX
  *   candidates.
  *
- *   `suppressLineNotify` (V2.4.0, default false) — order section
+ *   `suppressLineNotify` (V2.4.0, default false) -- order section
  *   二十's PHASE B gate ("允許進 Queue/AI，但暫不讓 TDX source 正式發
- *   LINE"). When true, every step up to and including the AI-approved
- *   decision already made by the caller still fully executes (incident
- *   suppression state is still read/written, notified-state per-target
- *   dedup is still computed, the CCTV image is still prepared — so
- *   Observatory/Pipeline Trace can show EXACTLY what would have been
- *   sent), but the real `pushLineMessages` call itself is skipped for
- *   every target — `pushAttempted`/`pushSucceeded` both stay 0, and
- *   notified-state is never persisted for a target that was never
- *   actually notified (persisting it would wrongly make a REAL future
- *   Phase-C send look like an already-seen duplicate). Never driven by
- *   any config value — see debugPush.js's own V2.4.0 comment on why this
- *   is hardcoded at the call site, not a wrangler.jsonc switch.
+ *   LINE"). When true, incident suppression state is still read/written
+ *   and notified-state per-target dedup is still computed (so
+ *   `result.suppressed`/`result.pendingTargetCount` stay meaningful for
+ *   Observatory/Pipeline Trace), but the function returns BEFORE CCTV
+ *   preparation, R2 publish, or the real `pushLineMessages` call -- none
+ *   of the three ever run: `pushAttempted`/`pushSucceeded` stay 0,
+ *   `completedProducts[0].imageUrl` stays null, and notified-state is
+ *   never persisted for a target that was never actually notified
+ *   (persisting it would wrongly make a REAL future Phase-C send look
+ *   like an already-seen duplicate).
+ *
+ *   V2_4_0_PHASE_B_QUEUE_OBSERVE_ENABLE (2026-09-01): moved this check to
+ *   run BEFORE CCTV preparation (previously it only gated the LINE push
+ *   itself, letting a TDX-origin notify:true accident still do a real
+ *   frame fetch + R2 publish "for observability" -- that traded real
+ *   side effects for a nice-to-have, and the order that enabled Queue
+ *   ingress explicitly requires `TDX_CCTV_STRUCTURALLY_BLOCKED = YES`,
+ *   never relying on "AI happened to say notify=false" as the safety
+ *   guarantee). Every Observatory field this round actually requires
+ *   (SOURCE/EVENT_ID/LIFECYCLE/MEMORY_CANDIDATES/SAME_INCIDENT/
+ *   MATERIAL_CHANGE/AI_NOTIFY/AI_IMPACT/AI_REASON/PRIMARY_SOURCE/
+ *   LAST_NOTIFIED_AT/MEMORY_WRITE) comes from the AI decision result
+ *   computed earlier in debugPush.js#runAiDecisionPath, not from
+ *   completedProducts -- so skipping CCTV prep here loses no information
+ *   Phase B needs to observe. Never driven by any config value -- see
+ *   debugPush.js's own V2.4.0 comment on why this is hardcoded at the
+ *   call site, not a wrangler.jsonc switch.
  * @returns {Promise<{
  *   lineReady:boolean, withinBroadcastHours:boolean, suppressed:boolean,
  *   pendingTargetCount:number, pushAttempted:number, pushSucceeded:number,
@@ -178,6 +193,17 @@ export async function runAiApprovedPbsBroadcast(env, { event, now = new Date(), 
   result.pendingTargetCount = pendingTargets.length;
   if (pendingTargets.length === 0) return result;
 
+  // V2_4_0_PHASE_B_QUEUE_OBSERVE_ENABLE — Phase B gate (see this
+  // function's own doc comment above for the full rationale). Checked
+  // HERE, before CCTV preparation/R2 publish, not just before the LINE
+  // push — a TDX-origin notify:true event must do ZERO real CCTV/R2 work
+  // in Phase B, never relying on "AI happened to say notify=false" as the
+  // safety boundary. `completedProducts[0].imageUrl` stays null in this
+  // path; nothing downstream (Shared Feed) ever sees it either way.
+  if (suppressLineNotify) {
+    return result;
+  }
+
   let messages = [{ type: 'text', text }];
   if (event.type === 'accident') {
     try {
@@ -192,19 +218,6 @@ export async function runAiApprovedPbsBroadcast(env, { event, now = new Date(), 
       // principle as the legacy pipeline's own CCTV integration.
       result.lineErrors.push(`CCTV prepare failed (non-blocking): ${safeErrorMessage(err)}`);
     }
-  }
-
-  // V2.4.0 — Phase B gate (see this function's own doc comment above):
-  // when true, every target this event would otherwise have pushed to is
-  // simply never attempted — pushAttempted/pushSucceeded stay 0,
-  // notified-state is never touched for a target that never actually got
-  // a message. `result.completedProducts[0].imageUrl` (if CCTV prepared
-  // one above) is still returned for observability, but nothing consumes
-  // it into a real Shared Feed entry (see debugPush.js's own V2.4.0
-  // comment: Shared Feed persistence is skipped entirely when this flag
-  // is set).
-  if (suppressLineNotify) {
-    return result;
   }
 
   const successfulTargets = [];

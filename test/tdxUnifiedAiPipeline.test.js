@@ -189,6 +189,92 @@ test('CASE 3: a TDX event with unchanged content (dedupe.js classifies it duplic
 });
 
 // =======================================================================
+// PHASE_B order CASE 1/2/4 (literal): a genuinely NEW/UPDATED TDX event
+// goes through the REAL enqueueTdxRoadEvents() -> exactly one real
+// PBS_AI_QUEUE.send() call -> the exact captured message is then
+// processed by processQueuedPbsEvent() -> exactly one real AI call, 0
+// LINE. Not the same as CASE 1/2 above (which hand-build the queue
+// message directly) — this exercises the actual Queue-ingress path the
+// order's own "Queue1 -> AI1 -> LINE0" / "UPDATED -> Queue -> AI"
+// requirements describe end-to-end.
+// =======================================================================
+
+function countingQueue() {
+  const sent = [];
+  return { sent, async send(message) { sent.push(message); } };
+}
+
+test('PHASE_B order CASE 1: Freeway NEW -> real enqueueTdxRoadEvents Queue1 -> processQueuedPbsEvent AI1 -> LINE0', async () => {
+  const queue = countingQueue();
+  const ai = contextAwareMockAi();
+  const env = await baseEnv({ AI: ai, PBS_AI_QUEUE: queue });
+  const event = freewayAccidentEvent();
+
+  const enqueueResult = await enqueueTdxRoadEvents(env, { newEvents: [event], updatedEvents: [] }, NOW);
+  assert.equal(enqueueResult.attempted, 1);
+  assert.equal(enqueueResult.enqueued, 1);
+  assert.equal(queue.sent.length, 1); // Queue1
+  assert.equal(queue.sent[0].source, 'freeway');
+  assert.equal(queue.sent[0].lifecycle, 'NEW');
+
+  const result = await processQueuedPbsEvent(env, queue.sent[0], NOW);
+  assert.equal(ai.calls.length, 1); // AI1
+  assert.equal(result.lineAttempted, false); // LINE0 (Phase B suppression)
+});
+
+test('PHASE_B order CASE 2: Highway NEW -> real enqueueTdxRoadEvents Queue1 -> processQueuedPbsEvent AI1 -> LINE0', async () => {
+  const queue = countingQueue();
+  const ai = contextAwareMockAi();
+  const env = await baseEnv({ AI: ai, PBS_AI_QUEUE: queue });
+  const event = highwayAccidentEvent();
+
+  const enqueueResult = await enqueueTdxRoadEvents(env, { newEvents: [event], updatedEvents: [] }, NOW);
+  assert.equal(enqueueResult.enqueued, 1);
+  assert.equal(queue.sent.length, 1); // Queue1
+  assert.equal(queue.sent[0].source, 'highway');
+  assert.equal(queue.sent[0].lifecycle, 'NEW');
+
+  const result = await processQueuedPbsEvent(env, queue.sent[0], NOW);
+  assert.equal(ai.calls.length, 1); // AI1
+  assert.equal(result.lineAttempted, false); // LINE0
+});
+
+test('PHASE_B order CASE 4: an UPDATED TDX event -> real enqueueTdxRoadEvents (lifecycle=UPDATED) -> Queue -> AI', async () => {
+  const queue = countingQueue();
+  const ai = contextAwareMockAi();
+  const env = await baseEnv({ AI: ai, PBS_AI_QUEUE: queue });
+  const event = freewayAccidentEvent({ EventID: 'FRW-97700-UPDATED', Description: '南向97K處車輛事故，內側車道也封閉' });
+
+  const enqueueResult = await enqueueTdxRoadEvents(env, { newEvents: [], updatedEvents: [event] }, NOW);
+  assert.equal(enqueueResult.enqueued, 1);
+  assert.equal(queue.sent.length, 1);
+  assert.equal(queue.sent[0].lifecycle, 'UPDATED');
+
+  const result = await processQueuedPbsEvent(env, queue.sent[0], NOW);
+  assert.equal(ai.calls.length, 1); // reached AI, not skipped as a duplicate
+  assert.equal(result.ok, true);
+});
+
+// =======================================================================
+// PHASE_B order CASE 15: PBS's own notify=true path stays completely
+// normal (source='pbs' -> suppressLineNotify is never true) — the fix
+// that moved the Phase B gate earlier in runAiApprovedPbsBroadcast (to
+// block CCTV/R2 for TDX) must not change PBS's own behavior at all.
+// =======================================================================
+
+test('PHASE_B order CASE 15: a PBS AI-approved (notify=true) accident still reaches a real LINE push (source=pbs is never suppressed)', async () => {
+  const ai = { calls: [], async run(model, input) { this.calls.push(input); return { response: JSON.stringify({ notify: true, impact: 'HIGH', reason: 'PBS事故', confidence: 0.9 }) }; } };
+  const env = await baseEnv({ AI: ai });
+  const pbsMessage = await buildQueueMessage({ source: 'pbs', event: pbsRawEvent(), eventId: 'PBS-15', fingerprint: 'fp-pbs-15' });
+
+  const result = await processQueuedPbsEvent(env, pbsMessage, NOW);
+
+  assert.equal(result.outcome, 'AI_NOTIFY_TRUE');
+  assert.equal(result.lineAttempted, true); // PBS is never suppressLineNotify -> real push attempted
+  assert.equal(result.lineSent, true);
+});
+
+// =======================================================================
 // CASE 4/5: cross-source same-incident, whichever source arrives first
 // =======================================================================
 
@@ -268,6 +354,10 @@ test('CASE 7: same incident, material escalation (AI sees it, sets materialChang
   );
   assert.equal(second.outcome, 'AI_NOTIFY_TRUE');
   assert.equal(second.materialChange, true);
+  // PHASE_B order CASE 8: material escalation -> AI notify can be true,
+  // but LINE stays 0 for a TDX source (Phase B never lifts, regardless
+  // of how confident the escalation judgment is).
+  assert.equal(second.lineAttempted, false);
 });
 
 // =======================================================================
@@ -360,23 +450,38 @@ test('CASE 11: TDX fetch failure (no client credentials) never blocks PBS\'s own
 });
 
 // =======================================================================
-// CASE 12: CCTV runtime TDX calls = 0
+// CCTV runtime TDX calls = 0 (kept from the original V2.4.0 build's own
+// CASE 12), STRENGTHENED for V2_4_0_PHASE_B_QUEUE_OBSERVE_ENABLE's own
+// CASE 12/13/14 (TDX_CCTV_STRUCTURALLY_BLOCKED / R2 publish=0 / LINE=0 —
+// a TDX-origin notify:true event must do ZERO CCTV prepare / R2 publish /
+// LINE work, never relying on "AI happened to say notify=false" as the
+// boundary; runAiApprovedPbsBroadcast's suppressLineNotify check now runs
+// BEFORE prepareCctvImageForEvent, not just before pushLineMessages).
 // =======================================================================
 
-test('CASE 12: a TDX-origin AI-approved accident\'s CCTV preparation makes 0 TDX calls (dynamicCollage.js structurally never imports tdx/auth.js or tdx/client.js)', async () => {
+test('PHASE_B order CASE 12/13/14: a TDX-origin AI-approved (notify=true) accident makes 0 TDX calls, 0 CCTV frame fetch, 0 R2 publish, and 0 LINE push', async () => {
   const ai = { async run() { return { response: JSON.stringify({ notify: true, impact: 'HIGH', reason: '事故', confidence: 0.9 }) }; } };
-  const env = await baseEnv({ AI: ai, CCTV_IMAGES: { async put() {} } });
+  let r2PutCalls = 0;
+  const env = await baseEnv({ AI: ai, CCTV_IMAGES: { async put() { r2PutCalls += 1; } } });
+  let anyNonLineFetch = 0;
   globalThis.fetch = async (url) => {
     const href = String(url);
-    if (href.includes('api.line.me')) return new Response('{}', { status: 200 });
+    if (href.includes('api.line.me')) throw new Error(`FORBIDDEN: LINE push attempted for a suppressed TDX event: ${href}`);
     if (href.includes('tdx.transportdata.tw')) throw new Error(`FORBIDDEN: TDX call attempted from CCTV path: ${href}`);
-    // freeway.gov.tw frame fetch or metadata cache miss -> just fail closed to no-camera, still 0 TDX calls either way
+    // Any other fetch (freeway.gov.tw frame fetch included) means CCTV
+    // preparation was attempted at all -- must never happen in Phase B.
+    anyNonLineFetch += 1;
     return new Response('not found', { status: 404 });
   };
   const event = freewayAccidentEvent();
   const message = await buildQueueMessage({ source: 'freeway', event });
   const result = await processQueuedPbsEvent(env, message, NOW);
-  assert.equal(result.ok, true); // never throws even when CCTV can't compose (fails closed to text-only)
+  assert.equal(result.ok, true);
+  assert.equal(result.outcome, 'AI_NOTIFY_TRUE'); // AI genuinely said notify:true
+  assert.equal(anyNonLineFetch, 0); // CCTV prepare = 0 (no frame fetch, no metadata fetch, nothing)
+  assert.equal(r2PutCalls, 0); // R2 publish = 0
+  assert.equal(result.lineAttempted, false); // LINE = 0
+  assert.equal(result.lineSent, false);
 });
 
 // =======================================================================
