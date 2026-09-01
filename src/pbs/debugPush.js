@@ -320,6 +320,7 @@ import { isWindowsPbsAiCandidateEligible, buildAiCandidate, PBS_AI_DECISION_MODE
 import { resolvePbsAiDecisionEnabled } from './aiConfig.js';
 import { resolveAiDecision, PBS_AI_MODEL_ID } from './aiDecisionEngine.js';
 import { runAiApprovedPbsBroadcast } from '../traffic/aiApprovedPbsBroadcast.js';
+import { isTdxRoadEventProductionNotifyEnabled } from '../traffic/sourceMode.js';
 import { taipeiDateString } from '../tdx/usageLedger.js';
 import { buildAiObservatoryRecord, recordAiObservatoryEntry, AI_OUTCOME } from './aiObservatoryIndex.js';
 import {
@@ -1013,15 +1014,16 @@ function buildRawPbsRecordFromPush({ eventId, generatedAt, event }) {
 // attribute a sighting to in incidentMemory.js, (2) `suppressLineNotify`
 // — see below.
 //
-// suppressLineNotify (order section二十, PHASE B "允許進Queue/AI，但暫不
-// 讓TDX source正式發LINE") — HARDCODED true for source==='freeway'||
-// 'highway' at this function's own call site inside processQueuedPbsEvent
-// below, NEVER driven by a wrangler.jsonc var. This is deliberate: Phase
-// C ("PRODUCTION_NOTIFY，必須真人再次授權，不得自行進 Phase C") must not
-// be reachable by flipping any config value alone — reaching it requires
-// an actual future code change (removing that hardcoded `true`), which is
-// the strongest guarantee this codebase can give that this round does
-// not silently let itself into Phase C. Everything ELSE (AI call, cache,
+// suppressLineNotify — PHASE B/C gate. V2_4_0_PHASE_C_PRODUCTION_NOTIFY_
+// IMPLEMENTATION (2026-09-01) replaced the old hardcoded `true` with the
+// canonical wrangler.jsonc switch TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED
+// (isTdxRoadEventProductionNotifyEnabled(env)), default "false" — see
+// this round's own final report for why a config switch is now
+// considered safe: the switch ships DISABLED in this same commit/deploy,
+// so nothing about landing this code turns real TDX LINE delivery on.
+// Reaching Phase C in Production still requires a SEPARATE, explicit
+// future human authorization to flip that one var — this file no longer
+// needs to be touched again to do it. Everything ELSE (AI call, cache,
 // sameIncident/materialChange reasoning, Recent Incident Memory read AND
 // write, Observatory logging) runs for real either way — order section
 // 二十's own "觀察：AI decision / sameIncident / materialChange / Memory"
@@ -1164,8 +1166,12 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
     }; // trace only — no LINE, no CCTV, no proactive broadcast (order section 九)
   }
 
-  // V2.4.0 — Phase B/C gate, see this function's own header comment.
-  const suppressLineNotify = source === 'freeway' || source === 'highway';
+  // Phase B/C gate, see this function's own header comment. A TDX-origin
+  // (freeway/highway) event is suppressed UNLESS the Phase C canonical
+  // switch is explicitly on; PBS (source==='pbs') is never suppressed,
+  // regardless of the switch — this round's own scope never touches
+  // PBS's own notify path.
+  const suppressLineNotify = (source === 'freeway' || source === 'highway') && !isTdxRoadEventProductionNotifyEnabled(env);
 
   try {
     const broadcastResult = await runAiApprovedPbsBroadcast(env, { event: normalizedEvent, now, suppressLineNotify });

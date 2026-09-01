@@ -613,6 +613,19 @@
     "TDX_CCTV_METADATA_REFRESH_ENABLED": "false",
     "TDX_LINE_STRUCTURALLY_BLOCKED": "YES (debugPush.js suppressLineNotify hardcoded true for source freeway/highway, unchanged)",
     "TDX_CCTV_STRUCTURALLY_BLOCKED": "YES (fixed this round -- runAiApprovedPbsBroadcast now checks suppressLineNotify BEFORE CCTV prepare/R2 publish, not just before the LINE push)",
-    "note": "AI OBSERVE ONLY. A genuinely new/updated TDX Freeway/Highway RoadEvent now reaches PBS_AI_QUEUE and the shared AI engine with Recent Incident Memory context; duplicates still never enqueue. TDX-origin notify:true never produces LINE, CCTV prepare, or R2 publish -- all three are blocked before they can run, not merely because AI happened to say notify:false. PBS pipeline unchanged (source=pbs is never suppressed). No APP_VERSION bump (config-only enablement of already-built V2.4.0 code plus one safety-tightening fix in aiApprovedPbsBroadcast.js)."
+    "note": "AI OBSERVE ONLY. A genuinely new/updated TDX Freeway/Highway RoadEvent now reaches PBS_AI_QUEUE and the shared AI engine with Recent Incident Memory context; duplicates still never enqueue. TDX-origin notify:true never produces LINE, CCTV prepare, or R2 publish -- all three are blocked before they can run, not merely because AI happened to say notify:false. PBS pipeline unchanged (source=pbs is never suppressed). No APP_VERSION bump (config-only enablement of already-built V2.4.0 code plus one safety-tightening fix in aiApprovedPbsBroadcast.js).",
+    "supersededBy": "V2_4_1_PHASE_C_PRODUCTION_NOTIFY_IMPLEMENTATION (2026-09-01)"
+  },
+  "V2_4_1_PHASE_C_PRODUCTION_NOTIFY_IMPLEMENTATION": {
+    "completedAt": "2026-09-01",
+    "CURRENT_RUNTIME_PHASE": "PHASE_C_READY_NOTIFY_OFF",
+    "TDX_ROADEVENT_FETCH_ENABLED": "true",
+    "TDX_ROADEVENT_QUEUE_INGRESS_ENABLED": "true",
+    "TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED": "false",
+    "TDX_CCTV_METADATA_REFRESH_ENABLED": "false",
+    "notifyKillSwitch": "IMPLEMENTED -- new canonical wrangler.jsonc switch TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED, default \"false\", ships OFF. Replaces the old hardcoded suppressLineNotify=true for TDX sources in src/pbs/debugPush.js.",
+    "incidentSuppressionFix": "incidentSuppression.js's own escalation heuristic (isMaterialEscalation) could silently veto an AI-approved notify:true -- fixed via a new trustCallerDecision option on resolveIncidentNotifications(): the AI-approved path (aiApprovedPbsBroadcast.js, used by both PBS and TDX) now only suppresses a near-simultaneous duplicate within a new short INCIDENT_SUPPRESSION_COLLISION_WINDOW_MS (10 min), trusting AI's own sameIncident/materialChange judgment for everything else. broadcastPipeline.js's legacy non-AI call site is unchanged.",
+    "productionTdxNotifyActive": false,
+    "note": "PRODUCTION_TDX_NOTIFY_ACTIVE=NO. This round builds and tests the mechanism only; TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED ships and stays \"false\" in this same commit/deploy. Enabling real TDX LINE delivery requires a separate, explicit future human authorization order. APP_VERSION bumped V2.4.0 -> V2.4.1 (PATCH: real bug fix + new gated switch, not an architecture change)."
   }
 }

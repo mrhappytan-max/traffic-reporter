@@ -25,6 +25,17 @@
 // (see lifecycle.js's own header comment): a bug in this brand-new logic
 // must never affect the already-working per-target fingerprint dedup for
 // every other event type, and vice versa.
+//
+// V2_4_0_PHASE_C_PRODUCTION_NOTIFY_IMPLEMENTATION (2026-09-01) — this
+// module now has TWO callers with two different needs, both reached via
+// resolveIncidentNotifications's own `trustCallerDecision` option (see
+// that function's own doc comment for the full rationale): the LEGACY,
+// non-AI broadcastPipeline.js path (unchanged, still the sole semantic
+// authority for its own accidents, still uses isMaterialEscalation), and
+// the AI-approved aiApprovedPbsBroadcast.js path (used by BOTH PBS and
+// TDX today), where this module's only remaining job is a short
+// near-simultaneous-duplicate defense — the AI decision engine is now
+// the sole authority on whether a real escalation happened.
 
 import { parseKM } from './roadSectionLabel.js';
 import { contentEqual } from '../util/contentEqual.js';
@@ -50,6 +61,25 @@ export const INCIDENT_MAX_KM_DIFF = 1.5;
 // same coincidental spot, long after the first one cleared, isn't
 // wrongly suppressed by stale history.
 export const INCIDENT_SUPPRESSION_WINDOW_MS = 60 * 60 * 1000;
+
+// V2_4_0_PHASE_C_PRODUCTION_NOTIFY_IMPLEMENTATION (2026-09-01) — the
+// window used ONLY by the `trustCallerDecision` mode below (see
+// resolveIncidentNotifications's own doc comment for why a second, much
+// shorter window exists). Pre-Phase-C audit found that this module's
+// OWN escalation heuristic (isMaterialEscalation, both immediately
+// below) could silently veto a notification the AI decision engine had
+// ALREADY approved — an unpredictable "AI 說發，legacy 說不發" dual
+// authority the order explicitly forbids. AI is now the sole semantic
+// authority for whether a re-notification is warranted (sameIncident/
+// materialChange, judged against Recent Incident Memory — see
+// pbs/aiDecisionEngine.js); this module's only remaining job for a
+// caller that already trusts the AI's decision is defending against a
+// NEAR-SIMULTANEOUS duplicate (e.g. PBS and TDX both independently
+// deciding notify:true for the same real incident before either one's
+// own Memory write has propagated to the other) — a race, not a
+// judgment call. 10 minutes is the generous end of the order's own
+// suggested "5～10分鐘" range for that purpose.
+export const INCIDENT_SUPPRESSION_COLLISION_WINDOW_MS = 10 * 60 * 1000;
 
 // "從可通行變成禁止/無法通行" / a fresh road-closure-grade signal on an
 // event that's still nominally type==='accident'. Deliberately a small,
@@ -181,19 +211,32 @@ export async function readIncidentSuppressionState(kv) {
  * @param {object} incidentsByGroup - as read from
  *   readIncidentSuppressionState.
  * @param {Date} now
+ * @param {{trustCallerDecision?: boolean}} [options] -
+ *   `trustCallerDecision` (V2_4_0_PHASE_C_PRODUCTION_NOTIFY_IMPLEMENTATION,
+ *   default false) — set by aiApprovedPbsBroadcast.js, the ONLY caller
+ *   reached after the AI decision engine has ALREADY judged this event
+ *   worth a (re-)notification. When true, this function stops
+ *   re-deciding "was this a real escalation" itself (isMaterialEscalation
+ *   is never consulted) — a matched incident is suppressed ONLY if it was
+ *   last seen within INCIDENT_SUPPRESSION_COLLISION_WINDOW_MS (a short
+ *   near-simultaneous-duplicate defense, order section 五), never because
+ *   this module disagrees with the AI's own judgment about whether
+ *   something changed. broadcastPipeline.js's own (legacy, non-AI) call
+ *   site never passes this — it keeps the original
+ *   INCIDENT_SUPPRESSION_WINDOW_MS + isMaterialEscalation() behavior
+ *   byte-for-byte, since that path has no AI decision to defer to.
  * @returns {{
  *   results: Array<{ event: object, notificationKey: string,
  *     suppressed: boolean,
- *     reason: 'new-incident'|'material-escalation'|'same-incident-no-escalation' }>,
+ *     reason: 'new-incident'|'material-escalation'|'same-incident-no-escalation'|'short-window-collision' }>,
  *   nextIncidentsByGroup: object,
  * }}
  */
-export function resolveIncidentNotifications(accidentEvents, incidentsByGroup, now) {
+export function resolveIncidentNotifications(accidentEvents, incidentsByGroup, now, { trustCallerDecision = false } = {}) {
+  const windowMs = trustCallerDecision ? INCIDENT_SUPPRESSION_COLLISION_WINDOW_MS : INCIDENT_SUPPRESSION_WINDOW_MS;
   const nextIncidentsByGroup = {};
   for (const [group, records] of Object.entries(incidentsByGroup || {})) {
-    const alive = (records || []).filter(
-      (r) => r && r.lastSeenAt && now.getTime() - new Date(r.lastSeenAt).getTime() < INCIDENT_SUPPRESSION_WINDOW_MS
-    );
+    const alive = (records || []).filter((r) => r && r.lastSeenAt && now.getTime() - new Date(r.lastSeenAt).getTime() < windowMs);
     if (alive.length > 0) nextIncidentsByGroup[group] = alive;
   }
 
@@ -214,10 +257,28 @@ export function resolveIncidentNotifications(accidentEvents, incidentsByGroup, n
       continue;
     }
 
-    const escalated = isMaterialEscalation(match.escalation, escalation);
+    // Compute the escalation verdict BEFORE mutating match.escalation —
+    // isMaterialEscalation() compares the PREVIOUS snapshot against this
+    // sighting's; overwriting match.escalation first would compare the
+    // new snapshot against itself (a real self-referential aliasing bug,
+    // same class this codebase has hit before — see KV Write
+    // Optimization's own history).
+    const escalated = trustCallerDecision ? null : isMaterialEscalation(match.escalation, escalation);
     match.lastSeenAt = now.toISOString(); // keep the family "alive" regardless of whether this sighting itself notifies
     match.km = km; // track (small, within-tolerance) drift so later matches compare against the latest known position
     match.escalation = escalation;
+
+    if (trustCallerDecision) {
+      // A match here means a record for this same incident group was
+      // last seen within the short collision window (the `alive` filter
+      // above already applied `windowMs`) — the ONLY thing this mode
+      // suppresses. The AI's own sameIncident/materialChange reasoning
+      // (already reflected in its notify:true decision) is trusted for
+      // everything past that; this module never independently overrides
+      // it based on type/closure-keyword/blockedLanes heuristics.
+      results.push({ event, notificationKey: match.notificationKey, suppressed: true, reason: 'short-window-collision' });
+      continue;
+    }
 
     results.push({
       event,

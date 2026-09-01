@@ -117,6 +117,19 @@ export function isTdxCctvMetadataRefreshEnabled(env) {
 }
 
 /**
+ * Phase C gate (V2_4_0_PHASE_C_PRODUCTION_NOTIFY_IMPLEMENTATION, new) —
+ * may a TDX-origin (source 'freeway'/'highway') AI notify:true event
+ * actually reach a real LINE push / CCTV prepare / R2 publish? Default
+ * false — see src/pbs/debugPush.js's own runAiDecisionPath, which now
+ * computes `suppressLineNotify` from this resolver (instead of the old
+ * hardcoded `source === 'freeway' || source === 'highway'`) so lifting
+ * the suppression is a canonical config flip, never a code change.
+ */
+export function isTdxRoadEventProductionNotifyEnabled(env) {
+  return resolveBooleanVar(env, 'TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED');
+}
+
+/**
  * The ONE gate tdx/auth.js actually enforces before ever issuing a TDX
  * OAuth token — broadened (V2.4.0) from "is TRAFFIC_SOURCE_MODE not
  * PBS_ONLY" to "is TDX access permitted for ANY reason right now",
@@ -187,6 +200,7 @@ export function describeSourceMode(env) {
   const tdxEnabled = mode !== SOURCE_MODE_PBS_ONLY;
   const roadEventFetchEnabled = isTdxRoadEventFetchEnabled(env);
   const roadEventQueueIngressEnabled = isTdxRoadEventQueueIngressEnabled(env);
+  const roadEventProductionNotifyEnabled = isTdxRoadEventProductionNotifyEnabled(env);
   const cctvMetadataRefreshEnabled = isTdxCctvMetadataRefreshEnabled(env);
   return {
     trafficSourceMode: mode,
@@ -213,6 +227,7 @@ export function describeSourceMode(env) {
     // isTdxRoadEventFetchEnabled/isTdxRoadEventQueueIngressEnabled.
     tdxRoadEventFetchEnabled: roadEventFetchEnabled,
     tdxRoadEventQueueIngressEnabled: roadEventQueueIngressEnabled,
+    tdxRoadEventProductionNotifyEnabled: roadEventProductionNotifyEnabled,
     // Present only while the restriction is on, so a reader is never left
     // guessing whether TDX is broken or deliberately paused.
     tdxPausedReason: tdxEnabled ? null : 'TDX API quota exhausted — temporary PBS-only mode. TDX code is preserved; see src/traffic/sourceMode.js for the restore entry point.',

@@ -153,7 +153,18 @@
     // runs BEFORE CCTV preparation, not just before the LINE push — see
     // that function's own V2_4_0_PHASE_B_QUEUE_OBSERVE_ENABLE comment).
     "TDX_ROADEVENT_QUEUE_INGRESS_ENABLED": "true",
-    // TDX_CCTV_METADATA_REFRESH_ENABLED — independent of the two switches
+    // TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED — Phase C gate (new,
+    // V2_4_0_PHASE_C_PRODUCTION_NOTIFY_IMPLEMENTATION, 2026-09-01).
+    // Default "false" — a TDX-origin AI notify:true event still does 0
+    // LINE / 0 CCTV prepare / 0 R2 publish, exactly like Phase B, just now
+    // via a canonical config switch instead of a hardcoded source check
+    // (see src/pbs/debugPush.js's own comment on suppressLineNotify).
+    // MUST be the string "true" to lift the suppression — this round
+    // builds and tests the mechanism but does NOT flip it; enabling real
+    // TDX LINE delivery requires a separate, explicit future human
+    // authorization order.
+    "TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED": "false",
+    // TDX_CCTV_METADATA_REFRESH_ENABLED — independent of the switches
     // above: may /admin/cctv-hsinchu-probe actually call TDX to refresh
     // cctv:freeway-metadata:v1. CCTV metadata refresh stays manual/
     // on-demand either way (order section 三) — this only decides whether

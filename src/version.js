@@ -1221,7 +1221,64 @@
 // pipelineTraceIntegration/aiObservatoryView.test.js) — full regression
 // (1746 tests) diffed against the pre-round 34-item known-flaky baseline:
 // IDENTICAL, NEW_FAILURES=0.
-export const APP_VERSION = 'V2.4.0';
+
+// V2.4.1 (2026-09-01) — V2_4_0_PHASE_C_PRODUCTION_NOTIFY_IMPLEMENTATION.
+// PATCH: a genuine root-cause fix plus one new canonical kill switch, not
+// an architecture change (Phase A/B themselves stayed at V2.4.0 — pure
+// config enablement of already-built code; this round both fixes real
+// behavior and adds new mechanism, warranting a bump).
+//
+// New: TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED (wrangler.jsonc, default
+// "false" — ships OFF in this same commit). Replaces the previous
+// hardcoded `suppressLineNotify = source === 'freeway' || 'highway'` in
+// src/pbs/debugPush.js with `... && !isTdxRoadEventProductionNotifyEnabled
+// (env)` — lifting the Phase B/C LINE suppression is now a canonical
+// config flip, gated behind a switch that defaults off, rather than a
+// future code change. Real TDX LINE delivery is NOT enabled by this
+// round; a separate, explicit future human authorization is required to
+// flip the switch.
+//
+// Root-cause fix: src/traffic/incidentSuppression.js's own escalation
+// heuristic (isMaterialEscalation — type change / closure keyword /
+// blockedLanes increase, INCIDENT_SUPPRESSION_WINDOW_MS=60min) could
+// silently veto a notification the AI decision engine had ALREADY
+// approved (notify:true) — an unpredictable "AI says notify, legacy says
+// don't" dual semantic authority, found during this round's own
+// pre-implementation audit. Fixed via a new `trustCallerDecision` option
+// on resolveIncidentNotifications(): when the caller (now
+// aiApprovedPbsBroadcast.js, used by both PBS and TDX) already trusts the
+// AI's own notify:true judgment, this module stops re-deciding whether
+// something "really" escalated — it suppresses ONLY a near-simultaneous
+// duplicate within a new, much shorter
+// INCIDENT_SUPPRESSION_COLLISION_WINDOW_MS (10 minutes — order's own
+// suggested "5～10分鐘"), trusting AI's sameIncident/materialChange
+// reasoning for everything past that. broadcastPipeline.js's own legacy,
+// non-AI call site is untouched — it keeps the original 60-minute +
+// isMaterialEscalation() behavior byte-for-byte, since that path has no
+// AI decision to defer to. Also fixed, in the same edit: a real
+// self-referential aliasing bug introduced while restructuring this
+// function (mutating a record's own `escalation` field before comparing
+// it against itself) — caught by the existing test suite before it ever
+// shipped.
+//
+// Also closed, ahead of enabling the new switch: runAiApprovedPbsBroadcast
+// (src/traffic/aiApprovedPbsBroadcast.js)'s suppressLineNotify check
+// previously ran AFTER CCTV preparation/R2 publish, only gating the LINE
+// push itself — a Phase B TDX-origin notify:true accident could still do
+// a real CCTV frame fetch + R2 write "for observability." Moved earlier
+// (fixed the prior round, carried forward here): CCTV/R2/LINE are all
+// gated by the same single check, before any of the three run.
+//
+// EXPLICITLY UNCHANGED: PBS's own notify path (source==='pbs' is never
+// suppressed, verified directly); CCTV's metadata-cache/selection/
+// compose/R2/read-back pipeline itself; the AI model, schema, and
+// fail-closed policy; TDX fetch schedule/quota; the Observatory UI
+// (already had every field this round needs). 24 new tests in
+// test/tdxPhaseCProductionNotify.test.js (the order's own 20-CASE list,
+// several split into sub-cases for precision) — full regression (1774
+// tests) diffed against the pre-round 34-item known-flaky baseline:
+// IDENTICAL, NEW_FAILURES=0.
+export const APP_VERSION = 'V2.4.1';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

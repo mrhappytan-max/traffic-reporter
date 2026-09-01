@@ -162,13 +162,20 @@ export async function runAiApprovedPbsBroadcast(env, { event, now = new Date(), 
   // Incident suppression — accident type only, same scope as the legacy
   // pipeline's own use of it. Persisted regardless of suppressed/not,
   // mirroring broadcastPipeline.js's own WRITE_ON_CHANGE call shape.
+  //
+  // V2_4_0_PHASE_C_PRODUCTION_NOTIFY_IMPLEMENTATION — `trustCallerDecision:
+  // true` because this function is only ever reached AFTER the AI
+  // decision engine has already validated notify:true (see debugPush.js's
+  // own runAiDecisionPath) — the AI, not this module's own escalation
+  // heuristic, is the semantic authority on whether this deserves a
+  // (re-)notification. See resolveIncidentNotifications's own doc comment.
   let eventKeyStr = eventKeyOf(event);
   if (event.type === 'accident') {
     const incidentState = await readIncidentSuppressionState(env.TRAFFIC_KV);
     if (!incidentState.kvAvailable) result.lineErrors.push(`incident suppression state unavailable: ${incidentState.kvError}`);
     if (incidentState.kvAvailable) {
       const before = structuredClone(incidentState.incidentsByGroup);
-      const { results, nextIncidentsByGroup } = resolveIncidentNotifications([event], incidentState.incidentsByGroup, now);
+      const { results, nextIncidentsByGroup } = resolveIncidentNotifications([event], incidentState.incidentsByGroup, now, { trustCallerDecision: true });
       const [resolved] = results;
       eventKeyStr = resolved.notificationKey;
       result.suppressed = resolved.suppressed;
