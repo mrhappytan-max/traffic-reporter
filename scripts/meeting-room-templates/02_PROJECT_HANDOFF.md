@@ -575,6 +575,38 @@ CLOUDFLARE_QUEUE`。V2.2.0 把查修頁升級為四層事件生命週期檢視�
 V2.3.2／V2.3.3 是三個連續 PATCH（LINE 地圖座標直連 fallback、CCTV
 診斷工具修復、CCTV R2 讀回驗證），皆未改架構本身。
 
+## V2.4.2 — PBS_AI_LINE_INFORMATION_FIDELITY_AND_POLICY_FIX（2026-09-01，同日稍晚，加在下方 V2.4.1 之上——三層開關現況/incidentSuppression 修正/啟用來源說明皆不變，本節只新增本輪的變更）
+
+**接手現在必須知道的是**：
+
+1. **LINE 訊息不再只剩「請留意路況」**：`messageFormat.js#formatEventMessage`
+   新增三條純增量 SOURCE FACTS 行——PBS comment 原文摘要（`event.source
+   ==='pbs'` 限定，上限60字）、「通報：XXX」（`event.sourceDetail`，僅有值
+   才顯示）、「⚠️ 封閉N車道」（TDX 結構化 `blockedLanes`）。根因是這個檔案
+   從未讀取 `event.description`／`event.sourceDetail`——AI 早就看得到、判
+   斷得到這些資訊，只是從未進到司機看到的 LINE 訊息裡。TDX 自己的原始
+   `Description` 仍如既往從不整段貼上（V1.2C 時代既有原則不變）。AI 的
+   `reason` 從未、也仍未傳入這個函式——不會覆蓋 source facts。
+2. **AI 通報政策重新校準**：`aiDecisionEngine.js` 的 `SYSTEM_PROMPT`
+   文字改寫（schema／cache／呼叫端完全不變），核心問題從「會不會造成壅塞」
+   改為「值不值得營業駕駛提前知道」：明確事故／車禍 → `notify=true` 不需
+   先證明壅塞；預防性道路安全風險（掉落物／輪胎皮／坍方／落石／道路中斷／
+   封閉／車道阻斷）→ `notify=true` 即使尚未壅塞；單純車多／一般壅塞（無
+   具體事件）→ `notify=false` 為原則，避免洗版真正重要的事故訊息。
+3. **EVENT_ID 11509010029-5 未解決，屬觀察中項目**：國3 81.3K 多車追撞
+   LINE 未發送，Queue retry 3 次後仍失敗。Queue retry 架構本身確認正常
+   （`MAX_QUEUE_RETRIES=3`，與 `wrangler.jsonc` 一致），但這筆歷史事件的
+   確切失敗階段本 session **無法獨立查證**（無 Cloudflare Worker Logs 存
+   取權限）——**未做任何 reliability 程式碼變更**。需要 Claude
+   Browser／Cloudflare Dashboard 讀取真實 Worker Logs 才能確認 root
+   cause。
+4. **三層開關與 incidentSuppression 現況不變**：見下方 V2.4.1 條目——
+   `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED` 仍為 `"true"`，本輪未改動
+   任何 config 值。
+
+完整文字記錄與 CASE 1-12 全文 → `06_VERSION_HISTORY.md`／
+`07_KNOWN_ISSUES.md`／`test/v242InformationFidelityAndPolicy.test.js`。
+
 ## V2.4.1 — Phase C 正式啟用（2026-09-01，同日稍晚，本節取代下方 V2.4.0 條目的「接手一定要知道」三件事）
 
 同一天稍晚，Phase A（FETCH ONLY）→ Phase B（QUEUE OBSERVE）→

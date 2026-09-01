@@ -17,10 +17,10 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | d66e2cbfe1e3408f08478dd99d334620e2b5c866 |
-| Snapshot generated at | 2026-09-01T14:20:01.767Z |
-| Source working tree | dirty (6 changed source file(s)) |
-| Current version | V2.4.1 |
+| Source main HEAD | 051211ae361f35dc3a68ef452bbe0716c6b5ff57 |
+| Snapshot generated at | 2026-09-01T16:07:52.641Z |
+| Source working tree | dirty (1 changed source file(s)) |
+| Current version | V2.4.2 |
 | Current phase | Production maintenance｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 正式重新接入統一 Queue/AI/Memory pipeline，Phase A/B/C 全部完成，Phase C（TDX 正式 LINE 通知）已於 2026-09-01 由明確人類授權啟用（V2_4_1_PRODUCTION_NOTIFY_CANONICAL_RECONCILIATION）。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡的舊限制已由本輪授權解除（TRAFFIC_SOURCE_MODE 本身仍為 PBS_ONLY，TDX 透過三個獨立 granular switch 疊加啟用，見 SYSTEM_STATE.json） |
 
 `Source main HEAD` 是這份快照所描述的正式 main commit（取自 `origin/main`），**不是**包含本檔案自己的那個 commit——兩者刻意分開，避免 Git 自我參照循環。詳見 `SYSTEM_STATE.json` 的 `sourceMainHead` / `exportArtifactCommit`。
@@ -98,7 +98,7 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 | 欄位 | 值 |
 |---|---|
-| Latest completed | V2.4.1 |
+| Latest completed | V2.4.2 |
 | package.json version | 0.1.0 |
 | Production status | DEPLOYED |
 | Production verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
@@ -107,7 +107,7 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 ## Current known issues
 
-- **Known blocker**：無 blocker。第一筆真實 TDX 觸發的正式 LINE 通知（Phase C 啟用後）尚未取得現場證據確認端對端成功——REAL_WORLD_CONFIRMATION_PENDING，非缺陷，僅為觀察中項目。既有兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且 CCTV_RUNTIME_TDX_CALLS 仍為 0。還原/緊急關閉程序見 07_KNOWN_ISSUES.md（TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 改回 false 即可立即關閉 TDX 正式通知，FETCH/QUEUE 可繼續 true，不需 rollback 整套程式）
+- **Known blocker**：無 blocker。第一筆真實 TDX 觸發的正式 LINE 通知尚未取得現場證據確認端對端成功——REAL_WORLD_CONFIRMATION_PENDING，非缺陷，僅觀察中。EVENT_ID 11509010029-5（國3 81.3K 追撞，2026-09-01）LINE 未發送——Queue retry 架構正常（MAX_QUEUE_RETRIES=3，同 wrangler.jsonc），確切失敗階段本 session 無法獨立查證（無 Worker Logs 權限），未臆測、未改 retry 邏輯。既有額度限制（TDX API、LINE OA）非本專案缺陷。還原程序見 07_KNOWN_ISSUES.md（TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 改回 false 即可關閉，FETCH/QUEUE 可繼續 true）
 - **Real-world confirmation**：REAL_WORLD_CONFIRMATION_PENDING
 - **既有測試失敗基準線**：`npm test` 共 1272 項，其中穩定 38 項為已知失敗（2 項 `pbs-relay/tests/*` 缺 `pbs-relay/src/cache.js`；**33 項過期斷言**——動態路肩推播關閉、PBS 成為 CCTV 可信來源之後未同步更新的測試，是目前最大的一筆技術債，待獨立施工令；3 項 wall-clock 相依的 `healthQuotaDashboard`，會隨日期自然增加）。**注意：舊版文件宣稱那 13 項是「Workers-only `.wasm` codec 在沙盒無法載入」，這是錯的 Root Cause——真正原因是沙盒 `node_modules` 不完整、`@jsquash/jpeg` 沒安裝；裝了之後那些檔案全部可以執行，並揭露上述 33 項過期斷言。**出現這 18 項以外的新失敗才算真正回歸，且**判斷回歸一律以同一輪 `git stash -u` 對照為準**；逐項清單、`deploymentPolicyAndVerify` 第 12 項的「尚未 push 必失敗」現象，以及 `deploymentStatus` 那項只在全套執行時偶發的雜訊，都見 `07_KNOWN_ISSUES.md`。
 - **Dashboard-only 事實永遠無法從程式驗證**：Production branch 指向、真實 Cron 排程、Secret 值是否正確、Build 歷史——只能由真人開 Dashboard 確認。
@@ -575,6 +575,38 @@ CLOUDFLARE_QUEUE`。V2.2.0 把查修頁升級為四層事件生命週期檢視�
 V2.3.2／V2.3.3 是三個連續 PATCH（LINE 地圖座標直連 fallback、CCTV
 診斷工具修復、CCTV R2 讀回驗證），皆未改架構本身。
 
+## V2.4.2 — PBS_AI_LINE_INFORMATION_FIDELITY_AND_POLICY_FIX（2026-09-01，同日稍晚，加在下方 V2.4.1 之上——三層開關現況/incidentSuppression 修正/啟用來源說明皆不變，本節只新增本輪的變更）
+
+**接手現在必須知道的是**：
+
+1. **LINE 訊息不再只剩「請留意路況」**：`messageFormat.js#formatEventMessage`
+   新增三條純增量 SOURCE FACTS 行——PBS comment 原文摘要（`event.source
+   ==='pbs'` 限定，上限60字）、「通報：XXX」（`event.sourceDetail`，僅有值
+   才顯示）、「⚠️ 封閉N車道」（TDX 結構化 `blockedLanes`）。根因是這個檔案
+   從未讀取 `event.description`／`event.sourceDetail`——AI 早就看得到、判
+   斷得到這些資訊，只是從未進到司機看到的 LINE 訊息裡。TDX 自己的原始
+   `Description` 仍如既往從不整段貼上（V1.2C 時代既有原則不變）。AI 的
+   `reason` 從未、也仍未傳入這個函式——不會覆蓋 source facts。
+2. **AI 通報政策重新校準**：`aiDecisionEngine.js` 的 `SYSTEM_PROMPT`
+   文字改寫（schema／cache／呼叫端完全不變），核心問題從「會不會造成壅塞」
+   改為「值不值得營業駕駛提前知道」：明確事故／車禍 → `notify=true` 不需
+   先證明壅塞；預防性道路安全風險（掉落物／輪胎皮／坍方／落石／道路中斷／
+   封閉／車道阻斷）→ `notify=true` 即使尚未壅塞；單純車多／一般壅塞（無
+   具體事件）→ `notify=false` 為原則，避免洗版真正重要的事故訊息。
+3. **EVENT_ID 11509010029-5 未解決，屬觀察中項目**：國3 81.3K 多車追撞
+   LINE 未發送，Queue retry 3 次後仍失敗。Queue retry 架構本身確認正常
+   （`MAX_QUEUE_RETRIES=3`，與 `wrangler.jsonc` 一致），但這筆歷史事件的
+   確切失敗階段本 session **無法獨立查證**（無 Cloudflare Worker Logs 存
+   取權限）——**未做任何 reliability 程式碼變更**。需要 Claude
+   Browser／Cloudflare Dashboard 讀取真實 Worker Logs 才能確認 root
+   cause。
+4. **三層開關與 incidentSuppression 現況不變**：見下方 V2.4.1 條目——
+   `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED` 仍為 `"true"`，本輪未改動
+   任何 config 值。
+
+完整文字記錄與 CASE 1-12 全文 → `06_VERSION_HISTORY.md`／
+`07_KNOWN_ISSUES.md`／`test/v242InformationFidelityAndPolicy.test.js`。
+
 ## V2.4.1 — Phase C 正式啟用（2026-09-01，同日稍晚，本節取代下方 V2.4.0 條目的「接手一定要知道」三件事）
 
 同一天稍晚，Phase A（FETCH ONLY）→ Phase B（QUEUE OBSERVE）→
@@ -726,7 +758,7 @@ branch／不要退休輪詢／不要開始 V1.9.8」等禁令已被上方 V1.9.8
 
 ## Next action
 
-無待辦。觀察中：第一筆真實 TDX 觸發的正式 LINE 通知，取得現場證據後回頭確認 端對端成功／CCTV（Freeway 限定）／Observatory 記錄完整；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計）。緊急關閉 TDX 正式通知只需將 TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 改回 false，FETCH/QUEUE 可繼續 true，不需 rollback 整套程式
+無待辦。觀察中：第一筆真實 TDX 觸發的正式 LINE 通知，取得現場證據後回頭確認 端對端成功／CCTV（Freeway 限定）／Observatory 記錄完整；EVENT_ID 11509010029-5 需要 Claude Browser／Cloudflare Dashboard 讀取真實 Worker Logs 才能確認確切失敗階段與 root cause，屆時才決定是否需要最小 reliability 修正；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計）。緊急關閉 TDX 正式通知只需將 TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 改回 false，FETCH/QUEUE 可繼續 true，不需 rollback 整套程式
 
 ## Full history location
 

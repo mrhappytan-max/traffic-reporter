@@ -138,11 +138,32 @@ test('1. the real 13:48 台68 record reproduces the exact Production message, by
   assert.equal(event.latitude, null);
   assert.equal(event.longitude, null);
 
-  // The exact message a real person received. If this ever stops matching,
-  // the reproduction — not the fixture — is what needs re-checking.
+  // The exact message a real person received AT THE TIME (pre-V2.4.2). If
+  // this ever stops matching, the reproduction — not the fixture — is what
+  // needs re-checking.
+  //
+  // V2.4.2 — V2_4_2_PBS_AI_LINE_INFORMATION_FIDELITY_AND_POLICY_FIX adds
+  // two new SOURCE-FACTS lines that were NOT part of the original
+  // Production message this test reproduces: the comment's own fact text
+  // ("西向發生交通事故，請小心通過" — event.description, previously never
+  // shown by messageFormat.js) and "通報：警廣" (event.sourceDetail,
+  // previously never read by messageFormat.js at all). This is the exact
+  // information-loss gap that round's own final report identifies and
+  // fixes — see src/version.js's V2.4.2 changelog. The historical
+  // Production message this fixture reproduces (bytes to the left of the
+  // now-updated assertion) is preserved in this comment for the record.
   assert.equal(
     formatEventMessage(event),
-    ['🚨 交通事故', '台68 西向', '（南寮竹東）-台68線', '事故影響通行', '請提前避開', '🕒 13:48更新'].join('\n')
+    [
+      '🚨 交通事故',
+      '台68 西向',
+      '（南寮竹東）-台68線',
+      '西向發生交通事故，請小心通過',
+      '事故影響通行',
+      '請提前避開',
+      '通報：警廣',
+      '🕒 13:48更新',
+    ].join('\n')
   );
 });
 

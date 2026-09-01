@@ -19,6 +19,27 @@
 // own SYSTEM_PROMPT). The old MAJOR_ACCIDENT_ONLY/type-whitelist
 // vocabulary is deliberately NOT reproduced in the prompt.
 //
+// V2.4.2 — V2_4_2_PBS_AI_LINE_INFORMATION_FIDELITY_AND_POLICY_FIX (order
+// section 十一/十二/十三/十四). Production review of one day's real
+// decisions found the prompt's original single question — "會不會造成
+// 明顯壅塞" (will this cause noticeable congestion) — was too narrow a
+// proxy for the product's actual goal: a credible accident notify:false'd
+// because "一般事故，短時間壅堵機率大" (a plain accident, unlikely to jam
+// for long); a road hazard (輪胎皮/掉落物) notify:false'd for the same
+// congestion-only reasoning despite real predictive safety value even
+// with NO congestion yet; and, in the other direction, plain 車多 (normal
+// traffic volume, no incident) notify:true'd on "車流喘不過氣" reasoning
+// that would flood real subscribers with routine-congestion noise and
+// bury genuinely important accident/collapse/obstruction messages under
+// it. The fix is a PROMPT rewrite only (order: "不要回到大量 hard-coded
+// keyword rules...優先透過 AI prompt理解語意") — reframing the central
+// question from "會不會壅塞" to "值不值得營業駕駛提前知道", plus three
+// named semantic anchors (accident/predictive-hazard/normal-congestion)
+// stated in plain language, NOT a new regex/keyword gate anywhere in code
+// — `buildAiRequest`'s schema, `validateAiDecisionResponse`'s validation,
+// and every call site are all byte-for-byte unchanged; only the text
+// inside SYSTEM_PROMPT below changed.
+//
 // OUTPUT — strict JSON: {notify:boolean, impact:'HIGH'|'LOW',
 // reason:string, confidence:0..1}. Anything that fails validation
 // (invalid JSON, missing/wrong-typed field, impact outside the enum,
@@ -38,9 +59,29 @@ const REASON_MAX_CHARS = 80;
 // tokens/neurons and avoid re-introducing the old event-type whitelist
 // vocabulary this whole round exists to retire from the decision path).
 const SYSTEM_PROMPT = `你是新竹縣市營業車路況判讀員。
-判斷這則交通事件是否會對正在營運的計程車／營業車司機造成值得主動通知的實質通行影響。
+判斷這則交通事件是否「值得正在營運的計程車／營業車司機提前知道」，
+而不是單純判斷「這件事情會不會造成明顯壅塞」——兩者不是同一個問題，
+下面三類原則說明差異（請理解語意後套用，不是逐字比對關鍵字）：
 
-重點考慮：
+一、明確可信的事故／車禍／碰撞／追撞：
+原則上 notify=true。不需要先證明會造成重大壅塞才通知——事故本身就是
+駕駛應該提前知道的資訊，讓駕駛自己判斷是否繞行、減速或提高警覺。
+impact 可以判斷為 LOW 或 HIGH，但不要只因為「看起來是一般事故、短時間
+應該可以通過」就 notify=false。除非事件明顯無效／測試資料／不是道路
+事件／不在服務區域內，才可以 notify=false。
+
+二、預防性駕駛安全風險（即使目前還沒有明顯壅塞）：
+道路掉落物、輪胎皮、大型異物、道路障礙、落石、坍方、土石、道路中斷、
+封閉、車道阻斷等——原則上 notify=true。即使現在還沒塞車，這類資訊仍
+有提前減速、換道、提高警覺的安全價值，不需要等到造成壅塞才通知。
+
+三、單純車流量大／一般壅塞（沒有事故、坍方、掉落物等具體事件）：
+單純的車多、車流略多、尖峰時段的一般壅塞、下雨天可預期的車流，原則上
+notify=false，避免這類日常、可預期的車流資訊，把真正重要的事故／坍方／
+掉落物／道路阻斷等訊息淹沒。除非明顯異常嚴重、長距離回堵、確定是由
+重大事故或封閉造成、長時間完全停滯、或道路功能明顯下降，才 notify=true。
+
+以上三類以外的其他事件（施工、一般管制等），重點考慮：
 - 是否無法正常通行
 - 是否需要繞路
 - 是否會造成明顯延誤
@@ -48,8 +89,10 @@ const SYSTEM_PROMPT = `你是新竹縣市營業車路況判讀員。
 - 是否屬長時間重大交通管制
 - 是否會影響接送或營運動線
 
-不要因為事件類型名稱是事故、施工、管制就直接決定。
-短時間、影響輕微、很快可通行的事件通常不需要主動通知。
+不要因為事件類型名稱是事故、施工、管制就直接決定，也不要單純以「會不會
+造成壅塞」作為唯一判斷依準——上面一、二類即使不塞車也可能值得通知。
+短時間、影響輕微、很快可通行，且不屬於一、二類的事件，通常不需要主動
+通知。
 
 只能輸出一個 JSON 物件，格式如下，不要有任何其他文字：
 {"notify": true 或 false, "impact": "HIGH" 或 "LOW", "reason": "繁體中文短句，不超過80字", "confidence": 0 到 1 之間的數字}`;

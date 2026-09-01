@@ -595,7 +595,7 @@
   "DASHBOARD_ONLY_AI_SWITCH": "RETIRED",
   "KEEP_VARS": "NOT_USED",
   "CONFIG_DRIFT_INCIDENT_V2_0_2": "Dashboard-only PBS_AI_DECISION_ENABLED was removed by later Wrangler deployment; fixed by declaring it in wrangler.jsonc",
-  "PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER": "KNOWN_ISSUE",
+  "PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER": "RESOLVED_V2_4_2 — see V2_4_2_PBS_AI_LINE_INFORMATION_FIDELITY_AND_POLICY_FIX below",
   "V2_4_0_PHASE_A_TDX_FETCH_ONLY_ENABLE": {
     "enabledAt": "2026-09-01",
     "CURRENT_RUNTIME_PHASE": "PHASE_A_FETCH_ONLY",
@@ -640,6 +640,25 @@
     "authorization": "Explicit, direct human authorization received in this session (config-only change: wrangler.jsonc TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED false -> true). This is the first commit in this repository's verifiable git history that sets this switch to \"true\" -- confirmed by searching all branches/commits for the string before making the change; none existed.",
     "priorDashboardClaimNote": "HUMAN_REPORTED_NOT_INDEPENDENTLY_VERIFIED: a claim was made that Production had already been hot-toggled to NOTIFY=true via the Cloudflare Dashboard ahead of this commit, with a specific deployment id and 0% error rate. This session could not confirm that independently (same standing sandbox-has-no-Production-network-access limitation as every prior round's PRODUCTION_VERIFICATION field), and no corresponding wrangler.jsonc commit ever existed to reconcile against. A Dashboard-only var would not be durable in this project's own deploy model regardless (Workers Builds treats wrangler.jsonc as authoritative on every deploy -- see the V2.0.2 Config Drift Hotfix history). Recorded here as reported, not verified, and not treated as the true origin of this change -- this round's own commit is the actual, verifiable point of enablement.",
     "verification": "Config-only change (no src/ or test/ files touched). Minimal verification per this round's own explicit scope: test/tdxPhaseCProductionNotify.test.js (24 tests) and test/tdxUnifiedAiPipeline.test.js (21 tests) both pass unchanged (both already exercise the switch via env overrides, so the deploy-time default does not affect their outcome); npm run check:deployment-policy PASS; wrangler deploy --dry-run confirms FETCH=true/QUEUE=true/NOTIFY=true/CCTV_METADATA_REFRESH=false. Full 1774-test regression was NOT re-run for this config-only change (out of proportion to a one-value flip, consistent with the Phase A/Phase B rounds' own precedent).",
-    "note": "Real TDX-origin (freeway/highway) AI notify:true events can now reach a real LINE push to real subscribers, CCTV prepare (Freeway only, eligible roads), and R2 publish, exactly the mechanism built and tested in V2_4_1_PHASE_C_PRODUCTION_NOTIFY_IMPLEMENTATION. APP_VERSION stays V2.4.1 (config-only enablement of already-built code)."
+    "note": "Real TDX-origin (freeway/highway) AI notify:true events can now reach a real LINE push to real subscribers, CCTV prepare (Freeway only, eligible roads), and R2 publish, exactly the mechanism built and tested in V2_4_1_PHASE_C_PRODUCTION_NOTIFY_IMPLEMENTATION. APP_VERSION stays V2.4.1 (config-only enablement of already-built code).",
+    "supersededBy": "V2_4_2_PBS_AI_LINE_INFORMATION_FIDELITY_AND_POLICY_FIX (2026-09-01, same day)"
+  },
+  "V2_4_2_PBS_AI_LINE_INFORMATION_FIDELITY_AND_POLICY_FIX": {
+    "completedAt": "2026-09-01",
+    "nature": "TARGETED_FIX_MINIMAL_CHANGE",
+    "trigger": "Production 審查：坍方事件 LINE 只剩「請留意路況」；明確事故 notify=false；單純車多 notify=true 洗版；EVENT_ID 11509010029-5 LINE 未發送。",
+    "informationLoss": {
+      "file": "src/traffic/messageFormat.js",
+      "function": "formatEventMessage",
+      "reason": "TYPE_IMPACT_LINES 固定依 type 選字，從未讀 event.description/sourceDetail，儘管 AI 已完整看到兩者（aiCandidate.js）；同一根因為既有 PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER"
+    },
+    "fixA": "messageFormat.js 新增3條增量行：PBS comment摘要(source==pbs,60字上限)、通報:XXX(sourceDetail)、封閉N車道(blockedLanes)。",
+    "fixB": "aiDecisionEngine.js SYSTEM_PROMPT 重寫(schema/cache不變)：改為「值不值得提前知道」——事故notify=true不需證壅塞/風險notify=true即使未壅塞/單純車多notify=false。",
+    "fixC_eventId_11509010029_5": {
+      "rootCause": "NOT_INDEPENDENTLY_VERIFIABLE_THIS_SESSION — 無 Cloudflare Worker Logs 存取權限",
+      "fixApplied": false,
+      "followUp": "需 Claude Browser/Dashboard 讀取真實 Worker Logs"
+    },
+    "verification": "test/v242InformationFidelityAndPolicy.test.js CASE1-12(16項)全過；full regression 1790 tests NEW_FAILURES=0；deployment-policy/wrangler dry-run PASS。"
   }
 }

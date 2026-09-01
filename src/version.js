@@ -1278,7 +1278,103 @@
 // several split into sub-cases for precision) — full regression (1774
 // tests) diffed against the pre-round 34-item known-flaky baseline:
 // IDENTICAL, NEW_FAILURES=0.
-export const APP_VERSION = 'V2.4.1';
+// V2.4.2 (2026-09-01) — V2_4_2_PBS_AI_LINE_INFORMATION_FIDELITY_AND_
+// POLICY_FIX. MINOR — a genuine product-behavior fix to LINE presentation
+// AND to the AI notify policy prompt, not a pure docs/governance round.
+//
+// TRIGGER — real Production review of one day's live AI-decided events
+// (2026-09-01, after V2.4.1's Phase C production notify went live) found
+// three separate problems:
+//   A) LINE INFORMATION LOSS — a 竹60鄉道坍方 event's PBS `comment` and
+//      the AI's own `reason` both correctly captured "道路完全阻斷、多車
+//      受困", but the LINE message that reached drivers still fell all
+//      the way through to the generic "請留意路況" — because NOTHING in
+//      messageFormat.js had ever read `event.description`'s own text
+//      into the message body (only the fixed per-type TYPE_IMPACT_LINES
+//      sentence), and `event.sourceDetail` (PBS's own "誰通報的" field,
+//      e.g. "熱心聽眾") was never read by that file at all. This closes
+//      the exact gap this file's own V2.0.2 comment already flagged as
+//      PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER.
+//   B) AI POLICY TOO CONGESTION-CENTRIC — a credible 台68 竹科入口匝道
+//      事故 notify:false'd on "一般事故，短時間壅堵機率大" reasoning, and
+//      a road hazard (輪胎皮/掉落物) notify:false'd the same way despite
+//      real predictive safety value even with no congestion yet — while,
+//      in the other direction, plain 車多 (routine congestion, no
+//      incident) notify:true'd on "車流喘不過氣" reasoning that would
+//      flood subscribers with routine-congestion noise and bury genuinely
+//      important events under it.
+//   C) EVENT_ID 11509010029-5 (國3 81.3K 多車追撞) — AI/background
+//      processing failed after retries; LINE never sent. Investigated
+//      read-only this round (Queue retry architecture: MAX_QUEUE_RETRIES
+//      =3, matching wrangler.jsonc's queues.consumers max_retries=3;
+//      AI_CALL_FAILED is the only retryable outcome, AI_DECISION_INVALID
+//      is terminal by design) — but this session has NO access to this
+//      historical event's actual Cloudflare Worker Logs (sandbox network
+//      egress blocks the Production/Dashboard domain, same limitation
+//      already documented throughout this file), so the SPECIFIC failing
+//      stage/error for THIS event could not be independently confirmed.
+//      Per the order's own "如果證據不足，不要猜" — NO reliability code
+//      change was made this round (RELIABILITY_FIX = NONE); this remains
+//      for a future round with real Worker Logs evidence (Claude Browser/
+//      Cloudflare Dashboard), per the order's own section 廿三.
+//
+// FIX A — messageFormat.js gains three new SOURCE-FACTS lines, all purely
+// additive (every existing line/branch/order is unchanged):
+//   - a fact line carrying PBS's own `event.description` text (capped 60
+//     chars, KM-mention stripped since the KM already has its own line) —
+//     deliberately PBS-only (`event.source==='pbs'`), preserving this
+//     file's own pre-existing, still-valid V1.2C-era invariant that TDX's
+//     raw Description text is never dumped onto a message (TDX's own
+//     free text was observed long/noisy; PBS's human-typed comment is
+//     structurally different and typically short);
+//   - "通報：XXX" from `event.sourceDetail`, verbatim, only when present —
+//     never guessed when absent (order section 九);
+//   - "⚠️ 封閉N車道" from TDX's own structured `blockedLanes` field (a
+//     real number, never free text — source-agnostic, adds no new
+//     keyword/regex judgment).
+// AI's own `reason` text is, and was already, NEVER passed to this file —
+// aiApprovedPbsBroadcast.js's call site only ever passes the plain
+// normalized event (order section 十五's "AI reason 不得覆蓋原始情報" was
+// already structurally true; this round adds a regression test proving
+// it, since it had never been directly tested before).
+//
+// FIX B — src/pbs/aiDecisionEngine.js's SYSTEM_PROMPT rewritten (PROMPT
+// TEXT ONLY — order's own "不要回到大量 hard-coded keyword rules...優先
+// 透過 AI prompt理解語意"; buildAiRequest's schema, validateAiDecision
+// Response's validation, and every call site are byte-for-byte
+// unchanged): reframes the central question from "會不會造成壅塞" to
+// "值不值得營業駕駛提前知道", with three named semantic anchors stated in
+// plain Traditional Chinese (not a code-level regex/keyword gate
+// anywhere): (1) a credible accident/collision -> notify=true by default,
+// not gated on proven congestion; (2) a predictive road-safety hazard
+// (掉落物/輪胎皮/坍方/落石/道路中斷/封閉/車道阻斷/etc) -> notify=true even
+// before congestion appears; (3) plain/routine congestion with no
+// specific incident -> notify=false unless AI judges it abnormally
+// severe/long/incident-caused, so routine車多 doesn't bury real
+// accident/hazard messages.
+//
+// EXPLICITLY UNCHANGED THIS ROUND (order section 十九's own "禁止動的範
+// 圍" plus this round's own scope discipline): TDX fetch schedule, Queue
+// architecture/count, Recent Incident Memory 8h window, the 10-minute
+// collision window, Cloudflare Cron, CCTV metadata pipeline, R2
+// read-back, Windows PBS geographic filter, TDX/PBS source priority, the
+// V2.4.1 Phase C production-notify switch itself (stays "true", unchanged
+// by this round), service area, the AI model/schema/cache, and
+// traffic/locationQuality.js (a separate, LEGACY-pipeline-only gate —
+// aiApprovedPbsBroadcast.js's own header comment already documents that
+// the AI-approved path never calls it; this round does not touch it or
+// its own pre-existing "description is never printed by messageFormat.js"
+// test comment's underlying legacy-pipeline behavior, which is unaffected
+// by fact-line additions this round makes to the AI-approved path's
+// shared formatter).
+//
+// See test/v242InformationFidelityAndPolicy.test.js for the order's own
+// CASE 1-12 acceptance suite (source-fact preservation, sourceDetail,
+// precise-location preservation, accident/hazard/congestion policy
+// anchors, AI-reason-never-overrides-facts, TDX shared-formatter
+// regression) and 07_KNOWN_ISSUES.md for the EVENT_ID 11509010029-5
+// investigation record.
+export const APP_VERSION = 'V2.4.2';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

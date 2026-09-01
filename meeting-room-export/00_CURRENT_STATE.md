@@ -9,20 +9,20 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V2.4.1（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | d66e2cbfe1e3408f08478dd99d334620e2b5c866 |
+| Current Version | V2.4.2（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | 051211ae361f35dc3a68ef452bbe0716c6b5ff57 |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty (6 changed source file(s)) |
+| Source working tree | dirty (1 changed source file(s)) |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
 | Current Phase | Production maintenance｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 正式重新接入統一 Queue/AI/Memory pipeline，Phase A/B/C 全部完成，Phase C（TDX 正式 LINE 通知）已於 2026-09-01 由明確人類授權啟用（V2_4_1_PRODUCTION_NOTIFY_CANONICAL_RECONCILIATION）。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡的舊限制已由本輪授權解除（TRAFFIC_SOURCE_MODE 本身仍為 PBS_ONLY，TDX 透過三個獨立 granular switch 疊加啟用，見 SYSTEM_STATE.json） |
-| Current Task | none（無進行中工作）。Latest completed task = V2_4_1_PRODUCTION_NOTIFY_CANONICAL_RECONCILIATION，status = SEALED（前序 V2_4_0_PHASE_A_TDX_FETCH_ONLY_ENABLE／V2_4_0_PHASE_B_QUEUE_OBSERVE_ENABLE／V2_4_1_PHASE_C_PRODUCTION_NOTIFY_IMPLEMENTATION 亦為 SEALED，完整歷程見 SYSTEM_STATE.json 對應區塊與 06_VERSION_HISTORY.md）。CURRENT_RUNTIME_PHASE=PHASE_C_PRODUCTION_NOTIFY_ACTIVE：TDX_ROADEVENT_FETCH_ENABLED／QUEUE_INGRESS_ENABLED／PRODUCTION_NOTIFY_ENABLED 皆為 "true"，TDX_CCTV_METADATA_REFRESH_ENABLED 仍為 "false"。雲端治理：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源。詳見 SYSTEM_STATE.json 的 cloudSyncGovernance。觀察中（非工作項，不是待辦）：第一筆真實 TDX 觸發的 LINE 正式通知尚待現場證據；一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數 |
-| Latest Completed Version | V2.4.1 |
-| Known Blocker | 無 blocker。第一筆真實 TDX 觸發的正式 LINE 通知（Phase C 啟用後）尚未取得現場證據確認端對端成功——REAL_WORLD_CONFIRMATION_PENDING，非缺陷，僅為觀察中項目。既有兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且 CCTV_RUNTIME_TDX_CALLS 仍為 0。還原/緊急關閉程序見 07_KNOWN_ISSUES.md（TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 改回 false 即可立即關閉 TDX 正式通知，FETCH/QUEUE 可繼續 true，不需 rollback 整套程式） |
+| Current Task | none（無進行中工作）。Latest completed task = V2_4_2_PBS_AI_LINE_INFORMATION_FIDELITY_AND_POLICY_FIX，status = SEALED（前序 V2_4_0_PHASE_A_TDX_FETCH_ONLY_ENABLE／V2_4_0_PHASE_B_QUEUE_OBSERVE_ENABLE／V2_4_1_PHASE_C_PRODUCTION_NOTIFY_IMPLEMENTATION／V2_4_1_PRODUCTION_NOTIFY_CANONICAL_RECONCILIATION 亦為 SEALED，完整歷程見 SYSTEM_STATE.json 對應區塊與 06_VERSION_HISTORY.md）。CURRENT_RUNTIME_PHASE=PHASE_C_PRODUCTION_NOTIFY_ACTIVE：TDX_ROADEVENT_FETCH_ENABLED／QUEUE_INGRESS_ENABLED／PRODUCTION_NOTIFY_ENABLED 皆為 "true"，TDX_CCTV_METADATA_REFRESH_ENABLED 仍為 "false"。雲端治理：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源。詳見 SYSTEM_STATE.json 的 cloudSyncGovernance。V2.4.2 修正了 LINE 訊息資訊遺失（PBS comment/sourceDetail 未曾顯示）與 AI 通報政策（過度以「會不會壅塞」為唯一依準）。觀察中（非工作項，不是待辦）：第一筆真實 TDX 觸發的 LINE 正式通知尚待現場證據；EVENT_ID 11509010029-5（國3 81.3K 追撞）LINE 未發送的確切失敗階段尚待真實 Worker Logs 確認；一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數 |
+| Latest Completed Version | V2.4.2 |
+| Known Blocker | 無 blocker。第一筆真實 TDX 觸發的正式 LINE 通知尚未取得現場證據確認端對端成功——REAL_WORLD_CONFIRMATION_PENDING，非缺陷，僅觀察中。EVENT_ID 11509010029-5（國3 81.3K 追撞，2026-09-01）LINE 未發送——Queue retry 架構正常（MAX_QUEUE_RETRIES=3，同 wrangler.jsonc），確切失敗階段本 session 無法獨立查證（無 Worker Logs 權限），未臆測、未改 retry 邏輯。既有額度限制（TDX API、LINE OA）非本專案缺陷。還原程序見 07_KNOWN_ISSUES.md（TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 改回 false 即可關閉，FETCH/QUEUE 可繼續 true） |
 | Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 無待辦。觀察中：第一筆真實 TDX 觸發的正式 LINE 通知，取得現場證據後回頭確認 端對端成功／CCTV（Freeway 限定）／Observatory 記錄完整；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計）。緊急關閉 TDX 正式通知只需將 TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 改回 false，FETCH/QUEUE 可繼續 true，不需 rollback 整套程式 |
-| Export Generated At | 2026-09-01T14:20:01.767Z |
+| Next Action | 無待辦。觀察中：第一筆真實 TDX 觸發的正式 LINE 通知，取得現場證據後回頭確認 端對端成功／CCTV（Freeway 限定）／Observatory 記錄完整；EVENT_ID 11509010029-5 需要 Claude Browser／Cloudflare Dashboard 讀取真實 Worker Logs 才能確認確切失敗階段與 root cause，屆時才決定是否需要最小 reliability 修正；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計）。緊急關閉 TDX 正式通知只需將 TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 改回 false，FETCH/QUEUE 可繼續 true，不需 rollback 整套程式 |
+| Export Generated At | 2026-09-01T16:07:52.641Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## V1.9.9 Phase 1 封版（2026-08-28，另一個 session 完成，本 Cloud Session 未參與，port 進本模板僅為維持 template↔engineering-memory 一致）

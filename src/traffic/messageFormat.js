@@ -368,11 +368,11 @@ function buildRoadLines(event) {
   const structuredKmLine =
     event.startKM !== undefined || event.endKM !== undefined ? formatKmRange(event.startKM, event.endKM) : '';
   if (structuredKmLine) {
-    return { firstLine, secondLine: structuredKmLine, mapUrl };
+    return { firstLine, secondLine: structuredKmLine, mapUrl, roadDirection, sectionLabel };
   }
 
   if (typeof event.displayKM === 'number' && Number.isFinite(event.displayKM)) {
-    return { firstLine, secondLine: formatKM(event.displayKM), mapUrl };
+    return { firstLine, secondLine: formatKM(event.displayKM), mapUrl, roadDirection, sectionLabel };
   }
 
   // Fallback (no KM recognizable at all, structured or displayKM): keep
@@ -390,7 +390,126 @@ function buildRoadLines(event) {
   // happens to duplicate the human location text already shown in
   // `sectionLabel` on line 1.
   if (secondLine && secondLine === sectionLabel) secondLine = '';
-  return { firstLine, secondLine, mapUrl };
+  return { firstLine, secondLine, mapUrl, roadDirection, sectionLabel };
+}
+
+// V2.4.2 — V2_4_2_PBS_AI_LINE_INFORMATION_FIDELITY_AND_POLICY_FIX.
+//
+// Production repro (2026-09-01): a 竹60鄉道坍方 event's PBS `comment` and
+// the AI's own `reason` both correctly captured "道路完全阻斷、多車受困",
+// but the LINE message that actually reached drivers still fell all the
+// way down to a generic "請留意路況" — because, structurally, NOTHING in
+// this file has ever read `event.description`'s own text into the
+// message body (only `TYPE_IMPACT_LINES`'s fixed per-type sentence), and
+// `event.sourceDetail` (PBS's own "誰通報的" field, e.g. "熱心聽眾"/
+// "新竹市警察局勤務中心") was never read by this file AT ALL. Root cause
+// confirmed by direct code reading, not a single-event guess — see this
+// round's own final report for the full PBS raw -> normalize -> Queue ->
+// AI -> LINE trace (`INFORMATION_LOSS_FILE`/`_FUNCTION`/`_REASON`).
+//
+// THREE-LAYER ARCHITECTURE this round establishes explicitly:
+//   SOURCE FACTS (PBS/TDX normalized fields — road/direction/KM/
+//     description/sourceDetail/blockedLanes) -> AI DECISION (notify/
+//     impact/reason — a JUDGMENT, never re-shown as if it were a fact,
+//     per order section 十五) -> LINE PRESENTATION (this file).
+// This file only ever renders SOURCE FACTS — `event.description`/
+// `event.sourceDetail`/`event.blockedLanes` — never an AI decision
+// object's own `reason` text (that never reaches this file's arguments
+// at all; see aiApprovedPbsBroadcast.js's own call site, which passes
+// only the plain normalized `event`).
+//
+// `buildSourceFactLine` is deliberately PBS-only (`event.source==='pbs'`)
+// — this file's OWN pre-existing header comment already establishes why
+// TDX's raw `Description` field must never be dumped onto a message (the
+// V1.2C-era production bug this file was built to prevent): TDX's
+// free-text description was observed to be long/noisy, structurally
+// unlike PBS's own typically-short human-typed `comment`. TDX's own
+// STRUCTURED facts (`blockedLanes`, a real TDX Impact.BlockedLanes
+// count) get their own dedicated, source-agnostic line below instead —
+// order section 十六's own "若 TDX 欄位目前不足，列 NON_BLOCKER" for
+// anything beyond that (TDX normalizer itself is NOT touched this round).
+const SOURCE_FACT_MAX_CHARS = 60;
+const SOURCE_DETAIL_MAX_CHARS = 40;
+
+// Same three digit-before-unit shapes pbs/normalize.js's own
+// DISPLAY_KM_*_PATTERN constants already parse (duplicated locally, same
+// "each module stays independently readable" convention already used
+// throughout this project — see e.g. this file's own truncateForDebug-
+// style helpers) — here used only to strip a KM mention that's already
+// shown on its own line (`secondLine`) from the fact line, so the two
+// lines don't visibly repeat the same kilometre marker. An optional
+// trailing "處" is also consumed ("23.5公里處" -> stripped whole), never
+// required.
+const FACT_KM_STRIP_PATTERNS = [
+  /\d+(?:\.\d+)?\s*K\s*\+\s*\d{1,3}處?/i,
+  /\d+(?:\.\d+)?\s*K(?!\s*\+)處?\b/i,
+  /\d+(?:\.\d+)?\s*公里處?/,
+];
+
+function stripKmMention(text) {
+  let out = text;
+  for (const pattern of FACT_KM_STRIP_PATTERNS) {
+    out = out.replace(pattern, '');
+  }
+  return out;
+}
+
+/**
+ * SOURCE FACTS layer — carries PBS's own free-text `comment` (already on
+ * `event.description`, see pbs/normalize.js) through to the driver,
+ * capped so a long comment can never dominate the message ("不要全文照貼
+ * 垃圾資訊" — order section 八). Never a second classification/decision:
+ * this is the SAME text the AI decision engine itself already saw (see
+ * pbs/aiCandidate.js#buildAiCandidate's own `comment` field) and the SAME
+ * text messageFormat.js already reads for anomaly-detail/displayKM
+ * extraction elsewhere in this file/pbs/normalize.js — just, for the
+ * first time, also shown to the driver.
+ *
+ * @returns {string|null}
+ */
+function buildSourceFactLine(event, { roadDirection, sectionLabel } = {}) {
+  if (!event || event.source !== 'pbs') return null;
+  const raw = (event.description || '').trim();
+  if (!raw) return null;
+  // Never repeat text already shown verbatim on the road/section line.
+  if (raw === roadDirection || raw === sectionLabel) return null;
+  const cleaned = stripKmMention(raw).replace(/\s{2,}/g, ' ').trim();
+  const text = cleaned || raw;
+  return text.length > SOURCE_FACT_MAX_CHARS ? `${text.slice(0, SOURCE_FACT_MAX_CHARS)}…` : text;
+}
+
+/**
+ * TDX's own structured Impact.BlockedLanes count (see tdx/normalize.js's
+ * `blockedLanes` field) — a real number, never free text, so this is
+ * safe for EVERY source (not gated to TDX specifically, though PBS never
+ * sets this field today) and adds no new keyword/regex judgment. Mirrors
+ * broadcastPolicy.js's own `hasStructuredLaneBlockage` reasoning: only a
+ * genuine positive numeric count counts.
+ *
+ * @returns {string|null}
+ */
+function buildBlockedLanesLine(event) {
+  const raw = event && event.blockedLanes;
+  if (raw === undefined || raw === null || raw === '') return null;
+  const count = Number(raw);
+  if (!Number.isFinite(count) || count <= 0) return null;
+  return `⚠️ 封閉${count}車道`;
+}
+
+/**
+ * "通報：XXX" — PBS's own `sourceDetail` field (raw.srcdetail, e.g.
+ * "熱心聽眾"/"新竹市警察局勤務中心"/"高速公路局交控中心"), shown VERBATIM,
+ * never guessed or inferred when absent (order section 九: "只顯示原始
+ * 提供的來源。AI 不得猜通報單位。"). Source-agnostic (checks the field,
+ * not `event.source`) — safe for any future source that populates it.
+ *
+ * @returns {string|null}
+ */
+function buildSourceDetailLine(event) {
+  const detail = (event && event.sourceDetail ? String(event.sourceDetail) : '').trim();
+  if (!detail) return null;
+  const truncated = detail.length > SOURCE_DETAIL_MAX_CHARS ? `${detail.slice(0, SOURCE_DETAIL_MAX_CHARS)}…` : detail;
+  return `通報：${truncated}`;
 }
 
 /**
@@ -400,7 +519,7 @@ function buildRoadLines(event) {
  *   hasn't started yet but falls inside the 60-minute window.
  */
 export function formatEventMessage(event, { forecast = false, minutesUntilStart = null } = {}) {
-  const { firstLine, secondLine, mapUrl } = buildRoadLines(event);
+  const { firstLine, secondLine, mapUrl, roadDirection, sectionLabel } = buildRoadLines(event);
   // V1.8.6.5: 📍 地圖 line — see the module comment above for why this is
   // independent of which location-label tier won firstLine.
   const mapLine = mapUrl ? `📍 地圖 ${mapUrl}` : null;
@@ -461,11 +580,21 @@ export function formatEventMessage(event, { forecast = false, minutesUntilStart 
     : (event.direction === '雙向' && BIDIRECTIONAL_IMPACT_LINES[event.type]) || TYPE_IMPACT_LINES[event.type] || '請留意路況';
   const updatedHHMM = toTaipeiHHMM(event.updatedAt);
 
+  // V2.4.2 — SOURCE FACTS layer (see this file's own architecture note
+  // above buildSourceFactLine). Computed AFTER firstLine/secondLine so
+  // the de-dup check against roadDirection/sectionLabel is accurate.
+  const factLine = buildSourceFactLine(event, { roadDirection, sectionLabel });
+  const blockedLanesLine = buildBlockedLanesLine(event);
+  const sourceDetailLine = buildSourceDetailLine(event);
+
   const lines = [
     `${emoji} ${label}`,
     firstLine,
     secondLine,
+    factLine,
+    blockedLanesLine,
     impactLines,
+    sourceDetailLine,
     mapLine,
     updatedHHMM ? `🕒 ${updatedHHMM}更新` : null,
   ].filter(Boolean);

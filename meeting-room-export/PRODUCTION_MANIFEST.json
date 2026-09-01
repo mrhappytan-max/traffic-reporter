@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "project": "traffic-reporter",
-  "verifiedFromRepoAt": "2026-09-01T14:20:01.767Z",
-  "verifiedFromCommit": "d66e2cbfe1e3408f08478dd99d334620e2b5c866",
+  "verifiedFromRepoAt": "2026-09-01T16:07:52.641Z",
+  "verifiedFromCommit": "051211ae361f35dc3a68ef452bbe0716c6b5ff57",
   "note": "Everything in this file is derived from wrangler.jsonc/src/index.js in THIS repo checkout, verifiable by any future reader by re-running the export script. Fields the repo cannot itself verify (real Cloudflare Dashboard state) are explicitly marked unverified, never guessed.",
   "worker": {
     "name": "traffic-reporter",
@@ -188,5 +188,11 @@
     "currentRuntimePhase": "PHASE_C_PRODUCTION_NOTIFY_ACTIVE (2026-09-01, same day, later rounds) -- see SYSTEM_STATE.json's own V2_4_0_PHASE_A_TDX_FETCH_ONLY_ENABLE / V2_4_0_PHASE_B_QUEUE_OBSERVE_ENABLE / V2_4_1_PHASE_C_PRODUCTION_NOTIFY_IMPLEMENTATION / V2_4_1_PRODUCTION_NOTIFY_CANONICAL_RECONCILIATION blocks for the full phase-by-phase history. TDX_ROADEVENT_FETCH_ENABLED/QUEUE_INGRESS_ENABLED/PRODUCTION_NOTIFY_ENABLED are now all \"true\"; TDX_CCTV_METADATA_REFRESH_ENABLED stays \"false\". A TDX-origin AI notify:true event can now reach a real LINE push to real subscribers.",
     "scopeDiscipline": "Explicitly unchanged: CCTV's entire metadata-cache -> camera-selection -> compose -> R2-put -> R2-read-back-verify -> LINE pipeline (V2.3.3, untouched); VD/CMS/other Traffic APIs (never restored); CCTV metadata refresh Cron (still MANUAL/ON-DEMAND). CCTV_RUNTIME_TDX_CALLS=0. incidentSuppression.js was revised in V2.4.1 (see SYSTEM_STATE.json's own V2_4_1_PHASE_C_PRODUCTION_NOTIFY_IMPLEMENTATION block) -- the AI-approved path now trusts the AI's own sameIncident/materialChange judgment, with only a short 10-minute near-simultaneous-duplicate collision defense remaining.",
     "testEvidence": "New test/tdxUnifiedAiPipeline.test.js (the order's own 17 CASE list) and test/tdxPhaseCProductionNotify.test.js (the order's own 20 CASE list), both fully passing, plus 8+ existing suites retrofitted for the intentional TDX-legacy-retirement. Full regression 1774/1740/34, NEW FAILURES=0 against the pre-round 34-item known-flaky baseline (as of the V2.4.1 code round; this later config-only reconciliation ran targeted verification only, per its own explicit minimal-scope authorization)."
+  },
+  "v242LineInformationFidelityAndPolicyFix": {
+    "note": "V2.4.2 (2026-09-01). TARGETED FIX, no config/binding/var change from V2.4.1 -- bindings.vars above are byte-for-byte unchanged this round.",
+    "fixScope": "src/traffic/messageFormat.js gains 3 new SOURCE-FACTS lines (PBS comment fact line, sourceDetail \"通報：XXX\" line, structured blockedLanes line) -- purely additive. src/pbs/aiDecisionEngine.js SYSTEM_PROMPT rewritten (text only, schema/cache/call-sites unchanged) to reframe the AI notify question from \"will this cause congestion\" to \"is this worth a driver knowing ahead of time\", with explicit accident/predictive-hazard/normal-congestion policy anchors.",
+    "knownIssueResolved": "PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER (SYSTEM_STATE.json) -- RESOLVED_V2_4_2.",
+    "eventReliabilityInvestigation": "EVENT_ID 11509010029-5 (國3 81.3K multi-vehicle collision) -- LINE never sent after Queue retries exhausted. Read-only architecture investigation only (Queue retry design confirmed sound); the specific failure stage/root cause for this historical event could NOT be independently confirmed (no Cloudflare Worker Logs access from this session) -- no reliability code change made. See SYSTEM_STATE.json V2_4_2 block for the full record."
   }
 }
