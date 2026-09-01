@@ -39,10 +39,10 @@
     "openStructuralQuestion": "TWO trees currently hold the same canonical content: engineering-memory/ (what the mirror syncs) and meeting-room-export/ (what scripts/export-meeting-room.mjs generates). They are kept in step by hand today, which is exactly the drift risk this governance exists to prevent. Needs a human decision: either point the generator at engineering-memory/, or retire one tree. NOT decided unilaterally."
   },
   "git": {
-    "sourceMainHead": "b53c9815048c4bd75f06240a14a26e2c749e832a",
+    "sourceMainHead": "6a57f855b41c56be1b14a612a14d693d3606ab4b",
     "sourceMainHeadResolvedFrom": "origin/main",
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
-    "sourceWorkingTree": "dirty (7 changed source file(s))",
+    "sourceWorkingTree": "dirty (2 changed source file(s))",
     "selfReferenceNote": "sourceMainHead is the official main commit this snapshot DESCRIBES; exportArtifactCommit is the commit that CONTAINS this artifact and is intentionally never equal to it. Requiring the two to match would create a Git self-reference loop (every export changes the file, which changes the commit, which invalidates the recorded head). sourceMainHead is read from origin/main and is therefore stable across re-runs and across whichever branch the export was generated on.",
     "checkoutNote": "The transient checkout (branch/HEAD/date) this export happened to run from is deliberately NOT recorded here. It changes on every commit and would make every release look like a content change, defeating delta sync; it also says nothing about the snapshot itself. The snapshot is identified by sourceMainHead alone. Local sync evidence in .engineering/ still records the checkout for auditing.",
     "workingTreeNote": "sourceWorkingTree excludes meeting-room-export/, which this generator dirties by definition; it answers 'is the source tree clean', not 'did the export just write files'."
@@ -433,69 +433,17 @@
       "task": "PRODUCTION_VERSION_LINEAGE_RECONCILIATION",
       "status": "SEALED",
       "sealedAt": "2026-08-25",
-      "sealedBy": "human directive (路況工程部 正式版本線校正施工令)",
-      "whatWasWrong": "兩層問題。表層：V1.8.7.7 之後有 7 次真正改變 Production runtime 行為的更新已 merge/deploy，卻只寫任務名稱、沒有配正式版本號。深層（更嚴重）：唯一權威來源 src/version.js 自 2026-08-21 的 V1.8.6.9 之後從未更新過，因此整個 V1.8.7.x 系列期間 GET /version 都在回報 V1.8.6.9。",
-      "rootCause": "有三個地方各自以為自己知道版本：src/version.js（餵 /version，值為 V1.8.6.9）、Engineering Memory export（掃 commit message 取最新 V 字串，值為 V1.8.7.7）、ENGINEERING_STATUS.md（人工標記）。從 commit message 掃出來的版本號是沒有人負責的版本號——有人剛好打了就會動，沒人打就停住。",
-      "whatChanged": "(1) src/version.js 確立為 ONE CANONICAL VERSION SOURCE，APP_VERSION 校正為 V1.8.7.14；(2) scripts/export-meeting-room.mjs 改讀 src/version.js，commit message 掃描降級為 drift 警告，且讀不到權威來源時直接拋錯而非退回猜測；(3) 06_VERSION_HISTORY.md 補記 V1.8.7.8～V1.8.7.14 七列；(4) 新增 test/versionLineage.test.js 七項測試鎖住規則的形狀。",
-      "whatDidNotChange": "沒有 rebase、沒有 amend、沒有 force push、沒有改動任何歷史 commit timestamp、沒有偽造部署、沒有把未上線的東西寫成已上線。本輪未修改任何 CCTV／TDX／PBS／LINE policy 程式（施工令第十條）。",
-      "versionsAssigned": {
-        "V1.8.7.8": "f5a339a — TDX Quota Protection / PBS_ONLY MODE（2026-08-23）",
-        "V1.8.7.9": "21c1a42 — Accident-Only Proactive LINE Push ＋ CCTV 影像恢復（2026-08-23）",
-        "V1.8.7.10": "fecb818 — PBS_ONLY 下不得要求 TDX 對應（2026-08-24）",
-        "V1.8.7.11": "fc43549 — Service Area Gate（八堵事件）（2026-08-24）",
-        "V1.8.7.12": "990237c — Location Quality Gate ＋ 播報追溯斷點修復（台68 事件）（2026-08-24）",
-        "V1.8.7.13": "678f0bb — PBS 國道事故 CCTV Enrichment（國3 96K+700 事件）（2026-08-25）",
-        "V1.8.7.14": "951f547 — CCTV 官方名冊恢復＋永久保存修正（國1 93K 事件）（2026-08-25）"
-      },
-      "governanceOnlyCommits": "其餘 79 個 commit 皆為純文件／Engineering Memory／governance／Drive sync 工具／export 凍結，未觸及 src/、wrangler.jsonc 或 data/，依規則不占產品版本號。唯一的例外檢查：56753bf 雖動到 package.json，但只新增一個 npm script，屬工具而非 runtime。",
-      "canonicalVersionSource": "src/version.js 的 APP_VERSION。GET /version、/admin/deployment-status、Engineering Memory export 全部由它衍生。",
-      "permanentRule": "任何進 Production 且改變 runtime 行為的變更，必須在同一個 commit 內 bump src/version.js 的 APP_VERSION。任務名稱永遠不能取代版本號。正式產品只有一條連續版本線 V1.8.7.x，不得建立 V1／V2／V57.x／CCTV V1 等平行版本線。純文件／治理／工具／測試整理不 bump 版本，但仍須有 commit。",
-      "versionDrift": "已消除於程式與文件層：src/version.js、GET /version、/admin/deployment-status、06_VERSION_HISTORY.md、SYSTEM_STATE.json 現在同為 V1.8.7.14。",
-      "productionVerificationNote": "PRODUCTION_DEPLOYED_COMMIT 與 /version 的實機值無法在本 sandbox 直接觀測——對 Production 網域的 outbound HTTPS 被 egress proxy 以 403 阻擋（既有的長期限制）。本輪回報的 /version 值是由已部署程式碼推導的事實（git 可證），不是實機讀數，且已如此標示。bump APP_VERSION 本身會觸發一次部署，這是 Version Reconciliation deployment，未夾帶任何產品修改。",
-      "githubSeal": "PASS",
-      "githubEngineeringMemory": "SEALED",
-      "claudeDriveUpload": "NO",
-      "doNotMisread": [
-        "不要在 src/version.js 以外的地方宣告產品版本號——其他地方一律 import 或衍生。",
-        "不要讓 Engineering Memory export 回頭從 commit message 取版本；test/versionLineage.test.js 第 6 項就是在擋這件事。",
-        "不要把 V1.8.7.8～V1.8.7.14 當成新部署——那是既有部署的補記，歷史 commit 未被改寫。",
-        "不要建立平行版本線；正式產品永遠只有 V1.8.7.x 一條。",
-        "不要用任務名稱（CCTV_METADATA_RECOVERY 之類）當版本號。",
-        "不要對 Google Drive 做任何寫入——Claude 唯讀，GitHub 是唯一正式寫入來源。"
-      ],
-      "openFollowUp": "(1) 約 33 項過期斷言（見 CCTV_METADATA_RECOVERY_V1 的 openFollowUp 與 07_KNOWN_ISSUES.md）仍待獨立施工令處理。(2) 待有 Production 網路存取的 session 出現時，實機讀 /version 確認 appVersion = V1.8.7.14、deployedCommit = 本輪最終 main HEAD。",
-      "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
+      "releaseVersion": "V1.8.7.14",
+      "sealCommit": "n/a (governance-only, no single sealCommit recorded)",
+      "summary": "Production Version Lineage Reconciliation：src/version.js 自 2026-08-21 起停在 V1.8.6.9，期間 V1.8.7.0～V1.8.7.14 全部上線但 GET /version 一直回報舊版本，因三個地方（src/version.js／commit-message 掃描／ENGINEERING_STATUS.md 人工標記）各自以為自己知道版本。修正：src/version.js 確立為唯一權威、export script 改讀它（commit-message 掃描降級為 drift 警告，讀不到權威來源直接拋錯而非猜測）、06_VERSION_HISTORY.md 補記 V1.8.7.8～V1.8.7.14 七列、新增 test/versionLineage.test.js 七項測試鎖住規則形狀。永久規則：任何改變 runtime 行為的變更必須同一個 commit 內 bump APP_VERSION，任務名稱不能取代版本號，只有一條連續版本線。"
     },
     {
       "task": "CCTV_METADATA_RECOVERY_V1",
       "status": "SEALED",
       "sealedAt": "2026-08-25",
-      "sealedBy": "human directive (路況工程部 CCTV 官方名冊恢復＋架構修正施工令)",
-      "realWorldTrigger": "2026-08-25 19:01 國道一號 93K 事故：LINE 文字正常推播、完全沒有圖片，Pipeline Trace 記錄 cctvSkippedByReason = metadata-cache-unavailable。",
-      "rootCause": "以 Repo 真實程式確認，非推測。freewayCctvMetadataCache.js 以 7 天 expirationTtl 寫入攝影機名冊，而這把 KV key 唯一的寫入者是 hsinchuCctvProbe.js 的 Admin-Auth 管理探針；該探針在 TRAFFIC_SOURCE_MODE=PBS_ONLY 下無法執行，因為 tdx/auth.js 會拒發 token。最後一次探針滿 7 天後 KV 自行刪除名冊，且沒有任何被允許的路徑能補回，形成死結。",
-      "whatChanged": "三件事，全在 metadata 層：(1) 移除 expirationTtl，key 不再自行消失；(2) 寫入只能升級不能降級——空的或格式錯誤的 record set 一律拒絕（refused-empty-record-set），此模組沒有任何路徑可以刪除名冊；(3) 打包官方 NFB open data 名冊 1943 筆（國1 510／國3 728）為地板，KV 完全空白時仍取得可用鏡頭清單。另新增 /health 攝影機基礎資料卡片（來源／筆數／資料日期，逾 30 天標示過舊）。",
-      "whyThisEndsTheDeadlock": "名冊不再依賴 TDX 是否開啟、也不再依賴 KV 是否存活。恢復在 deploy 當下自動發生，不需要對 Production KV 做任何寫入——這同時解決了本沙盒 egress 403 無法寫 Production 的限制。",
-      "verification": "以完全空的 KV 重跑 19:01 該筆事件，四格全中（CCTV-N1-S-91.800-M／CCTV-N1-S-94.900-M／CCTV-N1-N-92.675-M／CCTV-N1-N-94.030-L-新竹公道五路）；國3 96.7K 同樣四格全中。真實資料，非 mock。",
-      "cost": "Worker bundle gzip 749.54 KiB → 826.49 KiB（+77 KiB，上限 3 MB）。TDX 呼叫數 0——名冊在 build 時打包，執行期只從記憶體讀。",
-      "testResult": "npm test 共 1272 項；連續 4 次量測為 38／38／38／39 失敗，NEW FAILURES = 0、SILENTLY FIXED = 0，以同一輪 git stash -u 對照乾淨 checkout 驗證。新增 test/cctvMetadataRecovery.test.js 17 項全數通過。多出的那 1 次是 deploymentStatus 已記載的全套執行雜訊。",
-      "testsUpdatedNotWeakened": "5 個既有測試原本斷言「KV 空的或壞掉 = 沒有鏡頭」。那個斷言本身就是缺陷，因此逐一改為驗證新保證，並完整保留各自真正的不變量（絕不回頭呼叫 TDX、失敗時 fail-closed 成純文字）。真的需要「這條路沒有鏡頭」情境的測試，改為餵入另一條路的可用名冊，而不是空陣列——沿用 pbsAccidentCctvEnrichment.test.js 第 9 項既有慣例。",
-      "importantCorrection": "本輪發現並更正了工程記憶裡一筆錯誤的 Root Cause。舊記載說 13 項 CCTV/JPEG 測試失敗是「依賴 Workers-only 的 .wasm codec，沙盒無法載入」。這是錯的：真正原因是沙盒 node_modules 不完整，@jsquash/jpeg 沒安裝（它是正式 dependencies 且在 package-lock.json 內，正常 npm ci 一定會裝）。安裝後 12 個檔案全部正常執行，並揭露約 36 項長期被誤判成環境問題的過期斷言。詳見 07_KNOWN_ISSUES.md。",
-      "githubSeal": "PASS",
-      "githubEngineeringMemory": "SEALED",
-      "claudeDriveUpload": "NO",
-      "doNotMisread": [
-        "不要把 expirationTtl 加回攝影機名冊——那正是這次的缺陷本身。影格才是快取，名冊是參考資料。",
-        "不要把空的 record set 當成合法寫入；refused-empty-record-set 是刻意的保護。",
-        "不要為了取得名冊而重開 TDX——內建名冊的存在就是為了讓這件事永遠不必要。",
-        "不要因為名冊有 1943 筆就新增未驗證道路；CCTV_SUPPORTED_ROADS 仍只有國道一號與國道三號。",
-        "不要手動編輯 data/cctv/generated/freewayCctvInventory.js——它是產生物，改來源檔後跑 npm run build:cctv-inventory。",
-        "不要把 07_KNOWN_ISSUES.md 的 38 項基準線當成新回歸；判斷回歸一律以同一輪 git stash -u 對照為準。",
-        "不要對 Google Drive 做任何寫入——Claude 唯讀，GitHub 是唯一正式寫入來源。"
-      ],
-      "openFollowUp": "約 33 項過期斷言（動態路肩推播已關閉、PBS 已成為 CCTV 可信來源之後未同步更新的測試）現在會真的執行並失敗。本輪未修，因為施工令範圍是 CCTV 名冊恢復，無關重構被明確禁止。這是目前最大的一筆技術債，需要一張獨立施工令。",
-      "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending.",
       "releaseVersion": "V1.8.7.14",
-      "versionNote": "本輪施工當下尚未配發正式版本號（程式已 merge main 並自動部署後才收到版本治理令）。正式版本號由隨後的 PRODUCTION_VERSION_LINEAGE_RECONCILIATION 補配為 V1.8.7.14，對應 commit 951f547。任務名稱 CCTV_METADATA_RECOVERY_V1 是工程標籤，不是版本號。"
+      "sealCommit": "n/a (see git log for CCTV_METADATA_RECOVERY_V1 commits)",
+      "summary": "CCTV Metadata Recovery：唯讀查核先前誤記「Workers-only .wasm codec 沙盒無法載入」為根因，實為 @jsquash/jpeg 未安裝於沙盒 node_modules；npm install 後 12 個 CCTV/JPEG 測試檔全部可執行，揭露約 33-36 項因此長期被跳過的過期斷言（後續列為技術債 openFollowUp，非本輪回歸）。教訓：合理但未經驗證的 Root Cause 會靜音真實訊號。"
     },
     {
       "task": "DRIVE_SYNC_GOVERNANCE_V2",
@@ -617,8 +565,8 @@
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-09-01T07:04:15.354Z",
-    "sourceMainHead": "b53c9815048c4bd75f06240a14a26e2c749e832a",
+    "generatedAt": "2026-09-01T07:27:10.018Z",
+    "sourceMainHead": "6a57f855b41c56be1b14a612a14d693d3606ab4b",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
     "historyDir": "_history"
@@ -647,5 +595,13 @@
   "DASHBOARD_ONLY_AI_SWITCH": "RETIRED",
   "KEEP_VARS": "NOT_USED",
   "CONFIG_DRIFT_INCIDENT_V2_0_2": "Dashboard-only PBS_AI_DECISION_ENABLED was removed by later Wrangler deployment; fixed by declaring it in wrangler.jsonc",
-  "PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER": "KNOWN_ISSUE"
+  "PBS_PRECISE_COMMENT_LOCATION_NOT_USED_BY_LINE_FORMATTER": "KNOWN_ISSUE",
+  "V2_4_0_PHASE_A_TDX_FETCH_ONLY_ENABLE": {
+    "enabledAt": "2026-09-01",
+    "CURRENT_RUNTIME_PHASE": "PHASE_A_FETCH_ONLY",
+    "TDX_ROADEVENT_FETCH_ENABLED": "true",
+    "TDX_ROADEVENT_QUEUE_INGRESS_ENABLED": "false",
+    "TDX_CCTV_METADATA_REFRESH_ENABLED": "false",
+    "note": "FETCH ONLY. Queue ingress stays false -- a fetched TDX event is never enqueued, never reaches AI, never LINE (debugPush.js suppressLineNotify unchanged). No APP_VERSION bump (config-only enablement of already-built V2.4.0)."
+  }
 }

@@ -128,7 +128,16 @@
     //
     // TDX_ROADEVENT_FETCH_ENABLED — Phase A gate: may the Cron path fetch
     // TDX freeway/highway RoadEvent data at all this tick.
-    "TDX_ROADEVENT_FETCH_ENABLED": "false",
+    //
+    // V2_4_0_PHASE_A_TDX_FETCH_ONLY_ENABLE (2026-09-01): flipped on.
+    // FETCH ONLY — TDX_ROADEVENT_QUEUE_INGRESS_ENABLED stays "false" right
+    // below, so a fetched TDX event is still never enqueued onto
+    // PBS_AI_QUEUE, never reaches AI, and can never produce a real LINE
+    // push (see debugPush.js's own suppressLineNotify hardcoding, which
+    // this round did not touch). This switch alone only lets
+    // scheduled.js's own fetch/normalize/dedupe/service-area-filter logic
+    // run against real TDX Freeway/Highway RoadEvent data for observation.
+    "TDX_ROADEVENT_FETCH_ENABLED": "true",
     // TDX_ROADEVENT_QUEUE_INGRESS_ENABLED — Phase B gate: may a fetched
     // new/updated TDX event be enqueued onto PBS_AI_QUEUE for AI
     // judgment. Even when true, TDX-origin candidates never reach a real
