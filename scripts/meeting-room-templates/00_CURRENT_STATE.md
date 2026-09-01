@@ -247,6 +247,62 @@ authority、Windows PBS filter、LINE policy、V2.1.0 的 ctx.waitUntil 架構�
   **下一個 Agent：不得接著開始「AI 一小時歷史上下文」、driverSummary、
   formatter 修正或其他功能。**
 
+## V2.4.0 封版（2026-09-01）— TDX_FREEWAY_PROVINCIAL_TO_UNIFIED_AI_PIPELINE
+
+MINOR（架構階段）：TDX 國道/省道 RoadEvent 重新加入同一條 Queue／同一個 AI
+決策引擎，透過新的 Recent Incident Memory 跨來源協調，**Phase B（尚未真正
+推播 LINE）**——不是 Phase C。
+
+- 固定架構：TDX Freeway＋TDX Highway＋PBS Windows → 統一事件格式 →
+  serviceArea 閘門 → Recent Incident Memory（Cloudflare KV，8h TTL）→
+  唯一一個 Queue（沿用 `PBS_AI_QUEUE`）→ 唯一一個 AI 引擎 → AI 輸出
+  `sameIncident`／`materialChange`／`notify` → LINE → CCTV → R2 讀回驗證
+  （V2.3.3 原封不動）
+- 來源角色：TDX Freeway＝國道主要權威、TDX Highway＝省道主要權威、
+  PBS＝全道路即時＋TDX備援；`WAIT_FOR_TDX_BEFORE_NOTIFY=NO`，
+  `PBS_FREEWAY_DROP=NO`，`PBS_HIGHWAY_DROP=NO`——誰先到、誰有效就先進 AI
+- 只復原 Freeway＋Highway RoadEvent 抓取，明確**不**復原 VD／CMS／其他
+  Traffic API／CCTV metadata Cron；`CCTV_RUNTIME_TDX_CALLS` 維持 0，CCTV
+  metadata refresh 維持 MANUAL/ON-DEMAND
+- `wrangler.jsonc` 新增三個最小粒度開關（canonical，非 Dashboard-only），
+  預設全部 `"false"`：`TDX_ROADEVENT_FETCH_ENABLED`、
+  `TDX_ROADEVENT_QUEUE_INGRESS_ENABLED`、
+  `TDX_CCTV_METADATA_REFRESH_ENABLED`——疊加在 `TRAFFIC_SOURCE_MODE` 之上，
+  絕非取代（見 `sourceMode.js#isTdxTokenAccessPermitted`）
+- **`LEGACY_TDX_LINE_PIPELINE = RETIRED_FOR_ROADEVENT`**：
+  `scheduled.js` 的 `broadcastEvents` 不再包含 `summary.allEvents`（TDX
+  自己抓到的事件），即使單獨打開 `TDX_ROADEVENT_FETCH_ENABLED` 也無法讓
+  TDX 事件回到舊 V1.5 硬規則 LINE 路徑
+- 新模組 `src/traffic/incidentMemory.js`（KV key
+  `traffic:incident-memory:v1`，8h TTL，`MEMORY_KV_GETS_PER_EVENT<=1`／
+  `MEMORY_KV_PUTS_PER_EVENT<=1`，`WRITE_ON_CHANGE=YES`，road+direction →
+  1000m/1.5km 內 → 最近 8h → 最多 5 筆候選的三層 prefilter，並排除事件
+  自己剛寫入的紀錄，避免 AI decision cache key 誤判為「有新 context」）、
+  `src/tdx/tdxQueueIngress.js`（TDX 新／更新事件送進同一個 `PBS_AI_QUEUE`，
+  沿用 `dedupe.js`／`debugPush.js` 既有 fingerprint／idempotency／訊息
+  建構，絕非第二套 Queue 或第二套訊息格式）
+- AI schema 新增 `sameIncident`／`materialChange`（僅在有 memory context
+  時要求），AI decision cache key 併入 `memoryContextFingerprint`，未提供
+  時與 V2.4.0 前完全相同的 hash（向下相容）
+- Phase B 閘門硬寫死在單一呼叫點（`debugPush.js`：
+  `suppressLineNotify = source === 'freeway' || source === 'highway'`），
+  非任何 `wrangler.jsonc` 變數控制——要進 Phase C（TDX 真正推播 LINE）
+  需要未來一次明確的程式碼變更，絕非改設定值就能達成
+- `incidentSuppression.js` **不大拆**：保留作為短期重複推播安全網，疊加在
+  AI 自己的 8h Memory 再判斷之下，非取代
+- 全量迴歸 1746/1712/34，NEW FAILURES=0（僅跑一次，diff 對照既有 34 筆已知
+  flaky baseline，完全相同）；新增 `test/tdxUnifiedAiPipeline.test.js`
+  （order 自訂 17 個 CASE 全過），另 8 個既有測試檔改寫以反映
+  TDX-legacy-retirement 的刻意行為變更
+- `APP_VERSION` 從 `V2.3.3` 升為 `V2.4.0`
+- **本輪未啟用任何真實 TDX 抓取**：三個新開關全部預設 `"false"`，本輪只
+  建好機制，實際打開（Phase A：FETCH_ONLY）需要另一次明確的人類指示
+- 詳見 `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`／
+  `test/tdxUnifiedAiPipeline.test.js` 的完整記錄。**下一個 Agent：不得
+  自行開啟任何 TDX_ROADEVENT_* 開關、不得自行進 Phase C（移除
+  `suppressLineNotify` 的硬寫死 true）、不得復原 VD/CMS 等其他 TDX
+  功能。**
+
 ## V2.3.3 封版（2026-08-31）— CCTV_R2_READBACK_VERIFY_BEFORE_LINE
 
 PATCH，可靠性加強，不改架構、不改 15 分鐘 TTL、不改 LINE Push 模型、不改 CCTV 選鏡策略。

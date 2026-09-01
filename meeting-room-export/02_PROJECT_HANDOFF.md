@@ -17,10 +17,10 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | 150bafbab0ab8d7922a91e0e6aa8fc410e73c310 |
-| Snapshot generated at | 2026-08-31T06:25:17.943Z |
-| Source working tree | dirty (4 changed source file(s)) |
-| Current version | V2.3.3 |
+| Source main HEAD | b53c9815048c4bd75f06240a14a26e2c749e832a |
+| Snapshot generated at | 2026-09-01T07:04:15.354Z |
+| Source working tree | dirty (7 changed source file(s)) |
+| Current version | V2.4.0 |
 | Current phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
 
 `Source main HEAD` 是這份快照所描述的正式 main commit（取自 `origin/main`），**不是**包含本檔案自己的那個 commit——兩者刻意分開，避免 Git 自我參照循環。詳見 `SYSTEM_STATE.json` 的 `sourceMainHead` / `exportArtifactCommit`。
@@ -98,7 +98,7 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 | 欄位 | 值 |
 |---|---|
-| Latest completed | V2.3.3 |
+| Latest completed | V2.4.0 |
 | package.json version | 0.1.0 |
 | Production status | DEPLOYED |
 | Production verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
@@ -563,6 +563,51 @@ config drift 修正無關，刻意不同時處理兩個不相關問題。
 完整設計理由 → `07_KNOWN_ISSUES.md`／`03_ARCHITECTURE.md`；機器可讀狀態 →
 `SYSTEM_STATE.json` 的 `taskSeal`。**下一個 Agent：不得開始 formatter
 修正；不得實作 driverSummary；不得開始 hourly reminder。**
+
+## V2.1.0～V2.3.3 累計摘要（2026-08-29～2026-08-31，逐版全文見 `06_VERSION_HISTORY.md`／`07_KNOWN_ISSUES.md`）
+
+V2.0.2 之後到 V2.4.0 之間的四個版本，這份精簡接班版未逐版展開，僅摘要現況：
+`ctx.waitUntil()` 已於 V2.1.0 短暫改為 AI 背景執行載體，隨即在 V2.3.0 被
+**唯一一個** Cloudflare Queue（`pbs-ai-processing-queue`／binding
+`PBS_AI_QUEUE`）取代（真實 Production 事故：`ctx.waitUntil()` 背景時間預算
+到期，AI 決策永久遺失）——這是目前的正式架構，`AI_BACKGROUND_EXECUTION=
+CLOUDFLARE_QUEUE`。V2.2.0 把查修頁升級為四層事件生命週期檢視。V2.3.1／
+V2.3.2／V2.3.3 是三個連續 PATCH（LINE 地圖座標直連 fallback、CCTV
+診斷工具修復、CCTV R2 讀回驗證），皆未改架構本身。
+
+## V2.4.0 — TDX_FREEWAY_PROVINCIAL_TO_UNIFIED_AI_PIPELINE（本輪，2026-09-01，Phase B）
+
+TDX 國道/省道 RoadEvent 重新加入 PBS 既有的同一條 Queue／同一個 AI 決策引擎，
+跨來源（PBS＋TDX）同一實體事故的協調交給新的 Recent Incident Memory
+（`src/traffic/incidentMemory.js`，Cloudflare KV，8h TTL）——AI 現在會被
+問「這是不是同一起事故」「有沒有實質變化」，而非各來源獨立各判各的。
+
+**接手一定要知道的三件事**：
+
+1. **這是 Phase B，不是 Phase C**：AI 真的跑、Memory 真的讀寫，但 TDX
+   來源的事件目前**不會**真正推播 LINE（`debugPush.js` 內
+   `suppressLineNotify = source === 'freeway' || source === 'highway'`
+   硬寫死 `true`）。要進 Phase C 需要未來一次明確的程式碼變更，絕非改
+   `wrangler.jsonc` 設定值。
+2. **三個新開關全部預設 `"false"`**：`TDX_ROADEVENT_FETCH_ENABLED`／
+   `TDX_ROADEVENT_QUEUE_INGRESS_ENABLED`／
+   `TDX_CCTV_METADATA_REFRESH_ENABLED`。本輪只建好機制，實際打開
+   （即使只是 Phase A：FETCH_ONLY，觀察真實 TDX 格式/數量，不進 Queue）
+   需要另一次明確的人類指示——**不得自行打開**。
+3. **舊 TDX LINE 路徑已結構性退休**：`scheduled.js` 的
+   `broadcastEvents` 不再包含 TDX 自己抓到的事件，即使單獨打開
+   `TDX_ROADEVENT_FETCH_ENABLED`，TDX 事件也無法回到 V1.5 硬規則 LINE
+   路徑——`LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT`。
+
+CCTV 整條 metadata-cache→選鏡→compose→R2-put→R2-read-back-verify→LINE
+管線（V2.3.3）**完全未觸碰**；`incidentSuppression.js` 保留為短期重複推播
+安全網，未拆除。全量迴歸 1746/1712/34，NEW FAILURES=0。`APP_VERSION`
+V2.3.3→V2.4.0（MINOR）。
+
+完整設計理由與 17 個 CASE 全文 → `07_KNOWN_ISSUES.md`／
+`test/tdxUnifiedAiPipeline.test.js`；架構圖 → `03_ARCHITECTURE.md`。
+**下一個 Agent：不得自行開啟任何 `TDX_ROADEVENT_*` 開關；不得自行進
+Phase C；不得復原 VD/CMS 等其他 TDX 功能。**
 
 ## PBS Windows Local Edge Debug Push Integration（V1.9.6＋V1.9.7，2026-08-28，歷史記錄——已由上方 V1.9.8／V1.9.9 取代為 Production 主線）
 

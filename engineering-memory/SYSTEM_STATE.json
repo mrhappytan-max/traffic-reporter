@@ -39,10 +39,10 @@
     "openStructuralQuestion": "TWO trees currently hold the same canonical content: engineering-memory/ (what the mirror syncs) and meeting-room-export/ (what scripts/export-meeting-room.mjs generates). They are kept in step by hand today, which is exactly the drift risk this governance exists to prevent. Needs a human decision: either point the generator at engineering-memory/, or retire one tree. NOT decided unilaterally."
   },
   "git": {
-    "sourceMainHead": "150bafbab0ab8d7922a91e0e6aa8fc410e73c310",
+    "sourceMainHead": "b53c9815048c4bd75f06240a14a26e2c749e832a",
     "sourceMainHeadResolvedFrom": "origin/main",
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
-    "sourceWorkingTree": "dirty (4 changed source file(s))",
+    "sourceWorkingTree": "dirty (7 changed source file(s))",
     "selfReferenceNote": "sourceMainHead is the official main commit this snapshot DESCRIBES; exportArtifactCommit is the commit that CONTAINS this artifact and is intentionally never equal to it. Requiring the two to match would create a Git self-reference loop (every export changes the file, which changes the commit, which invalidates the recorded head). sourceMainHead is read from origin/main and is therefore stable across re-runs and across whichever branch the export was generated on.",
     "checkoutNote": "The transient checkout (branch/HEAD/date) this export happened to run from is deliberately NOT recorded here. It changes on every commit and would make every release look like a content change, defeating delta sync; it also says nothing about the snapshot itself. The snapshot is identified by sourceMainHead alone. Local sync evidence in .engineering/ still records the checkout for auditing.",
     "workingTreeNote": "sourceWorkingTree excludes meeting-room-export/, which this generator dirties by definition; it answers 'is the source tree clean', not 'did the export just write files'."
@@ -247,24 +247,35 @@
     }
   },
   "taskSeal": {
-    "task": "CCTV_R2_READBACK_VERIFY_BEFORE_LINE_V2_3_3",
+    "task": "TDX_FREEWAY_PROVINCIAL_TO_UNIFIED_AI_PIPELINE_V2_4_0",
     "status": "SEALED",
-    "sealedAt": "2026-08-31",
-    "sealedBy": "human directive (路況播報員｜CCTV R2 Read-Back Reliability Hotfix)",
-    "releaseVersion": "V2.3.3",
-    "previousVersion": "V2.3.2",
-    "nature": "PATCH — 可靠性加強，不改架構、不改15分鐘TTL、不改LINE Push模型、不改CCTV選鏡策略。",
-    "background": "上一輪唯讀查核（CCTV_IMAGE_READY_BEFORE_LINE_PUSH_AUDIT）逐函式追蹤真實AI-approved廣播路徑（handlePbsAiQueueBatch→AI decision→runAiApprovedPbsBroadcast→prepareCctvImageForEvent→composeQuadrantCollage→publishCollageImage→R2 bucket.put→publicImageUrl→LINE pushMessage），確認await鏈本身已安全：R2 put完整await、public URL只在R2 put成功後才建構、LINE push一律晚於兩者。但該查核無法用應用層時序缺陷解釋一筆真實回報的破圖事故（LINE端遠端抓取行為不在本repo可視範圍）。",
-    "decision": "停止對LINE端行為的無止盡追查，改為新增本codebase真正能自己保證的一件事——CCTV圖片成功寫入R2後，Cloudflare自己再讀一次確認圖片真的可讀，通過才把imageUrl交給LINE。",
-    "fix": "新增src/cctv/publishedImage.js#verifyPublishedImageReadable(bucket, id)：純內部R2 GET（絕非對本Worker自己public endpoint發HTTP），確認物件存在、Content-Type確實為image/jpeg、bytes非空；任一失敗或GET本身拋出例外，一律視為讀回失敗。接上src/cctv/dynamicCollage.js兩個既有R2發布點——prepareCctvImageWork（quad/事故路徑）與prepareSingleCctvImageWork（single/動態路肩路徑），兩者共用同一個publishCollageImage()、也共用同一套下游LINE image message組裝，因此同步保護，不留下半修的缺口。新失敗代號r2-readback-failed，與既有所有CCTV失敗原因採完全相同的fail-closed處理：文字照常送、圖片跳過、不重試、不重新publish、不影響事故文字本身。",
-    "scopeDiscipline": "明確未觸碰：15分鐘published-image TTL、previewImageUrl/originalContentUrl架構、CCTV選鏡策略、四象限版面、圖片尺寸/JPEG quality、LINE Push單一payload模型、AI Prompt/Model、Cloudflare Queue、Windows PBS、TDX、Google Maps；既有await順序（R2 put→public URL→LINE push）本身未重排，只在「R2 put成功」與「imageUrl回傳」之間多插入一個新的await步驟。TDX_CALL_CHANGE=0（新讀回只是一次bucket.get()，非fetch()）。TTL問題仍是獨立、本輪刻意不處理的可靠性議題。",
+    "sealedAt": "2026-09-01",
+    "sealedBy": "human directive (TDX_FREEWAY_PROVINCIAL_TO_UNIFIED_AI_PIPELINE_V2_4_0，正式開工令)",
+    "releaseVersion": "V2.4.0",
+    "previousVersion": "V2.3.3",
+    "nature": "MINOR（架構階段）— TDX 國道/省道 RoadEvent 重新加入 PBS 既有的同一條 Cloudflare Queue／同一個 AI 決策引擎，跨來源協調交給新的 Recent Incident Memory。這是 Phase B（AI 真的跑、Memory 真的讀寫，但 TDX 來源事件尚未真正推播 LINE），不是 Phase C。",
+    "background": "先前一輪唯讀架構稽核（TDX_FREEWAY_PROVINCIAL_TO_AI_MAIN_AUDIT）確認 TDX RoadEvent 可在不重造第二套決策系統的前提下重新加入既有 Queue/AI 架構，前提是跨來源（PBS＋TDX）同一實體事故要能被 AI 自己判斷「是否同一起、是否有實質變化」，而非各來源獨立各判各的。",
+    "fix": "新模組 src/traffic/incidentMemory.js（Recent Incident Memory，Cloudflare KV traffic:incident-memory:v1，8h TTL，MEMORY_KV_GETS_PER_EVENT<=1／MEMORY_KV_PUTS_PER_EVENT<=1、WRITE_ON_CHANGE=YES，road+direction→1000m/1.5km→最近8h→最多5筆候選三層prefilter，排除事件自己剛寫入的紀錄避免自我發現）。新模組 src/tdx/tdxQueueIngress.js（TDX新／更新事件送進同一個PBS_AI_QUEUE，沿用dedupe.js/debugPush.js既有fingerprint/idempotency/訊息建構）。src/pbs/debugPush.js#processQueuedPbsEvent依source分派：pbs維持原本normalizePbsEvent路徑，freeway/highway直接使用已正規化的RoadEvent。AI schema新增sameIncident/materialChange（僅在有memory context時要求），AI decision cache key併入memoryContextFingerprint（向下相容）。",
+    "phaseGate": "suppressLineNotify = source === \"freeway\" || source === \"highway\" 硬寫死於debugPush.js單一呼叫點，非wrangler.jsonc變數。要進Phase C需要未來一次明確的程式碼變更，絕非改設定值就能達成。三個新wrangler.jsonc開關（TDX_ROADEVENT_FETCH_ENABLED／TDX_ROADEVENT_QUEUE_INGRESS_ENABLED／TDX_CCTV_METADATA_REFRESH_ENABLED）預設全部\"false\"，本輪只建好機制未啟用任何真實TDX抓取。",
+    "legacyRetirement": "LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT：scheduled.js的broadcastEvents不再包含summary.allEvents（TDX自己抓到的事件），即使單獨打開TDX_ROADEVENT_FETCH_ENABLED，TDX事件也無法回到舊V1.5硬規則LINE路徑。",
+    "scopeDiscipline": "明確未觸碰：CCTV整條metadata-cache→選鏡→compose→R2-put→R2-read-back-verify→LINE管線（V2.3.3原封不動）、VD/CMS/其他Traffic API（未復原）、CCTV metadata refresh Cron（維持MANUAL/ON-DEMAND）、Google Maps。incidentSuppression.js不大拆，保留為短期重複推播安全網。CCTV_RUNTIME_TDX_CALLS=0。",
     "testEvidence": {
-      "newTests": "test/dynamicCollage.test.js新增CASE 1-5、7/8（共6項，quad路徑：成功／get回null／bytes=0／content-type錯誤／get拋出例外／0額外TDX呼叫），test/dynamicShoulder.test.js新增19b（single路徑的CASE 2對應版本）。另有9個既有測試檔的r2Bucket() mock補上httpMetadata傳遞（與真實R2行為一致——publishCollageImage一律傳httpMetadata:{contentType:'image/jpeg'}，mock先前未保存此欄位，補上後所有既有成功案例維持原本行為不變）。",
-      "fullRegression": "1729項/1695 pass/34 fail，與既有34項基準以failure名稱集合對照確認NEW FAILURES=0，僅跑一次。"
+      "newTests": "新增test/tdxUnifiedAiPipeline.test.js（order自訂17個CASE全過：跨來源同事故辨識、30分/70分/第三小時記憶延續、>8h記憶排除、TDX失敗不影響PBS、CCTV 0額外TDX呼叫、Memory寫入成本0/<=1、Observatory開啟0 AI/0 KV），另8個既有測試檔（broadcastEligibility/pbsLineBroadcast/v572TdxGatedFreewayBroadcast/pbsOnlyCrossSourceDedup/incidentRepeatSuppression/tdxUsageReduction/pipelineTraceIntegration/aiObservatoryView）改寫以反映TDX-legacy-retirement的刻意行為變更。",
+      "fullRegression": "1746項/1712 pass/34 fail，與既有34項基準以failure名稱集合對照確認NEW FAILURES=0，僅跑一次。",
+      "deploymentPolicy": "npm run check:deployment-policy PASS；wrangler deploy --dry-run確認bindings乾淨、唯一一個Queue（PBS_AI_QUEUE）、三個新開關均為\"false\"。"
     },
-    "readerNote": "完成後STOP。不得繼續追查LINE remote fetch；不得修改15分鐘TTL/previewImageUrl架構/CCTV選鏡策略/四象限版面/圖片尺寸/JPEG quality/LINE Push模型/AI Prompt/Model/Queue/Windows PBS/TDX/Google Maps。"
+    "sealCommit": "2d23329",
+    "readerNote": "完成後STOP。不得自行開啟任何TDX_ROADEVENT_*開關；不得自行進Phase C（移除suppressLineNotify的硬寫死true）；不得復原VD/CMS等其他TDX功能。"
   },
   "taskSealHistory": [
+    {
+      "task": "CCTV_R2_READBACK_VERIFY_BEFORE_LINE_V2_3_3",
+      "status": "SEALED",
+      "sealedAt": "2026-08-31",
+      "releaseVersion": "V2.3.3",
+      "sealCommit": "b3035b2",
+      "summary": "CCTV R2 Read-Back Verify Before LINE：先前唯讀查核確認CCTV廣播await鏈本身安全但無法解釋一筆真實破圖事故，新增publishedImage.js#verifyPublishedImageReadable()在R2 put成功後、imageUrl回傳前做一次純內部R2 GET確認物件存在/Content-Type為image/jpeg/bytes非空，接上quad與single兩條CCTV發布路徑。新失敗代號r2-readback-failed，fail-closed處理與既有完全相同。TDX_CALL_CHANGE=0。8項新/擴充測試，1729/1695/34，NEW FAILURES=0。完整記錄見06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V2.3.3條目。"
+    },
     {
       "task": "CCTV_PRODUCTION_IMAGE_DIAGNOSTIC_REPAIR_V2_3_2",
       "status": "SEALED",
@@ -583,7 +594,7 @@
   ],
   "version": {
     "packageJsonVersion": "0.1.0",
-    "latestCompleted": "V2.3.3",
+    "latestCompleted": "V2.4.0",
     "canonicalSource": "src/version.js 的 APP_VERSION — 唯一權威。packageJsonVersion 是 npm 套件版本（0.1.0），與產品版本線無關，不要混用。"
   },
   "production": {
@@ -593,7 +604,7 @@
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
   "currentPhase": "Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留",
-  "currentTask": "none（無進行中工作）。Latest completed task = AI_DECISION_OBSERVATORY_FOUR_LAYER_EVENT_LIFECYCLE_V2_2_0，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.2.0（MINOR，backward-compatible observability/UI擴充）。本輪：(1) /admin/pbs-ai-observatory-view升級為①PBS/Windows②Cloudflare③AI④LINE四層檢視；(2) commentSummary（原截斷120字）退休為rawComment/rawSourceDetail，完整未截斷；(3) processAcceptedEvent於處理一開始寫入PROCESSING_STARTED記錄，最終寫入原地覆寫同一KV key，crash/未跑完事件不再消失；(4) EXTRA_KV_WRITES_PER_ACCEPTED_EVENT=1（實測），puts=4N+2；(5) Cloudflare層狀態即時讀取既有transport idempotency記錄，AI層仍即時讀取既有aiDecisionCache，零新增KV prefix；(6) 開啟/刷新/搜尋仍0次AI呼叫、0次KV寫入。新增16項測試，1697/1663/34，NEW FAILURES=0。下一件事若要開工：觀察FIRST_REAL_AI_EVENT是否出現；或見07_KNOWN_ISSUES.md既有約34項過期斷言（與本輪無關）。不得自行開始「AI一小時歷史上下文」/driverSummary/formatter修正。",
+  "currentTask": "none（無進行中工作）。Latest completed task = TDX_FREEWAY_PROVINCIAL_TO_UNIFIED_AI_PIPELINE_V2_4_0，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.4.0（MINOR，架構階段，Phase B）。本輪：(1) TDX國道/省道RoadEvent重新加入同一條Cloudflare Queue（PBS_AI_QUEUE）與同一個AI決策引擎；(2) 新增Recent Incident Memory（incidentMemory.js，Cloudflare KV，8h TTL）跨來源協調同一實體事故；(3) 三個新wrangler.jsonc開關全部預設\"false\"，本輪未啟用任何真實TDX抓取；(4) suppressLineNotify硬寫死於TDX來源，Phase C需要未來明確的程式碼變更；(5) LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT，TDX事件結構性無法回到舊V1.5硬規則LINE路徑；(6) CCTV/incidentSuppression.js/VD/CMS/Google Maps全數未觸碰。新增17項CASE測試全過，另8個既有測試檔改寫，1746/1712/34，NEW FAILURES=0。下一件事若要開工：需另一次明確人類指示才能打開任一TDX_ROADEVENT_*開關（Phase A）或進Phase C；或見07_KNOWN_ISSUES.md既有約34項過期斷言（與本輪無關）。",
   "knownBlocker": "無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md",
   "realWorldConfirmation": {
     "status": "REAL_WORLD_CONFIRMATION_PENDING",
@@ -606,8 +617,8 @@
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-08-31T06:25:17.943Z",
-    "sourceMainHead": "150bafbab0ab8d7922a91e0e6aa8fc410e73c310",
+    "generatedAt": "2026-09-01T07:04:15.354Z",
+    "sourceMainHead": "b53c9815048c4bd75f06240a14a26e2c749e832a",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
     "historyDir": "_history"

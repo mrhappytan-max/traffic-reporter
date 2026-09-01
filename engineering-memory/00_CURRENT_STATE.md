@@ -9,20 +9,20 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V2.3.3（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | 150bafbab0ab8d7922a91e0e6aa8fc410e73c310 |
+| Current Version | V2.4.0（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | b53c9815048c4bd75f06240a14a26e2c749e832a |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty (4 changed source file(s)) |
+| Source working tree | dirty (7 changed source file(s)) |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
 | Current Phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
 | Current Task | none（無進行中工作）。Latest completed task = DRIVE_SYNC_GOVERNANCE_V2，status = SEALED（前序 PBS_ACCIDENT_CCTV_ENRICHMENT_FIX、PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX、PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。雲端治理：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源，封版時只寫 GitHub、不要自己搬檔案到 Drive；GitHub → Drive 自動同步已由真人建置並實測通過（GitHub Actions，engineering-memory/ 為 canonical mirror source），GITHUB_TO_DRIVE_SYNC = PASS；不得人工補上傳，也不要重建那套自動同步。詳見 SYSTEM_STATE.json 的 cloudSyncGovernance。觀察中（非工作項，不是待辦）：一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數 |
-| Latest Completed Version | V2.3.3 |
+| Latest Completed Version | V2.4.0 |
 | Known Blocker | 無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md |
 | Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
 | Next Action | 無待辦。TDX 額度恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計） |
-| Export Generated At | 2026-08-31T06:25:17.943Z |
+| Export Generated At | 2026-09-01T07:04:15.354Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## V1.9.9 Phase 1 封版（2026-08-28，另一個 session 完成，本 Cloud Session 未參與，port 進本模板僅為維持 template↔engineering-memory 一致）
@@ -246,6 +246,62 @@ authority、Windows PBS filter、LINE policy、V2.1.0 的 ctx.waitUntil 架構�
 - 詳見 `03_ARCHITECTURE.md`／`PRODUCT_DECISIONS.md`／`07_KNOWN_ISSUES.md`。
   **下一個 Agent：不得接著開始「AI 一小時歷史上下文」、driverSummary、
   formatter 修正或其他功能。**
+
+## V2.4.0 封版（2026-09-01）— TDX_FREEWAY_PROVINCIAL_TO_UNIFIED_AI_PIPELINE
+
+MINOR（架構階段）：TDX 國道/省道 RoadEvent 重新加入同一條 Queue／同一個 AI
+決策引擎，透過新的 Recent Incident Memory 跨來源協調，**Phase B（尚未真正
+推播 LINE）**——不是 Phase C。
+
+- 固定架構：TDX Freeway＋TDX Highway＋PBS Windows → 統一事件格式 →
+  serviceArea 閘門 → Recent Incident Memory（Cloudflare KV，8h TTL）→
+  唯一一個 Queue（沿用 `PBS_AI_QUEUE`）→ 唯一一個 AI 引擎 → AI 輸出
+  `sameIncident`／`materialChange`／`notify` → LINE → CCTV → R2 讀回驗證
+  （V2.3.3 原封不動）
+- 來源角色：TDX Freeway＝國道主要權威、TDX Highway＝省道主要權威、
+  PBS＝全道路即時＋TDX備援；`WAIT_FOR_TDX_BEFORE_NOTIFY=NO`，
+  `PBS_FREEWAY_DROP=NO`，`PBS_HIGHWAY_DROP=NO`——誰先到、誰有效就先進 AI
+- 只復原 Freeway＋Highway RoadEvent 抓取，明確**不**復原 VD／CMS／其他
+  Traffic API／CCTV metadata Cron；`CCTV_RUNTIME_TDX_CALLS` 維持 0，CCTV
+  metadata refresh 維持 MANUAL/ON-DEMAND
+- `wrangler.jsonc` 新增三個最小粒度開關（canonical，非 Dashboard-only），
+  預設全部 `"false"`：`TDX_ROADEVENT_FETCH_ENABLED`、
+  `TDX_ROADEVENT_QUEUE_INGRESS_ENABLED`、
+  `TDX_CCTV_METADATA_REFRESH_ENABLED`——疊加在 `TRAFFIC_SOURCE_MODE` 之上，
+  絕非取代（見 `sourceMode.js#isTdxTokenAccessPermitted`）
+- **`LEGACY_TDX_LINE_PIPELINE = RETIRED_FOR_ROADEVENT`**：
+  `scheduled.js` 的 `broadcastEvents` 不再包含 `summary.allEvents`（TDX
+  自己抓到的事件），即使單獨打開 `TDX_ROADEVENT_FETCH_ENABLED` 也無法讓
+  TDX 事件回到舊 V1.5 硬規則 LINE 路徑
+- 新模組 `src/traffic/incidentMemory.js`（KV key
+  `traffic:incident-memory:v1`，8h TTL，`MEMORY_KV_GETS_PER_EVENT<=1`／
+  `MEMORY_KV_PUTS_PER_EVENT<=1`，`WRITE_ON_CHANGE=YES`，road+direction →
+  1000m/1.5km 內 → 最近 8h → 最多 5 筆候選的三層 prefilter，並排除事件
+  自己剛寫入的紀錄，避免 AI decision cache key 誤判為「有新 context」）、
+  `src/tdx/tdxQueueIngress.js`（TDX 新／更新事件送進同一個 `PBS_AI_QUEUE`，
+  沿用 `dedupe.js`／`debugPush.js` 既有 fingerprint／idempotency／訊息
+  建構，絕非第二套 Queue 或第二套訊息格式）
+- AI schema 新增 `sameIncident`／`materialChange`（僅在有 memory context
+  時要求），AI decision cache key 併入 `memoryContextFingerprint`，未提供
+  時與 V2.4.0 前完全相同的 hash（向下相容）
+- Phase B 閘門硬寫死在單一呼叫點（`debugPush.js`：
+  `suppressLineNotify = source === 'freeway' || source === 'highway'`），
+  非任何 `wrangler.jsonc` 變數控制——要進 Phase C（TDX 真正推播 LINE）
+  需要未來一次明確的程式碼變更，絕非改設定值就能達成
+- `incidentSuppression.js` **不大拆**：保留作為短期重複推播安全網，疊加在
+  AI 自己的 8h Memory 再判斷之下，非取代
+- 全量迴歸 1746/1712/34，NEW FAILURES=0（僅跑一次，diff 對照既有 34 筆已知
+  flaky baseline，完全相同）；新增 `test/tdxUnifiedAiPipeline.test.js`
+  （order 自訂 17 個 CASE 全過），另 8 個既有測試檔改寫以反映
+  TDX-legacy-retirement 的刻意行為變更
+- `APP_VERSION` 從 `V2.3.3` 升為 `V2.4.0`
+- **本輪未啟用任何真實 TDX 抓取**：三個新開關全部預設 `"false"`，本輪只
+  建好機制，實際打開（Phase A：FETCH_ONLY）需要另一次明確的人類指示
+- 詳見 `03_ARCHITECTURE.md`／`07_KNOWN_ISSUES.md`／
+  `test/tdxUnifiedAiPipeline.test.js` 的完整記錄。**下一個 Agent：不得
+  自行開啟任何 TDX_ROADEVENT_* 開關、不得自行進 Phase C（移除
+  `suppressLineNotify` 的硬寫死 true）、不得復原 VD/CMS 等其他 TDX
+  功能。**
 
 ## V2.3.3 封版（2026-08-31）— CCTV_R2_READBACK_VERIFY_BEFORE_LINE
 

@@ -22,6 +22,101 @@ filter-prototype`）未找到對應此修正的 commit。本節僅記錄「人�
 修改 `pbs-relay/` 程式碼，故上方模組清單／架構圖若與此回報不一致，以自動
 掃描結果與程式碼本身為準。
 
+## V2.4.0 — TDX_FREEWAY_PROVINCIAL_TO_UNIFIED_AI_PIPELINE（本輪，2026-09-01，Phase B）
+
+TDX 國道/省道 RoadEvent 重新加入 PBS 既有的同一條 Queue／同一個 AI 決策
+引擎（非重造第二套決策系統），跨來源（PBS＋TDX）同一實體事故的協調交給
+新的 Recent Incident Memory。**這是 Phase B**——AI 真的跑、Memory 真的
+讀寫，但 TDX 來源事件目前不會真正推播 LINE（見下方「Phase B 閘門」）。
+
+### 端對端資料流（本輪新增部分以 `←NEW` 標示）
+
+```
+TDX Freeway RoadEvent ──┐                PBS Windows Push
+TDX Highway RoadEvent ──┤                       │
+      │（scheduled.js's own fetch, unchanged）   │（既有 /internal/pbs-debug-push）
+      ↓ normalizeRoadEvent(raw, source)          ↓ buildRawPbsRecordFromPush→normalizePbsEvent
+      ↓ dedupe.js#classifyEvents（NEW/UPDATED/duplicate）
+      ↓ tdxQueueIngress.js#enqueueTdxRoadEvents() ←NEW（duplicate 不進 Queue）
+      └────────────────┬───────────────────────────┘
+                        ↓
+          唯一一個 Cloudflare Queue（PBS_AI_QUEUE，沿用 V2.3.0）
+                        ↓
+        processQueuedPbsEvent() — 依 source 分派 normalize，
+        絕不互相套用對方原始 shape ←NEW（source dispatch）
+                        ↓
+              serviceArea 閘門（唯一保留的 EXECUTION-type 硬規則）
+                        ↓
+        incidentMemory.js#readIncidentMemory()+selectMemoryCandidates()
+        ←NEW（road+direction→1000m/1.5km→8h→最多5筆，排除自己）
+                        ↓
+        aiDecisionEngine.js#resolveAiDecision()
+        （唯一一個 AI 引擎；有 memory context 時 prompt 多帶
+        recentIncidents，schema 多要求 sameIncident/materialChange）
+                        ↓
+              notify:true?
+              ├─ 否 → persistSighting(false)，記錄但不推播
+              └─ 是 → runAiApprovedPbsBroadcast(suppressLineNotify=
+                       source==='freeway'||'highway' ←NEW Phase B 閘門)
+                       ├─ PBS 來源 → CCTV 準備（V2.3.3 R2 讀回驗證，
+                       │  未觸碰）→ 真正 LINE push → Shared Feed
+                       └─ TDX 來源 → 全流程執行到「準備推播」但
+                          suppressLineNotify=true 時在真正送出前
+                          return，0 次真實 LINE API 呼叫
+                        ↓
+              persistSighting(pushSucceeded>0) ←NEW
+              （<=1 KV get + <=1 KV put/事件，WRITE_ON_CHANGE）
+```
+
+### Phase B 閘門（接手最重要的一件事）
+
+`suppressLineNotify = source === 'freeway' || source === 'highway'`
+**硬寫死**在 `src/pbs/debugPush.js#runAiDecisionPath` 唯一呼叫
+`runAiApprovedPbsBroadcast()` 的那一行，不是任何 `wrangler.jsonc` 變數。
+要進 **Phase C**（TDX 真正推播 LINE）需要未來一次明確的程式碼變更（移除
+這個硬寫死的 `true`），絕非改設定值就能達成——這是本輪能給的最強保證：
+config 層面不可能意外進入 Phase C。
+
+### 三個新粒度開關（`wrangler.jsonc`，canonical，皆預設 `"false"`）
+
+| 開關 | 作用 | 目前值 |
+|---|---|---|
+| `TDX_ROADEVENT_FETCH_ENABLED` | 疊加於 `TRAFFIC_SOURCE_MODE` 之上，獨立允許 `scheduled.js` 抓 TDX RoadEvent | `"false"` |
+| `TDX_ROADEVENT_QUEUE_INGRESS_ENABLED` | 新／更新 TDX 事件是否送進 `PBS_AI_QUEUE` | `"false"` |
+| `TDX_CCTV_METADATA_REFRESH_ENABLED` | CCTV metadata refresh probe 是否允許真實 TDX 呼叫 | `"false"` |
+
+三者由 `src/traffic/sourceMode.js#isTdxTokenAccessPermitted(env)`（`=
+isTdxRuntimeEnabled(env) || isTdxRoadEventFetchEnabled(env) ||
+isTdxCctvMetadataRefreshEnabled(env)`）合併成單一「TDX token 是否可以
+發出」的粗粒度閘門（`tdx/auth.js`），實際「這次呼叫該不該真的發生」
+仍由各呼叫點自己用細粒度 resolver 判斷。
+
+### 結構性退休：LEGACY_TDX_LINE_PIPELINE
+
+`src/traffic/scheduled.js` 的 `broadcastEvents` 變數不再是
+`mergeForBroadcast(summary.allEvents, pbsSummary.canonicalEvents,
+pbsSummary.uniquePbsEvents)`，改為只有
+`[...pbsSummary.canonicalEvents, ...pbsSummary.uniquePbsEvents]`——TDX
+自己抓到的事件（`summary.allEvents`）**結構性地**永遠不會出現在這個
+變數裡。即使單獨打開 `TDX_ROADEVENT_FETCH_ENABLED`（Phase A：只抓不進
+Queue），TDX 事件也無法回到舊 V1.5 硬規則（`broadcastRules.js` 白名單／
+`MAJOR_ACCIDENT_ONLY`／locationQuality 語意 hard-reject）LINE 路徑——
+`LEGACY_TDX_LINE_PIPELINE = RETIRED_FOR_ROADEVENT`。PBS 自己的
+canonical／unique 事件（既有、目前預設休眠的 legacy 輪詢 fallback）不受
+影響，仍走原本路徑。
+
+### 未觸碰
+
+CCTV 整條 metadata-cache→選鏡→compose→R2-put→R2-read-back-verify→LINE
+管線（V2.3.3 原封不動）；`incidentSuppression.js`（保留為短期重複推播
+安全網，疊加在 AI 自己的 8h Memory 判斷之下，非取代）；Observatory UI
+（僅新增 7 個 trace 欄位，主頁面未重做）；VD／CMS／其他 Traffic
+API（未復原）；CCTV metadata refresh Cron（維持 MANUAL/ON-DEMAND）；
+Google Maps。`CCTV_RUNTIME_TDX_CALLS=0`。
+
+完整逐版本文字記錄 → `06_VERSION_HISTORY.md`／`07_KNOWN_ISSUES.md`；17
+個 CASE 測試全文 → `test/tdxUnifiedAiPipeline.test.js`。
+
 ## V2.3.0 — PBS AI Queue Reliability：Cloudflare Queues 取代 ctx.waitUntil（2026-08-30）
 
 **真實 Production 事故**（與 V2.1.0 修的是不同一種失敗模式）：`EVENT_ID=
@@ -872,6 +967,6 @@ PBS 資料流須改回 `PBS_30_MIN_POLLING_ENABLED=true` 並重新部署）。
 - **src/line/**: broadcastIntent.js, pushMessage.js, replyMessage.js, verifySignature.js, webhook.js
 - **src/pbs/**: aiCandidate.js, aiConfig.js, aiDecisionCache.js, aiDecisionEngine.js, aiObservatoryIndex.js, aiObservatoryView.js, classify.js, client.js, crossSourceDedup.js, debugPbs.js, debugPush.js, debugPushAuth.js, hsinchuFilter.js, lifecycle.js, normalize.js, pbsConfig.js, pipeline.js, roadName.js, vpcProbe.js
 - **src/security/**: adminAuth.js
-- **src/tdx/**: auth.js, cctvProbe.js, classify.js, client.js, debug.js, extract.js, fetchAll.js, hsinchuCctvProbe.js, normalize.js, sources.js, usageLedger.js, vdSpeed.js
-- **src/traffic/**: aiApprovedPbsBroadcast.js, anomalyClassification.js, broadcastHours.js, broadcastPipeline.js, broadcastPolicy.js, broadcastProvenance.js, broadcastRules.js, congestionCluster.js, congestionSeverity.js, congestionValidation.js, debugStatus.js, dedupe.js, deploymentStatus.js, deploymentStatusView.js, directionEquivalence.js, dynamicShoulderClassification.js, effectiveWindow.js, health.js, healthSnapshot.js, hsinchuConfig.js, hsinchuFilter.js, incidentSuppression.js, kmLocationResolver.js, locationQuality.js, messageFormat.js, notified.js, parseChineseDate.js, pbsSchedule.js, pipeline.js, pipelineTrace.js, pipelineTraceView.js, roadIdentity.js, roadSectionLabel.js, scheduled.js, serviceArea.js, sharedFeed.js, sharedFeedHandler.js, sourceMode.js, subscriptions.js, tdxEventCache.js, tdxSchedule.js
+- **src/tdx/**: auth.js, cctvProbe.js, classify.js, client.js, debug.js, extract.js, fetchAll.js, hsinchuCctvProbe.js, normalize.js, sources.js, tdxQueueIngress.js, usageLedger.js, vdSpeed.js
+- **src/traffic/**: aiApprovedPbsBroadcast.js, anomalyClassification.js, broadcastHours.js, broadcastPipeline.js, broadcastPolicy.js, broadcastProvenance.js, broadcastRules.js, congestionCluster.js, congestionSeverity.js, congestionValidation.js, debugStatus.js, dedupe.js, deploymentStatus.js, deploymentStatusView.js, directionEquivalence.js, dynamicShoulderClassification.js, effectiveWindow.js, health.js, healthSnapshot.js, hsinchuConfig.js, hsinchuFilter.js, incidentMemory.js, incidentSuppression.js, kmLocationResolver.js, locationQuality.js, messageFormat.js, notified.js, parseChineseDate.js, pbsSchedule.js, pipeline.js, pipelineTrace.js, pipelineTraceView.js, roadIdentity.js, roadSectionLabel.js, scheduled.js, serviceArea.js, sharedFeed.js, sharedFeedHandler.js, sourceMode.js, subscriptions.js, tdxEventCache.js, tdxSchedule.js
 - **src/util/**: contentEqual.js

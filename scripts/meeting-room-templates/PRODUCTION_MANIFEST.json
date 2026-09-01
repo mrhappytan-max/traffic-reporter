@@ -16,24 +16,43 @@
   },
   "bindings": {
     "kv_namespaces": [
-      { "binding": "TRAFFIC_KV", "id": "a763ccea75b0481aa4da99fa43f8341a", "source": "wrangler.jsonc" }
+      {
+        "binding": "TRAFFIC_KV",
+        "id": "a763ccea75b0481aa4da99fa43f8341a",
+        "source": "wrangler.jsonc"
+      }
     ],
     "r2_buckets": [
-      { "binding": "CCTV_IMAGES", "bucketName": "traffic-reporter-cctv-images", "source": "wrangler.jsonc" }
+      {
+        "binding": "CCTV_IMAGES",
+        "bucketName": "traffic-reporter-cctv-images",
+        "source": "wrangler.jsonc"
+      }
     ],
     "vpc_services": [
-      { "binding": "PBS_RELAY_WINDOWS", "serviceId": "01a008ab-4cc4-7c22-a747-4e27cdcc83c8", "source": "wrangler.jsonc" }
+      {
+        "binding": "PBS_RELAY_WINDOWS",
+        "serviceId": "01a008ab-4cc4-7c22-a747-4e27cdcc83c8",
+        "source": "wrangler.jsonc"
+      }
     ],
     "ai": [
-      { "binding": "AI", "source": "wrangler.jsonc", "note": "V1.9.9 Phase 3B: declared in wrangler.jsonc for @cf/zai-org/glm-4.7-flash driver-impact decisions (src/pbs/aiDecisionEngine.js). Declaring this binding does NOT activate AI decisions -- the real gate is the code-level kill switch src/pbs/aiConfig.js#PBS_AI_DECISION_ENABLED (default false). GPT Work confirmed the Dashboard-side binding is ACTIVE. V1.9.9 Phase 3D hotfix: resolvePbsAiDecisionEnabled() previously only accepted a real boolean; Cloudflare Dashboard/CLI Variables inject this kind of runtime flag as a STRING, so a Dashboard value of \"true\" silently stayed disabled. Fixed to also accept the string forms 'true'/'false' (case-insensitive, trimmed), still failing safe to false for anything else. V2.0.0 MILESTONE: GPT Work reports AI_DECISION=ACTIVE (PBS_AI_DECISION_ENABLED=\"true\" in Production) -- see v200MilestoneProductionLineage below; this repo checkout has not independently confirmed it. V2.0.2 Config Drift Hotfix: the Dashboard-side \"true\" GPT Work set was silently removed by a later Workers Builds deploy (wrangler.jsonc is authoritative on every deploy, same mechanism as TRAFFIC_SOURCE_MODE's own var) -- PBS_AI_DECISION_ENABLED is now declared canonically in wrangler.jsonc's vars block (see vars.PBS_AI_DECISION_ENABLED below), and the Dashboard is no longer used to set it long-term." }
+      {
+        "binding": "AI",
+        "source": "wrangler.jsonc",
+        "note": "V1.9.9 Phase 3B: declared in wrangler.jsonc for @cf/zai-org/glm-4.7-flash driver-impact decisions (src/pbs/aiDecisionEngine.js). Declaring this binding does NOT activate AI decisions -- the real gate is the code-level kill switch src/pbs/aiConfig.js#PBS_AI_DECISION_ENABLED (default false). GPT Work confirmed the Dashboard-side binding is ACTIVE. V1.9.9 Phase 3D hotfix: resolvePbsAiDecisionEnabled() previously only accepted a real boolean; Cloudflare Dashboard/CLI Variables inject this kind of runtime flag as a STRING, so a Dashboard value of \"true\" silently stayed disabled. Fixed to also accept the string forms 'true'/'false' (case-insensitive, trimmed), still failing safe to false for anything else. V2.0.0 MILESTONE: GPT Work reports AI_DECISION=ACTIVE (PBS_AI_DECISION_ENABLED=\"true\" in Production) -- see v200MilestoneProductionLineage below; this repo checkout has not independently confirmed it. V2.0.2 Config Drift Hotfix: the Dashboard-side \"true\" GPT Work set was silently removed by a later Workers Builds deploy (wrangler.jsonc is authoritative on every deploy, same mechanism as TRAFFIC_SOURCE_MODE's own var) -- PBS_AI_DECISION_ENABLED is now declared canonically in wrangler.jsonc's vars block (see vars.PBS_AI_DECISION_ENABLED below), and the Dashboard is no longer used to set it long-term."
+      }
     ],
     "vars": {
       "PUBLIC_BASE_URL": "https://traffic-reporter.mr-happytan.workers.dev",
       "TRAFFIC_SOURCE_MODE": "{{TRAFFIC_SOURCE_MODE}}",
       "LINE_PUSH_POLICY": "{{LINE_PUSH_POLICY}}",
-      "PBS_AI_DECISION_ENABLED": "{{PBS_AI_DECISION_ENABLED}}"
+      "PBS_AI_DECISION_ENABLED": "{{PBS_AI_DECISION_ENABLED}}",
+      "TDX_ROADEVENT_FETCH_ENABLED": "false",
+      "TDX_ROADEVENT_QUEUE_INGRESS_ENABLED": "false",
+      "TDX_CCTV_METADATA_REFRESH_ENABLED": "false"
     },
-    "varsNote": "These are the runtime flags that decide what Production actually does, so they belong in the manifest rather than only in wrangler.jsonc. TRAFFIC_SOURCE_MODE=PBS_ONLY stops every TDX API call; LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY narrows proactive LINE push to accidents; PBS_AI_DECISION_ENABLED gates Windows PBS AI driver-impact decisions (must be the string 'true' to activate, never a bare JSON boolean -- Cloudflare injects Workers Variables as strings). All three are substituted from wrangler.jsonc by the export script, never hardcoded here. V2.0.2: PBS_AI_DECISION_ENABLED's canonical source moved from a Dashboard-only Variable (silently dropped by every Workers Builds deploy) to this wrangler.jsonc declaration -- see PRODUCT_DECISIONS.md / 07_KNOWN_ISSUES.md for the Config Drift Hotfix history.",
+    "varsNote": "These are the runtime flags that decide what Production actually does, so they belong in the manifest rather than only in wrangler.jsonc. TRAFFIC_SOURCE_MODE=PBS_ONLY stops every TDX API call; LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY narrows proactive LINE push to accidents; PBS_AI_DECISION_ENABLED gates Windows PBS AI driver-impact decisions (must be the string 'true' to activate, never a bare JSON boolean -- Cloudflare injects Workers Variables as strings). All three are substituted from wrangler.jsonc by the export script, never hardcoded here. V2.0.2: PBS_AI_DECISION_ENABLED's canonical source moved from a Dashboard-only Variable (silently dropped by every Workers Builds deploy) to this wrangler.jsonc declaration -- see PRODUCT_DECISIONS.md / 07_KNOWN_ISSUES.md for the Config Drift Hotfix history. V2.4.0 adds three granular switches, all default the string \"false\": TDX_ROADEVENT_FETCH_ENABLED (independently allows scheduled.js to fetch TDX RoadEvent, layered on top of TRAFFIC_SOURCE_MODE, never replacing it), TDX_ROADEVENT_QUEUE_INGRESS_ENABLED (whether new/updated TDX events reach PBS_AI_QUEUE), TDX_CCTV_METADATA_REFRESH_ENABLED (whether the CCTV metadata probe may make a real TDX call). All three default off in this same commit -- live TDX fetching/enqueueing/CCTV-metadata-refresh stays at 0 real calls until a separate, explicit human decision turns one on.",
     "secretsDeclaredExternally": [
       "TDX_CLIENT_ID",
       "TDX_CLIENT_SECRET",
@@ -43,31 +62,92 @@
       "TRAFFIC_FEED_SECRET",
       "PBS_DEBUG_PUSH_SECRET"
     ],
-    "secretsNote": "Names only -- never values. Presence-only verifiable via GET /admin/deployment-status; correctness of any value is never verifiable from code."
+    "secretsNote": "Names only -- never values. Presence-only verifiable via GET /admin/deployment-status; correctness of any value is never verifiable from code.",
+    "queues": {
+      "producers": [
+        {
+          "binding": "PBS_AI_QUEUE",
+          "queue": "pbs-ai-processing-queue",
+          "source": "wrangler.jsonc"
+        }
+      ],
+      "consumers": [
+        {
+          "queue": "pbs-ai-processing-queue",
+          "maxBatchSize": 1,
+          "source": "wrangler.jsonc"
+        }
+      ],
+      "note": "QUEUE_COUNT=1 — introduced V2.3.0 (ctx.waitUntil() -> Cloudflare Queue for AI background processing), never a second queue. V2.4.0 reuses this exact same queue/binding for TDX freeway/highway RoadEvent ingress (src/tdx/tdxQueueIngress.js) — never a parallel queue for TDX. BROWSER_ACTION_REQUIRED: the real Cloudflare Queue resource must exist via Dashboard/`wrangler queues create`; this repo checkout cannot verify or create it."
+    }
   },
   "routes": {
     "public": [
-      { "path": "/", "method": "GET", "auth": "none" },
-      { "path": "/version", "method": "GET", "auth": "none", "note": "deployedCommit/deployedBranch/buildTime/appVersion" },
-      { "path": "/health", "method": "GET", "auth": "admin-basic" },
-      { "path": "/webhook", "method": "POST", "auth": "line-signature" },
-      { "path": "/internal/shared-feed", "method": "GET", "auth": "bearer:TRAFFIC_FEED_SECRET", "note": "Shared Traffic Feed consumer read path" },
-      { "path": "/internal/pbs-debug-push", "method": "POST", "auth": "bearer:PBS_DEBUG_PUSH_SECRET", "note": "V1.9.8: Windows PBS Local Monitor -> formal Production ingress (src/pbs/debugPush.js) — an accepted NEW/UPDATED event reaches the canonical Business Pipeline (runLineBroadcast/Shared Feed); CLEARED is acknowledged but never broadcast; duplicates are idempotent via TRAFFIC_KV under debug:pbs-push-idempotency:v1:*. V1.9.9 Phase 3B: when the code-level kill switch PBS_AI_DECISION_ENABLED is true (Production default: false), this same endpoint instead routes the event through resolveAiDecision() (src/pbs/aiDecisionEngine.js) and, on a validated notify:true verdict, runAiApprovedPbsBroadcast() (src/traffic/aiApprovedPbsBroadcast.js) — mutually exclusive with the legacy runLineBroadcast() call for that same event, never both. V2.0.1: also writes ONE thin AI Decision Observatory index record (debug:pbs-ai-observatory-index:v1:*, 48h TTL, src/pbs/aiObservatoryIndex.js) per genuinely accepted non-duplicate event — see GET /admin/pbs-ai-observatory-view below." },
-      { "path": "/cctv/image/:id", "method": "GET", "auth": "none", "note": "opaque 128-bit id, 15-min TTL enforced in code" }
+      {
+        "path": "/",
+        "method": "GET",
+        "auth": "none"
+      },
+      {
+        "path": "/version",
+        "method": "GET",
+        "auth": "none",
+        "note": "deployedCommit/deployedBranch/buildTime/appVersion"
+      },
+      {
+        "path": "/health",
+        "method": "GET",
+        "auth": "admin-basic"
+      },
+      {
+        "path": "/webhook",
+        "method": "POST",
+        "auth": "line-signature"
+      },
+      {
+        "path": "/internal/shared-feed",
+        "method": "GET",
+        "auth": "bearer:TRAFFIC_FEED_SECRET",
+        "note": "Shared Traffic Feed consumer read path"
+      },
+      {
+        "path": "/internal/pbs-debug-push",
+        "method": "POST",
+        "auth": "bearer:PBS_DEBUG_PUSH_SECRET",
+        "note": "V1.9.8: Windows PBS Local Monitor -> formal Production ingress (src/pbs/debugPush.js) — an accepted NEW/UPDATED event reaches the canonical Business Pipeline (runLineBroadcast/Shared Feed); CLEARED is acknowledged but never broadcast; duplicates are idempotent via TRAFFIC_KV under debug:pbs-push-idempotency:v1:*. V1.9.9 Phase 3B: when the code-level kill switch PBS_AI_DECISION_ENABLED is true (Production default: false), this same endpoint instead routes the event through resolveAiDecision() (src/pbs/aiDecisionEngine.js) and, on a validated notify:true verdict, runAiApprovedPbsBroadcast() (src/traffic/aiApprovedPbsBroadcast.js) — mutually exclusive with the legacy runLineBroadcast() call for that same event, never both. V2.0.1: also writes ONE thin AI Decision Observatory index record (debug:pbs-ai-observatory-index:v1:*, 48h TTL, src/pbs/aiObservatoryIndex.js) per genuinely accepted non-duplicate event — see GET /admin/pbs-ai-observatory-view below."
+      },
+      {
+        "path": "/cctv/image/:id",
+        "method": "GET",
+        "auth": "none",
+        "note": "opaque 128-bit id, 15-min TTL enforced in code"
+      }
     ],
     "admin": [
-      "/debug/tdx", "/debug/status", "/debug/pbs", "/debug/pbs-vpc-probe",
-      "/admin/cctv-probe", "/admin/cctv-hsinchu-probe", "/admin/cctv-hsinchu-collage",
-      "/admin/cctv-hsinchu-publish-test", "/admin/cctv-hsinchu-frame/0..3",
-      "/admin/deployment-status", "/admin/deployment-status-view",
-      "/admin/pipeline-trace", "/admin/pipeline-trace-view",
-      "/admin/broadcast-provenance", "/admin/pbs-ai-observatory-view"
+      "/debug/tdx",
+      "/debug/status",
+      "/debug/pbs",
+      "/debug/pbs-vpc-probe",
+      "/admin/cctv-probe",
+      "/admin/cctv-hsinchu-probe",
+      "/admin/cctv-hsinchu-collage",
+      "/admin/cctv-hsinchu-publish-test",
+      "/admin/cctv-hsinchu-frame/0..3",
+      "/admin/deployment-status",
+      "/admin/deployment-status-view",
+      "/admin/pipeline-trace",
+      "/admin/pipeline-trace-view",
+      "/admin/broadcast-provenance",
+      "/admin/pbs-ai-observatory-view"
     ],
     "adminAuth": "HTTP Basic, fixed username 'admin', Cloudflare Secret ADMIN_PASSWORD, timing-safe SHA-256 comparison (src/security/adminAuth.js)"
   },
   "deployment": {
     "method": "push to main -> Cloudflare Workers Builds auto-deploy",
-    "verificationScripts": ["npm run check:deployment-policy (local, 0 network)", "npm run verify:production (calls GET /version)"],
+    "verificationScripts": [
+      "npm run check:deployment-policy (local, 0 network)",
+      "npm run verify:production (calls GET /version)"
+    ],
     "buildMetadataSource": "scripts/generateBuildMetadata.mjs, run via package.json predeploy hook"
   },
   "v202ConfigDriftHotfix": {
@@ -98,5 +178,13 @@
     "Real traffic percentage split (gradual/staged rollouts)",
     "Whether a Cloudflare Secret is set to the CORRECT value (only presence is checkable)",
     "Build/Deployment history, logs, failure reasons"
-  ]
+  ],
+  "v240TdxUnifiedAiPipeline": {
+    "note": "V2.4.0 (2026-09-01, Phase B). TDX freeway/highway RoadEvent rejoins the same Cloudflare Queue (PBS_AI_QUEUE) and the same one AI decision engine PBS Windows ingress already uses, coordinated across sources by a new Recent Incident Memory (src/traffic/incidentMemory.js, Cloudflare KV, 8h TTL) instead of the retired V1.5 hard-rule pipeline.",
+    "phaseGate": "suppressLineNotify = source === \"freeway\" || source === \"highway\" is hardcoded at the one call site in src/pbs/debugPush.js, never a wrangler.jsonc variable. AI genuinely runs and Recent Incident Memory genuinely reads/writes for a TDX-origin event, but no real LINE push happens for it yet (Phase B). Reaching Phase C requires an actual future code change removing that hardcoded true, never a config flip.",
+    "legacyRetirement": "LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT -- src/traffic/scheduled.js's broadcastEvents no longer includes summary.allEvents (TDX's own fetched events); even with TDX_ROADEVENT_FETCH_ENABLED alone flipped on, a TDX RoadEvent can no longer reach the old V1.5 hard-rule LINE path.",
+    "currentRuntimePhase": "NOT_ACTIVATED -- all three new switches (see bindings.vars above) default to the string \"false\" in this same commit; the mechanism is built but 0 real TDX fetch/enqueue/CCTV-metadata-refresh calls happen until a separate, explicit human decision turns one on.",
+    "scopeDiscipline": "Explicitly unchanged: CCTV's entire metadata-cache -> camera-selection -> compose -> R2-put -> R2-read-back-verify -> LINE pipeline (V2.3.3, untouched); incidentSuppression.js (kept as-is, not ripped out, as a short-term repeat-push safety net underneath the AI's own 8h-memory re-notify judgment); VD/CMS/other Traffic APIs (never restored); CCTV metadata refresh Cron (still MANUAL/ON-DEMAND). CCTV_RUNTIME_TDX_CALLS=0.",
+    "testEvidence": "New test/tdxUnifiedAiPipeline.test.js (the order's own 17 CASE list, all passing) plus 8 existing suites retrofitted for the intentional TDX-legacy-retirement. Full regression 1746/1712/34, NEW FAILURES=0 against the pre-round 34-item known-flaky baseline."
+  }
 }
