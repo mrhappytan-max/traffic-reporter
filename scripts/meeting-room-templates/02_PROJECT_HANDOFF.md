@@ -575,6 +575,46 @@ CLOUDFLARE_QUEUE`。V2.2.0 把查修頁升級為四層事件生命週期檢視�
 V2.3.2／V2.3.3 是三個連續 PATCH（LINE 地圖座標直連 fallback、CCTV
 診斷工具修復、CCTV R2 讀回驗證），皆未改架構本身。
 
+## V2.4.1 — Phase C 正式啟用（2026-09-01，同日稍晚，本節取代下方 V2.4.0 條目的「接手一定要知道」三件事）
+
+同一天稍晚，Phase A（FETCH ONLY）→ Phase B（QUEUE OBSERVE）→
+V2_4_1_PHASE_C_PRODUCTION_NOTIFY_IMPLEMENTATION（建好 Phase C 機制但預設關閉）
+→ **V2_4_1_PRODUCTION_NOTIFY_CANONICAL_RECONCILIATION（在明確人類授權下正式
+啟用）**依序完成。**接手現在必須知道的是**：
+
+1. **TDX 正式 LINE 通知已啟用**：`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`
+   現在是 `"true"`（canonical，`wrangler.jsonc`）。下方 V2.4.0 條目所寫的
+   「suppressLineNotify 硬寫死 true」已在 V2.4.1 改為由此開關控制
+   （`src/pbs/debugPush.js`），且此開關本身現在是 `"true"`——TDX 來源的
+   AI notify:true 事件現在**會**真正推播 LINE 給真實訂閱者。
+2. **三層開關現況**：`TDX_ROADEVENT_FETCH_ENABLED`／
+   `TDX_ROADEVENT_QUEUE_INGRESS_ENABLED`／
+   `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED` 三者皆為 `"true"`；
+   `TDX_CCTV_METADATA_REFRESH_ENABLED` 仍為 `"false"`（CCTV metadata
+   refresh 維持 manual/on-demand）。緊急關閉只需把
+   `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED` 改回 `"false"`，FETCH／
+   QUEUE 可繼續 `"true"`，不需 rollback 整套程式。
+3. **incidentSuppression.js 語意權威已修正**：AI-approved 路徑
+   （`aiApprovedPbsBroadcast.js`，PBS 與 TDX 共用）現在信任 AI 自己的
+   `sameIncident`／`materialChange` 判斷；`incidentSuppression.js` 只剩
+   10 分鐘近同步重複碰撞防護一項職責，不再獨立否決 AI 已核准的
+   notify=true（詳見 `06_VERSION_HISTORY.md` 的 V2.4.1 條目）。legacy
+   （非 AI）`broadcastPipeline.js` 呼叫端維持原本 60 分鐘行為，未變更。
+4. **啟用來源說明**：這次啟用是在本 session 內收到明確、直接的人類授權後
+   完成的一次 `wrangler.jsonc` config 變更（`git log` 可查）。稍早曾有
+   一份指示聲稱 Production 已透過 Cloudflare Dashboard 提前熱切換為
+   `true`，本 session 無法獨立驗證此聲稱（沒有對應的 `wrangler.jsonc`
+   commit 可核對，且 Dashboard-only 變數在本專案的部署模型下本來就不會
+   持久——見 V2.0.2 Config Drift Hotfix 的教訓），已標記為
+   `HUMAN_REPORTED_NOT_INDEPENDENTLY_VERIFIED`，不視為此次啟用的真正起點
+   ——本輪 commit 本身才是可查證的正式啟用時刻。
+5. **第一筆真實通知尚待現場證據**：`REAL_WORLD_CONFIRMATION_PENDING`——
+   本 session 對 Production 網域無網路存取權限，無法自行確認第一筆真實
+   TDX 觸發的 LINE 通知是否成功送達。
+
+完整逐版本文字記錄與 20 個 CASE 全文 → `06_VERSION_HISTORY.md`／
+`07_KNOWN_ISSUES.md`／`test/tdxPhaseCProductionNotify.test.js`。
+
 ## V2.4.0 — TDX_FREEWAY_PROVINCIAL_TO_UNIFIED_AI_PIPELINE（本輪，2026-09-01，Phase B）
 
 TDX 國道/省道 RoadEvent 重新加入 PBS 既有的同一條 Queue／同一個 AI 決策引擎，

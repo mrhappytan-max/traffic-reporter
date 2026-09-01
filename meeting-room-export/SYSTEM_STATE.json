@@ -39,10 +39,10 @@
     "openStructuralQuestion": "TWO trees currently hold the same canonical content: engineering-memory/ (what the mirror syncs) and meeting-room-export/ (what scripts/export-meeting-room.mjs generates). They are kept in step by hand today, which is exactly the drift risk this governance exists to prevent. Needs a human decision: either point the generator at engineering-memory/, or retire one tree. NOT decided unilaterally."
   },
   "git": {
-    "sourceMainHead": "174cfc01f025c66da78037e68a8e049cb7cb5bc1",
+    "sourceMainHead": "d66e2cbfe1e3408f08478dd99d334620e2b5c866",
     "sourceMainHeadResolvedFrom": "origin/main",
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
-    "sourceWorkingTree": "dirty (9 changed source file(s))",
+    "sourceWorkingTree": "dirty (6 changed source file(s))",
     "selfReferenceNote": "sourceMainHead is the official main commit this snapshot DESCRIBES; exportArtifactCommit is the commit that CONTAINS this artifact and is intentionally never equal to it. Requiring the two to match would create a Git self-reference loop (every export changes the file, which changes the commit, which invalidates the recorded head). sourceMainHead is read from origin/main and is therefore stable across re-runs and across whichever branch the export was generated on.",
     "checkoutNote": "The transient checkout (branch/HEAD/date) this export happened to run from is deliberately NOT recorded here. It changes on every commit and would make every release look like a content change, defeating delta sync; it also says nothing about the snapshot itself. The snapshot is identified by sourceMainHead alone. Local sync evidence in .engineering/ still records the checkout for auditing.",
     "workingTreeNote": "sourceWorkingTree excludes meeting-room-export/, which this generator dirties by definition; it answers 'is the source tree clean', not 'did the export just write files'."
@@ -551,22 +551,22 @@
     "deployMethod": "push to main -> Cloudflare Workers Builds auto-deploy",
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
-  "currentPhase": "Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留",
+  "currentPhase": "Production maintenance｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 正式重新接入統一 Queue/AI/Memory pipeline，Phase A/B/C 全部完成，Phase C（TDX 正式 LINE 通知）已於 2026-09-01 由明確人類授權啟用（V2_4_1_PRODUCTION_NOTIFY_CANONICAL_RECONCILIATION）。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡的舊限制已由本輪授權解除（TRAFFIC_SOURCE_MODE 本身仍為 PBS_ONLY，TDX 透過三個獨立 granular switch 疊加啟用，見 SYSTEM_STATE.json）",
   "currentTask": "none（無進行中工作）。Latest completed task = TDX_FREEWAY_PROVINCIAL_TO_UNIFIED_AI_PIPELINE_V2_4_0，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.4.0（MINOR，架構階段，Phase B）。本輪：(1) TDX國道/省道RoadEvent重新加入同一條Cloudflare Queue（PBS_AI_QUEUE）與同一個AI決策引擎；(2) 新增Recent Incident Memory（incidentMemory.js，Cloudflare KV，8h TTL）跨來源協調同一實體事故；(3) 三個新wrangler.jsonc開關全部預設\"false\"，本輪未啟用任何真實TDX抓取；(4) suppressLineNotify硬寫死於TDX來源，Phase C需要未來明確的程式碼變更；(5) LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT，TDX事件結構性無法回到舊V1.5硬規則LINE路徑；(6) CCTV/incidentSuppression.js/VD/CMS/Google Maps全數未觸碰。新增17項CASE測試全過，另8個既有測試檔改寫，1746/1712/34，NEW FAILURES=0。下一件事若要開工：需另一次明確人類指示才能打開任一TDX_ROADEVENT_*開關（Phase A）或進Phase C；或見07_KNOWN_ISSUES.md既有約34項過期斷言（與本輪無關）。",
-  "knownBlocker": "無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md",
+  "knownBlocker": "無 blocker。第一筆真實 TDX 觸發的正式 LINE 通知（Phase C 啟用後）尚未取得現場證據確認端對端成功——REAL_WORLD_CONFIRMATION_PENDING，非缺陷，僅為觀察中項目。既有兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且 CCTV_RUNTIME_TDX_CALLS 仍為 0。還原/緊急關閉程序見 07_KNOWN_ISSUES.md（TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 改回 false 即可立即關閉 TDX 正式通知，FETCH/QUEUE 可繼續 true，不需 rollback 整套程式）",
   "realWorldConfirmation": {
     "status": "REAL_WORLD_CONFIRMATION_PENDING",
     "subject": "V1.8.7.7 CCTV gray broken image fix"
   },
-  "nextAction": "無待辦。TDX 額度恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計）",
+  "nextAction": "無待辦。觀察中：第一筆真實 TDX 觸發的正式 LINE 通知，取得現場證據後回頭確認 端對端成功／CCTV（Freeway 限定）／Observatory 記錄完整；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計）。緊急關閉 TDX 正式通知只需將 TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 改回 false，FETCH/QUEUE 可繼續 true，不需 rollback 整套程式",
   "authorityLevels": {
     "levelA_selfServiceReadOnly": "own repo git log, own Worker/KV/test results only",
     "levelB_requiresHumanApproval": "interactive login/OAuth, private dashboards, real KV content, any other department's resources (read or write)",
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-09-01T11:17:15.718Z",
-    "sourceMainHead": "174cfc01f025c66da78037e68a8e049cb7cb5bc1",
+    "generatedAt": "2026-09-01T14:20:01.767Z",
+    "sourceMainHead": "d66e2cbfe1e3408f08478dd99d334620e2b5c866",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
     "historyDir": "_history"
@@ -626,6 +626,20 @@
     "notifyKillSwitch": "IMPLEMENTED -- new canonical wrangler.jsonc switch TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED, default \"false\", ships OFF. Replaces the old hardcoded suppressLineNotify=true for TDX sources in src/pbs/debugPush.js.",
     "incidentSuppressionFix": "incidentSuppression.js's own escalation heuristic (isMaterialEscalation) could silently veto an AI-approved notify:true -- fixed via a new trustCallerDecision option on resolveIncidentNotifications(): the AI-approved path (aiApprovedPbsBroadcast.js, used by both PBS and TDX) now only suppresses a near-simultaneous duplicate within a new short INCIDENT_SUPPRESSION_COLLISION_WINDOW_MS (10 min), trusting AI's own sameIncident/materialChange judgment for everything else. broadcastPipeline.js's legacy non-AI call site is unchanged.",
     "productionTdxNotifyActive": false,
-    "note": "PRODUCTION_TDX_NOTIFY_ACTIVE=NO. This round builds and tests the mechanism only; TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED ships and stays \"false\" in this same commit/deploy. Enabling real TDX LINE delivery requires a separate, explicit future human authorization order. APP_VERSION bumped V2.4.0 -> V2.4.1 (PATCH: real bug fix + new gated switch, not an architecture change)."
+    "note": "PRODUCTION_TDX_NOTIFY_ACTIVE=NO. This round builds and tests the mechanism only; TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED ships and stays \"false\" in this same commit/deploy. Enabling real TDX LINE delivery requires a separate, explicit future human authorization order. APP_VERSION bumped V2.4.0 -> V2.4.1 (PATCH: real bug fix + new gated switch, not an architecture change).",
+    "supersededBy": "V2_4_1_PRODUCTION_NOTIFY_CANONICAL_RECONCILIATION (2026-09-01, same day)"
+  },
+  "V2_4_1_PRODUCTION_NOTIFY_CANONICAL_RECONCILIATION": {
+    "completedAt": "2026-09-01",
+    "CURRENT_RUNTIME_PHASE": "PHASE_C_PRODUCTION_NOTIFY_ACTIVE",
+    "TDX_ROADEVENT_FETCH_ENABLED": "true",
+    "TDX_ROADEVENT_QUEUE_INGRESS_ENABLED": "true",
+    "TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED": "true",
+    "TDX_CCTV_METADATA_REFRESH_ENABLED": "false",
+    "productionTdxNotifyActive": true,
+    "authorization": "Explicit, direct human authorization received in this session (config-only change: wrangler.jsonc TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED false -> true). This is the first commit in this repository's verifiable git history that sets this switch to \"true\" -- confirmed by searching all branches/commits for the string before making the change; none existed.",
+    "priorDashboardClaimNote": "HUMAN_REPORTED_NOT_INDEPENDENTLY_VERIFIED: a claim was made that Production had already been hot-toggled to NOTIFY=true via the Cloudflare Dashboard ahead of this commit, with a specific deployment id and 0% error rate. This session could not confirm that independently (same standing sandbox-has-no-Production-network-access limitation as every prior round's PRODUCTION_VERIFICATION field), and no corresponding wrangler.jsonc commit ever existed to reconcile against. A Dashboard-only var would not be durable in this project's own deploy model regardless (Workers Builds treats wrangler.jsonc as authoritative on every deploy -- see the V2.0.2 Config Drift Hotfix history). Recorded here as reported, not verified, and not treated as the true origin of this change -- this round's own commit is the actual, verifiable point of enablement.",
+    "verification": "Config-only change (no src/ or test/ files touched). Minimal verification per this round's own explicit scope: test/tdxPhaseCProductionNotify.test.js (24 tests) and test/tdxUnifiedAiPipeline.test.js (21 tests) both pass unchanged (both already exercise the switch via env overrides, so the deploy-time default does not affect their outcome); npm run check:deployment-policy PASS; wrangler deploy --dry-run confirms FETCH=true/QUEUE=true/NOTIFY=true/CCTV_METADATA_REFRESH=false. Full 1774-test regression was NOT re-run for this config-only change (out of proportion to a one-value flip, consistent with the Phase A/Phase B rounds' own precedent).",
+    "note": "Real TDX-origin (freeway/highway) AI notify:true events can now reach a real LINE push to real subscribers, CCTV prepare (Freeway only, eligible roads), and R2 publish, exactly the mechanism built and tested in V2_4_1_PHASE_C_PRODUCTION_NOTIFY_IMPLEMENTATION. APP_VERSION stays V2.4.1 (config-only enablement of already-built code)."
   }
 }

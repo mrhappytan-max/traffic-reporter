@@ -17,11 +17,11 @@
 
 | 欄位 | 值 |
 |---|---|
-| Source main HEAD | 174cfc01f025c66da78037e68a8e049cb7cb5bc1 |
-| Snapshot generated at | 2026-09-01T11:17:15.718Z |
-| Source working tree | dirty (9 changed source file(s)) |
+| Source main HEAD | d66e2cbfe1e3408f08478dd99d334620e2b5c866 |
+| Snapshot generated at | 2026-09-01T14:20:01.767Z |
+| Source working tree | dirty (6 changed source file(s)) |
 | Current version | V2.4.1 |
-| Current phase | Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留 |
+| Current phase | Production maintenance｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 正式重新接入統一 Queue/AI/Memory pipeline，Phase A/B/C 全部完成，Phase C（TDX 正式 LINE 通知）已於 2026-09-01 由明確人類授權啟用（V2_4_1_PRODUCTION_NOTIFY_CANONICAL_RECONCILIATION）。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡的舊限制已由本輪授權解除（TRAFFIC_SOURCE_MODE 本身仍為 PBS_ONLY，TDX 透過三個獨立 granular switch 疊加啟用，見 SYSTEM_STATE.json） |
 
 `Source main HEAD` 是這份快照所描述的正式 main commit（取自 `origin/main`），**不是**包含本檔案自己的那個 commit——兩者刻意分開，避免 Git 自我參照循環。詳見 `SYSTEM_STATE.json` 的 `sourceMainHead` / `exportArtifactCommit`。
 
@@ -107,7 +107,7 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 ## Current known issues
 
-- **Known blocker**：無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md
+- **Known blocker**：無 blocker。第一筆真實 TDX 觸發的正式 LINE 通知（Phase C 啟用後）尚未取得現場證據確認端對端成功——REAL_WORLD_CONFIRMATION_PENDING，非缺陷，僅為觀察中項目。既有兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且 CCTV_RUNTIME_TDX_CALLS 仍為 0。還原/緊急關閉程序見 07_KNOWN_ISSUES.md（TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 改回 false 即可立即關閉 TDX 正式通知，FETCH/QUEUE 可繼續 true，不需 rollback 整套程式）
 - **Real-world confirmation**：REAL_WORLD_CONFIRMATION_PENDING
 - **既有測試失敗基準線**：`npm test` 共 1272 項，其中穩定 38 項為已知失敗（2 項 `pbs-relay/tests/*` 缺 `pbs-relay/src/cache.js`；**33 項過期斷言**——動態路肩推播關閉、PBS 成為 CCTV 可信來源之後未同步更新的測試，是目前最大的一筆技術債，待獨立施工令；3 項 wall-clock 相依的 `healthQuotaDashboard`，會隨日期自然增加）。**注意：舊版文件宣稱那 13 項是「Workers-only `.wasm` codec 在沙盒無法載入」，這是錯的 Root Cause——真正原因是沙盒 `node_modules` 不完整、`@jsquash/jpeg` 沒安裝；裝了之後那些檔案全部可以執行，並揭露上述 33 項過期斷言。**出現這 18 項以外的新失敗才算真正回歸，且**判斷回歸一律以同一輪 `git stash -u` 對照為準**；逐項清單、`deploymentPolicyAndVerify` 第 12 項的「尚未 push 必失敗」現象，以及 `deploymentStatus` 那項只在全套執行時偶發的雜訊，都見 `07_KNOWN_ISSUES.md`。
 - **Dashboard-only 事實永遠無法從程式驗證**：Production branch 指向、真實 Cron 排程、Secret 值是否正確、Build 歷史——只能由真人開 Dashboard 確認。
@@ -575,6 +575,46 @@ CLOUDFLARE_QUEUE`。V2.2.0 把查修頁升級為四層事件生命週期檢視�
 V2.3.2／V2.3.3 是三個連續 PATCH（LINE 地圖座標直連 fallback、CCTV
 診斷工具修復、CCTV R2 讀回驗證），皆未改架構本身。
 
+## V2.4.1 — Phase C 正式啟用（2026-09-01，同日稍晚，本節取代下方 V2.4.0 條目的「接手一定要知道」三件事）
+
+同一天稍晚，Phase A（FETCH ONLY）→ Phase B（QUEUE OBSERVE）→
+V2_4_1_PHASE_C_PRODUCTION_NOTIFY_IMPLEMENTATION（建好 Phase C 機制但預設關閉）
+→ **V2_4_1_PRODUCTION_NOTIFY_CANONICAL_RECONCILIATION（在明確人類授權下正式
+啟用）**依序完成。**接手現在必須知道的是**：
+
+1. **TDX 正式 LINE 通知已啟用**：`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`
+   現在是 `"true"`（canonical，`wrangler.jsonc`）。下方 V2.4.0 條目所寫的
+   「suppressLineNotify 硬寫死 true」已在 V2.4.1 改為由此開關控制
+   （`src/pbs/debugPush.js`），且此開關本身現在是 `"true"`——TDX 來源的
+   AI notify:true 事件現在**會**真正推播 LINE 給真實訂閱者。
+2. **三層開關現況**：`TDX_ROADEVENT_FETCH_ENABLED`／
+   `TDX_ROADEVENT_QUEUE_INGRESS_ENABLED`／
+   `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED` 三者皆為 `"true"`；
+   `TDX_CCTV_METADATA_REFRESH_ENABLED` 仍為 `"false"`（CCTV metadata
+   refresh 維持 manual/on-demand）。緊急關閉只需把
+   `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED` 改回 `"false"`，FETCH／
+   QUEUE 可繼續 `"true"`，不需 rollback 整套程式。
+3. **incidentSuppression.js 語意權威已修正**：AI-approved 路徑
+   （`aiApprovedPbsBroadcast.js`，PBS 與 TDX 共用）現在信任 AI 自己的
+   `sameIncident`／`materialChange` 判斷；`incidentSuppression.js` 只剩
+   10 分鐘近同步重複碰撞防護一項職責，不再獨立否決 AI 已核准的
+   notify=true（詳見 `06_VERSION_HISTORY.md` 的 V2.4.1 條目）。legacy
+   （非 AI）`broadcastPipeline.js` 呼叫端維持原本 60 分鐘行為，未變更。
+4. **啟用來源說明**：這次啟用是在本 session 內收到明確、直接的人類授權後
+   完成的一次 `wrangler.jsonc` config 變更（`git log` 可查）。稍早曾有
+   一份指示聲稱 Production 已透過 Cloudflare Dashboard 提前熱切換為
+   `true`，本 session 無法獨立驗證此聲稱（沒有對應的 `wrangler.jsonc`
+   commit 可核對，且 Dashboard-only 變數在本專案的部署模型下本來就不會
+   持久——見 V2.0.2 Config Drift Hotfix 的教訓），已標記為
+   `HUMAN_REPORTED_NOT_INDEPENDENTLY_VERIFIED`，不視為此次啟用的真正起點
+   ——本輪 commit 本身才是可查證的正式啟用時刻。
+5. **第一筆真實通知尚待現場證據**：`REAL_WORLD_CONFIRMATION_PENDING`——
+   本 session 對 Production 網域無網路存取權限，無法自行確認第一筆真實
+   TDX 觸發的 LINE 通知是否成功送達。
+
+完整逐版本文字記錄與 20 個 CASE 全文 → `06_VERSION_HISTORY.md`／
+`07_KNOWN_ISSUES.md`／`test/tdxPhaseCProductionNotify.test.js`。
+
 ## V2.4.0 — TDX_FREEWAY_PROVINCIAL_TO_UNIFIED_AI_PIPELINE（本輪，2026-09-01，Phase B）
 
 TDX 國道/省道 RoadEvent 重新加入 PBS 既有的同一條 Queue／同一個 AI 決策引擎，
@@ -686,7 +726,7 @@ branch／不要退休輪詢／不要開始 V1.9.8」等禁令已被上方 V1.9.8
 
 ## Next action
 
-無待辦。TDX 額度恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計）
+無待辦。觀察中：第一筆真實 TDX 觸發的正式 LINE 通知，取得現場證據後回頭確認 端對端成功／CCTV（Freeway 限定）／Observatory 記錄完整；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計）。緊急關閉 TDX 正式通知只需將 TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 改回 false，FETCH/QUEUE 可繼續 true，不需 rollback 整套程式
 
 ## Full history location
 

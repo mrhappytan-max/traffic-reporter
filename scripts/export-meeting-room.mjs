@@ -552,25 +552,25 @@ function main() {
   const currentPhase = safe(
     process.env.EXPORT_CURRENT_PHASE,
     pbsOnly
-      ? 'Production maintenance / LINE Push observation（無施工中項目）｜PBS-ONLY + 重大事故限定 LINE Push + 三道獨立播報閘門 + PBS 國道事故 CCTV enrichment，全部已封版 SEALED。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡，TDX／機動路肩程式碼完整保留'
+      ? 'Production maintenance｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 正式重新接入統一 Queue/AI/Memory pipeline，Phase A/B/C 全部完成，Phase C（TDX 正式 LINE 通知）已於 2026-09-01 由明確人類授權啟用（V2_4_1_PRODUCTION_NOTIFY_CANONICAL_RECONCILIATION）。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡的舊限制已由本輪授權解除（TRAFFIC_SOURCE_MODE 本身仍為 PBS_ONLY，TDX 透過三個獨立 granular switch 疊加啟用，見 SYSTEM_STATE.json）'
       : 'Maintenance — awaiting real-world confirmation of latest release'
   );
   const currentTask = safe(
     process.env.EXPORT_CURRENT_TASK,
     pbsOnly
-      ? 'none（無進行中工作）。Latest completed task = DRIVE_SYNC_GOVERNANCE_V2，status = SEALED（前序 PBS_ACCIDENT_CCTV_ENRICHMENT_FIX、PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX、PBS_ONLY_SERVICE_AREA_GATE_FIX、PBS_CCTV_MAJOR_ACCIDENT_ONLY 亦為 SEALED）。雲端治理：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源，封版時只寫 GitHub、不要自己搬檔案到 Drive；GitHub → Drive 自動同步已由真人建置並實測通過（GitHub Actions，engineering-memory/ 為 canonical mirror source），GITHUB_TO_DRIVE_SYNC = PASS；不得人工補上傳，也不要重建那套自動同步。詳見 SYSTEM_STATE.json 的 cloudSyncGovernance。觀察中（非工作項，不是待辦）：一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數'
+      ? 'none（無進行中工作）。Latest completed task = V2_4_1_PRODUCTION_NOTIFY_CANONICAL_RECONCILIATION，status = SEALED（前序 V2_4_0_PHASE_A_TDX_FETCH_ONLY_ENABLE／V2_4_0_PHASE_B_QUEUE_OBSERVE_ENABLE／V2_4_1_PHASE_C_PRODUCTION_NOTIFY_IMPLEMENTATION 亦為 SEALED，完整歷程見 SYSTEM_STATE.json 對應區塊與 06_VERSION_HISTORY.md）。CURRENT_RUNTIME_PHASE=PHASE_C_PRODUCTION_NOTIFY_ACTIVE：TDX_ROADEVENT_FETCH_ENABLED／QUEUE_INGRESS_ENABLED／PRODUCTION_NOTIFY_ENABLED 皆為 "true"，TDX_CCTV_METADATA_REFRESH_ENABLED 仍為 "false"。雲端治理：Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源。詳見 SYSTEM_STATE.json 的 cloudSyncGovernance。觀察中（非工作項，不是待辦）：第一筆真實 TDX 觸發的 LINE 正式通知尚待現場證據；一個月後檢視實際 LINE 主動 Push 量與 insufficient-location-precision 計數'
       : 'None in progress — awaiting next assignment'
   );
   const knownBlocker = safe(
     process.env.EXPORT_KNOWN_BLOCKER,
     pbsOnly
-      ? '無 blocker。兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：TRAFFIC_SOURCE_MODE=PBS_ONLY 且 LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且仍為 0 次 TDX 呼叫。還原程序見 07_KNOWN_ISSUES.md'
+      ? '無 blocker。第一筆真實 TDX 觸發的正式 LINE 通知（Phase C 啟用後）尚未取得現場證據確認端對端成功——REAL_WORLD_CONFIRMATION_PENDING，非缺陷，僅為觀察中項目。既有兩個外部額度限制（TDX API、LINE OA 每月主動 Push）皆非本專案缺陷：LINE_PUSH_POLICY=MAJOR_ACCIDENT_ONLY，CCTV 已恢復且 CCTV_RUNTIME_TDX_CALLS 仍為 0。還原/緊急關閉程序見 07_KNOWN_ISSUES.md（TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 改回 false 即可立即關閉 TDX 正式通知，FETCH/QUEUE 可繼續 true，不需 rollback 整套程式）'
       : `${latestCompletedVersion} real-world confirmation pending — see 07_KNOWN_ISSUES.md`
   );
   const nextAction = safe(
     process.env.EXPORT_NEXT_ACTION,
     pbsOnly
-      ? '無待辦。TDX 額度恢復 → 套用 07_KNOWN_ISSUES.md 的 RESTORE TDX；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計）'
+      ? '無待辦。觀察中：第一筆真實 TDX 觸發的正式 LINE 通知，取得現場證據後回頭確認 端對端成功／CCTV（Freeway 限定）／Observatory 記錄完整；一個月後 → 依 ineligibleByReason 實際數據（含 insufficient-location-precision）決定是否收緊主動播報政策；若日後取得 2026-08-24 台68 那筆 PBS 原始記錄 → 回頭核對 07_KNOWN_ISSUES.md 記載的誠實限制（皆為既有程序，不需重新設計）。緊急關閉 TDX 正式通知只需將 TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 改回 false，FETCH/QUEUE 可繼續 true，不需 rollback 整套程式'
       : 'Await next task assignment, or real-world confirmation evidence for the latest release'
   );
   const productionStatus = safe(process.env.EXPORT_PRODUCTION_STATUS, 'DEPLOYED');
