@@ -1,17 +1,39 @@
 // V1.5.1 hotfix — production repro (2026-08-16): the same 國1 南向
 // 97K+700 accident was notified twice, 10 minutes apart, with no real
-// change a driver could see on LINE. Exercises the real Cron path
-// (runScheduledTdxSync) end to end for the 9 required scenarios.
+// change a driver could see on LINE. Originally exercised the real Cron
+// path (runScheduledTdxSync) end to end for the 9 required scenarios,
+// fed entirely by TDX RoadEvent fixtures.
 //
-// V1.6.1 note: runScheduledTdxSync now only fetches TDX on a minute
-// 00/20/40 mark (see tdxSchedule.js) — the second-tick timestamps below
-// were shifted from the original repro's exact minutes onto the nearest
-// such mark so each scenario's second Cron tick still actually fetches
-// TDX (17:30->17:40, 17:28->17:40, 17:25->17:40, 17:50->18:00). No
-// scenario here depends on the exact elapsed minutes — only on relative
-// ordering and staying well under the 60-minute suppression/relevance
-// windows (see incidentSuppression.js / broadcastRules.js) — so this
-// preserves every test's original intent.
+// V2.4.0 (TDX_FREEWAY_PROVINCIAL_TO_UNIFIED_AI_PIPELINE) — order section
+// 四: LEGACY_TDX_LINE_PIPELINE = RETIRED_FOR_ROADEVENT. A TDX freeway/
+// highway event no longer reaches `broadcastEvents` inside scheduled.js
+// AT ALL (see that module's own V2.4.0 comment), so it can no longer
+// reach incidentSuppression.js via this path either — every scenario
+// below that used to assert "1 LINE, then 0 (suppressed)" or "1 LINE,
+// then 1 (material escalation)" now correctly asserts 0 at every step,
+// since the TDX event never becomes a legacy broadcast candidate in the
+// first place, whether or not it would have been suppressed under the
+// old rules.
+//
+// THIS DOES NOT MEAN THE UNDERLYING SUPPRESSION/ESCALATION LOGIC LOST
+// COVERAGE — incidentSuppression.js itself (resolveIncidentNotifications/
+// isMaterialEscalation) is completely UNCHANGED by V2.4.0 and remains
+// fully covered at the pure-unit level in test/incidentSuppression.test.js
+// (same-rawId, different-rawId reissue, KM distance, direction, type
+// escalation, blockedLanes escalation, unchanged=no escalation, distinct
+// same-run accidents, GC after the window, KV I/O — literally every
+// scenario this file used to exercise end-to-end). It is ALSO still
+// exercised live for BOTH Windows PBS (legacy AI-disabled fallback) and
+// TDX (new AI path, once TDX_ROADEVENT_QUEUE_INGRESS_ENABLED is on) via
+// runAiApprovedPbsBroadcast — see test/aiApprovedPbsBroadcast.test.js and
+// test/pbsDebugPush.test.js's own incidentSuppression coverage.
+//
+// This file's remaining job, same repurposing this round already applied
+// to test/broadcastEligibility.test.js, is exactly order section 18's
+// test 17: proving TDX never reaches LINE via the legacy Cron path,
+// across the specific real-world scenarios this file's own production
+// repro history cares about (reissued rawId, wording-only changes,
+// escalation, blocked-lane increases, distinct nearby accidents).
 
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -88,12 +110,6 @@ async function withPushCapture(tdxFetch, run) {
 async function envWithSubscriber() {
   const TRAFFIC_KV = kv();
   await setUserEnabled(TRAFFIC_KV, 'U1', true, new Date('2026-08-01T00:00:00+08:00'));
-    // This file pins incident-repeat SUPPRESSION mechanics, using an
-    // accident->closure escalation as its vehicle. The 重大事故限定 push
-    // policy (broadcastPolicy.js) would withhold the closure half, which
-    // would test the policy instead of the suppression rule — so opt into
-    // ALL_ELIGIBLE. Production policy behaviour is pinned in
-    // test/pbsCctvMajorAccidentOnly.test.js.
   return {
     TDX_CLIENT_ID: 'id',
     TDX_CLIENT_SECRET: 'secret',
@@ -105,25 +121,28 @@ async function envWithSubscriber() {
 
 afterEach(() => resetTdxTokenCache());
 
-test('1. same accident, only updatedAt changed 10 min later -> 1 LINE total (the production repro)', async () => {
+test('1. (V2.4.0) same accident, only updatedAt changed 10 min later -> 0 LINE at every tick via the legacy path (the original production repro scenario; suppression logic itself still covered in incidentSuppression.test.js)', async () => {
   const env = await envWithSubscriber();
-  const tdxFetch1720 = mockFetch({ freewayEvents: [accidentRaw({ LastUpdateTime: '2026-08-16T17:15:00+08:00' })] });
-  const r1720 = await withPushCapture(tdxFetch1720, () => runScheduledTdxSync(env, new Date('2026-08-16T17:20:00+08:00')));
-  assert.equal(r1720.pushed.length, 1);
+  const r1720 = await withPushCapture(
+    mockFetch({ freewayEvents: [accidentRaw({ LastUpdateTime: '2026-08-16T17:15:00+08:00' })] }),
+    () => runScheduledTdxSync(env, new Date('2026-08-16T17:20:00+08:00'))
+  );
+  assert.equal(r1720.pushed.length, 0);
 
-  const tdxFetch1730 = mockFetch({ freewayEvents: [accidentRaw({ LastUpdateTime: '2026-08-16T17:24:00+08:00' })] });
-  const r1730 = await withPushCapture(tdxFetch1730, () => runScheduledTdxSync(env, new Date('2026-08-16T17:40:00+08:00')));
+  const r1730 = await withPushCapture(
+    mockFetch({ freewayEvents: [accidentRaw({ LastUpdateTime: '2026-08-16T17:24:00+08:00' })] }),
+    () => runScheduledTdxSync(env, new Date('2026-08-16T17:40:00+08:00'))
+  );
   assert.equal(r1730.pushed.length, 0);
-  assert.equal(r1730.result.line.incidentSuppressedCount, 1);
 });
 
-test('2. same accident, description wording changed (police-handling note added) -> 1 LINE total', async () => {
+test('2. (V2.4.0) same accident, description wording changed -> 0 LINE at every tick via the legacy path', async () => {
   const env = await envWithSubscriber();
   const first = await withPushCapture(
     mockFetch({ freewayEvents: [accidentRaw({ Description: '南向97K處車輛事故，外側車道封閉' })] }),
     () => runScheduledTdxSync(env, new Date('2026-08-16T17:20:00+08:00'))
   );
-  assert.equal(first.pushed.length, 1);
+  assert.equal(first.pushed.length, 0);
 
   const second = await withPushCapture(
     mockFetch({ freewayEvents: [accidentRaw({ Description: '南向97K處車輛事故，外側車道封閉，警方處理中' })] }),
@@ -132,15 +151,14 @@ test('2. same accident, description wording changed (police-handling note added)
   assert.equal(second.pushed.length, 0);
 });
 
-test('3. same accident, NEW rawId shortly after (same road/direction/KM) -> 1 LINE total', async () => {
+test('3. (V2.4.0) same accident, NEW rawId shortly after (same road/direction/KM) -> 0 LINE at every tick via the legacy path', async () => {
   const env = await envWithSubscriber();
   const first = await withPushCapture(
     mockFetch({ freewayEvents: [accidentRaw({ EventID: 'FRW-97700-1' })] }),
     () => runScheduledTdxSync(env, new Date('2026-08-16T17:20:00+08:00'))
   );
-  assert.equal(first.pushed.length, 1);
+  assert.equal(first.pushed.length, 0);
 
-  // TDX reissues under a brand-new EventID for the same real accident.
   const second = await withPushCapture(
     mockFetch({ freewayEvents: [accidentRaw({ EventID: 'FRW-97700-2-REISSUED' })] }),
     () => runScheduledTdxSync(env, new Date('2026-08-16T17:40:00+08:00'))
@@ -148,16 +166,18 @@ test('3. same accident, NEW rawId shortly after (same road/direction/KM) -> 1 LI
   assert.equal(second.pushed.length, 0);
 });
 
-test('4. PBS + TDX report the SAME accident across DIFFERENT Cron ticks -> 1 LINE total', async () => {
+test('4. (V2.4.0) PBS + TDX report the SAME accident across DIFFERENT Cron ticks -> 0 LINE at every tick (TDX never reaches the legacy path; PBS legacy polling stays dormant unless explicitly re-enabled, unaffected by this round)', async () => {
   const env = await envWithSubscriber();
   const first = await withPushCapture(
     mockFetch({ freewayEvents: [accidentRaw()] }),
     () => runScheduledTdxSync(env, new Date('2026-08-16T17:20:00+08:00'))
   );
-  assert.equal(first.pushed.length, 1);
+  assert.equal(first.pushed.length, 0);
 
-  // A later tick: TDX no longer reports it (already gone from the live
-  // feed), but PBS reports the same real accident on its own.
+  // A later tick: TDX no longer reports it, and PBS reports the same real
+  // accident — but PBS_30_MIN_POLLING_ENABLED is never set here, so
+  // (matching real Production default, unchanged since V1.9.8) PBS's own
+  // legacy polling never actually runs either.
   env.PBS_RELAY_TOKEN = 'relay-token';
   env.PBS_RELAY_WINDOWS = {
     fetch: async () =>
@@ -179,40 +199,34 @@ test('4. PBS + TDX report the SAME accident across DIFFERENT Cron ticks -> 1 LIN
   assert.equal(second.pushed.length, 0);
 });
 
-test('5. same accident, still unchanged 40 minutes later -> still 1 LINE total', async () => {
+test('5. (V2.4.0) same accident, still unchanged 40 minutes later -> 0 LINE at every tick via the legacy path', async () => {
   const env = await envWithSubscriber();
   const first = await withPushCapture(
     mockFetch({ freewayEvents: [accidentRaw()] }),
     () => runScheduledTdxSync(env, new Date('2026-08-16T17:20:00+08:00'))
   );
-  assert.equal(first.pushed.length, 1);
+  assert.equal(first.pushed.length, 0);
 
   const second = await withPushCapture(
     mockFetch({ freewayEvents: [accidentRaw({ LastUpdateTime: '2026-08-16T17:48:00+08:00' })] }),
-    () => runScheduledTdxSync(env, new Date('2026-08-16T18:00:00+08:00')) // +40 min (shifted onto a 20-min schedule mark, still well under the 60-min relevance/suppression window)
+    () => runScheduledTdxSync(env, new Date('2026-08-16T18:00:00+08:00'))
   );
   assert.equal(second.pushed.length, 0);
 });
 
-test('6. accident escalates to road closure -> second notification allowed', async () => {
+test('6. (V2.4.0) accident escalates to road closure -> still 0 LINE at every tick via the legacy path (escalation-unlocks-renotify logic itself still covered in incidentSuppression.test.js)', async () => {
   const env = await envWithSubscriber();
   const first = await withPushCapture(
     mockFetch({ freewayEvents: [accidentRaw()] }),
     () => runScheduledTdxSync(env, new Date('2026-08-16T17:20:00+08:00'))
   );
-  assert.equal(first.pushed.length, 1);
-  assert.match(first.pushed[0], /🚨 交通事故/);
+  assert.equal(first.pushed.length, 0);
 
   const second = await withPushCapture(
     mockFetch({
       freewayEvents: [
         accidentRaw({
           EventType: '封閉',
-          // closure is not a LIVE type (only accident/congestion are —
-          // see effectiveWindow.js), so it needs a parseable Chinese
-          // date range to become broadcast-relevant at all — same
-          // requirement as this project's other closure/construction
-          // tests (see broadcastEligibility.test.js #4).
           Description: '8月16日17時至18時南向97K處車輛事故，道路全線封閉，請改道',
           LastUpdateTime: '2026-08-16T17:40:00+08:00',
         }),
@@ -220,56 +234,40 @@ test('6. accident escalates to road closure -> second notification allowed', asy
     }),
     () => runScheduledTdxSync(env, new Date('2026-08-16T17:40:00+08:00'))
   );
-  assert.equal(second.pushed.length, 1);
-  assert.match(second.pushed[0], /🚧 道路封閉/);
-  // Note: this specific escalation (type changes AWAY from 'accident')
-  // is handled by the ORDINARY per-event fingerprint mechanism, not
-  // incidentSuppression.js's own tracking — accidentRelevant only ever
-  // routes CURRENTLY type==='accident' events into that module (see
-  // broadcastPipeline.js), so a record that has already become
-  // type==='closure' by the time it's evaluated naturally falls through
-  // to the normal path instead. It still gets through correctly because
-  // computeNotificationFingerprint() includes `type`, so the fingerprint
-  // differs from what was stored — no incidentSuppression involvement
-  // needed for this particular escalation shape.
-  assert.equal(second.result.line.materialRebroadcastCount, 0);
+  assert.equal(second.pushed.length, 0);
 });
 
-test('7. blocked lanes materially increase -> second notification allowed', async () => {
+test('7. (V2.4.0) blocked lanes materially increase -> still 0 LINE at every tick via the legacy path', async () => {
   const env = await envWithSubscriber();
   const first = await withPushCapture(
     mockFetch({ freewayEvents: [accidentRaw({ Impact: { BlockedLanes: 1 } })] }),
     () => runScheduledTdxSync(env, new Date('2026-08-16T17:20:00+08:00'))
   );
-  assert.equal(first.pushed.length, 1);
+  assert.equal(first.pushed.length, 0);
 
   const second = await withPushCapture(
     mockFetch({ freewayEvents: [accidentRaw({ Impact: { BlockedLanes: 3 }, LastUpdateTime: '2026-08-16T17:40:00+08:00' })] }),
     () => runScheduledTdxSync(env, new Date('2026-08-16T17:40:00+08:00'))
   );
-  assert.equal(second.pushed.length, 1);
-  assert.equal(second.result.line.materialRebroadcastCount, 1);
+  assert.equal(second.pushed.length, 0);
 });
 
-test('8. genuinely different accident, same road/direction, sufficiently different KM -> both broadcast', async () => {
+test('8. (V2.4.0) genuinely different accident, same road/direction, sufficiently different KM -> still 0 LINE at every tick via the legacy path', async () => {
   const env = await envWithSubscriber();
   const first = await withPushCapture(
     mockFetch({ freewayEvents: [accidentRaw({ EventID: 'FRW-A', Location: { FreeExpressHighway: { Road: '國道一號', Direction: '南向', StartKM: '97K+700', EndKM: '97K+700' } } })] }),
     () => runScheduledTdxSync(env, new Date('2026-08-16T17:20:00+08:00'))
   );
-  assert.equal(first.pushed.length, 1);
+  assert.equal(first.pushed.length, 0);
 
-  // A completely different accident, ~13km up the road (still within
-  // the Hsinchu-relevant range for 國道一號, 80K-105K — see
-  // hsinchuConfig.js — but well beyond INCIDENT_MAX_KM_DIFF), minutes later.
   const second = await withPushCapture(
     mockFetch({ freewayEvents: [accidentRaw({ EventID: 'FRW-B', Location: { FreeExpressHighway: { Road: '國道一號', Direction: '南向', StartKM: '85K+000', EndKM: '85K+000' } } })] }),
     () => runScheduledTdxSync(env, new Date('2026-08-16T17:40:00+08:00'))
   );
-  assert.equal(second.pushed.length, 1);
+  assert.equal(second.pushed.length, 0);
 });
 
-test('9. two accidents, same road/direction, genuinely distinct location AND reported in the same run -> both broadcast, not accidentally merged', async () => {
+test('9. (V2.4.0) two accidents, same road/direction, genuinely distinct location, reported in the same run -> 0 LINE (both fetched/classified correctly, neither reaches the legacy path)', async () => {
   const env = await envWithSubscriber();
   const events = [
     accidentRaw({ EventID: 'FRW-X', Location: { FreeExpressHighway: { Road: '國道一號', Direction: '南向', StartKM: '97K+700', EndKM: '97K+700' } } }),
@@ -277,6 +275,6 @@ test('9. two accidents, same road/direction, genuinely distinct location AND rep
   ];
   const { pushed, result } = await withPushCapture(mockFetch({ freewayEvents: events }), () => runScheduledTdxSync(env, new Date('2026-08-16T17:20:00+08:00')));
 
-  assert.equal(pushed.length, 2);
-  assert.equal(result.line.incidentSuppressedCount, 0);
+  assert.equal(pushed.length, 0);
+  assert.equal(result.baselineSeedCount, 2); // cold KV -> baseline seed, both genuinely fetched/classified
 });

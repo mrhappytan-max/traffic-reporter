@@ -193,7 +193,7 @@ test('1. PBS only (no TDX events): one unique active PBS event -> exactly 1 mess
   assert.equal(result.line.pushSucceeded, 1);
 });
 
-test('2. TDX only (no PBS match, PBS relay empty): one TDX event -> exactly 1 message', async () => {
+test('2. TDX only (no PBS match, PBS relay empty): V2.4.0 — 0 messages via the legacy path (LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT; a TDX event with no PBS corroboration is no longer a legacy broadcast candidate at all — see scheduled.js\'s own V2.4.0 comment on `broadcastEvents`)', async () => {
   const TRAFFIC_KV = kv();
   await setUserEnabled(TRAFFIC_KV, 'U1', true, new Date('2026-08-01T00:00:00+08:00'));
   const env = {
@@ -203,9 +203,9 @@ test('2. TDX only (no PBS match, PBS relay empty): one TDX event -> exactly 1 me
 
   const { pushed, result } = await withPushCapture(mockTdxFetch([freewayAccidentRaw()]), () => runScheduledTdxSync(env, NOW));
 
-  assert.equal(pushed.length, 1);
+  assert.equal(pushed.length, 0);
   assert.equal(result.pbs.activeCount, 0);
-  assert.equal(result.line.pushSucceeded, 1);
+  assert.equal(result.line.pushSucceeded, 0);
 });
 
 test('3. PBS + TDX describe the SAME incident -> exactly 1 message (canonical merge, not 2)', async () => {
@@ -227,7 +227,7 @@ test('3. PBS + TDX describe the SAME incident -> exactly 1 message (canonical me
   assert.doesNotMatch(text, /pbs|tdx/i);
 });
 
-test('4. PBS + TDX describe DIFFERENT incidents -> exactly 2 messages', async () => {
+test('4. PBS + TDX describe DIFFERENT incidents -> V2.4.0: exactly 1 message (only PBS\'s own unique event; TDX\'s own unmatched event no longer reaches the legacy path, LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT)', async () => {
   const TRAFFIC_KV = kv();
   await setUserEnabled(TRAFFIC_KV, 'U1', true, new Date('2026-08-01T00:00:00+08:00'));
   const env = {
@@ -237,7 +237,7 @@ test('4. PBS + TDX describe DIFFERENT incidents -> exactly 2 messages', async ()
 
   const { pushed, result } = await withPushCapture(mockTdxFetch([freewayAccidentRaw()]), () => runScheduledTdxSync(env, NOW));
 
-  assert.equal(pushed.length, 2);
+  assert.equal(pushed.length, 1);
   assert.equal(result.pbs.canonicalEventCount, 0);
   assert.equal(result.pbs.crossSourceDuplicateCount, 0);
 });
@@ -272,7 +272,7 @@ test('6. stale PBS event (>2h old, not cleared) -> 0 messages', async () => {
   assert.equal(result.pbs.activeCount, 0);
 });
 
-test('7a. PBS relay throws -> TDX still broadcasts normally', async () => {
+test('7a. PBS relay throws -> V2.4.0: 0 messages (PBS failure still isolated from TDX\'s own data collection — dedupe.js/pipeline.js still run cleanly, "pbsOk=false" is honestly reported — but TDX no longer has any legacy-path broadcast of its own to protect, LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT; TDX broadcast now flows only through Queue ingress, unaffected by a PBS relay outage either way since the two are fully independent code paths)', async () => {
   const TRAFFIC_KV = kv();
   await setUserEnabled(TRAFFIC_KV, 'U1', true, new Date('2026-08-01T00:00:00+08:00'));
   const env = {
@@ -283,8 +283,8 @@ test('7a. PBS relay throws -> TDX still broadcasts normally', async () => {
   const { pushed, result } = await withPushCapture(mockTdxFetch([freewayAccidentRaw()]), () => runScheduledTdxSync(env, NOW));
 
   assert.equal(result.pbs.pbsOk, false);
-  assert.equal(pushed.length, 1); // TDX's own event still goes out
-  assert.equal(result.line.pushSucceeded, 1);
+  assert.equal(pushed.length, 0);
+  assert.equal(result.line.pushSucceeded, 0);
 });
 
 test('7b. TDX has no data this run (token missing) -> PBS still broadcasts normally', async () => {

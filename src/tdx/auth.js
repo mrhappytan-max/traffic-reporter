@@ -33,7 +33,7 @@
 // caller/test) is a no-op, unchanged behavior.
 
 import { recordTdxOAuthCall } from './usageLedger.js';
-import { isTdxRuntimeEnabled } from '../traffic/sourceMode.js';
+import { isTdxTokenAccessPermitted } from '../traffic/sourceMode.js';
 
 const TDX_AUTH_URL =
   'https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token';
@@ -217,9 +217,14 @@ export async function getAccessToken(env, usageSink) {
   // so this degrades along an existing, tested path rather than throwing
   // something nobody handles. It must never reach PBS — PBS never asks
   // for a TDX token.
-  if (!isTdxRuntimeEnabled(env)) {
+  // V2.4.0 — broadened from isTdxRuntimeEnabled (TRAFFIC_SOURCE_MODE
+  // alone) to isTdxTokenAccessPermitted (TRAFFIC_SOURCE_MODE OR any of
+  // the three new granular switches — see sourceMode.js's own V2.4.0
+  // comment). With every new switch at its default (false), this is
+  // EXACTLY the same check as before.
+  if (!isTdxTokenAccessPermitted(env)) {
     throw new TdxAuthError(
-      'TDX runtime disabled (TRAFFIC_SOURCE_MODE=PBS_ONLY, quota protection) — no token requested. See src/traffic/sourceMode.js to restore.'
+      'TDX runtime disabled (TRAFFIC_SOURCE_MODE=PBS_ONLY and no granular TDX switch enabled) — no token requested. See src/traffic/sourceMode.js to restore.'
     );
   }
 

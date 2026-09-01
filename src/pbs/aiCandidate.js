@@ -113,9 +113,25 @@ async function sha256Hex(text) {
  * section 八 ("本階段可以只實作最小 schema / helper，不得真的呼叫 AI").
  * Phase 3 is the first round allowed to actually put/get
  * AI_DECISION_CACHE_KV_PREFIX.
+ *
+ * V2.4.0 — optional third input `memoryContextFingerprint`
+ * (traffic/incidentMemory.js#buildMemoryContextFingerprint's output).
+ * Omitted (every pre-V2.4.0 caller, and every PBS call site today —
+ * aiApprovedPbsBroadcast.js does not thread this through) produces the
+ * EXACT SAME hash as before — byte-for-byte, since the string being
+ * hashed is unchanged when this argument is absent/empty. This matters
+ * for correctness, not just compatibility: once an AI decision's prompt
+ * can include nearby Recent Incident Memory candidates (see
+ * aiDecisionEngine.js's own V2.4.0 comment), "same eventId + same
+ * fingerprint" alone no longer guarantees "same prompt, same decision" —
+ * the SAME event content asked twice with a genuinely different memory
+ * context (a new nearby sighting appeared in between) must not silently
+ * replay a stale cached sameIncident/notify verdict. Folding the memory
+ * fingerprint into the key is the minimal fix: a changed context produces
+ * a different key -> a real cache miss -> a fresh, context-aware AI call.
  */
-export async function computeAiDecisionCacheKeyHash({ eventId, fingerprint }) {
-  return sha256Hex(`${eventId}:${fingerprint}`);
+export async function computeAiDecisionCacheKeyHash({ eventId, fingerprint, memoryContextFingerprint }) {
+  return sha256Hex(memoryContextFingerprint ? `${eventId}:${fingerprint}:${memoryContextFingerprint}` : `${eventId}:${fingerprint}`);
 }
 
 export function buildAiDecisionCacheKvKey(keyHash) {

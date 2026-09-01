@@ -77,16 +77,38 @@ function eventKeyOf(event) {
 
 /**
  * @param {object} env
- * @param {{event:object, now?:Date}} options - `event` is the SAME
- *   normalized-event shape (pbs/normalize.js#normalizePbsEvent output)
- *   the legacy path already builds; already confirmed AI notify:true.
+ * @param {{event:object, now?:Date, suppressLineNotify?:boolean}} options -
+ *   `event` is the SAME normalized-event shape both pbs/normalize.js#
+ *   normalizePbsEvent AND (V2.4.0) tdx/normalize.js#normalizeRoadEvent
+ *   already produce — already confirmed AI notify:true. This function's
+ *   own logic (subscriptions/notified/incidentSuppression/messageFormat/
+ *   CCTV/pushMessage) only ever reads the generic unified-event fields
+ *   (road/direction/type/startKM/endKM/description/...), never anything
+ *   PBS-specific — see V2.4.0 architecture audit section 六's own finding
+ *   that this function needed ZERO logic fork to also serve TDX
+ *   candidates.
+ *
+ *   `suppressLineNotify` (V2.4.0, default false) — order section
+ *   二十's PHASE B gate ("允許進 Queue/AI，但暫不讓 TDX source 正式發
+ *   LINE"). When true, every step up to and including the AI-approved
+ *   decision already made by the caller still fully executes (incident
+ *   suppression state is still read/written, notified-state per-target
+ *   dedup is still computed, the CCTV image is still prepared — so
+ *   Observatory/Pipeline Trace can show EXACTLY what would have been
+ *   sent), but the real `pushLineMessages` call itself is skipped for
+ *   every target — `pushAttempted`/`pushSucceeded` both stay 0, and
+ *   notified-state is never persisted for a target that was never
+ *   actually notified (persisting it would wrongly make a REAL future
+ *   Phase-C send look like an already-seen duplicate). Never driven by
+ *   any config value — see debugPush.js's own V2.4.0 comment on why this
+ *   is hardcoded at the call site, not a wrangler.jsonc switch.
  * @returns {Promise<{
  *   lineReady:boolean, withinBroadcastHours:boolean, suppressed:boolean,
  *   pendingTargetCount:number, pushAttempted:number, pushSucceeded:number,
  *   completedProducts:object[], lineErrors:string[],
  * }>}
  */
-export async function runAiApprovedPbsBroadcast(env, { event, now = new Date() }) {
+export async function runAiApprovedPbsBroadcast(env, { event, now = new Date(), suppressLineNotify = false }) {
   const result = {
     lineReady: false,
     withinBroadcastHours: isWithinBroadcastHours(now),
@@ -170,6 +192,19 @@ export async function runAiApprovedPbsBroadcast(env, { event, now = new Date() }
       // principle as the legacy pipeline's own CCTV integration.
       result.lineErrors.push(`CCTV prepare failed (non-blocking): ${safeErrorMessage(err)}`);
     }
+  }
+
+  // V2.4.0 — Phase B gate (see this function's own doc comment above):
+  // when true, every target this event would otherwise have pushed to is
+  // simply never attempted — pushAttempted/pushSucceeded stay 0,
+  // notified-state is never touched for a target that never actually got
+  // a message. `result.completedProducts[0].imageUrl` (if CCTV prepared
+  // one above) is still returned for observability, but nothing consumes
+  // it into a real Shared Feed entry (see debugPush.js's own V2.4.0
+  // comment: Shared Feed persistence is skipped entirely when this flag
+  // is set).
+  if (suppressLineNotify) {
+    return result;
   }
 
   const successfulTargets = [];

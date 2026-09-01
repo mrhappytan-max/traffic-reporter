@@ -135,6 +135,7 @@ import { toTaipeiParts } from '../traffic/broadcastHours.js';
 import { composeQuadrantCollage } from '../cctv/collage.js';
 import { publishCollageImage } from '../cctv/publishedImage.js';
 import { writeFreewayCctvMetadataCache, readFreewayCctvMetadataCache } from '../cctv/freewayCctvMetadataCache.js';
+import { isTdxTokenAccessPermitted } from '../traffic/sourceMode.js';
 
 // cctv/jpegCodecWorker.js does a top-level `import ... from '*.wasm'` —
 // the only WASM-loading mechanism Cloudflare Workers actually supports
@@ -664,6 +665,23 @@ CCTV image source: *.freeway.gov.tw</div>
 }
 
 export async function handleHsinchuCctvProbe(env) {
+  // V2.4.0 — an explicit, clear up-front check (before ever touching the
+  // one-time-use KV lock below) rather than letting this fall through to
+  // auth.js's own generic "OAuth failed" refusal. isTdxTokenAccessPermitted
+  // already structurally blocks the real token request either way (see
+  // sourceMode.js/auth.js's own V2.4.0 comments) — this is purely for a
+  // human operator reading the response to immediately understand WHY,
+  // without spuriously arming the probe's own lock for a call that was
+  // never going to be allowed to happen.
+  if (!isTdxTokenAccessPermitted(env)) {
+    return htmlResponse(
+      renderPage(
+        '<div class="card"><p class="warn">CCTV metadata refresh disabled (TDX_CCTV_METADATA_REFRESH_ENABLED is not "true" and TRAFFIC_SOURCE_MODE=PBS_ONLY) — no TDX call attempted, probe lock left untouched.</p></div>'
+      ),
+      503
+    );
+  }
+
   // 0. Read the current KV state — BEFORE any TDX call whatsoever.
   if (env.TRAFFIC_KV === undefined) {
     return htmlResponse(renderPage('<div class="card"><p class="warn">TRAFFIC_KV binding not configured; refusing to call TDX.</p></div>'), 503);

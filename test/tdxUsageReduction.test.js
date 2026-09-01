@@ -342,7 +342,7 @@ test('15. a REAL TDX fetch returning 429 -> /health correctly shows degraded (on
 
 // --- 16-17: TDX/PBS failure isolation, unchanged by this round's restructuring ---
 
-test('16. PBS relay throws -> TDX still fetches and still broadcasts normally', async () => {
+test('16. (V2.4.0) PBS relay throws -> TDX still fetches normally (isolation unaffected); 0 LINE via the legacy path either way (LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT — TDX no longer broadcasts via this path regardless of PBS outcome)', async () => {
   const pbsCalls = [];
   const env = await envWithPbs(pbsCalls);
   env.PBS_RELAY_WINDOWS = throwingPbsRelay(pbsCalls);
@@ -368,8 +368,8 @@ test('16. PBS relay throws -> TDX still fetches and still broadcasts normally', 
   }
 
   assert.equal(result.pbs.pbsOk, false);
-  assert.ok(hits.some((h) => h.includes('/RoadEvent/LiveEvent/Freeway')));
-  assert.equal(pushed.length, 1); // the TDX accident still went out
+  assert.ok(hits.some((h) => h.includes('/RoadEvent/LiveEvent/Freeway'))); // TDX still fetches -- PBS failure never blocks TDX's own data collection
+  assert.equal(pushed.length, 0); // V2.4.0: TDX's own fetched event no longer reaches the legacy path at all
 });
 
 test('17. TDX freeway+highway both fail -> PBS still fetches and still broadcasts normally', async () => {

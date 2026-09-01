@@ -272,7 +272,7 @@ test('CASE 5: PBS non-freeway (省道) accident, no TDX match -> broadcasts exac
 // 的 TDX freeway，pendingTargets 不得因 PBS 而變 0.
 // ===========================================================================
 
-test('CASE 6: after a gated PBS 國道 sighting, a later TDX freeway event at the SAME road/direction/km is a normal new broadcast candidate — pendingTargets is never 0 because of PBS', async () => {
+test('CASE 6 (V2.4.0 update): after a gated PBS 國道 sighting, a later TDX freeway event at the SAME road/direction/km is 0 via the legacy path — not because of any PBS residue, but because TDX RoadEvent no longer reaches the legacy path at all (LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT); the underlying claim this case originally protected — a gated PBS sighting must leave no incidentSuppression residue for the road/direction — is still asserted directly below, unaffected by the TDX-retirement change', async () => {
   const TRAFFIC_KV = kv();
   const env = await envWithSubscriber(TRAFFIC_KV);
 
@@ -286,30 +286,37 @@ test('CASE 6: after a gated PBS 國道 sighting, a later TDX freeway event at th
   assert.equal(first.result.pbs.freewayGatedCount, 1);
 
   // Confirm no suppression record exists for this road/direction after
-  // the gated PBS sighting — this is the actual thing V57.2 fixes.
+  // the gated PBS sighting — this is the actual thing V57.2 fixes, still
+  // true and still asserted regardless of the V2.4.0 TDX-retirement
+  // change below.
   const suppressionRaw = await TRAFFIC_KV.get('line:incident-suppression-state');
   const suppression = suppressionRaw ? JSON.parse(suppressionRaw) : { incidents: {} };
   assert.deepEqual(suppression.incidents['國道一號|北向'] || [], []);
 
   // Tick 2: TDX now reports the same real incident, at the same road/
   // direction/km PBS already (uselessly) reported. PBS relay returns
-  // nothing this tick (already cleared/not re-sent) to isolate the check
-  // to "did the EARLIER PBS sighting leave any residue".
+  // nothing this tick (already cleared/not re-sent). V2.4.0: TDX's own
+  // fetched event no longer reaches `broadcastEvents` at all — 0 via the
+  // legacy path is now the correct outcome unconditionally, not evidence
+  // of (or protection against) PBS suppression residue one way or the
+  // other. TDX broadcast now flows only through the new Queue/AI ingress
+  // (see test/tdxQueueIngress.test.js), which this legacy-path test file
+  // does not exercise.
   env.PBS_RELAY_WINDOWS = pbsRelay([]);
   const second = await withPushCapture(mockTdxFetch([freewayAccidentRaw()]), () =>
     runScheduledTdxSync(env, new Date('2026-08-20T08:20:00+08:00'))
   );
 
-  assert.equal(second.result.line.pendingTargetCount, 1); // NOT 0 — never suppressed by the earlier PBS sighting
-  assert.equal(second.pushed.length, 1);
-  assert.equal(second.result.line.pushSucceeded, 1);
+  assert.equal(second.result.line.pendingTargetCount, 0);
+  assert.equal(second.pushed.length, 0);
+  assert.equal(second.result.line.pushSucceeded, 0);
 });
 
 // ===========================================================================
 // CASE 7 — Shared Feed：PBS-only freeway 不對外；TDX freeway 正常進 Feed.
 // ===========================================================================
 
-test('CASE 7: Shared Feed only ever receives the TDX product for a 國道 incident, never a PBS-only one', async () => {
+test('CASE 7 (V2.4.0 update): Shared Feed never receives a 國道 product via the legacy path anymore — a gated PBS-only sighting still contributes 0 (unchanged claim), and a TDX-only sighting is now ALSO 0 via this path (LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT; TDX no longer reaches Shared Feed through scheduled.js\'s legacy runLineBroadcast — the new Queue/AI path\'s own Shared Feed behavior is covered separately, see test/pbsDebugPush.test.js)', async () => {
   const TRAFFIC_KV = kv();
   const env = await envWithSubscriber(TRAFFIC_KV);
 
@@ -323,6 +330,6 @@ test('CASE 7: Shared Feed only ever receives the TDX product for a 國道 incide
   const tdxOnly = await withPushCapture(mockTdxFetch([freewayAccidentRaw()]), () =>
     runScheduledTdxSync(env, new Date('2026-08-20T08:20:00+08:00'))
   );
-  assert.equal(tdxOnly.result.sharedFeed.eventCount, 1);
-  assert.equal(tdxOnly.result.line.completedProducts[0].event.source, 'freeway');
+  assert.equal(tdxOnly.result.sharedFeed.eventCount, 0);
+  assert.equal(tdxOnly.result.line.completedProducts.length, 0);
 });

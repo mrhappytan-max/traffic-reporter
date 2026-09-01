@@ -123,7 +123,7 @@ afterEach(() => resetTdxTokenCache());
 
 // --- E. PBS-only tick uses a <=30-min cached TDX event for cross-source dedup ---
 
-test('E. 08:00 TDX sees the accident; 08:10 PBS reports the SAME accident -> not re-broadcast (cross-source dedup via cache)', async () => {
+test('E. (V2.4.0 update) 08:00 TDX sees the accident (0 via the legacy path, LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT); 08:30 PBS reports the SAME accident and matches the cached TDX sighting -> exactly 1 broadcast (the PBS-confirmed canonical event, its first and only send — not a re-broadcast, since TDX itself never independently broadcast at 08:00 anymore)', async () => {
   const env = await envWithSubscriber();
   const pbsCalls = [];
 
@@ -134,7 +134,15 @@ test('E. 08:00 TDX sees the accident; 08:10 PBS reports the SAME accident -> not
     env.PBS_RELAY_WINDOWS = pbsRelay(pbsCalls, []); // no PBS match yet at 08:00
     return runScheduledTdxSync(env, taipei('2026-08-18T08:00:00+08:00'));
   });
-  assert.equal(first.pushed.length, 1); // TDX accident broadcast once
+  // V2.4.0: TDX's own fetched event no longer reaches the legacy
+  // broadcastEvents at all (LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT)
+  // — 0 via this path now, regardless of PBS match status. The cache this
+  // test actually exercises (tdxEventCache.js, read by
+  // tdxEventsForPbsDedup below) is populated independently of
+  // broadcastEvents, so PBS's own cross-source match against the cached
+  // TDX sighting at 08:30 is UNCHANGED and still the real thing under
+  // test here.
+  assert.equal(first.pushed.length, 0);
 
   // V1.9.3: PBS itself is now only fetched every 30 minutes (see
   // pbsSchedule.js) — 08:30 (not 08:10) is the next minute that's a real
@@ -147,8 +155,17 @@ test('E. 08:00 TDX sees the accident; 08:10 PBS reports the SAME accident -> not
   });
 
   assert.equal(hits08_30.length, 0); // PBS-only tick: 0 TDX calls
-  assert.equal(second.pushed.length, 0); // NOT re-broadcast — already seen at 08:00
-  assert.equal(second.result.pbs.crossSourceDuplicateCount, 1); // matched the cached TDX event
+  // V2.4.0: exactly 1, not 0 — this IS the first (and only) broadcast for
+  // this real incident. Under the pre-V2.4.0 architecture the TDX event
+  // itself already broadcast at 08:00 under source:rawId=freeway:..., so
+  // the canonical merge at 08:30 (which deliberately keeps that SAME
+  // source:rawId identity — see crossSourceDedup.js#buildCanonicalEvent)
+  // was a genuine re-send notified.js's per-target dedup correctly
+  // skipped. Now that TDX's own 08:00 sighting never reaches LINE at all,
+  // there is no prior notified-state entry to dedup against — the
+  // canonical event is new to notified.js and sends once, correctly.
+  assert.equal(second.pushed.length, 1);
+  assert.equal(second.result.pbs.crossSourceDuplicateCount, 1); // matched the cached TDX event (PBS's own cross-source bookkeeping — unaffected by the V2.4.0 broadcastEvents change)
 });
 
 // --- F. A >30-min-old cached TDX event is NOT used ---

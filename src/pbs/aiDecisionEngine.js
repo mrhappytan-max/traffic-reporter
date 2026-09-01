@@ -27,6 +27,7 @@
 
 import { computeAiDecisionCacheKeyHash, buildAiDecisionCacheKvKey } from './aiCandidate.js';
 import { readAiDecisionCache, persistAiDecisionCache } from './aiDecisionCache.js';
+import { buildMemoryContextFingerprint } from '../traffic/incidentMemory.js';
 
 export const PBS_AI_MODEL_ID = '@cf/zai-org/glm-4.7-flash';
 
@@ -53,6 +54,30 @@ const SYSTEM_PROMPT = `你是新竹縣市營業車路況判讀員。
 只能輸出一個 JSON 物件，格式如下，不要有任何其他文字：
 {"notify": true 或 false, "impact": "HIGH" 或 "LOW", "reason": "繁體中文短句，不超過80字", "confidence": 0 到 1 之間的數字}`;
 
+// V2.4.0 — appended to SYSTEM_PROMPT ONLY when the caller actually
+// supplies recentIncidentContext (traffic/incidentMemory.js's own
+// prefiltered candidates) — order section 十一's three questions, kept
+// as close to the existing prompt's own plain-language style as
+// possible, never a second/different vocabulary. When no context is
+// supplied (every PBS call today, and any TDX/PBS call with nothing
+// nearby in memory), this text is never appended and the JSON schema
+// asked for is byte-for-byte the original four fields — see
+// buildAiRequest's own comment for why that matters for cache-key
+// compatibility.
+const MEMORY_CONTEXT_PROMPT_SUFFIX = `
+
+以下另外提供「近期同路段、同方向的既有事故記錄」（最多5筆，依最新時間排序），
+每筆記錄包含來源、事件類型、首次發現時間、最後確認時間、最後通知時間、最近摘要。
+請額外判斷這筆新事件與其中最相關的一筆是否為「同一起事故」，以及是否有「實質變化」
+（例如：從單線事故惡化為全線封閉、從可通行變成無法通行、車道封閉數增加）。
+
+輸出的 JSON 物件需多兩個欄位：
+"sameIncident": true 或 false（是否與提供的近期記錄中最相關的一筆屬於同一起事故；
+若近期記錄中沒有任何一筆看起來相關，請回答 false）
+"materialChange": true 或 false（若 sameIncident 為 false，此欄位一律為 false；
+若 sameIncident 為 true，判斷是否有上述實質變化，或距離上次通知已經過一段時間、
+事故仍持續、值得再次提醒駕駛）`;
+
 /**
  * Only the fields the model actually needs (order section 五) — never a
  * whole PBS batch, trace, KV state, LINE state, or CCTV metadata.
@@ -70,14 +95,49 @@ function buildAiUserPrompt(candidate) {
   return JSON.stringify(summary);
 }
 
-/** Exported for tests — the exact request body sent to env.AI.run(). */
-export function buildAiRequest(candidate) {
+// V2.4.0 — the exact (and ONLY) fields of an incidentMemory.js record
+// the model ever sees. Deliberately excludes incidentKey/km/latitude/
+// longitude/currentStatus — the model reasons about "same incident" from
+// the same descriptive fields a human would (source/type/timing/
+// summary), never from an internal storage id or raw coordinates it has
+// no use for; road/direction are already implied (this candidate list is
+// pre-filtered to the SAME road+direction group, see incidentMemory.js's
+// selectMemoryCandidates).
+function summarizeMemoryCandidateForPrompt(record) {
+  return {
+    source: record.primarySource || record.latestSource || '',
+    eventType: record.eventType || '',
+    firstSeenAt: record.firstSeenAt || null,
+    lastSeenAt: record.lastSeenAt || null,
+    lastNotifiedAt: record.lastNotifiedAt || null,
+    summary: record.latestRawSummary || '',
+  };
+}
+
+/**
+ * Exported for tests — the exact request body sent to env.AI.run().
+ *
+ * @param {object} candidate
+ * @param {{recentIncidentContext?: object[]}} [options] - V2.4.0.
+ *   `recentIncidentContext` — incidentMemory.js#selectMemoryCandidates()'s
+ *   own output (already prefiltered to <=5 same-road-direction, in-
+ *   window, proximate records — this function never re-filters or
+ *   re-queries anything). Omitted/empty -> the ORIGINAL prompt/schema,
+ *   unchanged, so every existing PBS call site (which passes nothing)
+ *   gets byte-for-byte the same request it always has.
+ */
+export function buildAiRequest(candidate, { recentIncidentContext = [] } = {}) {
+  const hasContext = Array.isArray(recentIncidentContext) && recentIncidentContext.length > 0;
+  const systemPrompt = hasContext ? `${SYSTEM_PROMPT}${MEMORY_CONTEXT_PROMPT_SUFFIX}` : SYSTEM_PROMPT;
+  const userPromptObject = hasContext
+    ? { event: JSON.parse(buildAiUserPrompt(candidate)), recentIncidents: recentIncidentContext.map(summarizeMemoryCandidateForPrompt) }
+    : null;
   return {
     model: PBS_AI_MODEL_ID,
     input: {
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: buildAiUserPrompt(candidate) },
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: hasContext ? JSON.stringify(userPromptObject) : buildAiUserPrompt(candidate) },
       ],
     },
   };
@@ -105,9 +165,20 @@ function extractAiResponseText(result) {
  * fence despite instructions) by extracting the first `{...}` block
  * before parsing, but never loosens the SCHEMA itself.
  *
- * @returns {{ok:true, decision:{notify:boolean, impact:'HIGH'|'LOW', reason:string, confidence:number}}|{ok:false, reason:'AI_DECISION_INVALID', detail:string}}
+ * V2.4.0 — when `expectMemoryFields` is true (the caller supplied
+ * recentIncidentContext to buildAiRequest — see resolveAiDecision below),
+ * `sameIncident`/`materialChange` are now REQUIRED booleans, validated
+ * with the exact same strictness as every other field ("但保持最小化" —
+ * order section 十一 — two booleans, no incidentStatus enum, no free
+ * text). When false (every existing PBS call, and any call with nothing
+ * nearby in memory), these two fields are not required at all and are
+ * simply absent from `decision` — the ORIGINAL four-field schema,
+ * unchanged, so this validator's behavior for every pre-V2.4.0 caller is
+ * byte-for-byte identical to before.
+ *
+ * @returns {{ok:true, decision:{notify:boolean, impact:'HIGH'|'LOW', reason:string, confidence:number, sameIncident?:boolean, materialChange?:boolean}}|{ok:false, reason:'AI_DECISION_INVALID', detail:string}}
  */
-export function validateAiDecisionResponse(rawText) {
+export function validateAiDecisionResponse(rawText, { expectMemoryFields = false } = {}) {
   const invalid = (detail) => ({ ok: false, reason: 'AI_DECISION_INVALID', detail });
   if (typeof rawText !== 'string' || !rawText.trim()) return invalid('empty-response');
 
@@ -129,15 +200,27 @@ export function validateAiDecisionResponse(rawText) {
     return invalid('confidence-out-of-range');
   }
 
-  return {
-    ok: true,
-    decision: {
-      notify: parsed.notify,
-      impact: parsed.impact,
-      reason: parsed.reason.length > REASON_MAX_CHARS ? `${parsed.reason.slice(0, REASON_MAX_CHARS)}…` : parsed.reason,
-      confidence: parsed.confidence,
-    },
+  const decision = {
+    notify: parsed.notify,
+    impact: parsed.impact,
+    reason: parsed.reason.length > REASON_MAX_CHARS ? `${parsed.reason.slice(0, REASON_MAX_CHARS)}…` : parsed.reason,
+    confidence: parsed.confidence,
   };
+
+  if (expectMemoryFields) {
+    if (typeof parsed.sameIncident !== 'boolean') return invalid('sameIncident-not-boolean');
+    if (typeof parsed.materialChange !== 'boolean') return invalid('materialChange-not-boolean');
+    // sameIncident:false logically forces materialChange:false ("若
+    // sameIncident 為 false，此欄位一律為 false" — the prompt's own
+    // instruction). A model that violates its own instructed invariant
+    // is exactly the kind of malformed-but-schema-valid response this
+    // validator exists to catch — never silently accepted.
+    if (!parsed.sameIncident && parsed.materialChange) return invalid('materialChange-true-without-sameIncident');
+    decision.sameIncident = parsed.sameIncident;
+    decision.materialChange = parsed.materialChange;
+  }
+
+  return { ok: true, decision };
 }
 
 /**
@@ -149,11 +232,11 @@ export function validateAiDecisionResponse(rawText) {
  * becomes a uniform {ok:false} so the caller's fail-closed policy is the
  * ONLY branch that ever decides what happens next.
  */
-async function callWorkersAi(env, candidate) {
+async function callWorkersAi(env, candidate, { recentIncidentContext = [] } = {}) {
   if (!env || !env.AI || typeof env.AI.run !== 'function') {
     return { ok: false, reason: 'AI_CALL_FAILED', detail: 'ai-binding-missing' };
   }
-  const request = buildAiRequest(candidate);
+  const request = buildAiRequest(candidate, { recentIncidentContext });
   try {
     const result = await env.AI.run(request.model, request.input);
     const rawText = extractAiResponseText(result);
@@ -175,6 +258,15 @@ async function callWorkersAi(env, candidate) {
  * @param {object} candidate - pbs/aiCandidate.js#buildAiCandidate() output
  * @param {{eventId:string, fingerprint:string}} keyInput
  * @param {Date} now
+ * @param {{recentIncidentContext?: object[]}} [options] - V2.4.0.
+ *   `recentIncidentContext` — see buildAiRequest's own comment. Threaded
+ *   through unchanged to the prompt, the schema validator (which fields
+ *   become required), AND the cache key (via
+ *   incidentMemory.js#buildMemoryContextFingerprint) — all three MUST
+ *   agree on whether memory context was supplied, or a cache hit could
+ *   return a decision shape the caller isn't expecting. Omitted (every
+ *   existing PBS call site) reproduces the exact pre-V2.4.0 behavior in
+ *   all three places.
  * @returns {Promise<{
  *   source: 'cache-hit'|'ai-call',
  *   ok: boolean,
@@ -185,10 +277,12 @@ async function callWorkersAi(env, candidate) {
  *   usage?: object,
  * }>}
  */
-export async function resolveAiDecision(env, candidate, { eventId, fingerprint }, now = new Date()) {
+export async function resolveAiDecision(env, candidate, { eventId, fingerprint }, now = new Date(), { recentIncidentContext = [] } = {}) {
   const startedAt = Date.now();
   const kv = env && env.TRAFFIC_KV;
-  const keyHash = await computeAiDecisionCacheKeyHash({ eventId, fingerprint });
+  const expectMemoryFields = Array.isArray(recentIncidentContext) && recentIncidentContext.length > 0;
+  const memoryContextFingerprint = expectMemoryFields ? buildMemoryContextFingerprint(recentIncidentContext) : undefined;
+  const keyHash = await computeAiDecisionCacheKeyHash({ eventId, fingerprint, memoryContextFingerprint });
   const kvKey = buildAiDecisionCacheKvKey(keyHash);
 
   const cached = await readAiDecisionCache(kv, kvKey);
@@ -196,12 +290,12 @@ export async function resolveAiDecision(env, candidate, { eventId, fingerprint }
     return { source: 'cache-hit', ok: true, decision: cached.decision, durationMs: Date.now() - startedAt };
   }
 
-  const aiResult = await callWorkersAi(env, candidate);
+  const aiResult = await callWorkersAi(env, candidate, { recentIncidentContext });
   if (!aiResult.ok) {
     return { source: 'ai-call', ok: false, reason: aiResult.reason, detail: aiResult.detail, durationMs: Date.now() - startedAt };
   }
 
-  const validation = validateAiDecisionResponse(aiResult.rawText);
+  const validation = validateAiDecisionResponse(aiResult.rawText, { expectMemoryFields });
   if (!validation.ok) {
     return { source: 'ai-call', ok: false, reason: validation.reason, detail: validation.detail, durationMs: Date.now() - startedAt, usage: aiResult.usage };
   }

@@ -152,13 +152,30 @@ export function buildAiObservatoryRecord({
   sharedFeedPersisted = null,
   imageUrlPresent = null,
   now = new Date(),
+  // V2.4.0 (order section 十六) — the minimal additional observability
+  // fields for the shared PBS+TDX AI pipeline: which source this
+  // candidate actually came from, how many Recent Incident Memory
+  // candidates were handed to the AI, its sameIncident/materialChange
+  // verdict, who currently owns primarySource for this incident family,
+  // when it was last actually notified, and whether this event's own
+  // memory sighting produced a real KV write. All optional/nullable —
+  // every existing PBS call site that doesn't pass these keeps producing
+  // the exact same record shape it always has (source still defaults to
+  // 'pbs', every new field defaults to null/false).
+  source = 'pbs',
+  memoryCandidateCount = null,
+  sameIncident = null,
+  materialChange = null,
+  primarySource = null,
+  lastNotifiedAt = null,
+  memoryWrite = false,
 }) {
   return {
     timestamp: now.toISOString(),
     eventId: eventId || null,
     lifecycle: lifecycle || null,
     fingerprint: fingerprint || null,
-    source: 'pbs',
+    source,
     road: (candidate && candidate.road) || null,
     direction: (candidate && candidate.direction) || null,
     areaNm: (candidate && candidate.areaNm) || null,
@@ -175,6 +192,12 @@ export function buildAiObservatoryRecord({
     lineSent: Boolean(lineSent),
     sharedFeedPersisted,
     imageUrlPresent,
+    memoryCandidateCount,
+    sameIncident,
+    materialChange,
+    primarySource,
+    lastNotifiedAt,
+    memoryWrite: Boolean(memoryWrite),
   };
 }
 

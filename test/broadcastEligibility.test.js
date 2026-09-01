@@ -2,10 +2,27 @@
 // professional drivers already have Google Maps/1968 for that. Only
 // genuinely sudden/abnormal events (accident/closure/control/other) are
 // broadcast-eligible; pure congestion never is, regardless of severity.
-// See broadcastRules.js's isBroadcastEligibleType.
+// See broadcastRules.js's isBroadcastEligibleType. That WHITELIST LOGIC
+// ITSELF is still fully covered at the unit level in broadcastRules.test.js
+// — never touched by V2.4.0, and not re-tested here.
 //
-// These exercise the real Cron path end to end (runScheduledTdxSync),
-// same style as pbsLineBroadcast.test.js/congestionValidationIntegration.test.js.
+// V2.4.0 (TDX_FREEWAY_PROVINCIAL_TO_UNIFIED_AI_PIPELINE) — order section
+// 四: LEGACY_TDX_LINE_PIPELINE = RETIRED_FOR_ROADEVENT. This file used to
+// exercise broadcastRules.js's whitelist end-to-end via
+// runScheduledTdxSync's LEGACY runLineBroadcast path, fed by fetched TDX
+// RoadEvents — that wiring is now retired: a TDX freeway/highway event no
+// longer reaches `broadcastEvents` inside scheduled.js AT ALL, regardless
+// of its own type/eligibility, so it never even reaches broadcastRules.js
+// to be judged eligible or ineligible in the first place (see
+// scheduled.js's own V2.4.0 comment on `broadcastEvents`). This file is
+// repurposed (not deleted — every one of these scenarios is still a real,
+// meaningful regression to guard) into exactly what order section 18's
+// test 17 asks for: proof that TDX-fetched events of EVERY type never
+// reach LINE via this legacy path, whatever their own eligibility would
+// have been under the old rules. The new AI-driven path (Queue ingress +
+// aiDecisionEngine.js) is where TDX events now get judged — see
+// test/tdxQueueIngress.test.js/test/pbsDebugPush.test.js's TDX-branch
+// coverage for that.
 
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -82,13 +99,6 @@ async function withPushCapture(tdxFetch, run) {
 async function baseEnv() {
   const TRAFFIC_KV = kv();
   await setUserEnabled(TRAFFIC_KV, 'U1', true, new Date('2026-08-01T00:00:00+08:00'));
-    // 2026-08-23: this file pins broadcastRules.js's V1.5 eligibility
-    // whitelist, which the 重大事故限定 push policy did NOT change. The
-    // policy is a separate layer on top (broadcastPolicy.js), so these
-    // cases opt into ALL_ELIGIBLE to keep testing the whitelist itself
-    // rather than silently re-testing the policy. Production runs
-    // MAJOR_ACCIDENT_ONLY — that behaviour is pinned in
-    // test/pbsCctvMajorAccidentOnly.test.js.
   return {
     TDX_CLIENT_ID: 'id',
     TDX_CLIENT_SECRET: 'secret',
@@ -100,73 +110,43 @@ async function baseEnv() {
 
 afterEach(() => resetTdxTokenCache());
 
-test('1. pure congestion (壅塞) -> 0 LINE messages', async () => {
+// One parameterized regression per real-world type this file used to
+// individually broadcast-test — order test 17's own requirement, applied
+// per type so a future accidental re-wiring of any ONE type back into the
+// legacy path (not just a blanket regression) would still be caught.
+const RETIRED_TDX_LEGACY_SCENARIOS = [
+  ['1. pure congestion (壅塞)', { EventID: 'FRW-CONG', EventType: '壅塞', Description: '北向92K壅塞回堵' }],
+  ['2. 車多', { EventID: 'FRW-BUSY', EventType: '車多', Description: '北向92K車多' }],
+  ['3. accident (事故)', { EventID: 'FRW-ACC', EventType: '事故', Description: '北向92K車輛事故' }],
+  ['4. closure (匝道封閉)', { EventID: 'FRW-CLOSE', EventType: '封閉', Description: '8月15日8時至12時北向92K匝道封閉' }],
+  ['5. flooding (淹水, classified "other")', { EventID: 'FRW-FLOOD', EventType: '其他', Description: '8月15日8時至12時北向92K路段淹水，請改道' }],
+  ['8. construction WITH an impact keyword (車道封閉)', { EventID: 'FRW-CONST-IMPACT', EventType: '施工', Description: '8月15日8時至12時北向92K施工，車道封閉' }],
+  ['9. "other" with a recognized anomaly keyword (落石)', { EventID: 'FRW-OTHER-ROCKSLIDE', EventType: '其他', Description: '8月15日8時至12時北向92K路段落石' }],
+];
+
+for (const [label, overrides] of RETIRED_TDX_LEGACY_SCENARIOS) {
+  test(`${label} -> 0 LINE messages via the legacy path (LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT, V2.4.0)`, async () => {
+    const env = await baseEnv();
+    const raw = freewayRaw(overrides);
+    const { pushed, result } = await withPushCapture(mockFetch({ freewayEvents: [raw] }), () => runScheduledTdxSync(env, NOW));
+
+    // Under the old (pre-V2.4.0) legacy pipeline, several of these types
+    // (accident/closure/flooding-as-other/construction-with-impact/
+    // rockslide-as-other) WOULD have produced exactly 1 LINE message —
+    // that is precisely the behavior this test now proves is gone,
+    // regardless of the event's own would-have-been eligibility.
+    assert.equal(pushed.length, 0, `${label}: TDX must never reach LINE via the legacy Cron path`);
+    // The event was still genuinely fetched/classified (dedupe.js still
+    // ran) — it simply never reached broadcastRules.js at all, so the
+    // legacy eligibility counters stay at their empty defaults, not "1
+    // ineligible" — there was no eligibility judgment to make.
+    assert.equal(result.line.typeIneligibleCount, 0);
+    assert.equal(result.baselineSeedCount, 1); // cold KV -> baseline seed, not 'new'
+  });
+}
+
+test('6. congestion + accident describing the SAME incident -> still 0 LINE via legacy path (neither ever reaches broadcastRules.js)', async () => {
   const env = await baseEnv();
-  const raw = freewayRaw({ EventID: 'FRW-CONG', EventType: '壅塞', Description: '北向92K壅塞回堵' });
-  const { pushed, result } = await withPushCapture(mockFetch({ freewayEvents: [raw] }), () => runScheduledTdxSync(env, NOW));
-
-  assert.equal(pushed.length, 0);
-  assert.equal(result.line.typeIneligibleCount, 1);
-});
-
-test('2. 車多 -> 0 LINE messages', async () => {
-  const env = await baseEnv();
-  const raw = freewayRaw({ EventID: 'FRW-BUSY', EventType: '車多', Description: '北向92K車多' });
-  const { pushed, result } = await withPushCapture(mockFetch({ freewayEvents: [raw] }), () => runScheduledTdxSync(env, NOW));
-
-  assert.equal(pushed.length, 0);
-  assert.equal(result.line.typeIneligibleCount, 1);
-});
-
-test('3. accident -> 1 LINE message', async () => {
-  const env = await baseEnv();
-  const raw = freewayRaw({ EventID: 'FRW-ACC', EventType: '事故', Description: '北向92K車輛事故' });
-  const { pushed } = await withPushCapture(mockFetch({ freewayEvents: [raw] }), () => runScheduledTdxSync(env, NOW));
-
-  assert.equal(pushed.length, 1);
-  assert.match(pushed[0], /🚨 交通事故/);
-});
-
-test('4. closure (匝道封閉) -> 1 LINE message', async () => {
-  const env = await baseEnv();
-  // closure is not a LIVE event type (only accident/congestion are — see
-  // effectiveWindow.js), so it needs a parseable Chinese date range in
-  // the description to become broadcast-relevant — same requirement as
-  // the project's existing construction/closure/control tests (see
-  // broadcastPipeline.test.js #20).
-  const raw = freewayRaw({ EventID: 'FRW-CLOSE', EventType: '封閉', Description: '8月15日8時至12時北向92K匝道封閉' });
-  const { pushed } = await withPushCapture(mockFetch({ freewayEvents: [raw] }), () => runScheduledTdxSync(env, NOW));
-
-  assert.equal(pushed.length, 1);
-  assert.match(pushed[0], /🚧 道路封閉/);
-});
-
-test('5. flooding (淹水) -> classifies as "other", still 1 LINE message', async () => {
-  const env = await baseEnv();
-  // No accident/construction/closure/control/congestion keyword at all —
-  // TDX's own classify.js has no dedicated flooding pattern, so this
-  // (correctly, per the existing "寧可不亂猜" classification design)
-  // falls through to 'other', which stays broadcast-eligible. 'other' is
-  // also not a LIVE type, so it needs the same parseable date range.
-  const raw = freewayRaw({ EventID: 'FRW-FLOOD', EventType: '其他', Description: '8月15日8時至12時北向92K路段淹水，請改道' });
-  const { pushed } = await withPushCapture(mockFetch({ freewayEvents: [raw] }), () => runScheduledTdxSync(env, NOW));
-
-  assert.equal(pushed.length, 1);
-  // V1.8.6.4: messageFormat.js now gives a recognized 'other' anomaly its
-  // own specific headline instead of the old generic "ℹ️ 路況異常" — see
-  // test/provincialRoadMessageClarity.test.js for the dedicated coverage.
-  // `event.type` itself is still plain 'other', unchanged — this is a
-  // display-only refinement, still gated by the same eligibility rule.
-  assert.match(pushed[0], /🌊 道路積水/);
-});
-
-test('6. congestion + accident describing the SAME incident -> exactly 1 LINE message, framed as the accident', async () => {
-  const env = await baseEnv();
-  // Two separate TDX records for the same real spot: one tagged 壅塞, one
-  // tagged 事故 — TDX/PBS never merge same-source-different-type records
-  // into one, so both flow through as independent unified events; the
-  // congestion one is excluded at the broadcast-eligibility gate, the
-  // accident one broadcasts normally on its own.
   const congestionRaw = freewayRaw({ EventID: 'FRW-CONG-SAME', EventType: '壅塞', Description: '北向92K壅塞回堵' });
   const accidentRaw = freewayRaw({ EventID: 'FRW-ACC-SAME', EventType: '事故', Description: '北向92K車輛事故' });
 
@@ -175,12 +155,11 @@ test('6. congestion + accident describing the SAME incident -> exactly 1 LINE me
     () => runScheduledTdxSync(env, NOW)
   );
 
-  assert.equal(pushed.length, 1);
-  assert.match(pushed[0], /🚨 交通事故/);
-  assert.equal(result.line.typeIneligibleCount, 1); // the congestion record, and only that one
+  assert.equal(pushed.length, 0);
+  assert.equal(result.baselineSeedCount, 2); // cold KV -> baseline seed, not 'new'
 });
 
-test('7. PBS + TDX report the SAME accident -> exactly 1 LINE message (cross-source dedup unaffected)', async () => {
+test('7. PBS + TDX report the SAME accident -> only the PBS side is even a broadcast candidate (TDX corroboration still computed, TDX itself never broadcasts)', async () => {
   const env = await baseEnv();
   env.PBS_RELAY_TOKEN = 'relay-token';
   env.PBS_30_MIN_POLLING_ENABLED = true; // V1.9.8: this file exercises the (unchanged) PBS pipeline via the polling entry point on purpose
@@ -201,63 +180,41 @@ test('7. PBS + TDX report the SAME accident -> exactly 1 LINE message (cross-sou
 
   const { pushed, result } = await withPushCapture(mockFetch({ freewayEvents: [accidentRaw] }), () => runScheduledTdxSync(env, NOW));
 
-  assert.equal(pushed.length, 1);
+  // PBS's own cross-source matching (V57.2) still runs and still finds
+  // the TDX corroboration (canonicalEventCount=1) — that bookkeeping is
+  // untouched. But `broadcastEvents` now only ever contains
+  // pbsSummary.canonicalEvents/uniquePbsEvents, and PBS's legacy polling
+  // pipeline itself is dormant in real Production (resolvePbsPollingEnabled
+  // defaults false) — this test explicitly re-enables it (PBS_30_MIN_POLLING_ENABLED)
+  // purely to prove the OTHER half of order section 四: PBS's own
+  // (already-dormant) legacy fallback is untouched by this round, while
+  // TDX's own RoadEvent never reaches LINE on its own right either way.
   assert.equal(result.pbs.canonicalEventCount, 1);
+  assert.equal(pushed.length, 1);
   assert.match(pushed[0], /🚨 交通事故/);
 });
 
-// --- V1.5 whitelist refinement: construction/other are now conditional, alert defaults off ---
+// --- V1.5 whitelist refinement scenarios that used to distinguish 0-vs-1
+// via broadcastRules.js — now uniformly 0 via this legacy path; the
+// whitelist distinction itself remains fully covered in
+// broadcastRules.test.js. ---
 
-test('8. routine construction (no impact keyword) -> 0 LINE messages', async () => {
-  const env = await baseEnv();
-  const raw = freewayRaw({
-    EventID: 'FRW-CONST-ROUTINE', EventType: '施工',
-    Description: '8月15日8時至12時北向92K路面刨鋪施工',
+const RETIRED_TDX_LEGACY_ZERO_SCENARIOS = [
+  ['10. routine construction (no impact keyword)', { EventID: 'FRW-CONST-ROUTINE', EventType: '施工', Description: '8月15日8時至12時北向92K路面刨鋪施工' }],
+  ['11. unrecognized "other" (no anomaly keyword)', { EventID: 'FRW-OTHER-UNKNOWN', EventType: '其他', Description: '8月15日8時至12時北向92K一般公告事項' }],
+];
+
+for (const [label, overrides] of RETIRED_TDX_LEGACY_ZERO_SCENARIOS) {
+  test(`${label} -> 0 LINE messages via the legacy path (already 0 under the old rules too, still 0 for a different reason now)`, async () => {
+    const env = await baseEnv();
+    const raw = freewayRaw(overrides);
+    const { pushed, result } = await withPushCapture(mockFetch({ freewayEvents: [raw] }), () => runScheduledTdxSync(env, NOW));
+
+    assert.equal(pushed.length, 0);
+    assert.equal(result.line.typeIneligibleCount, 0); // never reached the gate at all, not "reached and was rejected"
+    assert.equal(result.baselineSeedCount, 1); // cold KV -> baseline seed, not 'new'
   });
-  const { pushed, result } = await withPushCapture(mockFetch({ freewayEvents: [raw] }), () => runScheduledTdxSync(env, NOW));
-
-  assert.equal(pushed.length, 0);
-  assert.equal(result.line.ineligibleByReason['construction-no-impact-keyword'], 1);
-});
-
-test('9. construction WITH an impact keyword (車道封閉) -> 1 LINE message', async () => {
-  const env = await baseEnv();
-  const raw = freewayRaw({
-    EventID: 'FRW-CONST-IMPACT', EventType: '施工',
-    Description: '8月15日8時至12時北向92K施工，車道封閉',
-  });
-  const { pushed, result } = await withPushCapture(mockFetch({ freewayEvents: [raw] }), () => runScheduledTdxSync(env, NOW));
-
-  assert.equal(pushed.length, 1);
-  assert.match(pushed[0], /🚧 道路施工/);
-  assert.equal(result.line.ineligibleByReason['construction-no-impact-keyword'] || 0, 0);
-});
-
-test('10. unrecognized "other" (no anomaly keyword) -> 0 LINE messages', async () => {
-  const env = await baseEnv();
-  const raw = freewayRaw({
-    EventID: 'FRW-OTHER-UNKNOWN', EventType: '其他',
-    Description: '8月15日8時至12時北向92K一般公告事項',
-  });
-  const { pushed, result } = await withPushCapture(mockFetch({ freewayEvents: [raw] }), () => runScheduledTdxSync(env, NOW));
-
-  assert.equal(pushed.length, 0);
-  assert.equal(result.line.ineligibleByReason['other-no-anomaly-keyword'], 1);
-});
-
-test('11. "other" with a recognized anomaly keyword (落石) -> 1 LINE message', async () => {
-  const env = await baseEnv();
-  const raw = freewayRaw({
-    EventID: 'FRW-OTHER-ROCKSLIDE', EventType: '其他',
-    Description: '8月15日8時至12時北向92K路段落石',
-  });
-  const { pushed } = await withPushCapture(mockFetch({ freewayEvents: [raw] }), () => runScheduledTdxSync(env, NOW));
-
-  assert.equal(pushed.length, 1);
-  // V1.8.6.4: specific anomaly headline (⛰️ 落石), not the old generic
-  // "ℹ️ 路況異常" — see test/provincialRoadMessageClarity.test.js.
-  assert.match(pushed[0], /⛰️ 落石/);
-});
+}
 
 // V1.6.1: Bus Alert (both Hsinchu city and county) is no longer fetched
 // by the scheduled Cron at all (see scheduled.js's PRODUCTION_TDX_SOURCE_IDS)
@@ -301,7 +258,7 @@ test('12. bus alert endpoints are never requested by the Cron -> 0 LINE messages
   assert.equal(result.line.ineligibleByReason['alert-excluded'] || 0, 0);
 });
 
-test('13. ineligibleByReason breaks down multiple exclusion reasons correctly in one run', async () => {
+test('13. a mixed batch (congestion+construction+other+accident) in one run -> 0 LINE via legacy path, all 4 still correctly fetched/classified', async () => {
   const env = await baseEnv();
   const events = [
     freewayRaw({ EventID: 'FRW-CONG', EventType: '壅塞', Description: '北向92K壅塞' }),
@@ -311,10 +268,7 @@ test('13. ineligibleByReason breaks down multiple exclusion reasons correctly in
   ];
   const { pushed, result } = await withPushCapture(mockFetch({ freewayEvents: events }), () => runScheduledTdxSync(env, NOW));
 
-  assert.equal(pushed.length, 1);
-  assert.match(pushed[0], /🚨 交通事故/);
-  assert.equal(result.line.ineligibleByReason['congestion-excluded'], 1);
-  assert.equal(result.line.ineligibleByReason['construction-no-impact-keyword'], 1);
-  assert.equal(result.line.ineligibleByReason['other-no-anomaly-keyword'], 1);
-  assert.equal(result.line.typeIneligibleCount, 3);
+  assert.equal(pushed.length, 0);
+  assert.equal(result.line.typeIneligibleCount, 0);
+  assert.equal(result.baselineSeedCount, 4); // cold KV -> baseline seed, not 'new'
 });

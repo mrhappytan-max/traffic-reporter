@@ -208,7 +208,14 @@ test('7/8: cache MISS then cache HIT are correctly and distinctly displayed', as
   // Second push with the SAME eventId+fingerprint but a different
   // lifecycle (UPDATED) still hits the SAME AI decision cache key
   // (eventId+fingerprint only) -> cache hit, 0 additional AI calls, and
-  // produces its OWN observatory row for the new lifecycle.
+  // produces its OWN observatory row for the new lifecycle. V2.4.0 note:
+  // the first push above also wrote a Recent Incident Memory sighting for
+  // this event — without incidentMemory.js#selectMemoryCandidates's own
+  // `excludeEventId` exclusion (see that function's doc comment), this
+  // second push would "discover" its own just-recorded sighting as a
+  // memory candidate, changing the AI decision cache key's memory-context
+  // fingerprint and wrongly forcing a fresh AI call here. The exclusion
+  // is what keeps this a genuine cache hit.
   resetPbsDebugPushIdempotencyState();
   await handlePbsDebugPush(pushRequest({ body: { ...payload, lifecycle: 'UPDATED' } }), env, NOW);
   assert.equal(ai.calls.length, 1, 'a cache hit must never call Workers AI again');
@@ -273,10 +280,11 @@ test('11: missing/expired AI decision cache data renders UNKNOWN / NOT RECORDED,
 // a live "current version" smoke check rather than a frozen historical
 // literal — updated in the SAME commit as every subsequent APP_VERSION
 // bump (V2.2.0's own Four-Layer Event Lifecycle round moved it here;
-// V2.3.0/V2.3.1/V2.3.2/V2.3.3 only bump the literal), same discipline
-// test/versionLineage.test.js's own series-prefix check already follows.
+// V2.3.0/V2.3.1/V2.3.2/V2.3.3/V2.4.0 only bump the literal), same
+// discipline test/versionLineage.test.js's own series-prefix check
+// already follows.
 test('12: APP_VERSION reflects the current release', () => {
-  assert.equal(APP_VERSION, 'V2.3.3');
+  assert.equal(APP_VERSION, 'V2.4.0');
 });
 
 test('SERVICE_AREA_EXCLUDED events show "服務區域外", never routed through AI at all', async () => {

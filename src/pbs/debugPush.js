@@ -322,6 +322,14 @@ import { resolveAiDecision, PBS_AI_MODEL_ID } from './aiDecisionEngine.js';
 import { runAiApprovedPbsBroadcast } from '../traffic/aiApprovedPbsBroadcast.js';
 import { taipeiDateString } from '../tdx/usageLedger.js';
 import { buildAiObservatoryRecord, recordAiObservatoryEntry, AI_OUTCOME } from './aiObservatoryIndex.js';
+import {
+  readIncidentMemory,
+  selectMemoryCandidates,
+  buildIncidentMemoryUpdate,
+  persistIncidentMemory,
+  deriveEventLocationForMemory,
+  incidentMemoryGroupKey,
+} from '../traffic/incidentMemory.js';
 
 export const PBS_DEBUG_PUSH_PATH = '/internal/pbs-debug-push';
 
@@ -625,7 +633,7 @@ export function buildPbsAiQueueMessage({ source, eventId, lifecycle, fingerprint
  *   ok=false, retry=true -> the caller should Queue-retry (bounded).
  */
 export async function processQueuedPbsEvent(env, message, now = new Date()) {
-  const { eventId, lifecycle, fingerprint, generatedAt, event, idempotencyKeyHash, requestId, acceptedFirstAcceptedAt, acceptedAttemptCount } = message || {};
+  const { source = 'pbs', eventId, lifecycle, fingerprint, generatedAt, event, idempotencyKeyHash, requestId, acceptedFirstAcceptedAt, acceptedAttemptCount } = message || {};
   const kv = env.TRAFFIC_KV;
   const kvKey = idempotencyKeyHash ? buildIdempotencyKvKey(idempotencyKeyHash) : null;
   // KEY IDENTITY, not a business timestamp: the Observatory KV key is
@@ -673,8 +681,18 @@ export async function processQueuedPbsEvent(env, message, now = new Date()) {
   let candidate = null;
   let observatoryOutcome;
   try {
-    const rawRecord = buildRawPbsRecordFromPush({ eventId, generatedAt, event });
-    const normalizedEvent = normalizePbsEvent(rawRecord);
+    // V2.4.0 — order section 六's own required dispatch: TDX freeway/
+    // highway messages carry an ALREADY-normalized event (tdx/sources.js's
+    // own `source.normalize: (raw) => normalizeRoadEvent(raw, 'freeway'/
+    // 'highway')` runs at fetch time inside scheduled.js, before the
+    // message is ever built — see scheduled.js's own V2.4.0 comment) —
+    // never re-normalized here, and NEVER routed through
+    // buildRawPbsRecordFromPush/normalizePbsEvent, which assume Windows's
+    // raw push shape (road/areaNm/comment/x1/y1) that a TDX record simply
+    // isn't. PBS (source==='pbs', every existing call) is completely
+    // unchanged — same two-step build+normalize as before.
+    const normalizedEvent =
+      source === 'freeway' || source === 'highway' ? event && typeof event === 'object' ? event : {} : normalizePbsEvent(buildRawPbsRecordFromPush({ eventId, generatedAt, event }));
 
     try {
       if (isWindowsPbsAiCandidateEligible(normalizedEvent)) {
@@ -692,11 +710,28 @@ export async function processQueuedPbsEvent(env, message, now = new Date()) {
     }
 
     if (resolvePbsAiDecisionEnabled(env)) {
-      observatoryOutcome = await runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lifecycle, fingerprint, now });
+      observatoryOutcome = await runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lifecycle, fingerprint, now, source });
+    } else if (source !== 'pbs') {
+      // V2.4.0 — order section 四: LEGACY_TDX_LINE_PIPELINE =
+      // RETIRED_FOR_ROADEVENT. A TDX-origin message must NEVER fall back
+      // to the legacy hard-rule runLineBroadcast() below, AI-globally-
+      // disabled or not — that would silently resurrect V1.5 hard-rule
+      // judgment on exactly the events this whole round exists to bring
+      // under the one shared AI engine (order section 六/八's own "不得
+      // 建立第二套決策系統" also covers "don't let TDX fall back to a
+      // THIRD, even older one"). With AI disabled, a TDX-origin event
+      // simply gets no decision this delivery — logged, never queued
+      // anywhere else, never silently broadcast by a different rulebook.
+      console.log(
+        `[pbs-ai-queue][business-pipeline] eventId=${eventId} lifecycle=${lifecycle} source=${source} ` +
+          `skipped: PBS_AI_DECISION_ENABLED=false and legacy runLineBroadcast is not a valid TDX path`
+      );
+      observatoryOutcome = { outcome: AI_OUTCOME.AI_NOT_INVOKED_LEGACY_PATH, lineAttempted: false, lineSent: false, sharedFeedPersisted: false };
     } else {
       // Reuses the EXACT SAME canonical Business Pipeline entry point
       // traffic/scheduled.js's Cron path calls for every polled TDX/PBS
-      // event — never a second copy.
+      // event — never a second copy. PBS only (source==='pbs') — see the
+      // branch above for why TDX never reaches this.
       const lineSummary = await runLineBroadcast(env, {
         allEvents: [normalizedEvent],
         dedupeAvailable: true,
@@ -739,13 +774,20 @@ export async function processQueuedPbsEvent(env, message, now = new Date()) {
   // invalid answer) — is terminal, exactly as V2.1.0/V2.2.0 already
   // treated it; this round does not loosen that policy.
   if (observatoryOutcome.outcome === AI_OUTCOME.AI_CALL_FAILED) {
-    await writeObservatoryRecord(env, { candidate, eventId, lifecycle, fingerprint, now: observatoryNow, idempotencyKeyHash, ...observatoryOutcome });
+    await writeObservatoryRecord(env, { candidate, eventId, lifecycle, fingerprint, now: observatoryNow, idempotencyKeyHash, source, ...observatoryOutcome });
     return { ok: false, retry: true, outcome: observatoryOutcome.outcome, candidate };
   }
 
-  await writeObservatoryRecord(env, { candidate, eventId, lifecycle, fingerprint, now: observatoryNow, idempotencyKeyHash, ...observatoryOutcome });
+  await writeObservatoryRecord(env, { candidate, eventId, lifecycle, fingerprint, now: observatoryNow, idempotencyKeyHash, source, ...observatoryOutcome });
   await markProcessingComplete(kv, kvKey, { firstAcceptedAt: acceptedFirstAcceptedAt, requestId, attemptCount: acceptedAttemptCount, now: new Date() });
-  return { ok: true, retry: false, outcome: observatoryOutcome.outcome, candidate };
+  // V2.4.0 — the caller (Queue consumer, and this file's own test suite)
+  // gets the FULL decision outcome back, not just `outcome` — sameIncident/
+  // materialChange/memoryCandidateCount/primarySource/lastNotifiedAt/
+  // memoryWrite are exactly the order section 十六 observability fields,
+  // and surfacing them here (instead of only inside the Observatory KV
+  // record) is what lets a caller reason about a single event's result
+  // without a second KV read.
+  return { ok: true, retry: false, candidate, ...observatoryOutcome };
 }
 
 /**
@@ -961,12 +1003,50 @@ function buildRawPbsRecordFromPush({ eventId, generatedAt, event }) {
 // semantics are UNCHANGED — the descriptor is built purely from values
 // this function already computed for its own console.log lines, never a
 // new decision or a second AI call.
-async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lifecycle, fingerprint, now }) {
+// V2.4.0 — `source` (default 'pbs', backward-compatible with every
+// existing call site) and the new Recent Incident Memory integration
+// (order section 九/十/十一/十二). Reused for BOTH Windows PBS AND TDX
+// freeway/highway candidates — order section 六's own explicit
+// requirement ("不得建立 TDX_AI_ENGINE / PBS_AI_ENGINE 兩套 AI 決策系統")
+// — this is still the ONE orchestration entry point, just now aware of
+// which source called it for two purposes only: (1) which record to
+// attribute a sighting to in incidentMemory.js, (2) `suppressLineNotify`
+// — see below.
+//
+// suppressLineNotify (order section二十, PHASE B "允許進Queue/AI，但暫不
+// 讓TDX source正式發LINE") — HARDCODED true for source==='freeway'||
+// 'highway' at this function's own call site inside processQueuedPbsEvent
+// below, NEVER driven by a wrangler.jsonc var. This is deliberate: Phase
+// C ("PRODUCTION_NOTIFY，必須真人再次授權，不得自行進 Phase C") must not
+// be reachable by flipping any config value alone — reaching it requires
+// an actual future code change (removing that hardcoded `true`), which is
+// the strongest guarantee this codebase can give that this round does
+// not silently let itself into Phase C. Everything ELSE (AI call, cache,
+// sameIncident/materialChange reasoning, Recent Incident Memory read AND
+// write, Observatory logging) runs for real either way — order section
+// 二十's own "觀察：AI decision / sameIncident / materialChange / Memory"
+// requires the full pipeline to genuinely execute, not a stub.
+async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lifecycle, fingerprint, now, source = 'pbs' }) {
   if (!candidate) {
     // Outside the service area — already logged by the caller
     // (candidate=false reason=outside-service-area). No AI call, no LINE.
     return { outcome: AI_OUTCOME.SERVICE_AREA_EXCLUDED };
   }
+
+  // V2.4.0 — order section 九's gets<=1/event budget: exactly one read
+  // here, reused for both candidate selection (below) and the eventual
+  // write's own diff-against-previous (persistIncidentMemory). A KV
+  // outage degrades to "no candidates this event" (fail-open toward
+  // giving the AI less context, never toward blocking the event) — same
+  // philosophy incidentSuppression.js already uses.
+  const memoryState = await readIncidentMemory(env.TRAFFIC_KV);
+  const eventLocation = deriveEventLocationForMemory(normalizedEvent);
+  // Stable identity, excluded from its own candidate list — see
+  // incidentMemory.js#selectMemoryCandidates's own `excludeEventId` doc
+  // (never let an event discover its own just-recorded sighting as if it
+  // were a separate nearby incident).
+  const memoryEventId = `${source}:${eventId}`;
+  const memoryCandidates = selectMemoryCandidates(memoryState.groups, eventLocation, now, { excludeEventId: memoryEventId });
 
   // event=AI_CALL_STARTED is logged UNCONDITIONALLY here, before the cache
   // lookup that resolveAiDecision performs internally — "started" marks
@@ -974,11 +1054,14 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
   // vocabulary), which a cache hit still resolves without ever reaching
   // Workers AI itself (see the AI_CACHE_HIT/AI_CACHE_MISS line right
   // after, which is what actually distinguishes the two).
-  console.log(`[pbs-debug-push][ai-decision] event=AI_CALL_STARTED eventId=${eventId} lifecycle=${lifecycle}`);
+  console.log(
+    `[pbs-debug-push][ai-decision] event=AI_CALL_STARTED eventId=${eventId} lifecycle=${lifecycle} ` +
+      `source=${source} memoryCandidates=${memoryCandidates.length}`
+  );
 
   let aiResult;
   try {
-    aiResult = await resolveAiDecision(env, candidate, { eventId, fingerprint }, now);
+    aiResult = await resolveAiDecision(env, candidate, { eventId, fingerprint }, now, { recentIncidentContext: memoryCandidates });
   } catch (err) {
     console.error(`[pbs-debug-push][ai-decision] event=AI_CALL_FAILED eventId=${eventId} lifecycle=${lifecycle} detail=${err && err.message}`);
     return { outcome: AI_OUTCOME.AI_CALL_FAILED, cacheStatus: 'MISS' }; // fail closed — no LINE, no fallback to the legacy hard-rule decision (order section 十二)
@@ -997,7 +1080,9 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
     );
     // aiResult.reason is already 'AI_CALL_FAILED' or 'AI_DECISION_INVALID'
     // — the SAME closed vocabulary AI_OUTCOME uses, never re-mapped.
-    return { outcome: aiResult.reason, cacheStatus }; // -> 0 LINE, no fallback
+    // V2.4.0 — memory is NOT touched here: an unvalidated/failed decision
+    // has nothing trustworthy to record.
+    return { outcome: aiResult.reason, cacheStatus };
   }
 
   console.log(`[pbs-debug-push][ai-decision] event=AI_DECISION_VALID eventId=${eventId} lifecycle=${lifecycle}`);
@@ -1006,18 +1091,87 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
   console.log(
     `[pbs-debug-push][ai-decision] event=${decision.notify ? 'AI_NOTIFY_TRUE' : 'AI_NOTIFY_FALSE'} eventId=${eventId} ` +
       `lifecycle=${lifecycle} model=${PBS_AI_MODEL_ID} impact=${decision.impact} ` +
-      `confidence=${decision.confidence} reason=${decision.reason}`
+      `confidence=${decision.confidence} reason=${decision.reason} ` +
+      `sameIncident=${decision.sameIncident ?? 'n/a'} materialChange=${decision.materialChange ?? 'n/a'}`
   );
 
-  if (!decision.notify) {
-    return { outcome: AI_OUTCOME.AI_NOTIFY_FALSE, cacheStatus }; // trace only — no LINE, no CCTV, no proactive broadcast (order section 九)
+  // V2.4.0 — the AI's own sameIncident verdict (against
+  // memoryCandidates[0], the single MOST RECENT candidate this function
+  // handed it — "保持最小化", order section 十一: the schema asks for one
+  // sameIncident/materialChange pair, not a per-candidate match id, so
+  // the reference candidate is deterministically "the newest one in the
+  // same road+direction+proximity+8h window") decides which stored
+  // record this sighting updates in place, vs. starting a new incident
+  // family.
+  const matchedIncidentKey = decision.sameIncident && memoryCandidates[0] ? memoryCandidates[0].incidentKey : null;
+
+  async function persistSighting(notified) {
+    const nextGroups = buildIncidentMemoryUpdate(
+      memoryState.groups,
+      {
+        road: eventLocation.road,
+        direction: eventLocation.direction,
+        km: eventLocation.km,
+        latitude: eventLocation.latitude,
+        longitude: eventLocation.longitude,
+        eventType: normalizedEvent.type,
+        source,
+        eventId: memoryEventId,
+        rawSummary: normalizedEvent.description || normalizedEvent.title || '',
+      },
+      { matchedIncidentKey, notified, now }
+    );
+    const persistResult = await persistIncidentMemory(
+      env.TRAFFIC_KV,
+      nextGroups,
+      { previousGroups: memoryState.groups, previousStateExisted: memoryState.existed },
+      now
+    );
+    if (!persistResult.committed) {
+      console.error(`[pbs-debug-push][incident-memory] eventId=${eventId} persist failed: ${persistResult.error}`);
+    }
+    // order section 十六 — SOURCE/MEMORY_CANDIDATES/SAME_INCIDENT/
+    // MATERIAL_CHANGE/PRIMARY_SOURCE/LAST_NOTIFIED_AT/MEMORY_WRITE, the
+    // minimal observability fields. The touched record is re-derived from
+    // nextGroups (never a second KV read) — it's either the matched
+    // record (if matchedIncidentKey) or the just-appended new one, always
+    // the LAST entry in its own group array (buildIncidentMemoryUpdate
+    // always upserts in place or pushes to the end — never reorders).
+    const groupKey = incidentMemoryGroupKey(eventLocation.road, eventLocation.direction);
+    const groupRecords = nextGroups[groupKey] || [];
+    const touchedRecord = matchedIncidentKey
+      ? groupRecords.find((r) => r.incidentKey === matchedIncidentKey)
+      : groupRecords[groupRecords.length - 1];
+    return {
+      written: persistResult.written === true,
+      primarySource: touchedRecord ? touchedRecord.primarySource : source,
+      lastNotifiedAt: touchedRecord ? touchedRecord.lastNotifiedAt : null,
+    };
   }
 
+  if (!decision.notify) {
+    const memoryResult = await persistSighting(false);
+    return {
+      outcome: AI_OUTCOME.AI_NOTIFY_FALSE,
+      cacheStatus,
+      source,
+      memoryCandidateCount: memoryCandidates.length,
+      sameIncident: decision.sameIncident,
+      materialChange: decision.materialChange,
+      primarySource: memoryResult.primarySource,
+      lastNotifiedAt: memoryResult.lastNotifiedAt,
+      memoryWrite: memoryResult.written,
+    }; // trace only — no LINE, no CCTV, no proactive broadcast (order section 九)
+  }
+
+  // V2.4.0 — Phase B/C gate, see this function's own header comment.
+  const suppressLineNotify = source === 'freeway' || source === 'highway';
+
   try {
-    const broadcastResult = await runAiApprovedPbsBroadcast(env, { event: normalizedEvent, now });
+    const broadcastResult = await runAiApprovedPbsBroadcast(env, { event: normalizedEvent, now, suppressLineNotify });
     console.log(
       `[pbs-debug-push][ai-decision] event=AI_LINE_ATTEMPTED eventId=${eventId} lifecycle=${lifecycle} ` +
-        `lineReady=${broadcastResult.lineReady} suppressed=${broadcastResult.suppressed} ` +
+        `source=${source} suppressLineNotify=${suppressLineNotify} lineReady=${broadcastResult.lineReady} suppressed=${broadcastResult.suppressed} ` +
         `pendingTargets=${broadcastResult.pendingTargetCount} pushAttempted=${broadcastResult.pushAttempted} ` +
         `pushSucceeded=${broadcastResult.pushSucceeded}`
     );
@@ -1027,12 +1181,27 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
         `eventId=${eventId} lifecycle=${lifecycle}`
     );
 
+    // V2.4.0 — "notified" for memory bookkeeping means a REAL push
+    // succeeded, not merely "AI said notify:true" — matches order section
+    // 九's own primarySource/lastNotifiedAt semantics ("誰先送AI、誰先通
+    // 知" is about an ACTUAL LINE delivery, not an internal verdict a
+    // Phase B suppressLineNotify or a 0-pending-target/fail-closed
+    // outcome never actually delivered).
+    const memoryResult = await persistSighting(broadcastResult.pushSucceeded > 0);
+
     let sharedFeedCommitted = false;
-    try {
-      const sharedFeedSummary = await runSharedFeedPersist(env, { completedProducts: broadcastResult.completedProducts, now });
-      sharedFeedCommitted = Boolean(sharedFeedSummary.committed);
-    } catch (err) {
-      console.error(`[pbs-debug-push][shared-feed] eventId=${eventId} failed: ${err && err.message}`);
+    // V2.4.0 — Shared Feed persistence stays scoped to what actually
+    // reached LINE: a suppressLineNotify=true (Phase B, TDX-origin)
+    // outcome never pushed anything real, so it must never appear in the
+    // Shared Feed either (order's own architecture never asked for a
+    // TDX-origin Phase B "ghost" product visible downstream).
+    if (!suppressLineNotify) {
+      try {
+        const sharedFeedSummary = await runSharedFeedPersist(env, { completedProducts: broadcastResult.completedProducts, now });
+        sharedFeedCommitted = Boolean(sharedFeedSummary.committed);
+      } catch (err) {
+        console.error(`[pbs-debug-push][shared-feed] eventId=${eventId} failed: ${err && err.message}`);
+      }
     }
     if (broadcastResult.lineErrors.length > 0) {
       console.error(`[pbs-debug-push][ai-decision] eventId=${eventId} lineErrors=${broadcastResult.lineErrors.join('; ')} sharedFeedCommitted=${sharedFeedCommitted}`);
@@ -1041,14 +1210,35 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
     return {
       outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
       cacheStatus,
+      source,
+      memoryCandidateCount: memoryCandidates.length,
       lineAttempted: broadcastResult.pushAttempted > 0,
       lineSent,
       sharedFeedPersisted: sharedFeedCommitted,
       imageUrlPresent: Boolean(firstProduct && firstProduct.imageUrl),
+      sameIncident: decision.sameIncident,
+      materialChange: decision.materialChange,
+      primarySource: memoryResult.primarySource,
+      lastNotifiedAt: memoryResult.lastNotifiedAt,
+      memoryWrite: memoryResult.written,
+      suppressedForPhase: suppressLineNotify,
     };
   } catch (err) {
     console.error(`[pbs-debug-push][ai-decision] event=AI_LINE_FAILED eventId=${eventId} lifecycle=${lifecycle} failed: ${err && err.message}`);
-    return { outcome: AI_OUTCOME.AI_NOTIFY_TRUE, cacheStatus, lineAttempted: true, lineSent: false };
+    const memoryResult = await persistSighting(false);
+    return {
+      outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+      cacheStatus,
+      source,
+      memoryCandidateCount: memoryCandidates.length,
+      lineAttempted: true,
+      lineSent: false,
+      sameIncident: decision.sameIncident,
+      materialChange: decision.materialChange,
+      primarySource: memoryResult.primarySource,
+      lastNotifiedAt: memoryResult.lastNotifiedAt,
+      memoryWrite: memoryResult.written,
+    };
   }
 }
 

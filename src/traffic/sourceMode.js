@@ -74,6 +74,64 @@ export function isTdxRuntimeEnabled(env) {
   return resolveTrafficSourceMode(env) !== SOURCE_MODE_PBS_ONLY;
 }
 
+// V2.4.0 — TDX_FREEWAY_PROVINCIAL_TO_UNIFIED_AI_PIPELINE, order section
+// 五/十二. Granular source switches, ADDITIONAL to (never a replacement
+// for) TRAFFIC_SOURCE_MODE above — order section 四's own explicit
+// instruction: "不得直接 TRAFFIC_SOURCE_MODE = ALL". TRAFFIC_SOURCE_MODE
+// stays exactly as it is (PBS_ONLY today); these three new vars are how
+// TDX RoadEvent fetch / Queue ingress / CCTV metadata refresh get their
+// OWN independent on/off switches instead of inheriting one coarse
+// binary flag that also happens to control everything else TDX. Each
+// resolver below follows the EXACT same strict-string-parsing discipline
+// TRAFFIC_SOURCE_MODE/PBS_AI_DECISION_ENABLED already established in this
+// codebase (Cloudflare injects Workers Variables as strings, never a bare
+// JSON boolean — see PBS_AI_DECISION_ENABLED's own V1.9.9 Phase 3D
+// history in 07_KNOWN_ISSUES.md): only the exact string 'true'
+// (case/whitespace-insensitive) turns a switch on; anything else
+// (missing, 'false', a typo) is off. All three DEFAULT OFF — this round
+// builds the mechanism; a human operator flips these in wrangler.jsonc
+// when ready to actually begin Phase A (order section 二十), never this
+// round itself (see this round's own final report for why: making real
+// TDX API calls spends real, previously-exhausted quota, a production
+// decision this codebase has always treated as requiring an explicit,
+// separate operator action — see TDX_QUOTA_PROTECTION_PBS_ONLY's own
+// sealed history).
+function resolveBooleanVar(env, varName) {
+  const raw = env && typeof env[varName] === 'string' ? env[varName].trim().toLowerCase() : '';
+  return raw === 'true';
+}
+
+/** May the Cron path fetch TDX freeway/highway RoadEvent data at all this tick (independent of TRAFFIC_SOURCE_MODE)? Phase A gate. */
+export function isTdxRoadEventFetchEnabled(env) {
+  return resolveBooleanVar(env, 'TDX_ROADEVENT_FETCH_ENABLED');
+}
+
+/** May a fetched new/updated TDX freeway/highway event be enqueued onto PBS_AI_QUEUE for AI judgment? Phase B gate — see debugPush.js's own V2.4.0 comment for why this still never reaches a real LINE push on its own. */
+export function isTdxRoadEventQueueIngressEnabled(env) {
+  return resolveBooleanVar(env, 'TDX_ROADEVENT_QUEUE_INGRESS_ENABLED');
+}
+
+/** May the Admin-Auth-gated /admin/cctv-hsinchu-probe actually call TDX to refresh cctv:freeway-metadata:v1? Independent of the two switches above — CCTV metadata refresh stays manual/on-demand either way (order section 三), this only decides whether that manual trigger is itself allowed to make the one TDX call it needs. */
+export function isTdxCctvMetadataRefreshEnabled(env) {
+  return resolveBooleanVar(env, 'TDX_CCTV_METADATA_REFRESH_ENABLED');
+}
+
+/**
+ * The ONE gate tdx/auth.js actually enforces before ever issuing a TDX
+ * OAuth token — broadened (V2.4.0) from "is TRAFFIC_SOURCE_MODE not
+ * PBS_ONLY" to "is TDX access permitted for ANY reason right now",
+ * because auth.js has no way to know which of the three call sites above
+ * is asking (it's a single shared token layer) — the FINER distinction
+ * (does RoadEvent fetch itself proceed, does the CCTV probe itself
+ * proceed) is enforced separately, at each call site, using the specific
+ * resolver functions above. This function is purely additive: with all
+ * three new switches at their default (false), it evaluates to EXACTLY
+ * isTdxRuntimeEnabled(env) — today's behavior, unchanged byte-for-byte.
+ */
+export function isTdxTokenAccessPermitted(env) {
+  return isTdxRuntimeEnabled(env) || isTdxRoadEventFetchEnabled(env) || isTdxCctvMetadataRefreshEnabled(env);
+}
+
 /**
  * May the broadcast path attempt CCTV enrichment?
  *
@@ -127,18 +185,34 @@ export function isPbsEnabled() {
 export function describeSourceMode(env) {
   const mode = resolveTrafficSourceMode(env);
   const tdxEnabled = mode !== SOURCE_MODE_PBS_ONLY;
+  const roadEventFetchEnabled = isTdxRoadEventFetchEnabled(env);
+  const roadEventQueueIngressEnabled = isTdxRoadEventQueueIngressEnabled(env);
+  const cctvMetadataRefreshEnabled = isTdxCctvMetadataRefreshEnabled(env);
   return {
     trafficSourceMode: mode,
     tdxRuntimeEnabled: tdxEnabled,
     // CCTV images are independent of the TDX gate (frames come from
     // freeway.gov.tw, metadata from the KV cache) — see
-    // isCctvImageEnabled. tdxCctvMetadataRefreshEnabled stays pinned to
-    // the TDX gate: reading the cache is allowed, refilling it from TDX
-    // is not.
+    // isCctvImageEnabled.
     cctvImageEnabled: isCctvImageEnabled(env),
-    tdxCctvMetadataRefreshEnabled: tdxEnabled,
+    // V2.4.0 — tdxCctvMetadataRefreshEnabled now reflects the dedicated
+    // TDX_CCTV_METADATA_REFRESH_ENABLED switch (isTdxCctvMetadataRefreshEnabled),
+    // no longer pinned 1:1 to the coarse TDX runtime gate — see this
+    // module's own V2.4.0 comment block above for the full reasoning.
+    // `|| tdxEnabled` keeps this permissive under TRAFFIC_SOURCE_MODE=ALL
+    // even before anyone sets the new var explicitly, so a legacy
+    // "restore TDX" (flip TRAFFIC_SOURCE_MODE back to ALL) still behaves
+    // the way 07_KNOWN_ISSUES.md's existing RESTORE TDX procedure
+    // documents, unchanged.
+    tdxCctvMetadataRefreshEnabled: cctvMetadataRefreshEnabled || tdxEnabled,
     tdxCctvEnabled: isCctvImageEnabled(env),
     pbsEnabled: true,
+    // V2.4.0 — the two new granular RoadEvent switches, surfaced
+    // read-only for /health and Pipeline Trace-style observability (order
+    // section 十六). Neither is derived from tdxEnabled — see
+    // isTdxRoadEventFetchEnabled/isTdxRoadEventQueueIngressEnabled.
+    tdxRoadEventFetchEnabled: roadEventFetchEnabled,
+    tdxRoadEventQueueIngressEnabled: roadEventQueueIngressEnabled,
     // Present only while the restriction is on, so a reader is never left
     // guessing whether TDX is broken or deliberately paused.
     tdxPausedReason: tdxEnabled ? null : 'TDX API quota exhausted — temporary PBS-only mode. TDX code is preserved; see src/traffic/sourceMode.js for the restore entry point.',

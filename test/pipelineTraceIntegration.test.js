@@ -12,6 +12,7 @@ import { runLineBroadcast } from '../src/traffic/broadcastPipeline.js';
 import { runScheduledTdxSync } from '../src/traffic/scheduled.js';
 import { setUserEnabled } from '../src/traffic/subscriptions.js';
 import { normalizeRoadEvent } from '../src/tdx/normalize.js';
+import { normalizePbsEvent } from '../src/pbs/normalize.js';
 import { FREEWAY_METADATA_KEY } from '../src/cctv/freewayCctvMetadataCache.js';
 import { decodeJpeg, encodeJpeg } from './testJpegCodec.js';
 // V1.9.2 — the real Cron path (scheduled.js) now writes via
@@ -343,17 +344,39 @@ test('10: LINE push fails for the only target -> status line-failed', async () =
 
 // --- 11: Shared Feed with image trace (patched after Shared Feed persist) -
 
+// V2.4.0 note (both tests below): originally fed by a fetched TDX
+// RoadEvent through runScheduledTdxSync end-to-end — with
+// LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT, a TDX event no longer
+// reaches `broadcastEvents` inside scheduled.js at all (see that module's
+// own V2.4.0 comment), so these two tests — which specifically need the
+// FULL Cron orchestration (runLineBroadcast -> runSharedFeedPersist ->
+// the trace-patch step, all inside scheduled.js; not just runLineBroadcast
+// alone, unlike tests 8/9/10 above) — now use a PBS 國道 event instead,
+// with TRAFFIC_SOURCE_MODE=PBS_ONLY (bypassing the V57.2 TDX-corroboration
+// gate the same way real Production does today) and PBS_30_MIN_POLLING_ENABLED
+// (this file's existing pattern, see test 5). This still exercises the
+// exact SAME scheduled.js orchestration/patch logic under test — only the
+// data source that reaches it changed.
+function pbsAccidentRaw(overrides = {}) {
+  return {
+    UID: 'PBS-A1', road: '國道一號', direction: '北向', areaNm: '國道一號北向', roadtype: '事故',
+    comment: '北向93公里處發生車輛事故，外側車道封閉', happendate: '2026-08-20', happentime: '20:13:00',
+    modDttm: '2026-08-20 20:13:48', srcdetail: '測試來源',
+    ...overrides,
+  };
+}
+
 test('11: a full Cron run patches sharedFeedPersisted/sharedFeedWithImage from the ACTUAL persisted feed', async () => {
   // Pre-seed a STILL-VALID stored image for this exact event/fingerprint
   // (same carry-forward mechanism sharedFeedCctvTopUp.test.js's own tests
-  // 2/8 use) — this run then needs 0 real CCTV compose (0 codec
-  // dependency, which runScheduledTdxSync has no test-only override for
-  // at all — see productionIntegrationFixtures.test.js's own comment on
-  // why that file calls runLineBroadcast directly instead), so this test
-  // can go through the REAL scheduled.js entry point end-to-end and still
-  // deterministically end up with an image in the Shared Feed.
+  // 2/8 use) — this run then needs 0 real CCTV compose, so this test can
+  // go through the REAL scheduled.js entry point end-to-end and still
+  // deterministically end up with an image in the Shared Feed. Carry-
+  // forward (sharedFeed.js#isStoredImageStillValid) only compares eventId
+  // + fingerprint against the CURRENT event — it does not require CCTV
+  // eligibility to hold on this particular run.
   const { eventIdOf, fingerprintOf, SHARED_FEED_KEY } = await import('../src/traffic/sharedFeed.js');
-  const event = normalizeRoadEvent(freewayAccidentRaw(), 'freeway');
+  const event = normalizePbsEvent(pbsAccidentRaw());
   const stored = {
     eventId: eventIdOf(event),
     fingerprint: await fingerprintOf(event),
@@ -369,23 +392,21 @@ test('11: a full Cron run patches sharedFeedPersisted/sharedFeedWithImage from t
   const { env } = await envWithSubscriber({
     [SHARED_FEED_KEY]: JSON.stringify({ schemaVersion: 1, events: [stored], updatedAt: NOW.toISOString() }),
   });
-  env.TDX_CLIENT_ID = 'id';
-  env.TDX_CLIENT_SECRET = 'secret';
-  const raw = freewayAccidentRaw();
+  env.TRAFFIC_SOURCE_MODE = 'PBS_ONLY';
+  env.PBS_RELAY_TOKEN = 'relay-token';
+  env.PBS_30_MIN_POLLING_ENABLED = true;
+  env.PBS_RELAY_WINDOWS = { fetch: async () => new Response(JSON.stringify([pbsAccidentRaw()]), { status: 200 }) };
   priorFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
-    const href = String(url);
-    if (href.includes('openid-connect/token')) return new Response(JSON.stringify({ access_token: 'tok', expires_in: 3600 }), { status: 200 });
-    if (href.includes('/RoadEvent/LiveEvent/Freeway')) return new Response(JSON.stringify({ RoadEvents: [raw] }), { status: 200 });
-    if (href.includes('/RoadEvent/LiveEvent/Highway')) return new Response(JSON.stringify({ RoadEvents: [] }), { status: 200 });
-    if (href.includes('api.line.me')) return new Response('{}', { status: 200 });
-    throw new Error(`unexpected fetch (must not need a real CCTV frame fetch — the image is carried forward): ${href}`);
+    if (String(url).includes('api.line.me')) return new Response('{}', { status: 200 });
+    throw new Error(`unexpected fetch (must not need a real CCTV frame fetch — the image is carried forward): ${url}`);
   };
 
-  await runScheduledTdxSync(env, NOW);
+  const pbsScheduledNow = new Date(NOW.getTime() - 20 * 60_000); // 20:00 — divisible by both 20 (TDX) and 30 (PBS)
+  await runScheduledTdxSync(env, pbsScheduledNow);
 
   const { records } = await listPipelineTrace(env.TRAFFIC_KV, { limit: 100 });
-  const trace = records.find((r) => r.identity.rawId === 'A1' && r.status === 'line-sent');
+  const trace = records.find((r) => r.identity.rawId === 'PBS-A1' && r.status === 'line-sent');
   assert.ok(trace, 'a line-sent trace entry for this event must exist');
   assert.equal(trace.delivery.sharedFeedPersisted, true);
   assert.equal(trace.delivery.sharedFeedWithImage, true);
@@ -400,24 +421,22 @@ test('25: pipeline trace KV write failure never affects the real LINE push outco
     if (key.startsWith(TRACE_BATCH_KEY_PREFIX)) throw new Error('trace KV outage');
     return originalPut(key, value, options);
   };
-  env.TDX_CLIENT_ID = 'id';
-  env.TDX_CLIENT_SECRET = 'secret';
-  const raw = freewayAccidentRaw();
+  env.TRAFFIC_SOURCE_MODE = 'PBS_ONLY';
+  env.PBS_RELAY_TOKEN = 'relay-token';
+  env.PBS_30_MIN_POLLING_ENABLED = true;
+  env.PBS_RELAY_WINDOWS = { fetch: async () => new Response(JSON.stringify([pbsAccidentRaw()]), { status: 200 }) };
   priorFetch = globalThis.fetch;
   const pushed = [];
   globalThis.fetch = async (url, init) => {
-    const href = String(url);
-    if (href.includes('openid-connect/token')) return new Response(JSON.stringify({ access_token: 'tok', expires_in: 3600 }), { status: 200 });
-    if (href.includes('/RoadEvent/LiveEvent/Freeway')) return new Response(JSON.stringify({ RoadEvents: [raw] }), { status: 200 });
-    if (href.includes('/RoadEvent/LiveEvent/Highway')) return new Response(JSON.stringify({ RoadEvents: [] }), { status: 200 });
-    if (href.includes('api.line.me')) {
+    if (String(url).includes('api.line.me')) {
       pushed.push(JSON.parse(init.body));
       return new Response('{}', { status: 200 });
     }
-    throw new Error(`unexpected fetch: ${href}`);
+    throw new Error(`unexpected fetch: ${url}`);
   };
 
-  const result = await runScheduledTdxSync(env, NOW);
+  const pbsScheduledNow = new Date(NOW.getTime() - 20 * 60_000); // 20:00 — divisible by both 20 (TDX) and 30 (PBS)
+  const result = await runScheduledTdxSync(env, pbsScheduledNow);
   assert.equal(pushed.length, 1, 'the real LINE push must still succeed despite the trace KV outage');
   assert.equal(result.line.pushSucceeded, 1);
   assert.equal(result.pipelineTrace.failed > 0, true, 'the trace write failure IS visible in its own summary, just isolated');

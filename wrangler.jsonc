@@ -110,7 +110,38 @@
     // this exact string form since V1.9.9 Phase 3D). To disable AI
     // decisions, change this value here and push — never rely on a
     // Dashboard-only override again.
-    "PBS_AI_DECISION_ENABLED": "true"
+    "PBS_AI_DECISION_ENABLED": "true",
+    // V2.4.0 (TDX_FREEWAY_PROVINCIAL_TO_UNIFIED_AI_PIPELINE) — three
+    // granular TDX switches, ADDITIONAL to (never a replacement for)
+    // TRAFFIC_SOURCE_MODE above — order section 四's own explicit
+    // instruction was NOT to flip TRAFFIC_SOURCE_MODE back to "ALL".
+    // Full reasoning: src/traffic/sourceMode.js's own V2.4.0 comment
+    // block. All three default OFF ("false") on purpose — this round
+    // BUILDS the TDX-RoadEvent-to-Queue-to-AI mechanism and its own test
+    // suite proves it works, but does not itself begin spending real TDX
+    // quota or enqueueing anything; a human operator flips these when
+    // ready to begin Phase A/B (see this round's own final report/
+    // 07_KNOWN_ISSUES.md for the phase model). MUST be the STRING "true"
+    // to turn on (same Cloudflare-injects-strings discipline as every
+    // other var in this block) — anything else, including a typo, stays
+    // off.
+    //
+    // TDX_ROADEVENT_FETCH_ENABLED — Phase A gate: may the Cron path fetch
+    // TDX freeway/highway RoadEvent data at all this tick.
+    "TDX_ROADEVENT_FETCH_ENABLED": "false",
+    // TDX_ROADEVENT_QUEUE_INGRESS_ENABLED — Phase B gate: may a fetched
+    // new/updated TDX event be enqueued onto PBS_AI_QUEUE for AI
+    // judgment. Even when true, TDX-origin candidates never reach a real
+    // LINE push in this version of the code (see debugPush.js's own
+    // V2.4.0 comment on why Phase C requires a future CODE change, not a
+    // config flip) — this switch alone can only ever reach Phase B.
+    "TDX_ROADEVENT_QUEUE_INGRESS_ENABLED": "false",
+    // TDX_CCTV_METADATA_REFRESH_ENABLED — independent of the two switches
+    // above: may /admin/cctv-hsinchu-probe actually call TDX to refresh
+    // cctv:freeway-metadata:v1. CCTV metadata refresh stays manual/
+    // on-demand either way (order section 三) — this only decides whether
+    // that manual trigger itself is allowed to make its one TDX call.
+    "TDX_CCTV_METADATA_REFRESH_ENABLED": "false"
   },
   "vpc_services": [
     {

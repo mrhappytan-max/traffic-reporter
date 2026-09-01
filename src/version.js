@@ -1137,7 +1137,91 @@
 // camera path's equivalent of CASE 2) — see those files for the order's
 // own CASE numbering. TDX_CALL_CHANGE=0 (verified directly — the new
 // read-back is a single bucket.get(), never a fetch()).
-export const APP_VERSION = 'V2.3.3';
+
+// V2.4.0 (2026-09-01) — TDX_FREEWAY_PROVINCIAL_TO_UNIFIED_AI_PIPELINE.
+// Architecture-level minor: TDX 國道/省道 RoadEvent rejoins the same
+// Cloudflare Queue (PBS_AI_QUEUE, still the ONLY queue) and the SAME one
+// AI engine Windows PBS already uses, coordinated across sources by a
+// new Recent Incident Memory (Cloudflare KV, 8h TTL) instead of the
+// retired V1.5 hard-rule pipeline. TDX Freeway = 國道主要權威, TDX
+// Highway = 省道主要權威, PBS = 全道路即時 + TDX備援 — whichever source
+// sees a notify-worthy event first goes to AI first; a later same-
+// incident sighting from the other source asks the AI (with up to 5
+// recent-memory candidates as context) whether it's the same incident
+// and whether anything materially changed, never a second independent
+// judgment.
+//
+// New: src/traffic/incidentMemory.js (the memory module itself — KV key
+// traffic:incident-memory:v1, 8h TTL, <=1 get/<=1 put per event,
+// WRITE_ON_CHANGE, a 3-layer road+direction -> proximity -> 8h-window
+// candidate prefilter capped at 5, and self-referential-candidate
+// exclusion so an event can never discover its own just-recorded
+// sighting as if it were a separate nearby incident — see
+// selectMemoryCandidates' excludeEventId); src/tdx/tdxQueueIngress.js
+// (enqueues classified new/updated TDX RoadEvents onto PBS_AI_QUEUE,
+// reusing dedupe.js/debugPush.js's own fingerprint/idempotency/message-
+// building — never a second queue, never a second message schema).
+//
+// Extended: src/pbs/aiDecisionEngine.js (the AI schema gains two new
+// booleans, sameIncident/materialChange, ONLY when memory context is
+// present — the plain-event prompt is byte-identical to V2.3.3 when it
+// isn't); src/pbs/aiCandidate.js (the AI decision cache key folds in a
+// memoryContextFingerprint so a different memory context can never replay
+// a stale cached verdict — omitted, it reproduces the exact pre-V2.4.0
+// hash); src/pbs/debugPush.js (processQueuedPbsEvent now source-
+// dispatches: source==='pbs' keeps its exact prior normalizePbsEvent
+// path, source==='freeway'/'highway' uses the already-normalized
+// RoadEvent as-is — never re-normalized, never converted into PBS's raw
+// shape); src/traffic/aiApprovedPbsBroadcast.js (a new suppressLineNotify
+// option, hardcoded true for TDX sources at the one call site in
+// debugPush.js — this is Phase B: the AI genuinely runs, memory genuinely
+// reads/writes, but no real LINE push happens for a TDX-origin event yet;
+// reaching Phase C requires an actual future code change removing that
+// hardcoded true, never a config flip).
+//
+// Three new granular switches in wrangler.jsonc (canonical, never
+// Dashboard-only), all default "false": TDX_ROADEVENT_FETCH_ENABLED,
+// TDX_ROADEVENT_QUEUE_INGRESS_ENABLED, TDX_CCTV_METADATA_REFRESH_ENABLED
+// — layered ON TOP OF TRAFFIC_SOURCE_MODE (never replacing it; see
+// sourceMode.js#isTdxTokenAccessPermitted). This round BUILDS the
+// mechanism only; no switch is flipped, so live TDX RoadEvent fetching/
+// enqueueing/CCTV-metadata-refresh stays at exactly 0 real calls until a
+// separate, explicit human decision turns one on (consistent with this
+// project's TDX_QUOTA_PROTECTION_PBS_ONLY governance history).
+//
+// Structurally retired this round: LEGACY_TDX_LINE_PIPELINE. TDX's own
+// fetched events no longer reach scheduled.js's broadcastEvents variable
+// AT ALL (was mergeForBroadcast(summary.allEvents, ...), now only
+// pbsSummary's own canonical/unique events) — even if
+// TDX_ROADEVENT_FETCH_ENABLED were flipped on alone, a TDX RoadEvent can
+// no longer reach the old V1.5 hard-rule LINE path. Before AI, only the
+// EXECUTION-type serviceArea gate remains for TDX — the V1.5 semantic
+// whitelist, MAJOR_ACCIDENT_ONLY policy, locationQuality semantic hard-
+// reject, legacy effectiveWindow drop, and legacy congestion rules are
+// never consulted; event importance is entirely the AI's decision, same
+// as PBS already had.
+//
+// EXPLICITLY UNCHANGED THIS ROUND: CCTV's entire metadata-cache ->
+// camera-selection -> compose -> R2-put -> R2-read-back-verify -> LINE
+// pipeline (V2.3.3, untouched byte-for-byte); incidentSuppression.js
+// (kept exactly as-is as a short-term repeat-push safety net — not
+// ripped out — layered underneath, not instead of, the AI's own 8h-
+// memory re-notify judgment); the Observatory UI (7 new trace fields
+// only: source/memoryCandidateCount/sameIncident/materialChange/
+// primarySource/lastNotifiedAt/memoryWrite — opening/refreshing the page
+// still costs 0 AI calls and 0 KV writes); Google Maps; VD/CMS/other
+// Traffic APIs (never restored — only Freeway+Highway RoadEvent); the
+// CCTV metadata refresh Cron (still MANUAL/ON-DEMAND).
+//
+// Test coverage: new test/tdxUnifiedAiPipeline.test.js (17 tests, the
+// order's own CASE 1-17 list end-to-end) plus 8 existing suites
+// retrofitted to assert the intentional TDX-legacy-retirement
+// (broadcastEligibility/pbsLineBroadcast/v572TdxGatedFreewayBroadcast/
+// pbsOnlyCrossSourceDedup/incidentRepeatSuppression/tdxUsageReduction/
+// pipelineTraceIntegration/aiObservatoryView.test.js) — full regression
+// (1746 tests) diffed against the pre-round 34-item known-flaky baseline:
+// IDENTICAL, NEW_FAILURES=0.
+export const APP_VERSION = 'V2.4.0';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

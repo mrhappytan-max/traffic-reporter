@@ -24,13 +24,13 @@
 import { runTdxPipelineAndCommit } from './pipeline.js';
 import { runLineBroadcast } from './broadcastPipeline.js';
 import { runPbsPipelineAndCommit } from '../pbs/pipeline.js';
-import { mergeForBroadcast } from '../pbs/crossSourceDedup.js';
 import { PBS_BROADCAST_ENABLED, resolvePbsPollingEnabled } from '../pbs/pbsConfig.js';
 import { buildHealthSnapshot, persistHealthSnapshot, readHealthSnapshot } from './healthSnapshot.js';
 import { getTdxScheduleState } from './tdxSchedule.js';
 import { getPbsScheduleState } from './pbsSchedule.js';
 import { hasPipelineTraceRelevantChange } from './pipelineTrace.js';
-import { isTdxRuntimeEnabled, describeSourceMode } from './sourceMode.js';
+import { isTdxRuntimeEnabled, isTdxRoadEventFetchEnabled, isTdxRoadEventQueueIngressEnabled, describeSourceMode } from './sourceMode.js';
+import { enqueueTdxRoadEvents } from '../tdx/tdxQueueIngress.js';
 import { resolveLinePushPolicy } from './broadcastPolicy.js';
 import { readDedupeState } from './dedupe.js';
 import { PRODUCTION_TDX_SOURCE_IDS } from '../tdx/sources.js';
@@ -135,7 +135,13 @@ export async function runScheduledTdxSync(env, now = new Date()) {
   // The state is reported as its own value, not reused as
   // 'skipped-by-schedule', so nobody reads a deliberate quota pause as
   // either a TDX failure or a routine odd-minute tick.
-  const tdxEnabled = isTdxRuntimeEnabled(env);
+  // V2.4.0 — order section 五/十二's own granular switch: TDX RoadEvent
+  // fetch may now also be independently enabled via
+  // TDX_ROADEVENT_FETCH_ENABLED, without touching TRAFFIC_SOURCE_MODE
+  // (order section 四's own explicit "不得直接 TRAFFIC_SOURCE_MODE=ALL").
+  // With the new switch at its default (false), this is EXACTLY
+  // isTdxRuntimeEnabled(env) — today's behavior, unchanged.
+  const tdxEnabled = isTdxRuntimeEnabled(env) || isTdxRoadEventFetchEnabled(env);
   const tdxScheduleState = tdxEnabled ? getTdxScheduleState(now) : 'disabled-quota';
 
   // V1.8.6 — TDX usage ledger: a fresh, request-scoped array only this
@@ -183,6 +189,31 @@ export async function runScheduledTdxSync(env, now = new Date()) {
       `failedSources=${summary.failedSources.map((f) => f.source).join(',') || 'none'}`
   );
 
+  // V2.4.0 — order section 六/七, Phase A/B (order section 二十). Only
+  // when TDX_ROADEVENT_QUEUE_INGRESS_ENABLED is on (default off — see
+  // sourceMode.js's own V2.4.0 comment) does a genuinely new/updated TDX
+  // freeway/highway sighting this tick get handed to the SAME
+  // PBS_AI_QUEUE Windows PBS already uses. `summary.newEvents`/
+  // `summary.updatedEvents` are already exactly what dedupe.js#
+  // classifyEvents decided this run (empty on a non-'scheduled' tick, or
+  // when kvAvailable is false — see pipeline.js's own buildSummary fail-
+  // closed comment) — never re-classified here. A duplicate is never
+  // enqueued (it simply never appears in either array). This never calls
+  // runLineBroadcast, directly or indirectly — see tdxQueueIngress.js's
+  // own module comment.
+  let tdxQueueIngress = { attempted: 0, enqueued: 0, failed: 0 };
+  if (tdxScheduleState === 'scheduled' && isTdxRoadEventQueueIngressEnabled(env)) {
+    try {
+      tdxQueueIngress = await enqueueTdxRoadEvents(env, { newEvents: summary.newEvents, updatedEvents: summary.updatedEvents }, now);
+    } catch (err) {
+      console.error(`[cron][tdx-queue-ingress] failed: ${err && err.message}`);
+    }
+    console.log(
+      `[cron][tdx-queue-ingress] attempted=${tdxQueueIngress.attempted} enqueued=${tdxQueueIngress.enqueued} ` +
+        `failed=${tdxQueueIngress.failed}${tdxQueueIngress.reason ? ` reason=${tdxQueueIngress.reason}` : ''}`
+    );
+  }
+
   // V1.6.2: persist a small cache of THIS run's TDX events so a later
   // PBS-only tick can still cross-source-dedup against them — see
   // tdxEventCache.js. Only written on a genuinely successful scheduled
@@ -211,8 +242,9 @@ export async function runScheduledTdxSync(env, now = new Date()) {
   // cutoff). This is used ONLY inside PBS's own pipeline for matching; it
   // never feeds dedupe.js's TDX new/updated classification (that already
   // happened above, entirely from `summary`, before this point) and is
-  // NOT what gets passed to mergeForBroadcast below (that still only
-  // ever receives THIS run's real summary.allEvents) — so a PBS event
+  // NOT the same thing as `broadcastEvents` below (V2.4.0: TDX's own
+  // fetched events no longer reach that variable at all — see its own
+  // comment) — so a PBS event
   // that matches a CACHED (not-this-run) TDX event is correctly dropped
   // from this run's broadcast entirely (already reported once when TDX
   // itself saw it), never re-broadcast as new.
@@ -282,20 +314,31 @@ export async function runScheduledTdxSync(env, now = new Date()) {
       `pbsFetchSkippedSchedule=${!pbsFetchPerformed}`
   );
 
-  // V1.4 Alpha: fold PBS's cross-source dedup result into what gets
-  // broadcast — same real incident reported by both TDX and an active PBS
-  // event becomes exactly one canonical message; an active PBS event with
-  // no TDX match is its own message; cleared/stale PBS events never reach
-  // here at all (pipeline.js's crossSourceDedup only ever sees
-  // `activeEvents`). Gated on PBS_BROADCAST_ENABLED (pbsConfig.js) — when
-  // false, or when PBS's own pipeline failed above (empty arrays),
-  // mergeForBroadcast returns `summary.allEvents` completely unchanged,
-  // so this is byte-for-byte the pre-V1.4 TDX-only behavior either way.
-  // On a tick that skipped TDX, `summary.allEvents` is simply empty, so
-  // this run's broadcast candidates are PBS-only — exactly as intended.
-  const broadcastEvents = PBS_BROADCAST_ENABLED
-    ? mergeForBroadcast(summary.allEvents, pbsSummary.canonicalEvents || [], pbsSummary.uniquePbsEvents || [])
-    : summary.allEvents;
+  // V1.4 Alpha (fold PBS's cross-source dedup result into what gets
+  // broadcast) — RETIRED FOR TDX, V2.4.0 (order section 四:
+  // LEGACY_TDX_LINE_PIPELINE = RETIRED_FOR_ROADEVENT). This used to pass
+  // `summary.allEvents` (this tick's own fetched TDX events) into
+  // mergeForBroadcast so an unmatched TDX event broadcast on its own via
+  // the legacy hard-rule pipeline below. TDX RoadEvent broadcast now ONLY
+  // happens through the new Queue/AI ingress above
+  // (enqueueTdxRoadEvents/TDX_ROADEVENT_QUEUE_INGRESS_ENABLED) — this is
+  // load-bearing, not cosmetic: Phase A (TDX_ROADEVENT_FETCH_ENABLED=true,
+  // QUEUE_INGRESS still false) is supposed to be fetch-only/observe-only
+  // (order section 二十); if `summary.allEvents` still reached
+  // runLineBroadcast here, flipping ONLY the fetch switch would silently
+  // let a real TDX event broadcast via the OLD V1.5 hard rules the moment
+  // TDX resumed — exactly what Phase A promises never happens.
+  //
+  // pbsSummary.canonicalEvents/uniquePbsEvents are UNCHANGED and STILL
+  // flow through here — this is PBS's own (currently dormant, since
+  // resolvePbsPollingEnabled(env) defaults false — see pbsFetchPerformed
+  // above) legacy-polling cross-source result, not TDX's own events, and
+  // order section 四 only asks to retire TDX's own RoadEvent broadcast,
+  // not PBS's pre-existing (already-dormant) polling fallback. TDX's own
+  // fetched data is still available to PBS's OWN cross-source matching
+  // via `tdxEventsForPbsDedup` above (V57.2's 國道 corroboration gate) —
+  // only TDX's fetched events broadcasting IN THEIR OWN RIGHT is retired.
+  const broadcastEvents = PBS_BROADCAST_ENABLED ? [...(pbsSummary.canonicalEvents || []), ...(pbsSummary.uniquePbsEvents || [])] : [];
 
   // V1.6.1: congestion severity validation (an extra TDX VD API call) has
   // been removed from this Cron path entirely — V1.5 already excludes
