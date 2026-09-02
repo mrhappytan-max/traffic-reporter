@@ -349,6 +349,53 @@ PBS 閘門排除仍視為有意義。fixture 實測 QUIET/NORMAL/HIGH writes/day
 
 **狀態：`HUMAN_REPORTED_NOT_INDEPENDENTLY_VERIFIED`。** 人類回報：Windows PBS 本機篩選舊邏輯先套用 `isAccident()` 事故關鍵字語意閘門，才進新竹縣市地理判斷，導致非事故型事件（落石／坍方／封路／施工／積水等）即使位於新竹縣市仍可能在 Windows 端被直接丟棄，從未進入 Cloudflare/AI。回報修正：移除 `isAccident()` 語意閘門，改用 point-in-polygon（data.gov.tw dataset 7442 縣市界線）取代原本的矩形邊界，新竹市/縣**所有**事件類型皆納入候選，語意判斷完全交給 AI；同批資料驗證回報 `BEFORE_KEEP_COUNT=11 → AFTER_KEEP_COUNT=29`（找回 18 筆），`TESTS=124 passed/0 failed`。**本 Cloud Session 的獨立查證**：目前 `main`／本分支的 `pbs-relay/src/localPrototype.js` 仍保留 `isAccident()` 並仍作為候選閘門使用（見該檔第 56/108 行），`pbs-relay/` 完整 git 歷史（含 `feature/pbs-local-edge-filter-prototype` 分支）中**未找到**對應此修正的 commit，故無法核對回報的 point-in-polygon 實作、dataset 7442 引用或 11→29/124 測試數字。與既有 `PBS Windows Local Edge Debug Push Integration`（V1.9.6）記錄採同一誠實原則：**本節只記錄「人類回報了什麼」，不代表本 Session 已驗證程式碼或測試結果為真**——待對應 commit 出現於本 repo（或人類提供可核對的 diff/測試輸出）後，下一輪應改記為已驗證版本，並同步更新 `pbs-relay/` 程式碼本身（本輪禁止修改）。
 
+## 封版部署紀錄｜V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY（2026-09-02 同日再稍晚，不升版，**生效中／觀察中**）
+
+**狀態：`ACTIVE_REAL_WORLD_OBSERVATION`。** 人類明確授權，正式把
+`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED` 從 `"false"` 改回 `"true"`（FETCH/
+QUEUE/AI 皆已 `"true"`）——TDX 真實 LINE 通知重新上線，`CURRENT_RUNTIME_PHASE`
+=`PHASE_E_TDX_NOTIFY_LIVE`。這是 V2.4.4 洩漏事件（台61線39.6K誤判新竹）後，
+V2.4.5 官方界線 positive-authority resolver＋道路管理政策閘門＋官方 shapefile
+補正三輪修復完成、人類主動決定不再長時間停留 observation-only 的正式重新啟用。
+
+**開工前逐項確認（未新增任何程式碼，純讀程式碼/測試驗證既有 13 項功能）**：
+①TDX座標保留②新竹縣市geo resolver③OUTSIDE_HSINCHU→DROP④UNKNOWN→DROP
+⑤桃園觀音台61線39.6K→DROP⑥頭份→DROP⑦竹南→DROP⑧機動路肩開放→0AI⑨機動路肩
+關閉→0AI⑩一般施工0-1車道→0AI⑪一般施工≥2車道→可進AI⑫blockedLanes已進AI
+input⑬PBS完全未修改——全數確認存在，targeted tests 42/42 全過。
+
+**部署**：本次是純 config-only commit（`wrangler.jsonc` 單一開關值），working
+tree 於變更前已 clean、local HEAD 與 `origin/main` 一致（`31ae4ef`），推送後
+依本專案既有唯一部署路徑（push main → Cloudflare Workers Builds 自動部署）
+生效，未執行任何手動 `wrangler deploy`（維持既有唯一部署路徑，未新增第二條）。
+
+**已知、誠實揭露的限制**：`npm run verify:production` 執行結果仍是
+`PASS_NETWORK_VERIFICATION_BLOCKED`——本 sandbox 對 Production `*.workers.dev`
+無任何直接網路存取（與本專案自始至終記錄的限制一致），因此本 session **無法
+自行觀察真實 TDX 事件的 LINE 推播結果**，也無法直接確認 Cloudflare Dashboard
+上的 Production branch/實際 deployedCommit。第六節「實機直接觀察」的執行者
+是**人類**，非 Claude；本輪只完成「讓它有機會被觀察」的部署，觀察本身待人類
+回報證據。
+
+**Rollback 協定（永久規則，優先於任何查修動作）**：人類（或未來有 Production
+存取的 session）發現任一異常——桃園/苗栗/頭份/竹南 LINE 推播、機動路肩開放/
+關閉 LINE 推播、一般施工 0-1 車道 LINE 推播、真正新竹重大事件完全進不了 AI、
+LINE 內容明顯錯誤——**第一動作固定是**把 `TDX_ROADEVENT_PRODUCTION_NOTIFY_
+ENABLED` 改回 `"false"` 止血，**禁止**邊跑 Production 邊大改程式碼。止血後才
+依序：保存事件證據（eventId/source/road/KM/coordinates/description）→找到
+實際 pipeline stage→修正→targeted test→regression→commit→push→docs
+sync→再部署→再開 Notify。**禁止**「先在 Production 修，文件明天再補」與
+「今天改很多但沒有封版」——任何時刻都必須能回答「這一刻 Production 對應哪一
+個 Git commit」。
+
+**觀察重點對照表**（供人類/未來 session 核對）：新竹縣市事件應完整走
+TDX→地理通過→政策通過→AI→LINE；桃園/苗栗事件必須 0 LINE；頭份/竹南必須
+0 LINE；機動路肩開放/關閉必須 0 LINE；一般施工封鎖 0-1 車道必須 0 LINE；一般
+施工封鎖 ≥2 車道才可能經 AI 後 LINE。
+
+**未觸碰**：resolver/gate/policy 程式碼本身、PBS、其餘三個 wrangler.jsonc TDX
+開關值（皆維持不變，只有 NOTIFY 一個值變動）。`APP_VERSION` 不變，仍 V2.4.5。
+
 ## 補正紀錄｜V2_4_5_OFFICIAL_HSINCHU_BOUNDARY_DATA_HOTFIX_CONTINUE（2026-09-02 同日稍晚，不升版，壓縮摘要）
 
 **背景**：V2.4.5 原輪用 taiwan-atlas npm 2021.9.20 鏡像作為 TDX 地理正面權威，非直連
@@ -527,63 +574,20 @@ messageFormat/60字上限。`APP_VERSION`V2.4.4→V2.4.5（MINOR）。
 
 `RAW_PBS_TEXT_POLICY=IMMUTABLE_END_TO_END_UNTIL_AI`不變。**KV成本**(實測)：`puts=4N+2`(與V2.2.0同)，`gets=6N`(+1/事件)。**Queue成本**(估算)：成功2次operation，重試耗盡最差5次；50/100/200事件/日最差250/500/1000次，遠低於10,000/日免費額度。新增`test/pbsAiQueueReliability.test.js`(含真實事故迴歸fixture)，改寫`pbsDebugPushBackgroundProcessing.test.js`5項過時測試。1705項/1671 pass/34 fail，NEW_FAILURES=0。`APP_VERSION`V2.2.0→V2.3.0。未觸碰：Windows PBS filter/HTTP timeout、PBS原始文字、AI prompt/model、service area、LINE formatter、driverSummary、TDX、CCTV、Shared Feed。`BROWSER_ACTION_REQUIRED`：真實Cloudflare Queue資源需Dashboard/`wrangler queues create`建立，sandbox無法驗證。**2026-08-30補記**：人類回報稱已由Production驗收，本Session未取得可核對證據，維持原狀待補。
 
-## 修正紀錄｜V2.2.0 — AI Decision Observatory 四層事件生命週期（2026-08-29）
+## 修正紀錄｜V2.2.0 — AI Decision Observatory 四層事件生命週期（2026-08-29，深度壓縮）
 
-**產品目標**：把既有 AI Decision Observatory（`/admin/pbs-ai-observatory-view`）
-升級成「單一事件四層生命週期查修頁」——① PBS/Windows ② Cloudflare ③ AI
-④ LINE，每層各自顯示成功／未執行／失敗／未知四種狀態，一眼看出事件卡在
-哪一層，不需翻 Cloudflare log。純 backward-compatible 觀測/UI 擴充，
-**未改** AI semantic authority、Windows PBS filter、LINE policy、
-V2.1.0 的 ctx.waitUntil 架構。
-
-**RAW_PBS_TEXT_VISIBLE**：`src/pbs/aiObservatoryIndex.js` 的
-`commentSummary`（原截斷至 120 字）退休，改為 `rawComment`／
-`rawSourceDetail`——PBS 原始自由文字欄位，完整未截斷儲存，與既有解析欄位
-（road/direction/areaNm/displayKM）獨立標示，絕不合併覆蓋。
-
-**FAILURE_EVENT_VISIBILITY**（本輪真正要補的缺口）：一筆事件的
-`ctx.waitUntil`（V2.1.0）背景處理若中途 crash 或從未跑完，原本 Observatory
-index 完全不會留下任何紀錄（原本只在處理「最尾端」寫入一次）。本輪
-`src/pbs/debugPush.js` 的 `processAcceptedEvent` 在 business processing
-「一開始」就先寫入一筆 `AI_OUTCOME.PROCESSING_STARTED` 紀錄（直接取自
-Windows 原始 payload 欄位，寫在任何可能 throw 的程式碼之前），既有的
-「最終」寫入之後原地覆寫同一把 KV key（`idempotencyKeyHash` +
-`taipeiDate` + 接受當下的 `now` 三者相同）。停滯／crash 的事件因此仍有
-一張卡可查（凍結在 `PROCESSING_STARTED`），不再完全消失。
-
-**KV 成本**（實測，非估算，見
-`test/pbsAiObservatoryFourLayer.test.js` 的 KV cost formula 測試）：
-`EXTRA_KV_WRITES_PER_ACCEPTED_EVENT = 1`。
-`KV_NEW_FORMULA：puts = 4N + 2`（idempotency PROCESSING+COMPLETED、
-observatory PROCESSING_STARTED+最終、+1 incident-suppression-state、
-+1 shared-feed／整輪一次）——50/100/200 accepted events/day 分別為
-202/402/802 puts/day，遠低於 Cloudflare Workers KV Free Plan 每日
-1,000 次寫入額度。REUSE_EXISTING_DATA_FIRST 全程遵守：Cloudflare 層
-PROCESSING/COMPLETED 狀態改為**即時讀取**既有 V2.1.0 transport
-idempotency 記錄（`computeIdempotencyKeyHash`／`buildIdempotencyKvKey`
-自 `debugPush.js` 匯出重用，非第二套 hash 實作）；AI 層 notify/impact/
-reason/confidence 仍即時讀取既有 `aiDecisionCache` 記錄，未重複儲存。
-**零新增 KV prefix**。
-
-**零副作用不變**：開啟／重新整理／搜尋／篩選本頁仍是 0 次 Workers AI
-呼叫、0 次 KV 寫入（僅讀取：既有的每列 aiDecisionCache 查詢 ＋新增的
-每列 transport-idempotency-status 查詢——讀取本身不受本輪規則限制，
-只有寫入才要求 0）。
-
-`APP_VERSION` 從 `V2.1.0` 升為 `V2.2.0`（MINOR，backward-compatible
-observability 擴充）。新增 16 項測試
-（`test/pbsAiObservatoryFourLayer.test.js`，涵蓋 order 十二的全部
-20 項最低要求），既有 `aiObservatoryIndex.test.js`／
-`aiObservatoryView.test.js`／`pbsDebugPush.test.js` 的相關斷言同步更新
-（截斷測試 → 完整性測試；KV 成本公式 3N+2 → 4N+2）。全部首次執行即
-PASS；全量迴歸 1697/1663/34，與 V2.1.0 基準以 failure 名稱集合對照確認
-NEW FAILURES=0，僅跑一次。
-
-本輪**未觸碰**：Windows PBS filter／relay transport、V2.1.0 的
-ctx.waitUntil 架構、AI Prompt／model／semantic policy、service area、
-LINE policy／formatter、Shared Feed、CCTV、TDX、driverSummary、hourly
-reminder，以及「同一事故一小時內」AI 語意上下文功能（本輪刻意未實作）。
-詳見 `03_ARCHITECTURE.md`／`PRODUCT_DECISIONS.md` 的完整記錄。
+把既有 AI Decision Observatory 升級成「單一事件四層生命週期查修頁」——①PBS/Windows
+②Cloudflare③AI④LINE，每層顯示成功/未執行/失敗/未知，一眼看出事件卡在哪層。純
+backward-compatible擴充，未改AI語意/Windows PBS filter/LINE policy/V2.1.0架構。
+**RAW_PBS_TEXT_VISIBLE**：原截斷120字的`commentSummary`退休，改`rawComment`/
+`rawSourceDetail`完整未截斷儲存。**FAILURE_EVENT_VISIBILITY**（本輪真正缺口）：
+`ctx.waitUntil`背景處理中途crash原本Observatory完全無紀錄，本輪`processAcceptedEvent`
+一開始就寫入`PROCESSING_STARTED`，停滯/crash事件仍有卡可查。**KV成本**（實測）：
+`puts=4N+2`，200 events/day為802 puts/day，遠低於Free Plan每日1,000額度上限；
+REUSE_EXISTING_DATA_FIRST全程遵守，零新增KV prefix。零副作用不變：開啟/搜尋本頁
+0次AI呼叫/0次KV寫入。`APP_VERSION`V2.1.0→V2.2.0。新增16項測試全過，全量迴歸
+1697/1663/34，NEW_FAILURES=0。未觸碰：Windows PBS/ctx.waitUntil架構/AI Prompt/
+service area/LINE policy/Shared Feed/CCTV/TDX。詳見`03_ARCHITECTURE.md`。
 
 ## 修正紀錄｜V1.9.9 Phase 1 — Windows Service Area Hsinchu Only（2026-08-28，完成於另一個 session，本 Cloud Session 未參與，port 進本模板僅為維持一致）
 

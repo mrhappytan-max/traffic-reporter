@@ -39,7 +39,7 @@
     "openStructuralQuestion": "TWO trees currently hold the same canonical content: engineering-memory/ (what the mirror syncs) and meeting-room-export/ (what scripts/export-meeting-room.mjs generates). They are kept in step by hand today, which is exactly the drift risk this governance exists to prevent. Needs a human decision: either point the generator at engineering-memory/, or retire one tree. NOT decided unilaterally."
   },
   "git": {
-    "sourceMainHead": "e8e4c77fdf16963d8ba1c6eb6bc132946d875b44",
+    "sourceMainHead": "31ae4ef6d84bbfd19fcab483ff80c2f9c7fc1b03",
     "sourceMainHeadResolvedFrom": "origin/main",
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
     "sourceWorkingTree": "dirty (V2_4_5_OFFICIAL_HSINCHU_BOUNDARY_DATA_HOTFIX_CONTINUE changeset, committed together with this snapshot)",
@@ -247,25 +247,19 @@
     }
   },
   "taskSeal": {
-    "task": "V2_4_5_TDX_HSINCHU_GEO_RESOLVER_AND_ROAD_MANAGEMENT_POLICY_GATE",
+    "task": "V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY",
     "status": "SEALED",
     "sealedAt": "2026-09-02",
-    "sealedBy": "human directive (V2_4_5_TDX_HSINCHU_GEO_RESOLVER 正式開工令 + V2_4_5_TDX_ROAD_MANAGEMENT_POLICY_GATE 補充令)",
+    "sealedBy": "human directive (V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY 正式封版部署與實機驗證令)",
     "releaseVersion": "V2.4.5",
-    "previousVersion": "V2.4.4",
-    "nature": "MINOR — 正式架構修正（非僅denylist patch）。核心驗收：TDX必須先證明位於新竹縣/市才進AI，無法證明就不進；PBS完全不在範圍。",
-    "background": "V2.4.4唯讀audit發現TDX服務區判斷全建立在hsinchuConfig.js自承未驗證的KM表上，且座標缺席時serviceArea.js舊TDX分支fail-open；真實洩漏台61線39.6K(桃園觀音)曾被誤判新竹。",
-    "fixA_geoResolver": "新模組src/tdx/hsinchuGeoResolver.js#resolveTdxHsinchuGeography()——三態CONFIRMED_HSINCHU/OUTSIDE_HSINCHU/UNKNOWN。唯一正面權威：座標對照內政部國土測繪中心官方行政區界線(data.gov.tw dataset 7442，經taiwan-atlas npm套件鏡像取得，本sandbox無法直連data.gov.tw，人類裁決核准)。KM表降為觀察用途。UNKNOWN下游等同OUTSIDE_HSINCHU。normalize.js新增座標證據保留，crossSourceDedup.js補上座標傳遞。serviceArea.js TDX分支委派此resolver，Gate2/Gate3自動沿用同一canonical結果。",
-    "fixB_roadManagementGate": "新模組src/tdx/roadManagementPolicyGate.js#resolveTdxRoadManagementEligibility()，跑在地理閘門之後——機動路肩開放/關閉永不進AI；一般施工需blockedLanes>=2才有資格，資料不足一律UNKNOWN_BLOCKED_LANES不進AI；escape valve防止真正重大事故被誤判為一般施工擋下。blockedLanes新增進AI結構化輸入(PBS恆為null)。",
-    "preserved": "V2.4.4 denylist硬閘門(resolveHsinchuOnlyProductionEligibility)與AI prompt第四類語意錨點均保留為第二層safety net，未刪除。",
-    "scopeDiscipline": "明確未觸碰：Windows PBS、pbs-relay/、PBS本機篩選、PBS AI候選、PBS LINE路徑、Workers AI模型、AI prompt路肩政策原文、Incident Memory、CCTV、LINE messageFormat、60字上限。",
-    "testEvidence": {
-      "newTests": "test/tdxHsinchuGeoResolver.test.js(19項，CASE1-10+39.6K永久回歸鎖定)／test/tdxRoadManagementPolicyGate.test.js(21項，CASE1-10)全過。",
-      "fullRegression": "git stash -u 同commit精確基準52項失敗，全量迴歸NEW_FAILURES=0，僅跑一次。",
-      "deploymentPolicy": "npm run check:deployment-policy PASS；wrangler deploy --dry-run確認FETCH/QUEUE=true、NOTIFY=false。"
-    },
-    "sealCommit": "見 git log 訊息 V2_4_5_TDX_HSINCHU_GEO_RESOLVER（單一 commit，SHA 因自我參照而略去，同 V2.4.1-V2.4.4 條目先例）",
-    "readerNote": "完成後STOP。不得自行開啟TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED；不得修改Windows PBS/pbs-relay/；不得刪除V2.4.4的denylist gate或AI prompt錨點（僅保留為第二層safety net，是否精簡是未來另一輪的決定）。"
+    "previousVersion": "V2.4.5（不升版，同版本封版部署）",
+    "nature": "config-only — 把TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED從false改為true，未新增任何程式碼。",
+    "preflightConfirmed": "working tree clean、local HEAD==origin/main(31ae4ef)、APP_VERSION=V2.4.5、Engineering Memory已同步、targeted tests 42/42 PASS、check:deployment-policy PASS、wrangler dry-run PASS。",
+    "featuresReconfirmed": "13項既有功能逐一確認存在（座標保留/geo resolver/OUTSIDE&UNKNOWN drop/39.6K/頭份/竹南/路肩開關/施工車道數/blockedLanes入AI/PBS未改）。",
+    "networkLimitation": "npm run verify:production仍回報PASS_NETWORK_VERIFICATION_BLOCKED——本session無Production網路存取，實機觀察須由人類執行，非Claude自行監看。",
+    "rollbackProtocol": "永久規則：發現任一異常（桃園/苗栗/頭份/竹南推播、路肩開關推播、0-1車道施工推播、新竹重大事件進不了AI、LINE內容錯誤），第一動作固定改回false止血，不得邊跑Production邊大改，止血後才走查修→測試→commit→push→docs sync→再部署→再開Notify全流程。",
+    "sealCommit": "見 git log 訊息 V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY（單一 commit，SHA 因自我參照而略去，同前例）",
+    "readerNote": "CURRENT_RUNTIME_PHASE=PHASE_E_TDX_NOTIFY_LIVE。異常回報時優先執行rollbackProtocol，完整記錄見07_KNOWN_ISSUES.md「封版部署紀錄」章節。"
   },
   "taskSealHistory": [
     {
@@ -513,22 +507,22 @@
     "deployMethod": "push to main -> Cloudflare Workers Builds auto-deploy",
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
-  "currentPhase": "Production maintenance｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，且 V2.4.5 已把 TDX 服務區判斷從「未驗證 KM 表 + denylist patch」升級為「官方行政區界線 positive-authority resolver + 道路管理政策閘門」。TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 維持 false（FETCH/QUEUE 仍 true），續留 PHASE_D_TDX_NOTIFY_OBSERVATION，待觀察後再由人類＋Claude Browser 決定重新開啟。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一寫入來源，GitHub Actions 自動鏡像至 Drive",
-  "currentTask": "none（無進行中工作）。Latest completed task = V2_4_5_TDX_HSINCHU_GEO_RESOLVER + V2_4_5_TDX_ROAD_MANAGEMENT_POLICY_GATE，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.4.5（MINOR）。核心驗收：TDX必須先證明位於新竹縣/市才進AI，無法證明就不進，PBS完全不在範圍。本輪：(1) 新模組hsinchuGeoResolver.js，座標對照官方界線dataset 7442為唯一正面權威，KM表降為觀察用途；(2) 新模組roadManagementPolicyGate.js，機動路肩開放/關閉永不進AI，一般施工需blockedLanes>=2；(3) normalize.js保留座標證據，crossSourceDedup.js補上座標傳遞；(4) blockedLanes新增進AI結構化輸入；(5) V2.4.4 denylist與AI prompt錨點皆保留為第二層safety net；(6) PBS完全未觸碰。新增40項專用測試全過，全量迴歸NEW_FAILURES=0（git stash -u精確基準52項）。下一件事若要開工：見07_KNOWN_ISSUES.md既有過期斷言技術債（與本輪無關），或觀察真實Production後由人類決定是否重新開啟TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED。",
-  "knownBlocker": "無 blocker。TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 目前為 false 是刻意的安全政策，非缺陷——FETCH/QUEUE 仍為 true。第一筆真實 TDX LINE 通知（Notify 重新開啟後）尚待現場證據——REAL_WORLD_CONFIRMATION_PENDING。AI 呼叫已有 45 秒 fail-fast timeout（V2.4.3），CLEARED 會取消舊事件 stale retry。EVENT_ID 11509010029-5 該筆歷史事件確切失敗階段仍無法獨立查證，未臆測。詳見 07_KNOWN_ISSUES.md",
+  "currentPhase": "Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline。**PHASE_E_TDX_NOTIFY_LIVE（2026-09-02，人類授權）**：TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=true（FETCH/QUEUE/AI皆true），TDX真實LINE通知重新上線。本session無Production網路存取，實機觀察委由人類；異常第一動作固定改回false。雲端同步治理V2生效：Claude對Drive唯讀、GitHub為唯一寫入來源",
+  "currentTask": "none（無進行中工作）。Latest completed task = V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.4.5（不升版）。本輪純config-only：wrangler.jsonc的TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED改true，13項既有功能逐一確認存在（未新增程式碼）。前序：hsinchuGeoResolver.js(座標對照官方界線)+roadManagementPolicyGate.js(路肩/施工車道數)+官方shapefile補正(幾何比對無實質差異)+V2.4.4denylist/AI prompt錨點保留+PBS未觸碰。全量迴歸NEW_FAILURES=0。下一件事：等人類回報真實Production觀察結果；異常時rollback協定見07_KNOWN_ISSUES.md。",
+  "knownBlocker": "無blocker，觀察中。TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED剛改true（2026-09-02），第一筆真實TDX LINE通知現場結果待人類回報——REAL_WORLD_CONFIRMATION_PENDING（本輪）。本session無Production網路存取無法自行觀察。異常時第一動作固定改回false止血，非邊跑邊改。AI呼叫已有45秒fail-fast timeout（V2.4.3）。EVENT_ID 11509010029-5歷史事件確切失敗階段仍無法查證，未臆測。詳見07_KNOWN_ISSUES.md",
   "realWorldConfirmation": {
     "status": "REAL_WORLD_CONFIRMATION_PENDING",
     "subject": "V1.8.7.7 CCTV gray broken image fix"
   },
-  "nextAction": "待辦：觀察真實 Production（FETCH=true／QUEUE=true／NOTIFY=false）確認只剩新竹縣市 candidate、一般施工不再誤判、TDX facts 可完整組成 LINE 預覽後，才由人類＋Claude Browser 決定改回 true——不得自行改回。一個月後依 ineligibleByReason 數據決定是否收緊主動播報政策",
+  "nextAction": "待辦：人類觀察真實Production TDX LINE推播（NOTIFY=true剛開啟）——新竹縣市正常通過、桃園/苗栗/頭份/竹南=0推播、路肩開關=0推播、施工0-1車道=0推播、LINE內容無誤。異常時第一動作固定改回false止血。一個月後依ineligibleByReason數據決定是否收緊主動播報政策",
   "authorityLevels": {
     "levelA_selfServiceReadOnly": "own repo git log, own Worker/KV/test results only",
     "levelB_requiresHumanApproval": "interactive login/OAuth, private dashboards, real KV content, any other department's resources (read or write)",
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-09-02T15:08:33.000Z",
-    "sourceMainHead": "e8e4c77fdf16963d8ba1c6eb6bc132946d875b44",
+    "generatedAt": "2026-09-02T16:25:40.000Z",
+    "sourceMainHead": "31ae4ef6d84bbfd19fcab483ff80c2f9c7fc1b03",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
     "historyDir": "_history"
@@ -674,5 +668,16 @@
     "deploymentPolicy": "TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED維持false(FETCH/QUEUE仍true)，進入觀察期，待人類確認桃園/苗栗/頭份/竹南=0 candidate、真實新竹事件正常通過、UNKNOWN正確攔截後才另行決定開啟。",
     "explicitlyUnchanged": "Windows PBS、pbs-relay/、PBS本機篩選、PBS AI候選、PBS LINE路徑、Workers AI模型、AI prompt路肩政策原文、Incident Memory、CCTV、LINE messageFormat、60字上限。",
     "verification": "test/tdxHsinchuGeoResolver.test.js(19項)/test/tdxRoadManagementPolicyGate.test.js(21項)全過；git stash -u同commit精確基準52項，全量迴歸NEW_FAILURES=0；wrangler dry-run確認FETCH/QUEUE=true、NOTIFY=false。"
+  },
+  "V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY": {
+    "completedAt": "2026-09-02",
+    "CURRENT_RUNTIME_PHASE": "PHASE_E_TDX_NOTIFY_LIVE",
+    "nature": "config-only，人類明確授權：TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED從false改true，未新增程式碼。",
+    "preflightConfirmed": "working tree clean/HEAD==origin main(31ae4ef)/APP_VERSION=V2.4.5/Engineering Memory已同步/targeted tests 42/42/deployment-policy PASS/wrangler dry-run PASS。",
+    "featuresReconfirmed13": "座標保留/geo resolver/OUTSIDE&UNKNOWN drop/39.6K/頭份/竹南/路肩開關0AI/施工0-1車道0AI/≥2車道可進AI/blockedLanes入AI/PBS未改，全數確認存在。",
+    "networkLimitation": "verify:production仍PASS_NETWORK_VERIFICATION_BLOCKED，本session無Production網路存取，實機觀察須人類執行。",
+    "rollbackProtocol": "異常時第一動作固定TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=false止血，禁止邊跑Production邊大改，止血後才查修→測試→commit→push→docs sync→再部署→再開Notify。",
+    "unchanged": "resolver/gate程式碼本身、PBS、其餘三個TDX/AI開關值。",
+    "appVersion": "不變，仍V2.4.5"
   }
 }

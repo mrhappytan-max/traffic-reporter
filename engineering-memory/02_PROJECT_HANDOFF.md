@@ -107,7 +107,7 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 ## Current known issues
 
-- **Known blocker**：無 blocker。TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 目前為 false 是刻意的安全政策，非缺陷——FETCH/QUEUE 仍為 true。第一筆真實 TDX LINE 通知（Notify 重新開啟後）尚待現場證據——REAL_WORLD_CONFIRMATION_PENDING。AI 呼叫已有 45 秒 fail-fast timeout（V2.4.3），CLEARED 會取消舊事件 stale retry。EVENT_ID 11509010029-5 該筆歷史事件確切失敗階段仍無法獨立查證，未臆測。詳見 07_KNOWN_ISSUES.md
+- **Known blocker**：無 blocker，但**觀察中**——V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY（2026-09-02）已將 TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 改回 true（FETCH/QUEUE/AI 皆 true），第一筆真實 TDX LINE 通知的現場結果尚待人類回報——本 session 無 Production 網路存取無法自行觀察。異常回報時第一動作固定改回 false 止血，非邊跑邊改。AI 呼叫已有 45 秒 fail-fast timeout（V2.4.3），CLEARED 會取消舊事件 stale retry。EVENT_ID 11509010029-5 該筆歷史事件確切失敗階段仍無法獨立查證，未臆測。詳見 07_KNOWN_ISSUES.md
 - **Real-world confirmation**：REAL_WORLD_CONFIRMATION_PENDING
 - **既有測試失敗基準線**：`npm test` 共 1272 項，其中穩定 38 項為已知失敗（2 項 `pbs-relay/tests/*` 缺 `pbs-relay/src/cache.js`；**33 項過期斷言**——動態路肩推播關閉、PBS 成為 CCTV 可信來源之後未同步更新的測試，是目前最大的一筆技術債，待獨立施工令；3 項 wall-clock 相依的 `healthQuotaDashboard`，會隨日期自然增加）。**注意：舊版文件宣稱那 13 項是「Workers-only `.wasm` codec 在沙盒無法載入」，這是錯的 Root Cause——真正原因是沙盒 `node_modules` 不完整、`@jsquash/jpeg` 沒安裝；裝了之後那些檔案全部可以執行，並揭露上述 33 項過期斷言。**出現這 18 項以外的新失敗才算真正回歸，且**判斷回歸一律以同一輪 `git stash -u` 對照為準**；逐項清單、`deploymentPolicyAndVerify` 第 12 項的「尚未 push 必失敗」現象，以及 `deploymentStatus` 那項只在全套執行時偶發的雜訊，都見 `07_KNOWN_ISSUES.md`。
 - **Dashboard-only 事實永遠無法從程式驗證**：Production branch 指向、真實 Cron 排程、Secret 值是否正確、Build 歷史——只能由真人開 Dashboard 確認。
@@ -576,6 +576,21 @@ V2.3.2／V2.3.3 是三個連續 PATCH（LINE 地圖座標直連 fallback、CCTV
 診斷工具修復、CCTV R2 讀回驗證），皆未改架構本身。
 
 ## V2.4.5 — TDX_HSINCHU_GEO_RESOLVER ＋ TDX_ROAD_MANAGEMENT_POLICY_GATE（2026-09-02，加在下方 V2.4.4 之上）
+
+**封版部署（V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY，同日再稍晚，不升
+版）**：人類明確授權，正式將 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`
+改回 `"true"`（FETCH/QUEUE/AI 皆已 `"true"`）——**TDX 真實 LINE 通知重新
+上線**。開工前逐項確認 13 項既有功能（座標保留/geo resolver/OUTSIDE
+&UNKNOWN drop/39.6K/頭份/竹南/路肩開關/施工車道數/blockedLanes入AI/PBS
+未改）皆已存在，**未新增任何程式碼**，僅 config-only commit（`wrangler.jsonc`
+單一開關值）。**本 session 無 Production 網路存取權限**（`verify:production`
+仍回報 `PASS_NETWORK_VERIFICATION_BLOCKED`）——實機真實事件觀察委由人類
+執行，非 Claude 自行監看。**Rollback 協定（永久規則）**：發現任一異常
+（桃園/苗栗/頭份/竹南推播、路肩開關推播、0-1車道施工推播、新竹重大事件
+進不了AI、LINE內容錯誤），第一動作固定 `TDX_ROADEVENT_PRODUCTION_NOTIFY_
+ENABLED=false` 止血，**不得**邊跑 Production 邊大改；接著才走完整
+查修→測試→commit→push→docs sync 流程再重新部署。完整回報見
+`07_KNOWN_ISSUES.md`。
 
 **補正（V2_4_5_OFFICIAL_HSINCHU_BOUNDARY_DATA_HOTFIX_CONTINUE，同日稍晚，
 不升版）**：地理正面權威資料來源已從下方第 1 點所述的 `taiwan-atlas` npm

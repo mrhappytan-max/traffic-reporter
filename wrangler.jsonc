@@ -182,7 +182,24 @@
     // notices no longer notify=true. FETCH/QUEUE stay "true" — this
     // switch alone controls real LINE/CCTV/R2 delivery for TDX-origin
     // events (see debugPush.js's own suppressLineNotify comment).
-    "TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED": "false",
+    //
+    // V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY (2026-09-02): flipped back
+    // to "true" under explicit human authorization, immediately after
+    // V2.4.5's own root-cause fixes for the V2.4.4 leak — the official-
+    // boundary-backed positive-authority geo resolver (src/tdx/
+    // hsinchuGeoResolver.js, replacing the denylist-only patch this round
+    // flipped false on) plus the deterministic road-management policy
+    // gate (src/tdx/roadManagementPolicyGate.js) plus the official-NLSC-
+    // shapefile boundary-data hotfix. Real TDX-origin LINE pushes to real
+    // subscribers go live again as of this deploy. Order's own explicit
+    // rollback switch: if any anomaly is observed (Taoyuan/Miaoli/
+    // Toufen/Zhunan LINE push, shoulder-open/close LINE push, 0-1-lane
+    // routine construction LINE push, a genuine Hsinchu event never
+    // reaching AI, or a malformed LINE message), flip this back to
+    // "false" FIRST, before investigating — see 07_KNOWN_ISSUES.md's
+    // V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY entry for the full
+    // decision record and observation protocol.
+    "TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED": "true",
     // TDX_CCTV_METADATA_REFRESH_ENABLED — independent of the switches
     // above: may /admin/cctv-hsinchu-probe actually call TDX to refresh
     // cctv:freeway-metadata:v1. CCTV metadata refresh stays manual/

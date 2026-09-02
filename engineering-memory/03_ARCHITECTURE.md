@@ -101,10 +101,11 @@ safety net，程式碼閘門（`roadManagementPolicyGate.js`）為第一層。�
 **目前部署狀態（`wrangler.jsonc`，取代上方 V2.4.0 表格中已過時的
 「皆預設 false」敘述）**：`TDX_ROADEVENT_FETCH_ENABLED="true"`、
 `TDX_ROADEVENT_QUEUE_INGRESS_ENABLED="true"`、
-`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED="false"`——本輪完成後進入觀察
-期，需人類確認桃園/苗栗/頭份/竹南＝0 candidate、真實新竹事件正常通過、
-UNKNOWN 正確被攔截後，才另行決定是否開啟 Production Notify；本輪禁止自
-行開啟。
+`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED="true"`——**V2_4_5_SEAL_DEPLOY_
+AND_REAL_WORLD_VERIFY（2026-09-02）已在人類明確授權下重新開啟**，TDX 真
+實 LINE 通知正式上線（PHASE_E_TDX_NOTIFY_LIVE）。本 sandbox 無 Production
+網路存取，實機觀察委由人類執行；發現異常第一動作固定改回 `"false"`。完
+整觀察協定與 rollback 記錄見 `07_KNOWN_ISSUES.md`。
 
 完整逐版本文字記錄／CASE 測試對照 → `06_VERSION_HISTORY.md`／
 `07_KNOWN_ISSUES.md`；專用測試 →
