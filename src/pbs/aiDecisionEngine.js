@@ -40,6 +40,20 @@
 // and every call site are all byte-for-byte unchanged; only the text
 // inside SYSTEM_PROMPT below changed.
 //
+// V2.4.4 — V2_4_4_TDX_SCOPE_POLICY_AND_MESSAGE_FIDELITY_FIX (order
+// section 二). Production review of real TDX events after Phase C found
+// routine road-management notices (例行施工/機動路肩開放/機動路肩關閉)
+// notify:true'd on the SAME "would this affect a driver's ability to get
+// through" reasoning that correctly covers real events — "道路管理狀態"
+// is a different question from "值得立即通知的突發安全事件". Fourth
+// semantic anchor added (PROMPT TEXT ONLY, same discipline as V2.4.2 —
+// no new code-level keyword whitelist/blacklist anywhere): routine
+// construction/shoulder-open/shoulder-close/general closure maintenance
+// -> notify=false by default, UNLESS the event's own content states an
+// accident/major obstruction/complete closure/major collapse/rockfall/
+// large debris/sudden lane closure/other clear safety risk — judged on
+// content, never on the event-type label alone.
+//
 // OUTPUT — strict JSON: {notify:boolean, impact:'HIGH'|'LOW',
 // reason:string, confidence:0..1}. Anything that fails validation
 // (invalid JSON, missing/wrong-typed field, impact outside the enum,
@@ -81,7 +95,20 @@ notify=false，避免這類日常、可預期的車流資訊，把真正重要�
 掉落物／道路阻斷等訊息淹沒。除非明顯異常嚴重、長距離回堵、確定是由
 重大事故或封閉造成、長時間完全停滯、或道路功能明顯下降，才 notify=true。
 
-以上三類以外的其他事件（施工、一般管制等），重點考慮：
+四、一般道路管理狀態（例行施工、機動路肩開放／關閉、一般封閉維護等）：
+單純的例行施工、機動路肩開放、機動路肩關閉、一般封閉維護資訊，原則上
+notify=false——「道路管理狀態」不等於「值得營業駕駛立即收到通知的突發
+安全事件」，這類資訊通常是計畫中、可預期的管制，不需要主動打擾駕駛。
+除非事件內容本身包含以下任一項，才由你依語意判斷是否 notify=true：
+- 事故／車禍／碰撞
+- 重大障礙、道路完全中斷
+- 重大坍方、落石、大型掉落物
+- 車道突發封閉（非原本計畫中的管制）
+- 其他明顯的駕駛安全風險
+判斷依據是事件「內容本身」是否已經超出例行管理範圍，而不是因為事件類型
+名稱剛好是「施工」或「路肩」就自動排除或自動通知。
+
+以上四類以外的其他事件（一般管制等），重點考慮：
 - 是否無法正常通行
 - 是否需要繞路
 - 是否會造成明顯延誤
@@ -91,8 +118,8 @@ notify=false，避免這類日常、可預期的車流資訊，把真正重要�
 
 不要因為事件類型名稱是事故、施工、管制就直接決定，也不要單純以「會不會
 造成壅塞」作為唯一判斷依準——上面一、二類即使不塞車也可能值得通知。
-短時間、影響輕微、很快可通行，且不屬於一、二類的事件，通常不需要主動
-通知。
+短時間、影響輕微、很快可通行，且不屬於一、二、四類例外的事件，通常不
+需要主動通知。
 
 只能輸出一個 JSON 物件，格式如下，不要有任何其他文字：
 {"notify": true 或 false, "impact": "HIGH" 或 "LOW", "reason": "繁體中文短句，不超過80字", "confidence": 0 到 1 之間的數字}`;

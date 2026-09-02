@@ -302,12 +302,16 @@ test('12. regression — the real working "國1 南向｜新竹／科學園區�
   // the old hand-curated tier-3 anchor table for this KM too — "竹北交流
   // 道－新竹交流道" (real interchange names bracketing 93.3K) replaces the
   // old hand-typed "新竹／科學園區附近"; a 📍 地圖 line is now also added.
+  // V2.4.4 — TDX_SCOPE_POLICY_AND_MESSAGE_FIDELITY_FIX: the fact line
+  // (event.description, now shown for TDX sources too — see
+  // messageFormat.js's own V2.4.4 comment) is purely additive here.
   assert.equal(
     text,
     [
       '🚨 交通事故',
       '國1 南向｜竹北交流道－新竹交流道路段',
       '93K+300',
+      '事故',
       '事故影響通行',
       '請提前避開',
       '📍 地圖 https://maps.google.com/?q=24.80516,121.00984',

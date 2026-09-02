@@ -42,9 +42,19 @@
 // WHAT IT STILL ENFORCES (order section 三 — "必須保留")
 // ---------------------------------------------------------
 // Broadcast hours (traffic/broadcastHours.js) — execution/quota safety,
-// not a content judgment. Service area is NOT re-checked here: Phase 2's
-// isWindowsPbsAiCandidateEligible() already gated candidate construction
-// on it (pbs/aiCandidate.js), before this function is ever reached.
+// not a content judgment.
+//
+// V2.4.4 — SERVICE AREA IS NOW RE-CHECKED HERE TOO (this paragraph
+// previously said the opposite — "Service area is NOT re-checked here:
+// Phase 2's isWindowsPbsAiCandidateEligible() already gated candidate
+// construction on it, before this function is ever reached" — that
+// single upstream gate was proven insufficient in Production on
+// 2026-09-01: a TDX event (台61線／桃園市觀音區) reached real LINE despite
+// it. serviceArea.js#resolveHsinchuOnlyProductionEligibility() is now
+// called FIRST in this function, before any I/O — a deterministic
+// geography hard gate the AI's own notify:true verdict can never
+// override. See that function's own comment for the full root-cause
+// writeup and why a SECOND check, right before LINE, is now required.
 //
 // Deliberately does NOT touch Shared Feed itself — the caller
 // (pbs/debugPush.js) is responsible for calling traffic/sharedFeed.js's
@@ -53,6 +63,7 @@
 // uses, so this module stays a pure "decide + push" unit.
 
 import { isWithinBroadcastHours } from './broadcastHours.js';
+import { resolveHsinchuOnlyProductionEligibility } from './serviceArea.js';
 import { readSubscriptions } from './subscriptions.js';
 import {
   readNotifiedState,
@@ -127,6 +138,7 @@ export async function runAiApprovedPbsBroadcast(env, { event, now = new Date(), 
   const result = {
     lineReady: false,
     withinBroadcastHours: isWithinBroadcastHours(now),
+    serviceAreaEligible: true,
     suppressed: false,
     pendingTargetCount: 0,
     pushAttempted: 0,
@@ -134,6 +146,24 @@ export async function runAiApprovedPbsBroadcast(env, { event, now = new Date(), 
     completedProducts: [],
     lineErrors: [],
   };
+
+  // V2.4.4 — order section 七's own geographic HARD GATE, checked FIRST,
+  // before any I/O and before the AI's own notify:true verdict gets any
+  // further say. Deliberately independent of, and stricter than,
+  // pbs/aiCandidate.js's own isWindowsPbsAiCandidateEligible() (which
+  // only ran once, at candidate-build time, using the same resolver that
+  // let today's 台61線/桃園市觀音區 leak through on a since-corrected but
+  // still-imperfect KM table) — see serviceArea.js's own V2.4.4 comment
+  // for the full root-cause writeup and why this is checked again here,
+  // right before LINE, for both PBS and TDX uniformly. This is a
+  // deterministic geography gate, not a semantic judgment — AI notify:true
+  // can NEVER override it; an ineligible event gets 0 LINE, 0 CCTV, 0 R2,
+  // unconditionally.
+  const areaGate = resolveHsinchuOnlyProductionEligibility(event);
+  result.serviceAreaEligible = areaGate.eligible;
+  if (!areaGate.eligible) {
+    return result;
+  }
 
   const hasToken = Boolean(env.LINE_CHANNEL_ACCESS_TOKEN);
   if (!hasToken) result.lineErrors.push('LINE_CHANNEL_ACCESS_TOKEN not configured');

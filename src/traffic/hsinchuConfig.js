@@ -32,6 +32,22 @@ export const KM_BOUNDARY_BUFFER_KM = 3;
 // Freeway (國道) — TDX's real Road value has been observed as the
 // Chinese-numeral form ("國道一號"), so that's the canonical key; digit
 // forms are kept as aliases in case a different endpoint uses them.
+//
+// V2.4.4 — V2_4_4_TDX_SCOPE_POLICY_AND_MESSAGE_FIDELITY_FIX. Production
+// repro (2026-09-01): 台61線 39K+600（實際為桃園市觀音區）被這份表格自己
+// 判定為「在範圍內」，真實推播到 LINE——直接證明這裡的 minKM/maxKM 精確度
+// 不足以單獨作為 Production 播報的地理依據。本輪一開始曾嘗試直接收窄這裡
+// 的數字（含移除頭份/竹南/三灣覆蓋的範圍），但這些數字本來就只是本檔案
+// 開頭就已經誠實揭露的「未經官方里程樁驗證的最佳猜測」——重新用另一組同樣
+// 未經驗證的猜測數字取代，反而是這輪自己也警告過的「草率修補」，而且已經
+// 實測會破壞既有測試對這些數字的既定假設（例如台61線 48K-49K 這個既有
+// fixture）。因此本輪保留這份表格的數字不變，改為在
+// traffic/serviceArea.js 新增 resolveHsinchuOnlyProductionEligibility()
+// ——一個獨立、不依賴 KM 精確度的地名文字比對 hard gate，直接檢查事件自己
+// 的原始文字（今天洩漏的事件文字本身就寫著「桃園市觀音區」），作為
+// Production 播報前的真正防線，而不是繼續依賴這份表格的猜測數字本身。
+// 頭份／竹南／三灣（苗栗縣，本輪由真人命令明確排除於服務範圍外）同樣是靠
+// 那個新的地名 hard gate 排除，不是靠這裡改數字——見該函式自己的完整說明。
 export const FREEWAY_RULES = {
   國道一號: {
     aliases: ['國道1號', '國1', '中山高速公路', '中山高'],
@@ -69,6 +85,10 @@ export const HIGHWAY_RULES = {
   },
   台61線: {
     aliases: ['台61', '台61號', '西濱快速公路', '西濱公路'],
+    // V2.4.4 — 39K+600 已證實為桃園市觀音區，非新竹（見本檔案上方 V2.4.4
+    // comment）。這個數字本輪刻意不變（同樣理由：沒有把握重新畫界，不要
+    // 用另一個猜測取代舊猜測）——真正擋下這類事件的是 serviceArea.js 的
+    // 地名 denylist hard gate，不是這裡的 minKM/maxKM。
     minKM: 35, // 新豐 一帶
     maxKM: 75, // 香山/新竹市 一帶
   },

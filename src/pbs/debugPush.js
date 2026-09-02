@@ -1311,7 +1311,8 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
     const broadcastResult = await runAiApprovedPbsBroadcast(env, { event: normalizedEvent, now, suppressLineNotify });
     console.log(
       `[pbs-debug-push][ai-decision] event=AI_LINE_ATTEMPTED eventId=${eventId} lifecycle=${lifecycle} ` +
-        `source=${source} suppressLineNotify=${suppressLineNotify} lineReady=${broadcastResult.lineReady} suppressed=${broadcastResult.suppressed} ` +
+        `source=${source} suppressLineNotify=${suppressLineNotify} serviceAreaEligible=${broadcastResult.serviceAreaEligible} ` +
+        `lineReady=${broadcastResult.lineReady} suppressed=${broadcastResult.suppressed} ` +
         `pendingTargets=${broadcastResult.pendingTargetCount} pushAttempted=${broadcastResult.pushAttempted} ` +
         `pushSucceeded=${broadcastResult.pushSucceeded}`
     );

@@ -196,6 +196,14 @@ test('CASE 9: the AI decision reason text never appears in the pushed LINE messa
     startKM: '90K+000',
     description: '追撞事故，車道封閉',
     sourceDetail: '警廣路況中心',
+    // V2.4.4 — real Hsinchu coordinates, so this fixture genuinely passes
+    // the new resolveHsinchuOnlyProductionEligibility() hard gate now
+    // checked inside runAiApprovedPbsBroadcast (see serviceArea.js's own
+    // V2.4.4 comment) — this test's own focus (AI reason never leaks into
+    // the LINE text) is unrelated to geography, but the call must still
+    // clear the real gate to reach a real push.
+    latitude: 24.8,
+    longitude: 121.0,
     updatedAt: WITHIN_HOURS.toISOString(),
   };
   const result = await runAiApprovedPbsBroadcast(env, { event, now: WITHIN_HOURS });
@@ -210,7 +218,7 @@ test('CASE 9: the AI decision reason text never appears in the pushed LINE messa
 // fact line (source-gated — TDX's own raw Description is never dumped).
 // =============================================================================
 
-test('CASE 10: TDX highway event uses the same shared formatter, text-only, no PBS-only fact line', () => {
+test('CASE 10: TDX highway event uses the same shared formatter, text-only', () => {
   const event = {
     source: 'highway',
     type: 'accident',
@@ -224,7 +232,13 @@ test('CASE 10: TDX highway event uses the same shared formatter, text-only, no P
   const text = formatEventMessage(event);
   assert.match(text, /🚨 交通事故/);
   assert.match(text, /台1 南向/);
-  assert.doesNotMatch(text, /很長的原始 TDX 敘述/); // still never dumped, unchanged invariant
+  // V2.4.4 — TDX_SCOPE_POLICY_AND_MESSAGE_FIDELITY_FIX: this file's own
+  // description is now shown too (capped at SOURCE_FACT_MAX_CHARS=60,
+  // this fixture's text is under the cap so it appears whole) — the
+  // "never dumps unbounded raw text" invariant is proven by the cap test
+  // in this same file below, not by hiding TDX description entirely
+  // (that was V2.4.2's information-loss bug for TDX, fixed this round).
+  assert.match(text, /很長的原始 TDX 敘述/);
 });
 
 // =============================================================================
@@ -232,7 +246,7 @@ test('CASE 10: TDX highway event uses the same shared formatter, text-only, no P
 // structured TDX field) DOES get its own line, source-agnostic.
 // =============================================================================
 
-test('CASE 11: TDX freeway event — shared formatter unaffected, blockedLanes gets its own structured fact line', () => {
+test('CASE 11: TDX freeway event — shared formatter unaffected, blockedLanes AND description facts both preserved', () => {
   const event = {
     source: 'freeway',
     type: 'accident',
@@ -246,7 +260,18 @@ test('CASE 11: TDX freeway event — shared formatter unaffected, blockedLanes g
   const text = formatEventMessage(event);
   assert.match(text, /國3 南向/);
   assert.match(text, /⚠️ 封閉2車道/);
-  assert.doesNotMatch(text, /很長的原始 TDX 敘述/); // TDX Description still never dumped
+  // V2.4.4 — see CASE 10's own comment: TDX description is now shown too.
+  assert.match(text, /很長的原始 TDX 敘述/);
+});
+
+test('TDX description longer than SOURCE_FACT_MAX_CHARS is still capped, never fully dumped (the invariant CASE 10/11 relied on, preserved via the cap, not via source exclusion)', () => {
+  const longDescription = 'TDX原始敘述'.repeat(20); // far over 60 chars
+  const event = { source: 'freeway', type: 'accident', road: '國道三號', direction: '南向', startKM: '81K+300', description: longDescription };
+  const text = formatEventMessage(event);
+  assert.doesNotMatch(text, new RegExp(longDescription.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))); // the FULL text never appears verbatim
+  const factLine = text.split('\n').find((l) => l.includes('TDX原始敘述'));
+  assert.ok(factLine, 'a capped fact line should still be present');
+  assert.ok(factLine.length <= 61); // 60 chars + ellipsis
 });
 
 test('blockedLanes=0 or non-numeric never renders a line (no false positive)', () => {

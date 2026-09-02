@@ -161,20 +161,28 @@
     // comment on suppressLineNotify).
     //
     // V2_4_1_PRODUCTION_NOTIFY_CANONICAL_RECONCILIATION (2026-09-01):
-    // flipped to "true" under explicit real-time human authorization
-    // (this exact value, this exact change, requested directly in this
-    // session — see this round's own commit message and Engineering
-    // Memory for the full record). This is the first commit in this
-    // repository's verifiable history that sets this switch true; an
-    // earlier claim that Production had already been hot-toggled true
-    // via the Cloudflare Dashboard ahead of this commit could not be
-    // independently confirmed (no corresponding wrangler.jsonc state
-    // ever existed, and a Dashboard-only var is not durable in this
-    // project's own deploy model — see the V2.0.2 Config Drift Hotfix
-    // history) — recorded as HUMAN_REPORTED_NOT_INDEPENDENTLY_VERIFIED,
-    // not asserted as fact. Real TDX-origin LINE pushes to real
-    // subscribers are now live as of this deploy.
-    "TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED": "true",
+    // flipped to "true" under explicit real-time human authorization.
+    // Real TDX-origin LINE pushes to real subscribers went live as of
+    // that deploy — through V2.4.2/V2.4.3.
+    //
+    // V2_4_4_TDX_SCOPE_POLICY_AND_MESSAGE_FIDELITY_FIX (2026-09-01, same
+    // day): flipped back to "false" — order section 十's own explicit
+    // instruction. Real Production evidence the same day showed a TDX
+    // event OUTSIDE the service area (台61線／桃園市觀音區) reached real
+    // LINE, and routine road-management notices (例行施工/機動路肩) were
+    // notify:true'd alongside genuine safety events. This round fixes the
+    // root causes (a new geographic hard gate — see traffic/
+    // serviceArea.js#resolveHsinchuOnlyProductionEligibility — and a
+    // fourth AI policy anchor — see aiDecisionEngine.js's own SYSTEM_
+    // PROMPT), but re-enabling real TDX LINE delivery again requires a
+    // SEPARATE, explicit future human + Claude Browser decision, after
+    // observing FETCH=true/QUEUE=true/NOTIFY=false in Production and
+    // confirming (via the AI Decision Observatory) that only genuine
+    // Hsinchu-city/county candidates remain and routine road-management
+    // notices no longer notify=true. FETCH/QUEUE stay "true" — this
+    // switch alone controls real LINE/CCTV/R2 delivery for TDX-origin
+    // events (see debugPush.js's own suppressLineNotify comment).
+    "TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED": "false",
     // TDX_CCTV_METADATA_REFRESH_ENABLED — independent of the switches
     // above: may /admin/cctv-hsinchu-probe actually call TDX to refresh
     // cctv:freeway-metadata:v1. CCTV metadata refresh stays manual/

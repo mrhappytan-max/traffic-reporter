@@ -1,6 +1,9 @@
-// Builds the short LINE text for a driving audience. Never dumps the raw
-// TDX Description onto the message — always a short, synthesized line set
-// built from road/direction/location/type.
+// Builds the short LINE text for a driving audience. Never dumps the
+// FULL, UNBOUNDED raw TDX/PBS Description onto the message — road/
+// direction/location/type are always the synthesized backbone; V2.4.2/
+// V2.4.4 additionally carry the source's own free-text description
+// through as a SEPARATE, CAPPED (SOURCE_FACT_MAX_CHARS) fact line (see
+// buildSourceFactLine's own V2.4.4 comment) — capped, never a dump.
 //
 // V1.2C: the first two lines used to repeat "road direction" twice (e.g.
 // "國道一號 北向\n國道一號 北向 91K+000 - 82K+400" — the exact bug reported
@@ -455,20 +458,43 @@ function stripKmMention(text) {
 }
 
 /**
- * SOURCE FACTS layer — carries PBS's own free-text `comment` (already on
- * `event.description`, see pbs/normalize.js) through to the driver,
- * capped so a long comment can never dominate the message ("不要全文照貼
- * 垃圾資訊" — order section 八). Never a second classification/decision:
- * this is the SAME text the AI decision engine itself already saw (see
- * pbs/aiCandidate.js#buildAiCandidate's own `comment` field) and the SAME
- * text messageFormat.js already reads for anomaly-detail/displayKM
- * extraction elsewhere in this file/pbs/normalize.js — just, for the
- * first time, also shown to the driver.
+ * SOURCE FACTS layer — carries the source's own free-text `description`
+ * (PBS's `comment`, see pbs/normalize.js; TDX's `Description`/
+ * `EventDescription`/`Remark`/`EventName`, see tdx/normalize.js) through
+ * to the driver, capped so a long text can never dominate the message
+ * ("不要全文照貼垃圾資訊" — V2.4.2 order section 八). Never a second
+ * classification/decision: this is the SAME text the AI decision engine
+ * itself already saw (pbs/aiCandidate.js#buildAiCandidate's own
+ * `comment` field) — just, for the first time (V2.4.2), also shown to
+ * the driver.
+ *
+ * V2.4.4 — V2_4_4_TDX_SCOPE_POLICY_AND_MESSAGE_FIDELITY_FIX. Production
+ * repro (2026-09-01) confirmed TDX_INFORMATION_LOSS_FILE = THIS FILE,
+ * TDX_INFORMATION_LOSS_FUNCTION = this function's own `event.source !==
+ * 'pbs'` gate: a real TDX event's `description` (施工原因/事故原因/道路
+ * 狀態…) was already present on the normalized event before ever reaching
+ * this file (TDX_DESCRIPTION_PRESENT_BEFORE_FORMATTER = YES — confirmed
+ * by reading tdx/normalize.js, which always sets `description` from the
+ * raw record's Description/EventDescription/Remark/EventName), but this
+ * function refused to show it for any source other than 'pbs', so TDX
+ * LINE messages stayed on the generic "施工影響通行／請注意車道" template
+ * even when the source record had real detail. The PBS-only gate was
+ * V2.4.2's own deliberate choice, reasoning from this file's OWN pre-
+ * V2.4.2 header comment ("never dumps the raw TDX Description onto the
+ * message... TDX's own free-text description was observed to be long/
+ * noisy") — but that concern was about an UNBOUNDED dump; the
+ * SOURCE_FACT_MAX_CHARS cap below already fully neutralizes it (the
+ * exact same protection PBS's own comment already relies on since
+ * V2.4.2), so there was never a real reason to withhold this from TDX
+ * specifically. This is a widening of the SAME shared function's source
+ * gate, not a second TDX-specific formatter (order section 三's own
+ * "不要建立第二套 TDX formatter" — there is exactly one formatter, this
+ * one, now serving both sources identically).
  *
  * @returns {string|null}
  */
 function buildSourceFactLine(event, { roadDirection, sectionLabel } = {}) {
-  if (!event || event.source !== 'pbs') return null;
+  if (!event || (event.source !== 'pbs' && event.source !== 'freeway' && event.source !== 'highway')) return null;
   const raw = (event.description || '').trim();
   if (!raw) return null;
   // Never repeat text already shown verbatim on the road/section line.

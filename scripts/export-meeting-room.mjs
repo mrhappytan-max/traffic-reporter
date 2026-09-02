@@ -552,25 +552,25 @@ function main() {
   const currentPhase = safe(
     process.env.EXPORT_CURRENT_PHASE,
     pbsOnly
-      ? 'Production maintenance｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 正式重新接入統一 Queue/AI/Memory pipeline，Phase A/B/C 全部完成，Phase C（TDX 正式 LINE 通知）已於 2026-09-01 由明確人類授權啟用（V2_4_1_PRODUCTION_NOTIFY_CANONICAL_RECONCILIATION）。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一正式寫入來源，GitHub Actions 自動鏡像至 Drive（實測 PASS）。TDX 額度用盡的舊限制已由本輪授權解除（TRAFFIC_SOURCE_MODE 本身仍為 PBS_ONLY，TDX 透過三個獨立 granular switch 疊加啟用，見 SYSTEM_STATE.json）'
+      ? 'Production maintenance｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 已重新接入統一 Queue/AI/Memory pipeline，但 V2.4.4 緊急品質修復（服務區域洩漏＋一般道路管理誤發＋TDX 訊息遺失）已將 TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 重設回 false（FETCH/QUEUE 仍 true），進入 PHASE_D_TDX_NOTIFY_OBSERVATION，待觀察後再由人類＋Claude Browser 決定重新開啟。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一寫入來源，GitHub Actions 自動鏡像至 Drive'
       : 'Maintenance — awaiting real-world confirmation of latest release'
   );
   const currentTask = safe(
     process.env.EXPORT_CURRENT_TASK,
     pbsOnly
-      ? 'none。Latest completed task = V2_4_3_AI_TIMEOUT_AND_STALE_RETRY_RELIABILITY_FIX，status = SEALED（前序歷程見 SYSTEM_STATE.json／06_VERSION_HISTORY.md）。CURRENT_RUNTIME_PHASE=PHASE_C_PRODUCTION_NOTIFY_ACTIVE：TDX 三開關皆為 "true"，CCTV_METADATA_REFRESH 仍 "false"。雲端治理：Claude 對 Drive 唯讀，GitHub 為唯一寫入來源。V2.4.3：AI 呼叫新增 45 秒 fail-fast timeout（原無任何 timeout），並修正 CLEARED 到達時舊 retry 未停止的問題。觀察中：第一筆真實 TDX LINE 通知尚待現場證據；EVENT_ID 11509010029-5 這筆歷史事件確切失敗階段仍待真實 Worker Logs 確認'
+      ? 'none。Latest completed task = V2_4_4_TDX_SCOPE_POLICY_AND_MESSAGE_FIDELITY_FIX，status = SEALED（前序歷程見 SYSTEM_STATE.json／06_VERSION_HISTORY.md）。CURRENT_RUNTIME_PHASE=PHASE_D_TDX_NOTIFY_OBSERVATION：TDX_ROADEVENT_FETCH_ENABLED/QUEUE_INGRESS_ENABLED 為 "true"，TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 為 "false"（本輪刻意關閉，非缺陷），CCTV_METADATA_REFRESH 仍 "false"。雲端治理：Claude 對 Drive 唯讀，GitHub 為唯一寫入來源。V2.4.4：新增 resolveHsinchuOnlyProductionEligibility() 地名 denylist hard gate（新竹市／新竹縣以外一律擋下，含頭份／竹南／三灣）、AI prompt 第四類「一般道路管理狀態」語意錨點（例行施工/機動路肩開放關閉預設不通知）、TDX 訊息事實行（buildSourceFactLine 由 PBS-only 放寬為 PBS+TDX，60 字上限不變）。觀察中：確認真實 TDX 事件只剩新竹縣市 candidate、一般施工/路肩不再誤發、TDX facts 可完整組成 LINE 預覽後，再由人類＋Claude Browser 決定重新開啟 Production Notify'
       : 'None in progress — awaiting next assignment'
   );
   const knownBlocker = safe(
     process.env.EXPORT_KNOWN_BLOCKER,
     pbsOnly
-      ? '無 blocker。第一筆真實 TDX LINE 通知尚未取得現場證據——REAL_WORLD_CONFIRMATION_PENDING，非缺陷。AI 呼叫已有 45 秒 fail-fast timeout（V2.4.3），CLEARED 會取消舊事件 stale retry，此類長時間卡住問題已從機制上修正；EVENT_ID 11509010029-5 該筆歷史事件本身的確切失敗階段仍無法獨立查證（無 Worker Logs 權限），未臆測。還原程序見 07_KNOWN_ISSUES.md'
+      ? '無 blocker。TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 目前為 false 是 V2.4.4 刻意的安全政策，非缺陷——FETCH/QUEUE 仍為 true。第一筆真實 TDX LINE 通知（Notify 重新開啟後）尚待現場證據——REAL_WORLD_CONFIRMATION_PENDING。AI 呼叫已有 45 秒 fail-fast timeout（V2.4.3），CLEARED 會取消舊事件 stale retry。EVENT_ID 11509010029-5 該筆歷史事件確切失敗階段仍無法獨立查證，未臆測。詳見 07_KNOWN_ISSUES.md'
       : `${latestCompletedVersion} real-world confirmation pending — see 07_KNOWN_ISSUES.md`
   );
   const nextAction = safe(
     process.env.EXPORT_NEXT_ACTION,
     pbsOnly
-      ? '無待辦。觀察中：第一筆真實 TDX LINE 通知取得證據後回頭確認端對端成功／AI timeout 是否曾實際觸發；一個月後依 ineligibleByReason 數據決定是否收緊主動播報政策。緊急關閉 TDX 正式通知只需 TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 改回 false，FETCH/QUEUE 可繼續 true'
+      ? '待辦：觀察真實 Production（FETCH=true／QUEUE=true／NOTIFY=false）確認只剩新竹縣市 candidate、一般施工不再誤判、TDX facts 可完整組成 LINE 預覽後，才由人類＋Claude Browser 決定改回 true——不得自行改回。一個月後依 ineligibleByReason 數據決定是否收緊主動播報政策'
       : 'Await next task assignment, or real-world confirmation evidence for the latest release'
   );
   const productionStatus = safe(process.env.EXPORT_PRODUCTION_STATUS, 'DEPLOYED');

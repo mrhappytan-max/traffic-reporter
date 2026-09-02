@@ -43,12 +43,19 @@
 //                    (FREEWAY_RULES / HIGHWAY_RULES + the bounding box in
 //                     traffic/hsinchuConfig.js)
 //
-// The canonical area in hsinchuConfig.js already covers the four places
-// the product serves — verified against real coordinates: 新竹市
-// (24.804/120.965), 竹北 (24.839/121.013), 竹南 (24.686/120.876) and 頭份
-// (24.688/120.908) all fall inside HSINCHU_BOUNDING_BOX, while 八堵
-// (25.103/121.718) falls outside. So nothing here needed to change to
-// satisfy "新竹／竹北／竹南／頭份", and nothing was changed.
+// The canonical area in hsinchuConfig.js covers 新竹市 (24.804/120.965)
+// and 竹北 (24.839/121.013), while 八堵 (25.103/121.718) falls outside.
+// HISTORICAL NOTE (superseded by V2.4.4, see this file's own V2.4.4
+// comment below) — this paragraph originally also listed 竹南
+// (24.686/120.876) and 頭份 (24.688/120.908) as intentionally covered;
+// both are Miaoli County towns, and a direct 2026-09-01 human order now
+// states the current, highest-priority canonical service area as EXACTLY
+// 新竹市／新竹縣 — 頭份／竹南 are no longer in scope. HSINCHU_BOUNDING_BOX
+// itself (a secondary, KM-unparseable-only fallback) is UNCHANGED this
+// round and may still geometrically include them; the new
+// resolveHsinchuOnlyProductionEligibility() hard gate is what actually
+// excludes them from a real LINE send now, by name, regardless of which
+// coordinate/KM path admitted the event.
 //
 // WHY PBS AND TDX ARE TREATED DIFFERENTLY (this is not an oversight)
 // -------------------------------------------------------------------
@@ -149,4 +156,114 @@ export function resolveServiceAreaEligibility(event) {
 /** Thin boolean wrapper for call sites that don't need the reason. */
 export function isWithinServiceArea(event) {
   return resolveServiceAreaEligibility(event).eligible;
+}
+
+// V2.4.4 — V2_4_4_TDX_SCOPE_POLICY_AND_MESSAGE_FIDELITY_FIX (order section
+// 一/七). Production repro (2026-09-01): a TDX highway event —
+// 台61線／桃園市觀音區白玉里／39K+600／雙向道路封閉 — reached real LINE.
+//
+// ROOT CAUSE (confirmed by reading the code, not guessed): 台61線's own
+// canonical KM range in hsinchuConfig.js (`minKM:35, maxKM:75`, labeled
+// "新豐 一帶 -> 香山/新竹市 一帶") was WRONG for this event — 39K+600 fell
+// inside that range, so traffic/hsinchuFilter.js#isHsinchuRelevant
+// legitimately (per its own, inaccurate, table) returned `true` at BOTH
+// TDX ingestion (src/tdx/sources.js's own `filter: isHsinchuRelevant`)
+// AND resolveServiceAreaEligibility() above (same resolver, reused) — the
+// event was never in the "no evidence, defer" branch this module's own
+// header already flags as a known asymmetry; it had CONFIDENT, POSITIVE,
+// but factually incorrect evidence. hsinchuConfig.js's own header has
+// always disclosed these KM ranges as "best-effort... NOT verified
+// against official 公路局/國道局 里程樁 data" — this is the first
+// confirmed case of that disclosed risk actually firing in Production.
+// This round narrows the most exposed ranges (see hsinchuConfig.js's own
+// V2.4.4 comment) as a partial mitigation, but this session still has NO
+// live mapping/official-mileage data access to fully re-verify every
+// range with confidence — so KM/coordinate resolution ALONE is no longer
+// treated as sufficient at the one point that actually gates a real LINE
+// send.
+//
+// THIS is the "geographic hard gate" order section 七 explicitly asks
+// for and explicitly permits ("不是 semantic judgement，而是產品服務區
+// 域，這一層允許 hard gate") — a SECOND, INDEPENDENT signal, checked
+// immediately before LINE (traffic/aiApprovedPbsBroadcast.js), not
+// merely once at candidate-build time (pbs/aiCandidate.js's own
+// isWindowsPbsAiCandidateEligible, unchanged, still the first gate). It
+// never widens eligibility — only narrows it further:
+//
+//   eligible  <=>  resolveServiceAreaEligibility(event).eligible
+//                  AND NOT (a non-Hsinchu county/city/township name is
+//                  positively named in the event's own text)
+//
+// PRODUCT SCOPE (order section 一, explicit, highest-priority, this
+// round's own instruction): the current canonical service area is
+// EXACTLY 新竹市／新竹縣 — nothing else. 頭份／竹南／三灣 (Miaoli County
+// towns) are explicitly named in this round's order as no longer in
+// scope, even though hsinchuConfig.js's own pre-V2.4.4 KM ranges/
+// HSINCHU_BOUNDING_BOX comment treated 頭份 as covered ("頭份
+// (24.688/120.908)... falls inside HSINCHU_BOUNDING_BOX") — recorded
+// here as a deliberate product-scope NARROWING, not a bug fix to a prior
+// mistake: an earlier round's own service-area definition was broader
+// than what this round's direct human order now states as the current
+// requirement.
+//
+// WHY A DENYLIST OF OTHER PLACES, NOT A WHITELIST OF HSINCHU PLACES —
+// many genuine Hsinchu TDX/PBS events carry NO place name at all (only
+// road+KM, e.g. "南向97K處車輛事故") — a whitelist requiring an
+// affirmative Hsinchu place name would wrongly block those. A denylist
+// only ever SUBTRACTS: it fires only when the event's own text
+// positively names a DIFFERENT county/city/township, which a genuinely
+// Hsinchu-relevant TDX/PBS record has no legitimate reason to state
+// (same "only block on positive evidence" principle this module already
+// uses for KM/coordinates — extended to text, which is exactly the
+// signal that would have caught today's leak: the raw TDX text itself
+// said 桃園市觀音區). Deliberately NOT a large event-type/keyword
+// whitelist or blacklist (order section 二's own prohibition) — this is
+// pure geography, a fixed, short list of Taiwan's OTHER top-level
+// administrative divisions plus the two specifically-named Miaoli towns,
+// never event semantics.
+//
+// KNOWN TRADE-OFF, accepted deliberately: an event that IS genuinely in
+// Hsinchu but whose own text happens to name another place only as a
+// travel direction (e.g. "新竹路段往桃園方向") would also be blocked by
+// this gate. Given this round's own explicit priority ("除此之外全部不
+// 得主動LINE" / "LINE 必須 = 0"), under-broadcasting a rare edge case is
+// the correct, ordered bias over ever repeating today's leak.
+const NON_HSINCHU_PLACE_TOKENS = [
+  // Other cities/counties (short forms — the forms TDX/PBS free text
+  // actually uses; none is a substring of any Hsinchu place name).
+  '台北', '新北', '桃園', '台中', '台南', '高雄', '基隆', '嘉義',
+  '苗栗', '彰化', '南投', '雲林', '屏東', '宜蘭', '花蓮', '台東',
+  '澎湖', '金門', '連江',
+  // Miaoli townships explicitly named in this round's order as no
+  // longer in scope (adjacent to, but administratively outside, Hsinchu).
+  '頭份', '竹南', '三灣',
+];
+
+function collectEventPlaceText(event) {
+  if (!event) return '';
+  return [event.description, event.locationDescription, event.location, event.title]
+    .filter((v) => typeof v === 'string' && v)
+    .join(' ');
+}
+
+/**
+ * The Production notify hard gate (order section 七) — call this
+ * immediately before a real LINE send is even considered, for EVERY
+ * source, never only TDX. Purely SUBTRACTS from resolveServiceAreaEligibility's
+ * own verdict; can never make something eligible that resolver rejected.
+ *
+ * @param {object} event - a normalized unified event
+ * @returns {{eligible: boolean, reason: string}}
+ */
+export function resolveHsinchuOnlyProductionEligibility(event) {
+  const base = resolveServiceAreaEligibility(event);
+  if (!base.eligible) return base;
+
+  const text = collectEventPlaceText(event);
+  const matchedToken = NON_HSINCHU_PLACE_TOKENS.find((token) => text.includes(token));
+  if (matchedToken) {
+    return { eligible: false, reason: `hsinchu-only-gate-non-hsinchu-place:${matchedToken}` };
+  }
+
+  return { eligible: true, reason: 'hsinchu-only-gate-pass' };
 }

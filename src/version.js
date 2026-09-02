@@ -1465,7 +1465,84 @@
 // See test/v243AiTimeoutAndStaleRetryReliability.test.js for the order's
 // own CASE 1-12 acceptance suite and 07_KNOWN_ISSUES.md for the full
 // investigation record.
-export const APP_VERSION = 'V2.4.3';
+//
+// V2.4.4 (2026-09-02) — V2_4_4_TDX_SCOPE_POLICY_AND_MESSAGE_FIDELITY_FIX.
+// PATCH — emergency targeted quality fix, not an architecture round.
+//
+// TRIGGER — real Production evidence, the day TDX Freeway/Highway was
+// reconnected to AI: (A) 台61線 39K+600（實際為桃園市觀音區）reached real
+// LINE despite the service area being 新竹市／新竹縣 only; (B) routine
+// road-management events (一般施工、機動路肩開放／關閉、一般封閉維護) were
+// notified when they should not be by default; (C) TDX LINE messages still
+// showed generic templates ("🚧 道路施工...請注意車道") even though the
+// normalized event already carried real description/blockedLanes text.
+//
+// FIX A — service-area hard gate (src/traffic/serviceArea.js). Root cause,
+// confirmed by reading the code: hsinchuConfig.js's own 台61線 minKM=35/
+// maxKM=75 table genuinely counted 39.6K as "in range" (a best-effort,
+// never officially verified guess — see that file's own header), and
+// traffic/aiApprovedPbsBroadcast.js (the actual LINE-push executor) never
+// independently re-checked service area at all — only an upstream
+// candidate-build-time check did, once. New
+// resolveHsinchuOnlyProductionEligibility(event): a SECOND, stricter,
+// denylist-only gate (never widens eligibility, only subtracts) — the base
+// resolver's eligible:true is additionally rejected if a non-Hsinchu place
+// name (other counties/cities, plus 頭份/竹南/三灣 — Miaoli, per this
+// round's explicit product-scope narrowing) is positively named in the
+// event's own description/locationDescription/location/title text. Called
+// FIRST, before any I/O, inside runAiApprovedPbsBroadcast — even an
+// AI-approved notify:true is now hard-blocked to 0 LINE if the event's own
+// text names a place outside 新竹市／新竹縣. Deliberately did NOT re-guess
+// hsinchuConfig.js's KM ranges (an earlier attempt this round to narrow
+// them caused ~30 collateral test failures against existing fixtures and
+// was reverted) — replacing one unverified guess with another is exactly
+// the "sloppy quick patch" this order itself warns against; the text
+// denylist is verified independent of KM-table precision.
+//
+// FIX B — 4th AI policy semantic anchor (src/pbs/aiDecisionEngine.js
+// SYSTEM_PROMPT, prompt text only — no code-level keyword whitelist/
+// blacklist, same discipline as V2.4.2's 3 anchors). Routine road-
+// management status (例行施工／機動路肩開放／關閉／一般封閉維護) now
+// defaults to notify=false, UNLESS the event's own content contains
+// 事故／車禍／碰撞、重大障礙／道路完全中斷、重大坍方／落石／大型掉落物、
+// 車道突發封閉, or another clear safety risk — judged on content, never on
+// the event-type label alone (a real 故障車 Observatory case stays
+// AI-judged, not hardcoded either way).
+//
+// FIX C — TDX message fidelity (src/traffic/messageFormat.js).
+// TDX_INFORMATION_LOSS_FILE = src/traffic/messageFormat.js,
+// TDX_INFORMATION_LOSS_FUNCTION = buildSourceFactLine,
+// TDX_DESCRIPTION_PRESENT_BEFORE_FORMATTER = YES (confirmed by reading
+// tdx/normalize.js — description/blockedLanes/locationDescription were
+// already on the normalized event long before this function's PBS-only
+// gate discarded them for TDX). Fixed by widening the SAME shared
+// function's source gate from PBS-only to PBS+TDX (freeway/highway) —
+// explicitly not a second TDX-specific formatter. The pre-existing
+// SOURCE_FACT_MAX_CHARS = 60 cap (unchanged) already fully neutralizes the
+// original V2.4.2 "never dump unbounded raw TDX text" concern, so excluding
+// TDX from the fact line was over-cautious, not load-bearing.
+//
+// DEPLOYMENT POLICY (order section 十) — TDX_ROADEVENT_PRODUCTION_NOTIFY_
+// ENABLED flipped back to "false" in wrangler.jsonc as THIS round's own
+// deliverable (FETCH=true, QUEUE=true, NOTIFY=false) — re-enabling is a
+// separate future human+Claude Browser decision after observing, in real
+// Production, that only Hsinchu-city/county candidates remain and routine
+// shoulder-open/close events no longer notify.
+//
+// EXPLICITLY UNCHANGED THIS ROUND (order's own "不得重新修改" list): Queue
+// architecture/count, Incident Memory 8h, the 10-minute collision window,
+// CCTV metadata architecture, R2 read-back, PBS Windows polling, the PBS
+// service-area resolver itself, LINE quota logic, TDX fetch schedule, and
+// the entire V2.4.3 AI-timeout/stale-retry mechanism (no genuine V2.4.3
+// deployment gap or bug was found this round).
+//
+// See test/v244TdxScopePolicyAndMessageFidelity.test.js for the order's
+// own CASE 1-14 acceptance suite (Hsinchu pass-through, Taoyuan/Miaoli/
+// Taipei/NewTaipei blocked, gate-never-widens-eligibility proof, routine-
+// management prompt anchor + exception carve-outs, no-hardcoded-type-based
+// notify proof, TDX description/blockedLanes fidelity capped at 60 chars)
+// and 07_KNOWN_ISSUES.md for the full investigation record.
+export const APP_VERSION = 'V2.4.4';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

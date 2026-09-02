@@ -361,31 +361,15 @@
       "status": "SEALED",
       "sealedAt": "2026-08-26",
       "releaseVersion": "V1.9.2",
-      "fixCommit": "f45cd5e",
-      "compressedSummary": "真實 Cloudflare 用量警示（Writes 749/1,000，traffic-reporter-kv 佔 97.9%）觸發。WRITE_ON_CHANGE：Shared Feed／Incident Suppression 內容不變時不寫入（發現並修正 resolveIncidentNotifications 的別名 aliasing bug）。Pipeline Trace 改批次寫入（O(事件數)→O(1)），舊版 v1 key 保留靠 TTL 自然過期，listPipelineTrace 相容新舊 schema。TDX Usage Summary 正式退休（非優化，人類決策：TDX 額度改查官方後台），底層 usageLedger.js 程式碼保留未刪除、只是不再被任何正式路徑呼叫。新增 [kv-write-budget] Cron log（純 console.log，不建立新 KV key）。測試 1300 項（新增38），NEW FAILURES=0。單日 KV writes 從 11~21/round 降至 1~8/round，遠低於 1,000/day 免費額度。canonicalVersionSource=src/version.js APP_VERSION bump 至 V1.9.2。",
-      "doNotMisread": "TDX usageLedger.js 函式保留可測試，只是不再被呼叫；WRITE_ON_CHANGE 未改變 Shared Feed/Incident Suppression 的內容決策邏輯，只改變何時寫入；Pipeline Trace v1 per-entry key 未刪除/遷移，靠 24h TTL 自然過期；[kv-write-budget] 只是 log，非新 KV 機制。",
+      "summary": "真實Cloudflare用量警示(Writes 749/1,000，traffic-reporter-kv佔97.9%)觸發。WRITE_ON_CHANGE：Shared Feed/Incident Suppression內容不變時不寫入(發現並修正resolveIncidentNotifications別名aliasing bug)。Pipeline Trace改批次寫入(O(事件數)→O(1))，舊v1 key保留靠TTL自然過期，listPipelineTrace相容新舊schema。TDX Usage Summary正式退休(人類決策)，usageLedger.js程式碼保留未刪除、只是不再被正式路徑呼叫。新增[kv-write-budget]Cron log(純console.log)。1300 tests(新增38)，NEW FAILURES=0。單日KV writes從11~21/round降至1~8/round。APP_VERSION→V1.9.2。",
       "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
     },
     {
       "task": "PIPELINE_TRACE_FILTER_ROOT_CAUSE_V1_9_1",
       "status": "SEALED",
       "sealedAt": "2026-08-26",
-      "sealedBy": "human directive (路況工程部 V1.9.1 正式施工令｜Pipeline Trace 查修頁篩選失效修正＋預設 60 筆)",
       "releaseVersion": "V1.9.1",
-      "realWorldTrigger": "真人在真實手機（iOS Safari）操作 /admin/pipeline-trace-view：選擇來源／關鍵字／道路／rawId／狀態／筆數後按「篩選」，畫面完全不跟著變。",
-      "rootCause": "以真實 headless Chromium 對著真實部署的 HTTP 回應（含真實 response headers）重現，非猜測。applyAdminSecurityHeaders 的 CSP 帶 form-action 'none'——任何有強制 CSP 的瀏覽器（包含真人回報所用的 iOS Safari）都會用這個指令完全拒絕頁面上任何 <form> 的送出，包含這個篩選表單、也包含本專案任何其他 admin HTML 頁面上的表單。前一輪（V1.8.7.6）已完整查證伺服器端每一層（表單標記、query string、listPipelineTrace 的 predicate、分頁邏輯，含小規模與 2000+ key 真實分頁規模）都是對的，並推測是「client-side staleness」——但那一輪自己承認其 headless 瀏覽器重現「不在本 repo 的自動化測試套件內」，顯然從未真正對著這個 Worker 自己的安全標頭送出過請求，因此從未撞見這個指令真正擋下點擊的瞬間。",
-      "reproductionEvidence": "真實 Chromium 載入真實 handlePipelineTraceView 回應（經過真實 applyAdminSecurityHeaders），實際點擊渲染出來的送出按鈕，瀏覽器完全不導頁。瀏覽器主控台明確寫出原因：「Refused to send form data to '...' because it violates the following Content Security Policy directive: form-action 'none'.」只拿掉這一個指令（其餘完全不動），同一個點擊就能正確導頁到篩選後的網址——同時證實了原因、也證實了沒有其他層需要改。",
-      "fix": {
-        "plan": "A（修好既有篩選功能，UI 保留，未移除任何篩選欄位）",
-        "cspChange": "security/adminAuth.js：form-action 'none' → 'self'。同源表單（本專案唯一擁有、未來合理新增的也會是同源）仍可送出；攻擊者仍無法把這個頁面的表單資料導到外部網域——這才是 form-action 真正要保護的東西。CSP 其餘指令（default-src／style-src／img-src／base-uri／frame-ancestors）完全未動。",
-        "defaultLimitChange": "traffic/pipelineTrace.js：DEFAULT_LIST_LIMIT 30→60。MAX_LIST_LIMIT（100）與 KV list() 掃描安全上限 MAX_ENTRIES_SCANNED（500）完全不變——只移動「未指定 limit 時」的預設值。",
-        "filterLogicChange": "無。伺服器端篩選邏輯（source/keyword/road/rawId/status/組合/清除）本來就是對的，V1.8.7.6 已證實，本輪未改動任何 predicate。"
-      },
-      "testResult": "npm test 共 1292 項；NEW FAILURES = 0（同一輪 git stash -u 對照乾淨 checkout，38 項既有失敗完全相同）。",
-      "canonicalVersionSource": "src/version.js 的 APP_VERSION 已 bump 為 V1.9.1（patch release，三段式版本治理）——與本次修復同一個 commit。",
-      "githubSeal": "PASS",
-      "githubEngineeringMemory": "SEALED",
-      "claudeDriveUpload": "NO",
+      "summary": "以真實headless Chromium對真實部署回應重現：applyAdminSecurityHeaders的CSP帶form-action 'none'，任何強制CSP瀏覽器（含真人回報的iOS Safari）因此完全拒絕頁面上任何<form>送出。前一輪(V1.8.7.6)已查證伺服器端每一層(表單標記/query string/predicate/分頁)皆對，但其headless重現不在本repo自動化套件內，從未真正撞見這個指令擋下點擊的瞬間。修正：只改form-action 'none'→'self'(同源表單仍可送出，其餘CSP指令不動)；DEFAULT_LIST_LIMIT 30→60(MAX_LIST_LIMIT/MAX_ENTRIES_SCANNED不變)；filter predicate邏輯本身無需改動。1292 tests，NEW FAILURES=0。APP_VERSION→V1.9.1。",
       "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
     },
     {
@@ -400,33 +384,7 @@
       "task": "THREE_PART_VERSIONING_TRANSITION",
       "status": "SEALED",
       "sealedAt": "2026-08-25",
-      "sealedBy": "human directive (路況工程部 三段式版本治理切換)",
-      "scope": "docs/governance only。未修改任何 CCTV／PBS／TDX／LINE 或其他 Production runtime 程式，未 deploy 功能變更。",
-      "decision": {
-        "CURRENT_OFFICIAL_VERSION": "V1.8.7.14",
-        "LAST_FOUR_PART_VERSION": "V1.8.7.14",
-        "FOUR_PART_VERSIONING": "RETIRED",
-        "THREE_PART_VERSIONING": "ACTIVE",
-        "NEXT_RELEASE_VERSION": "V1.9.0"
-      },
-      "permanentRule": {
-        "bugFix": "V1.9.0 → V1.9.1 → V1.9.2 …（patch）",
-        "newFeatureOrArchPhase": "V1.9.x → V1.10.0（minor）",
-        "largeIncompatibleChange": "→ V2.0.0（major）",
-        "docsGovernanceMemoryTestsOnly": "不升 Product Version，但仍須有 commit"
-      },
-      "whatDidNotChange": "src/version.js 的 APP_VERSION 本輪維持 'V1.8.7.14'，未提前改為 V1.9.0。依施工令明文：只有下一次真正 Production runtime release 才會在該次 commit 內同步 bump APP_VERSION → V1.9.0。src/version.js 與 test/versionLineage.test.js 各自新增了說明本次切換的註解，但兩者的『當前值』與『現行斷言』本身都沒有變動——APP_VERSION 仍是 V1.8.7.14，versionLineage 測試仍鎖 'V1.8.7.' 前綴，等下一次真正 release 才會一起改成 'V1.9.'。",
-      "supersedes": "PRODUCTION_VERSION_LINEAGE_RECONCILIATION 記錄的 NEXT_RELEASE_VERSION = V1.8.7.15 由本次正式決議取代為 V1.9.0。V1.8.7.8～V1.8.7.14 的既有補記版本列不受影響、不重寫。",
-      "githubSeal": "PASS",
-      "githubEngineeringMemory": "SEALED",
-      "claudeDriveUpload": "NO",
-      "doNotMisread": [
-        "不要把 src/version.js 的 APP_VERSION 提前改成 V1.9.0——本輪是治理紀錄，不是 release。",
-        "不要因為本輪切換就重寫 V1.8.7.8～V1.8.7.14 既有版本列；四段式版本線在 V1.8.7.14 停止，原樣保留。",
-        "下一次真正 Production runtime release 時，必須在同一 commit 內：bump src/version.js 到 V1.9.0、更新 test/versionLineage.test.js 第 1 項的前綴斷言、更新 06_VERSION_HISTORY.md。",
-        "三段式規則：bug fix 動 patch、明顯新功能/架構階段動 minor、大型不相容變更才動 major。",
-        "不要對 Google Drive 做任何寫入——Claude 唯讀，GitHub 是唯一正式寫入來源。"
-      ],
+      "summary": "docs/governance only，未改任何Production runtime。決議：CURRENT_OFFICIAL_VERSION=V1.8.7.14為四段式版本線最後一版，三段式版本治理(bug fix=patch/新功能架構=minor/不相容變更=major)即日ACTIVE，NEXT_RELEASE_VERSION=V1.9.0。src/version.js本輪未提前bump，維持V1.8.7.14，等下一次真正release才同步改。取代PRODUCTION_VERSION_LINEAGE_RECONCILIATION記錄的NEXT_RELEASE_VERSION=V1.8.7.15；V1.8.7.8~14既有版本列不重寫。",
       "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
     },
     {
@@ -490,17 +448,7 @@
       "status": "SEALED",
       "sealedAt": "2026-08-28",
       "releaseVersion": "V1.9.9",
-      "fixCommit": "0f9a080",
-      "phase1BackfillNote": "V1.9.9 Phase 1（fix commit 7acb82a，另一個 session 完成，本 Cloud Session 未參與）：Windows PBS Local Edge Filter 服務區收斂為新竹市／新竹縣（竹南/頭份/苗栗市及其他苗栗縣區域排除），純 pbs-relay/（Windows端）變更，未觸碰 src/ Cloudflare runtime。詳見 SYSTEM_STATE.json 頂層 V1.9.9_PHASE_1 欄位（該輪自建，本輪保留未動）與 07_KNOWN_ISSUES.md。",
-      "compressedSummary": "新模組 src/pbs/aiCandidate.js（純函式/零I/O）：從既有 normalizedEvent 建立最小 AI candidate 物件（source/eventId/lifecycle/road/direction/areaNm/comment/longitude/latitude/generatedAt+displayKM/eventType/sourceDetail/locationQuality，刻意不含notify/impact），與完全未修改的 runLineBroadcast() 並行、純觀察用。只保留 service area + 既有冪等兩個 gate；MAJOR_ACCIDENT_ONLY/V1.5 whitelist/location quality hard-reject 三者對candidate建構不套用，但這些函式本身未修改，對真實LINE決策仍完整生效直到Phase 3。安全狀態 PBS_AI_DECISION_MODE=PREPARED_NOT_ACTIVE。預留 computeAiDecisionCacheKeyHash({eventId,fingerprint})=SHA-256、AI_DECISION_CACHE_KV_PREFIX='debug:pbs-ai-decision-cache:v1'，本輪無任何KV讀寫。新增28項測試（pbsAiCandidate 13 + pbsDebugPush十五項清單）。1452/1419/33，NEW FAILURES=0。Production未嘗試（sandbox網路政策封鎖）。V1.9.9 Phase 3B已將這裡的cache key設計正式接上真實Workers AI呼叫。",
-      "notTouchedByThisRound": [
-        "真實LINE決策邏輯（runLineBroadcast/broadcastPolicy.js/broadcastRules.js/locationQuality.js 本身皆未修改一行）",
-        "Workers AI（未接入、未選model、未呼叫）",
-        "LINE policy擴大",
-        "CCTV/Shared Feed判斷邏輯",
-        "每小時重大事件提醒（僅Engineering Memory記錄設計方向，未實作）",
-        "Windows Secret/Task Scheduler"
-      ],
+      "summary": "新模組src/pbs/aiCandidate.js(純函式/零I/O)：從既有normalizedEvent建立最小AI candidate物件(source/eventId/lifecycle/road/direction/areaNm/comment/座標/generatedAt+displayKM/eventType/sourceDetail/locationQuality，不含notify/impact)，與完全未修改的runLineBroadcast()並行、純觀察用。只保留service area+既有冪等兩gate；MAJOR_ACCIDENT_ONLY/V1.5 whitelist/location quality hard-reject對candidate建構不套用，但這些函式本身未修改，真實LINE決策仍完整生效直到Phase 3。PBS_AI_DECISION_MODE=PREPARED_NOT_ACTIVE。預留computeAiDecisionCacheKeyHash/AI_DECISION_CACHE_KV_PREFIX，本輪無KV讀寫。28項新測試，1452/1419/33，NEW FAILURES=0。Phase1(fix commit 7acb82a，另一session完成)：Windows PBS Local Edge Filter服務區收斂為新竹市/縣，純pbs-relay/變更。",
       "readerNote": "This task is CLOSED — superseded by V1.9.9 Phase 3B. Do not re-open it."
     },
     {
@@ -526,8 +474,7 @@
       "status": "SEALED",
       "sealedAt": "2026-08-28",
       "releaseVersion": "V2.0.0",
-      "fixCommit": "f1a05d0",
-      "compressedSummary": "重大架構里程碑封版，非新功能開發。APP_VERSION V1.9.9->V2.0.0（架構世代更換：舊世代Cloudflare 30分鐘PBS輪詢->MAJOR_ACCIDENT_ONLY等hard rules->LINE，對Windows PBS路徑已退休；新世代PBS官方來源->Windows Local Edge->Cloudflare ingress->持久冪等->AI candidate->AI decision cache->Cloudflare Workers AI->既有LINE執行基礎設施）。新增03_ARCHITECTURE.md「V2.0.0接手地圖」26題問答與完整決策流程圖；02_PROJECT_HANDOFF.md新增Canonical Facts Checklist/Dashboard設定手冊/Rollback Runbook/Troubleshooting Runbook/Commit Lineage；PRODUCT_DECISIONS.md新增AI driver-impact取代accident-only的產品決策記錄。未修改任何runtime決策邏輯。1517/1484/33，NEW FAILURES=0。Production狀態（AI_BINDING=ACTIVE/AI_DECISION=ACTIVE/Active Production Version a8e9454c-ab3f-4555-ab7e-0d8c39ecf73c）為GPT Work回報，本Session未獨立驗證。FIRST_REAL_AI_EVENT=WAITING誠實記錄，非封版blocker。",
+      "summary": "重大架構里程碑封版，非新功能開發。APP_VERSION V1.9.9→V2.0.0(架構世代更換：舊世代Cloudflare 30分鐘PBS輪詢→hard rules→LINE，對Windows PBS路徑已退休；新世代PBS官方來源→Windows Local Edge→Cloudflare ingress→持久冪等→AI candidate→AI decision cache→Workers AI→既有LINE執行基礎設施)。新增03_ARCHITECTURE.md「V2.0.0接手地圖」26題問答；02_PROJECT_HANDOFF.md新增Checklist/Dashboard手冊/Rollback/Troubleshooting/Commit Lineage；PRODUCT_DECISIONS.md新增AI driver-impact取代accident-only決策記錄。未改任何runtime決策邏輯。1517/1484/33，NEW FAILURES=0。Production狀態為GPT Work回報，本Session未獨立驗證。FIRST_REAL_AI_EVENT=WAITING誠實記錄，非blocker。",
       "readerNote": "This task is CLOSED — superseded by V2.0.1. Do not re-open it."
     },
     {
@@ -668,6 +615,16 @@
     "rootCauseInvestigation": "callWorkersAi原無timeout；236秒/3046為PLATFORM側，無即時文件確認。",
     "fix1_failFastTimeout": "AI_CALL_TIMEOUT_MS=45000，caller-side Promise.race；callWorkersAi零side effect故安全；retry不變。",
     "verification": "CASE1-12全過；迴歸1802 tests NEW_FAILURES=0。",
-    "fixes": "FIX1: AI_CALL_TIMEOUT_MS=45000, Promise.race fail-fast, zero side-effect safe. FIX2: debug:pbs-event-cleared:v1 marker -> STALE_AFTER_CLEARED outcome, reuses existing idempotency COMPLETED."
+    "fixes": "FIX1: AI_CALL_TIMEOUT_MS=45000, Promise.race fail-fast, zero side-effect safe. FIX2: debug:pbs-event-cleared:v1 marker -> STALE_AFTER_CLEARED outcome, reuses existing idempotency COMPLETED.",
+    "supersededBy": "V2_4_4_TDX_SCOPE_POLICY_AND_MESSAGE_FIDELITY_FIX (2026-09-02)"
+  },
+  "V2_4_4_TDX_SCOPE_POLICY_AND_MESSAGE_FIDELITY_FIX": {
+    "completedAt": "2026-09-02",
+    "CURRENT_RUNTIME_PHASE": "PHASE_D_TDX_NOTIFY_OBSERVATION",
+    "trigger": "TDX重接AI後：(A)台61線39.6K(實桃園觀音)誤發LINE；(B)一般道路管理事件誤發；(C)TDX訊息仍通用模板，description未進LINE。",
+    "fixes": "FIXA: serviceArea.js#resolveHsinchuOnlyProductionEligibility()，denylist-only二次gate(含頭份/竹南/三灣)，不重猜KM表。FIXB: SYSTEM_PROMPT第四類錨點，一般道路管理預設notify=false。FIXC: messageFormat.js#buildSourceFactLine source gate放寬為PBS+TDX(60字上限不變)。",
+    "deploymentPolicy": "TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED重設回false(FETCH/QUEUE仍true)，待觀察後由人類+Claude Browser決定重新開啟。",
+    "explicitlyUnchanged": "Queue架構、Incident Memory、collision window、CCTV/R2、PBS Windows polling、PBS服務區域resolver、LINE quota、TDX排程、V2.4.3機制。",
+    "verification": "CASE1-14全過；NEW_FAILURES=0；wrangler dry-run確認FETCH/QUEUE=true、NOTIFY=false。"
   }
 }

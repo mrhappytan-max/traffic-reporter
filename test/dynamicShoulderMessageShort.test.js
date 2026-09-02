@@ -229,7 +229,7 @@ test('12. Shared Feed still carries the shoulder event\'s own imageUrl/imageExpi
 // 13-14: accident / construction formatters completely unchanged
 // =======================================================================
 
-test('13. accident formatter output is byte-identical to before this round', () => {
+test('13. accident formatter output is otherwise unchanged (V2.4.4 adds the description fact line, purely additive)', () => {
   const text = formatEventMessage(accidentEvent());
   assert.equal(
     text,
@@ -237,6 +237,7 @@ test('13. accident formatter output is byte-identical to before this round', () 
       '🚨 交通事故',
       '國1 北向｜新竹交流道－竹北交流道路段',
       '93K+500～93K+000',
+      '事故',
       '事故影響通行',
       '請提前避開',
       '📍 地圖 https://maps.google.com/?q=24.80605,121.00998',
@@ -245,7 +246,7 @@ test('13. accident formatter output is byte-identical to before this round', () 
   );
 });
 
-test('14. construction formatter output is byte-identical to before this round', () => {
+test('14. construction formatter output is otherwise unchanged (V2.4.4 adds the description fact line, purely additive)', () => {
   const text = formatEventMessage(constructionEvent());
   assert.equal(
     text,
@@ -253,6 +254,7 @@ test('14. construction formatter output is byte-identical to before this round',
       '🚧 道路施工',
       '國1 北向｜機場系統交流道－桃園交流道路段',
       '50K+000～50K+500',
+      '國道一號 北向 車道封閉施工',
       '施工影響通行',
       '請注意車道',
       '📍 地圖 https://maps.google.com/?q=25.03210,121.28917',
