@@ -43,6 +43,7 @@ import { classifyCongestionSeverity } from '../traffic/congestionSeverity.js';
 import { buildUpstreamSnapshot } from '../traffic/pipelineTrace.js';
 import { detectNonCollisionAnomaly } from '../traffic/anomalyClassification.js';
 import { detectDynamicShoulder } from '../traffic/dynamicShoulderClassification.js';
+import { extractPositions } from '../traffic/hsinchuFilter.js';
 
 const EVENT_TYPE_TEXT_MAP = {
   事故: 'accident',
@@ -202,6 +203,38 @@ export function normalizeRoadEvent(raw, source) {
     undefined
   );
 
+  // V2.4.5 — V2_4_5_TDX_HSINCHU_GEO_RESOLVER (order section 四/五). CONFIRMED
+  // STRUCTURAL GAP (found by the V2.4.4 read-only audit, provable by
+  // reading this function's OLD return statement, independent of any one
+  // event): `isHsinchuRelevant()` (traffic/hsinchuFilter.js, called from
+  // tdx/sources.js's own ingestion filter) already reads the raw record's
+  // `Positions`/`Position` fields to make its own geo judgment at fetch
+  // time — but that raw record is discarded the instant fetchSource()
+  // returns; this function's returned NORMALIZED event never carried that
+  // coordinate evidence forward at all. Every later stage (dedupe, the
+  // Queue, the AI candidate, and — before this round — the SERVICE AREA
+  // GATE itself) therefore had NO coordinate to re-check against, which
+  // is the direct mechanical cause of traffic/serviceArea.js's old
+  // TDX-side "service-area-deferred-to-ingestion" fail-open branch (see
+  // that module's own V2.4.5 comment). Fixed here, once, at the source:
+  // reuses traffic/hsinchuFilter.js's own extractPositions() — the SAME
+  // field-name-tolerant extraction (`PositionLon`/`Longitude`/`lon`/
+  // `longitude`, `PositionLat`/`Latitude`/`lat`/`latitude`) ingestion
+  // already trusts — never a second/different parsing pass. A RoadEvent
+  // MAY carry more than one Positions entry (e.g. a start/end pair for an
+  // extended closure); ALL of them are preserved as `positions` (never
+  // just the first — order section 四's own explicit "不得任意只拿第一
+  // 個"), plus a top-level `latitude`/`longitude` convenience pair (the
+  // FIRST valid entry) matching the shape pbs/normalize.js's own PBS
+  // events already carry, for any caller that only wants "a" coordinate
+  // (e.g. messageFormat.js's existing DIRECT_COORDINATE_MAP_FALLBACK).
+  // Absent entirely (never a null/empty placeholder) when the raw record
+  // carries no usable position at all — every downstream consumer already
+  // branches on presence, never assumes it (same convention as
+  // `blockedLanes`/`locationDescription` right below).
+  const rawPositions = extractPositions(raw);
+  const firstPosition = rawPositions[0] || null;
+
   const composedLocation = composeLocation({ road, direction, startKM, endKM });
   const location =
     composedLocation ||
@@ -303,6 +336,13 @@ export function normalizeRoadEvent(raw, source) {
     ...(endKM !== undefined ? { endKM } : {}),
     ...(blockedLanes !== undefined ? { blockedLanes } : {}),
     ...(locationDescription ? { locationDescription } : {}),
+    // V2.4.5 — see this function's own V2.4.5 comment above (`rawPositions`/
+    // `firstPosition`). `positions` carries EVERY point the raw record
+    // supplied (never just the first); `latitude`/`longitude` are the
+    // first valid point, for any caller that only wants one coordinate.
+    // Both absent entirely when the raw record carried no usable position.
+    ...(rawPositions.length > 0 ? { positions: rawPositions.map((p) => ({ longitude: p.lon, latitude: p.lat })) } : {}),
+    ...(firstPosition ? { longitude: firstPosition.lon, latitude: firstPosition.lat } : {}),
     // V1.8.6.6 — set ONLY when mapRoadEventType's non-collision-anomaly
     // override fired (see that function's own comment). Not debug-only —
     // messageFormat.js's resolveOtherAnomalyDetail reads this directly so

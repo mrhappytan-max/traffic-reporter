@@ -51,6 +51,11 @@ function freewayRaw(overrides = {}) {
     EffectiveTime: '2026-08-15T08:12:00+08:00',
     LastUpdateTime: '2026-08-15T08:20:00+08:00',
     Location: { FreeExpressHighway: { Road: '國道一號', Direction: '北向', StartKM: '92K+500', EndKM: '91K+800' } },
+    // V2.4.5 — coordinate evidence so resolveTdxHsinchuGeography() can
+    // confirm this fixture's geography (matches pbsRawEvent's own
+    // 121.0/24.8 elsewhere in this suite, where a same-incident proximity
+    // match matters); official-polygon-confirmed inside 新竹市/縣.
+    Positions: [{ PositionLon: 121.0, PositionLat: 24.8 }],
     ...overrides,
   };
 }

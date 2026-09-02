@@ -148,6 +148,31 @@ test('buildAiCandidate: locationQuality is attached as metadata, never used to o
   assert.equal(candidate.eventId, 'PBS-UID-1');
 });
 
+test('buildAiCandidate: PBS events always carry blockedLanes: null (PBS never sets it) — purely additive field, order section 七/八', () => {
+  const normalized = normalizePbsEvent(hsinchuAccidentRaw());
+  const candidate = buildAiCandidate(normalized, { lifecycle: 'NEW', generatedAt: '2026-08-28T10:00:00+08:00' });
+  assert.equal(candidate.blockedLanes, null);
+});
+
+test('buildAiCandidate: a TDX-normalized event\'s numeric blockedLanes is carried through unchanged (V2.4.5 — the SAME deterministic fact roadManagementPolicyGate.js\'s own gate already used, never re-derived by the AI)', () => {
+  const tdxNormalizedEvent = {
+    source: 'freeway', rawId: 'FRW-1', road: '國道一號', direction: '南向',
+    location: '國道一號 南向', description: '外側及中線車道封閉施工', type: 'construction',
+    blockedLanes: 2, longitude: 120.9686, latitude: 24.8066,
+  };
+  const candidate = buildAiCandidate(tdxNormalizedEvent, { lifecycle: 'NEW', generatedAt: '2026-08-28T10:00:00+08:00' });
+  assert.equal(candidate.blockedLanes, 2);
+});
+
+test('buildAiCandidate: a non-numeric/missing blockedLanes on a TDX event -> null (never a raw pass-through of an untrustworthy value)', () => {
+  const tdxNormalizedEvent = {
+    source: 'freeway', rawId: 'FRW-2', road: '國道一號', direction: '南向',
+    location: '國道一號 南向', description: '事故', type: 'accident',
+  };
+  const candidate = buildAiCandidate(tdxNormalizedEvent, { lifecycle: 'NEW', generatedAt: '2026-08-28T10:00:00+08:00' });
+  assert.equal(candidate.blockedLanes, null);
+});
+
 test('buildAiCandidate: CLEARED events are never passed to this function by the real call site — lifecycle is caller-supplied metadata only, not re-derived', () => {
   // This module has no opinion on lifecycle gating itself — debugPush.js's
   // own call site is what skips CLEARED entirely (see that module and its

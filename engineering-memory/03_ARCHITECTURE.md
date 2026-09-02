@@ -22,6 +22,87 @@ filter-prototype`）未找到對應此修正的 commit。本節僅記錄「人�
 修改 `pbs-relay/` 程式碼，故上方模組清單／架構圖若與此回報不一致，以自動
 掃描結果與程式碼本身為準。
 
+## V2.4.5 — TDX_HSINCHU_GEO_RESOLVER ＋ TDX_ROAD_MANAGEMENT_POLICY_GATE（本輪，2026-09-02）
+
+TDX ONLY——**Windows PBS／`pbs-relay/`／PBS 本機篩選／PBS 地理判斷／PBS AI
+候選／PBS LINE 路徑／PBS lifecycle 完全未觸碰**（見上方 2026-08-30 補登，
+PBS 自己是否使用 dataset 7442 仍是獨立、未驗證的另一件事，與本輪 TDX 專用
+resolver 無關）。核心驗收句：「TDX 必須先證明事件位於新竹縣或新竹市，才
+有資格進 AI；無法證明就是不進 AI。」
+
+**背景**：V2.4.4 自己的唯讀 audit 發現 TDX 既有服務區判斷（`traffic/
+hsinchuFilter.js` 的 ingestion 過濾、`traffic/serviceArea.js` 的候選建立
+閘門）皆建立在 `hsinchuConfig.js` 自承「best-effort、未對照官方里程樁驗
+證」的 KM 表之上，且 `serviceArea.js` 舊 TDX 分支在完全沒有座標時會
+fail-open（"service-area-deferred-to-ingestion"）。真實 Production 洩漏一
+筆事件：台61線 39K+600，實際位於桃園市觀音區，被舊 KM 表誤判為新竹（見
+`07_KNOWN_ISSUES.md` V2.4.4 條目、`test/tdxHsinchuGeoResolver.test.js`
+CASE 3 的永久回歸鎖定測試）。
+
+**新 TDX 端對端流程**：
+
+```
+TDX API → normalizeRoadEvent()（保留完整座標證據：positions[]／
+          longitude／latitude，來源 tdx/normalize.js＋
+          traffic/hsinchuFilter.js#extractPositions 重用，V2.4.5 新增）
+        → tdx/hsinchuGeoResolver.js#resolveTdxHsinchuGeography()
+          （Gate A 第一步——三態 CONFIRMED_HSINCHU／OUTSIDE_HSINCHU／
+          UNKNOWN，絕不是 boolean；證據優先序：①座標對照官方行政區界線
+          （內政部國土測繪中心，data.gov.tw dataset 7442，經
+          taiwan-atlas npm 套件鏡像取得——本環境無法直連 data.gov.tw，
+          決策記錄見 07_KNOWN_ISSUES.md）②KM 表僅作觀察用途，絕不再單
+          獨核發 CONFIRMED/OUTSIDE ③明確行政區文字，含「往ＸＸ方向」與
+          事件本身所在地的區分）
+        → tdx/roadManagementPolicyGate.js#resolveTdxRoadManagementEligibility()
+          （Gate A 第二步，僅在地理閘門通過後才執行——機動路肩開放／關閉
+          永不進 AI；一般施工需 blockedLanes>=2 才有資格進 AI，資料不足
+          一律 UNKNOWN_BLOCKED_LANES 不進 AI；真正重大事故／完全封閉／
+          坍方／落石等透過 escape valve 不受此規則誤殺）
+        → tdx/tdxQueueIngress.js#enqueueTdxRoadEvents()（依上兩步過濾後
+          才 Queue.send()，新增 droppedOutsideHsinchu／
+          droppedUnknownHsinchu／droppedRoadManagement 三個純觀察計數）
+        → PBS_AI_QUEUE（沿用 V2.3.0，同一條 Queue／同一個 AI 引擎）
+        → aiCandidate.js#buildAiCandidate()（新增 blockedLanes 結構化欄
+          位帶入 AI prompt——PBS 事件恆為 null，純新增欄位，不改變 PBS
+          自己的決策）
+        → 既有 Production Notify Pipeline（Gate B——`traffic/
+          serviceArea.js#resolveServiceAreaEligibility` 的 TDX 分支已改
+          為委派同一個 resolveTdxHsinchuGeography()，故
+          `pbs/aiCandidate.js` Gate 2、`traffic/aiApprovedPbsBroadcast.js`
+          既有 V2.4.4 Gate 3 皆自動使用同一個 canonical 地理結果，未新增
+          任何程式碼、未讓真正 LINE 推播前重跑第二套判斷）
+        → LINE
+```
+
+**服務範圍精確化**：本輪起「新竹」服務範圍明確等於新竹市＋新竹縣兩個縣
+市（`data/hsinchu-boundary/generated/hsinchuBoundary.js`），不再是舊
+「新竹生活圈」概念——桃園／苗栗／頭份／竹南／三灣一律不在範圍內。
+
+**CRS**：TDX PositionLat/PositionLon 視為 WGS84；官方界線資料標示 TWD97
+經緯度（EPSG:3824）；台灣地區兩者差距僅公分級，本輪採用此既有工程判斷
+（`data/road-location/raw/README.md` 早有相同先例，非本輪新猜測），未做
+座標轉換。完整 CRS／資料集決策記錄見 `07_KNOWN_ISSUES.md`。
+
+**保留、未撤除**：`resolveHsinchuOnlyProductionEligibility()`（V2.4.4 的
+denylist 硬閘門）本輪保留作為第二層 safety net，新 resolver 成為主要
+positive-eligibility 權威；`aiDecisionEngine.js` SYSTEM_PROMPT 既有的
+機動路肩開放／關閉／一般施工語意提示（第四類原則）保留作為第二層
+safety net，程式碼閘門（`roadManagementPolicyGate.js`）為第一層。舊
+`HSINCHU_BOUNDING_BOX`／KM 表保留為輔助觀察／快速排除工具，不再擁有最終
+放行權威。
+
+**目前部署狀態（`wrangler.jsonc`，取代上方 V2.4.0 表格中已過時的
+「皆預設 false」敘述）**：`TDX_ROADEVENT_FETCH_ENABLED="true"`、
+`TDX_ROADEVENT_QUEUE_INGRESS_ENABLED="true"`、
+`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED="false"`——本輪完成後進入觀察
+期，需人類確認桃園/苗栗/頭份/竹南＝0 candidate、真實新竹事件正常通過、
+UNKNOWN 正確被攔截後，才另行決定是否開啟 Production Notify；本輪禁止自
+行開啟。
+
+完整逐版本文字記錄／CASE 測試對照 → `06_VERSION_HISTORY.md`／
+`07_KNOWN_ISSUES.md`；專用測試 →
+`test/tdxHsinchuGeoResolver.test.js`／`test/tdxRoadManagementPolicyGate.test.js`。
+
 ## V2.4.0 — TDX_FREEWAY_PROVINCIAL_TO_UNIFIED_AI_PIPELINE（本輪，2026-09-01，Phase B）
 
 TDX 國道/省道 RoadEvent 重新加入 PBS 既有的同一條 Queue／同一個 AI 決策
@@ -967,6 +1048,6 @@ PBS 資料流須改回 `PBS_30_MIN_POLLING_ENABLED=true` 並重新部署）。
 - **src/line/**: broadcastIntent.js, pushMessage.js, replyMessage.js, verifySignature.js, webhook.js
 - **src/pbs/**: aiCandidate.js, aiConfig.js, aiDecisionCache.js, aiDecisionEngine.js, aiObservatoryIndex.js, aiObservatoryView.js, classify.js, client.js, crossSourceDedup.js, debugPbs.js, debugPush.js, debugPushAuth.js, hsinchuFilter.js, lifecycle.js, normalize.js, pbsConfig.js, pipeline.js, roadName.js, vpcProbe.js
 - **src/security/**: adminAuth.js
-- **src/tdx/**: auth.js, cctvProbe.js, classify.js, client.js, debug.js, extract.js, fetchAll.js, hsinchuCctvProbe.js, normalize.js, sources.js, tdxQueueIngress.js, usageLedger.js, vdSpeed.js
+- **src/tdx/**: auth.js, cctvProbe.js, classify.js, client.js, debug.js, extract.js, fetchAll.js, hsinchuCctvProbe.js, hsinchuGeoResolver.js, normalize.js, roadManagementPolicyGate.js, sources.js, tdxQueueIngress.js, usageLedger.js, vdSpeed.js
 - **src/traffic/**: aiApprovedPbsBroadcast.js, anomalyClassification.js, broadcastHours.js, broadcastPipeline.js, broadcastPolicy.js, broadcastProvenance.js, broadcastRules.js, congestionCluster.js, congestionSeverity.js, congestionValidation.js, debugStatus.js, dedupe.js, deploymentStatus.js, deploymentStatusView.js, directionEquivalence.js, dynamicShoulderClassification.js, effectiveWindow.js, health.js, healthSnapshot.js, hsinchuConfig.js, hsinchuFilter.js, incidentMemory.js, incidentSuppression.js, kmLocationResolver.js, locationQuality.js, messageFormat.js, notified.js, parseChineseDate.js, pbsSchedule.js, pipeline.js, pipelineTrace.js, pipelineTraceView.js, roadIdentity.js, roadSectionLabel.js, scheduled.js, serviceArea.js, sharedFeed.js, sharedFeedHandler.js, sourceMode.js, subscriptions.js, tdxEventCache.js, tdxSchedule.js
 - **src/util/**: contentEqual.js

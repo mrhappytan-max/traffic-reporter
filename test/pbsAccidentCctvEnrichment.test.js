@@ -474,6 +474,10 @@ test('20. restoring TRAFFIC_SOURCE_MODE=ALL does not disturb any of this', () =>
     direction: '南向',
     startKM: '93K+000',
     endKM: '93K+800',
+    // V2.4.5 — service-area gate evidence; official-polygon-confirmed
+    // inside 新竹市 (near 國道一號 93K).
+    longitude: 120.9686,
+    latitude: 24.8066,
   };
   const elig = resolveCctvEligibility(tdxEvent);
   assert.equal(elig.eligible, true);

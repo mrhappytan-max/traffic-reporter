@@ -163,6 +163,10 @@ function accidentEvent(overrides = {}) {
     startKM: '96K+500',
     endKM: '96K+900',
     description: '事故',
+    // V2.4.5 — service-area gate evidence; official-polygon-confirmed
+    // inside 新竹縣 (竹北市 vicinity, near 國道三號 96K).
+    longitude: 121.0134,
+    latitude: 24.8388,
     ...overrides,
   };
 }

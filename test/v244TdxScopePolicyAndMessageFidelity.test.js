@@ -122,13 +122,32 @@ test('CASE 4b: 苗栗縣竹南/三灣 named in text alone (no placeable KM/coord
 });
 
 // =============================================================================
-// CASE 5 — 台北／新北 -> LINE = 0. Deliberately NO KM/coordinates, so the
-// base resolveServiceAreaEligibility() alone would "defer to ingestion"
-// (eligible:true) — this proves the NEW text-denylist backstop, not just
-// the KM-table fix, is what closes the gap.
+// CASE 5 — 台北／新北 -> LINE = 0. Deliberately NO KM/coordinates.
+//
+// V2.4.5 UPDATE: this case's own premise changed. Before V2.4.5, the base
+// resolveServiceAreaEligibility() had no positive text authority of its
+// own for TDX events and would "defer to ingestion" (fail-open,
+// eligible:true) whenever no KM/coordinate was placeable — it was
+// resolveHsinchuOnlyProductionEligibility()'s OWN separate
+// NON_HSINCHU_PLACE_TOKENS denylist check (serviceArea.js lines
+// 255-259, run only once `base.eligible` is already true) that actually
+// caught 台北市 and blocked it.
+//
+// Now resolveTdxHsinchuGeography()'s own Tier 3 (explicit administrative
+// text) is itself both a positive allowlist AND a negative denylist (see
+// hsinchuGeoResolver.js's OTHER_TOP_LEVEL_PLACES) — so 台北市 is now
+// caught by the BASE resolver itself (base.eligible === false,
+// reason `service-area-tdx:text_explicit_non_hsinchu_place:台北`), and
+// resolveHsinchuOnlyProductionEligibility() returns that `base` result
+// directly (line 253) without ever reaching its own separate denylist
+// tokens. The old V2.4.4 denylist is untouched and still runs for any
+// case the new resolver's Tier 3 does NOT itself catch (see CASE 5b/4b,
+// still exercising that code path directly and unaffected here) — this
+// one case simply resolves one layer earlier now. The acceptance bar
+// (blocked, 0 LINE) is identical; only which layer catches it changed.
 // =============================================================================
 
-test('CASE 5a: 台北市 mentioned, no placeable geography -> the denylist backstop blocks it (base resolver alone would defer)', async () => {
+test('CASE 5a: 台北市 mentioned, no placeable geography -> blocked (V2.4.5: caught by the base geo resolver\'s own Tier 3 text denylist, before the separate hsinchu-only denylist backstop is even reached)', async () => {
   const env = await broadcastEnv();
   const event = {
     source: 'freeway', rawId: 'C5A', type: 'accident', road: '國道一號', direction: '南向',
@@ -136,7 +155,7 @@ test('CASE 5a: 台北市 mentioned, no placeable geography -> the denylist backs
   };
   const gate = resolveHsinchuOnlyProductionEligibility(event);
   assert.equal(gate.eligible, false);
-  assert.match(gate.reason, /non-hsinchu-place:台北/);
+  assert.match(gate.reason, /text_explicit_non_hsinchu_place:台北/);
   const result = await runAiApprovedPbsBroadcast(env, { event, now: NOW });
   assert.equal(result.pushSucceeded, 0);
 });

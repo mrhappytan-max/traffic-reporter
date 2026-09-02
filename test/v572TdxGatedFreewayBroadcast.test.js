@@ -43,6 +43,9 @@ function freewayAccidentRaw(overrides = {}) {
     LastUpdateTime: '2026-08-20T08:00:00+08:00',
     Location: { FreeExpressHighway: { Road: '國道一號', Direction: '北向', StartKM: '92K+500', EndKM: '91K+800' } },
     Impact: { BlockedLanes: 1 },
+    // V2.4.5 — service-area gate evidence; official-polygon-confirmed
+    // inside 新竹市/新竹縣.
+    Positions: [{ PositionLon: 121.0, PositionLat: 24.8 }],
     ...overrides,
   };
 }

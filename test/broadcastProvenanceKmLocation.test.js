@@ -89,6 +89,14 @@ test('4. end-to-end: a real successful push writes a provenance record whose kmL
     startTime: now.toISOString(),
     endTime: null,
     updatedAt: now.toISOString(),
+    // V2.4.5 — service-area gate evidence only (kmLocationResolution
+    // itself, asserted below, still comes from kmLocationResolver.js's
+    // own road+KM resolution against the real dataset, untouched by
+    // this). Confirmed this round inside 新竹縣 (關西/橫山 vicinity — the
+    // real-world location 78.5-79.2K on 台3線 corresponds to) by the
+    // official NLSC polygon.
+    longitude: 121.15,
+    latitude: 24.78,
   };
 
   try {

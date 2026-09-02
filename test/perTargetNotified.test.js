@@ -22,6 +22,8 @@ function createMockKV(initial = {}) {
 
 const ENROLLED_AT = new Date('2026-08-01T00:00:00+08:00');
 
+// V2.4.5 — carries a real coordinate, confirmed this round inside 新竹市
+// by the official NLSC polygon (see tdx/hsinchuGeoResolver.js).
 function accidentEvent(overrides = {}) {
   return {
     source: 'freeway',
@@ -34,6 +36,8 @@ function accidentEvent(overrides = {}) {
     startTime: '2026-08-15T07:30:00+08:00',
     endTime: null,
     updatedAt: '2026-08-15T07:30:00+08:00',
+    longitude: 120.9686,
+    latitude: 24.8066,
     ...overrides,
   };
 }

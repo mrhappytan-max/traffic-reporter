@@ -337,10 +337,25 @@ test('16. ALL mode: the service area gate applies exactly the same', () => {
   assert.equal(resolveServiceAreaEligibility(inArea).eligible, true, 'and in-area still passes in ALL mode');
 });
 
-test('16b. TDX-sourced events are placed by the existing road+KM rules, and fail closed when unplaceable', () => {
-  // 國道一號 KM 95 is inside the canonical Hsinchu range; KM 3 (八堵) is not.
-  assert.equal(isWithinServiceArea({ source: 'freeway', road: '國道一號', startKM: 95, endKM: 95 }), true);
-  assert.equal(isWithinServiceArea({ source: 'freeway', road: '國道一號', startKM: 3, endKM: 3 }), false);
+test('16b. V2.4.5: TDX-sourced events are placed by the real official-boundary resolver — KM alone never confirms, and fail closed when unplaceable', () => {
+  // V2.4.5 (V2_4_5_TDX_HSINCHU_GEO_RESOLVER) — KM/road heuristics alone
+  // can no longer confirm eligibility for TDX (order section 九: "禁止再
+  // 使用...這種人工估算表取得最終放行資格"). A KM-only event (no
+  // coordinates, no explicit administrative-region text) now resolves to
+  // the resolver's own UNKNOWN state, which this gate treats exactly like
+  // a confirmed negative — see tdx/hsinchuGeoResolver.js.
+  assert.equal(isWithinServiceArea({ source: 'freeway', road: '國道一號', startKM: 95, endKM: 95 }), false);
+  // A real coordinate inside 新竹市/新竹縣 (official NLSC polygon) still
+  // confirms; 八堵 (基隆) does not — this is the actual positive/negative
+  // authority now, not the KM table.
+  assert.equal(
+    isWithinServiceArea({ source: 'freeway', road: '國道一號', latitude: 24.8066, longitude: 120.9686 }),
+    true
+  );
+  assert.equal(
+    isWithinServiceArea({ source: 'freeway', road: '國道一號', latitude: 25.10288, longitude: 121.71801 }),
+    false
+  );
   // Unknown source cannot be placed by either resolver -> blocked.
   const unknown = resolveServiceAreaEligibility({ source: 'cms', road: '國道一號' });
   assert.equal(unknown.eligible, false);

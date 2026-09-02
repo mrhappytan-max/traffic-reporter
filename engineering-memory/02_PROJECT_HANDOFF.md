@@ -98,7 +98,7 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 | 欄位 | 值 |
 |---|---|
-| Latest completed | V2.4.4 |
+| Latest completed | V2.4.5 |
 | package.json version | 0.1.0 |
 | Production status | DEPLOYED |
 | Production verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
@@ -107,7 +107,7 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 ## Current known issues
 
-- **Known blocker**：無 blocker。TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 目前為 false 是 V2.4.4 刻意的安全政策，非缺陷——FETCH/QUEUE 仍為 true。第一筆真實 TDX LINE 通知（Notify 重新開啟後）尚待現場證據——REAL_WORLD_CONFIRMATION_PENDING。AI 呼叫已有 45 秒 fail-fast timeout（V2.4.3），CLEARED 會取消舊事件 stale retry。EVENT_ID 11509010029-5 該筆歷史事件確切失敗階段仍無法獨立查證，未臆測。詳見 07_KNOWN_ISSUES.md
+- **Known blocker**：無 blocker。TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED 目前為 false 是刻意的安全政策，非缺陷——FETCH/QUEUE 仍為 true。第一筆真實 TDX LINE 通知（Notify 重新開啟後）尚待現場證據——REAL_WORLD_CONFIRMATION_PENDING。AI 呼叫已有 45 秒 fail-fast timeout（V2.4.3），CLEARED 會取消舊事件 stale retry。EVENT_ID 11509010029-5 該筆歷史事件確切失敗階段仍無法獨立查證，未臆測。詳見 07_KNOWN_ISSUES.md
 - **Real-world confirmation**：REAL_WORLD_CONFIRMATION_PENDING
 - **既有測試失敗基準線**：`npm test` 共 1272 項，其中穩定 38 項為已知失敗（2 項 `pbs-relay/tests/*` 缺 `pbs-relay/src/cache.js`；**33 項過期斷言**——動態路肩推播關閉、PBS 成為 CCTV 可信來源之後未同步更新的測試，是目前最大的一筆技術債，待獨立施工令；3 項 wall-clock 相依的 `healthQuotaDashboard`，會隨日期自然增加）。**注意：舊版文件宣稱那 13 項是「Workers-only `.wasm` codec 在沙盒無法載入」，這是錯的 Root Cause——真正原因是沙盒 `node_modules` 不完整、`@jsquash/jpeg` 沒安裝；裝了之後那些檔案全部可以執行，並揭露上述 33 項過期斷言。**出現這 18 項以外的新失敗才算真正回歸，且**判斷回歸一律以同一輪 `git stash -u` 對照為準**；逐項清單、`deploymentPolicyAndVerify` 第 12 項的「尚未 push 必失敗」現象，以及 `deploymentStatus` 那項只在全套執行時偶發的雜訊，都見 `07_KNOWN_ISSUES.md`。
 - **Dashboard-only 事實永遠無法從程式驗證**：Production branch 指向、真實 Cron 排程、Secret 值是否正確、Build 歷史——只能由真人開 Dashboard 確認。
@@ -574,6 +574,53 @@ V2.0.2 之後到 V2.4.0 之間的四個版本，這份精簡接班版未逐版�
 CLOUDFLARE_QUEUE`。V2.2.0 把查修頁升級為四層事件生命週期檢視。V2.3.1／
 V2.3.2／V2.3.3 是三個連續 PATCH（LINE 地圖座標直連 fallback、CCTV
 診斷工具修復、CCTV R2 讀回驗證），皆未改架構本身。
+
+## V2.4.5 — TDX_HSINCHU_GEO_RESOLVER ＋ TDX_ROAD_MANAGEMENT_POLICY_GATE（2026-09-02，加在下方 V2.4.4 之上）
+
+**核心驗收**：「TDX 必須先證明事件位於新竹縣或新竹市，才有資格進 AI；無法
+證明就是不進 AI。PBS 完全不屬於本輪施工範圍。」
+
+**接手現在必須知道的是**：
+
+1. **地理判斷從 denylist patch 升級為 positive-authority resolver**：新模組
+   `src/tdx/hsinchuGeoResolver.js#resolveTdxHsinchuGeography()`，三態輸出
+   `CONFIRMED_HSINCHU`/`OUTSIDE_HSINCHU`/`UNKNOWN`，絕非 boolean。唯一能
+   核發 `CONFIRMED_HSINCHU` 的權威是座標對照**內政部國土測繪中心**官方
+   行政區界線（data.gov.tw dataset **7442**，經 `taiwan-atlas` npm 套件
+   逐位元組鏡像取得——此 sandbox 無法直連 data.gov.tw，人類已裁決核准此
+   鏡像來源，決策記錄見 `07_KNOWN_ISSUES.md`）。舊 KM 表（`hsinchuConfig.js`）
+   降為觀察用途，永不再單獨核發最終判定；`serviceArea.js` TDX 分支現在
+   委派這個新 resolver，**不要**再回頭修 KM 表數字。
+2. **座標證據現在會被保留到底**：`normalize.js` 新增
+   `positions`/`longitude`/`latitude`（重用 `hsinchuFilter.js#extractPositions`），
+   `crossSourceDedup.js#buildCanonicalEvent()` 也補上座標傳遞——PBS＋TDX
+   合併事件不會再因為座標遺失而退化成 UNKNOWN 誤擋。
+3. **新道路管理政策閘門**（補充令，跑在地理閘門之後）：`src/tdx/
+   roadManagementPolicyGate.js#resolveTdxRoadManagementEligibility()`——
+   機動路肩開放／關閉永不進 AI；一般施工需明確 `blockedLanes>=2` 才有資格
+   進 AI，資料不足（缺失/無法解析/負數/非整數）一律 `UNKNOWN_BLOCKED_LANES`
+   不進 AI，禁止 fail-open。有 escape valve（重用
+   `anomalyClassification.js#detectNonCollisionAnomaly` + 獨立事故/完全
+   封閉關鍵字比對，非重造 `classify.js` 第二套分類系統）防止「施工造成
+   雙向完全封閉」這類真正重大事故被誤判為一般施工擋下。
+4. **`blockedLanes` 現在是 AI 的結構化輸入**：`aiCandidate.js#
+   buildAiCandidate()`／`aiDecisionEngine.js#buildAiUserPrompt()` 新增此
+   欄位——AI 不再需要從自由文字猜車道數；PBS 事件恆為 `null`，純新增欄位。
+5. **V2.4.4 的兩個安全網都保留，不是被取代**：`resolveHsinchuOnly
+   ProductionEligibility()` denylist 硬閘門與 SYSTEM_PROMPT 第四類語意
+   錨點本輪均**未刪除**——新 resolver/新閘門是主要權威，這兩個是第二層
+   safety net。是否日後精簡是未來另一輪的決定，不是本輪的。
+6. **部署政策不變**：`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED` 維持
+   `"false"`（FETCH/QUEUE 仍 `"true"`）——**不要自行改回 `"true"`**，需另
+   一次明確的人類決策，確認觀察期三項條件（桃園/苗栗/頭份/竹南=0
+   candidate、真實新竹事件正常通過、UNKNOWN 正確攔截）後才能重新開啟。
+7. **PBS 完全未觸碰**：Windows PBS／`pbs-relay/`／PBS 本機篩選／PBS AI
+   候選／PBS LINE 路徑／PBS lifecycle 一律未修改，這是兩份施工令共同、
+   反覆重申的邊界。
+
+完整文字記錄與 CASE 1-10 全文 → `06_VERSION_HISTORY.md`／
+`07_KNOWN_ISSUES.md`／`test/tdxHsinchuGeoResolver.test.js`／
+`test/tdxRoadManagementPolicyGate.test.js`。
 
 ## V2.4.4 — TDX_SCOPE_POLICY_AND_MESSAGE_FIDELITY_FIX（2026-09-02，加在下方 V2.4.3 之上）
 

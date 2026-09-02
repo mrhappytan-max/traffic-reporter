@@ -49,23 +49,14 @@
 
 **任何未來 session 若取得證據**（正面或負面），只需要更新 `ENGINEERING_STATUS.md` 與 `PROJECT_HANDOFF.md` §35 的狀態欄位為 `REAL_WORLD_CONFIRMED`（附上證據來源），**不需要**開新的修復版本，除非證據顯示修復本身有缺陷（此時視為新事故，重新走 root cause 流程，不要假設是「修得不夠完整」而直接補丁）。
 
-## KI｜TDX 額度用盡 — 暫時 PBS-ONLY MODE（2026-08-23，**生效中**）
+## KI｜TDX 額度用盡 — 暫時 PBS-ONLY MODE（2026-08-23，歷史記錄，已由 V2.4.0+ 逐步部分還原）
 
-- **狀態**：`ACTIVE_TEMPORARY_QUOTA_PROTECTION`。這是**刻意的暫停，不是故障，也沒有刪除任何 TDX 功能**。
-- **起因**：TDX API 額度已用盡。若持續呼叫，只會不斷產生失敗請求，無法取得資料。
-- **現在的資料來源**：警廣 PBS 單一來源 → 既有分類／格式化／Shared Traffic Feed → 下游 Consumer。PBS 行為完全未變更。
-- **開關**：`wrangler.jsonc` 的 `TRAFFIC_SOURCE_MODE`。目前值 `PBS_ONLY`。
-  實作在 `src/traffic/sourceMode.js`（純函式，可單元測試）。
-- **實際被關掉的三個點**：
-  1. `scheduled.js` — 新狀態 `tdxScheduleState='disabled-quota'`，走既有的 skipped-tick 路徑（`buildSkippedTdxSummary`）。刻意用獨立狀態值，避免被誤讀成 TDX 故障或一般跳過的奇數分鐘 tick。
-  2. `tdx/auth.js` — 關閉時**拒發 TDX token**。所有 TDX 呼叫都需要 token，所以「零 TDX 呼叫」是程式層保證，不是靠每個呼叫端記得檢查旗標。丟 `TdxAuthError`，呼叫端本來就當成「這輪沒有 token」處理。
-  3. ~~`cctv/dynamicCollage.js`~~ — **2026-08-23 已解除**，見下方「CCTV 重新開啟」。CCTV 從來就不消耗 TDX 額度，關掉它一點額度都沒省下。
-- **重要事實（未來判讀用）**：CCTV **影格**來自 `*.freeway.gov.tw`，**不是 TDX**；播報路徑的攝影機 metadata 讀的是 KV 快取，也不呼叫 TDX。**所以 CCTV 補圖原本就已經是 0 次 TDX 呼叫**。
-- **降級行為**：PBS 事件沒有 CCTV 時，仍正常產出完整文字產品；Cron 不會失敗，Shared Feed 不會失敗。沒有任何 CCTV 問題可以擋住 PBS 播報。
-- **可觀測性**：`/health` 有 `sourceMode` 區塊；每輪 log 一行 `[cron][source-mode] trafficSourceMode=… tdxRuntimeEnabled=… cctvImageEnabled=… tdxCctvMetadataRefreshEnabled=… pbsEnabled=… linePushPolicy=… dynamicShoulderPush=…`。
-- **旗標語意**：只有精確值 `PBS_ONLY` 會關閉 TDX；缺漏或無法辨識的值一律解析為 `ALL`（正常全來源），所以少設一個 var 永遠不會把 production 餓死。無法辨識的非空值會大聲 log 警告——因為相反的失敗（打錯字導致繼續燒額度）才是會花錢的那個。
-- **已知限制**：`/debug/tdx`、`/admin/cctv-*` 這些**人工** admin 端點仍然存在。它們現在會因為拿不到 token 而失敗（不會燒額度），但這是副作用而非設計目標；本輪只保證「Cron／scheduled pipeline 的 TDX 呼叫為 0」。
-- **還原條件與方式**：見下方「TDX 還原程序」。
+`ACTIVE_TEMPORARY_QUOTA_PROTECTION`（刻意暫停非故障）。開關 `wrangler.jsonc`
+`TRAFFIC_SOURCE_MODE`；`tdx/auth.js`關閉時拒發TDX token(零呼叫是程式層保證)。
+CCTV影格來自freeway.gov.tw非TDX，從未消耗額度。**現況（V2.4.5）**：
+`TDX_ROADEVENT_FETCH_ENABLED`/`QUEUE_INGRESS_ENABLED`已重新設為"true"（見
+V2.4.0/V2.4.5條目），額度限制已解除，此段落僅存歷史脈絡，還原程序見下方
+「TDX 還原程序」。
 
 ## 封版紀錄｜TDX_QUOTA_PROTECTION_PBS_ONLY = SEALED（2026-08-23，壓縮摘要）
 
@@ -482,6 +473,63 @@ PBS 閘門排除仍視為有意義。fixture 實測 QUIET/NORMAL/HIGH writes/day
 
 **狀態：`HUMAN_REPORTED_NOT_INDEPENDENTLY_VERIFIED`。** 人類回報：Windows PBS 本機篩選舊邏輯先套用 `isAccident()` 事故關鍵字語意閘門，才進新竹縣市地理判斷，導致非事故型事件（落石／坍方／封路／施工／積水等）即使位於新竹縣市仍可能在 Windows 端被直接丟棄，從未進入 Cloudflare/AI。回報修正：移除 `isAccident()` 語意閘門，改用 point-in-polygon（data.gov.tw dataset 7442 縣市界線）取代原本的矩形邊界，新竹市/縣**所有**事件類型皆納入候選，語意判斷完全交給 AI；同批資料驗證回報 `BEFORE_KEEP_COUNT=11 → AFTER_KEEP_COUNT=29`（找回 18 筆），`TESTS=124 passed/0 failed`。**本 Cloud Session 的獨立查證**：目前 `main`／本分支的 `pbs-relay/src/localPrototype.js` 仍保留 `isAccident()` 並仍作為候選閘門使用（見該檔第 56/108 行），`pbs-relay/` 完整 git 歷史（含 `feature/pbs-local-edge-filter-prototype` 分支）中**未找到**對應此修正的 commit，故無法核對回報的 point-in-polygon 實作、dataset 7442 引用或 11→29/124 測試數字。與既有 `PBS Windows Local Edge Debug Push Integration`（V1.9.6）記錄採同一誠實原則：**本節只記錄「人類回報了什麼」，不代表本 Session 已驗證程式碼或測試結果為真**——待對應 commit 出現於本 repo（或人類提供可核對的 diff/測試輸出）後，下一輪應改記為已驗證版本，並同步更新 `pbs-relay/` 程式碼本身（本輪禁止修改）。
 
+## 修正紀錄｜V2.4.5 — TDX_HSINCHU_GEO_RESOLVER ＋ TDX_ROAD_MANAGEMENT_POLICY_GATE（2026-09-02，壓縮摘要）
+
+**背景**：V2.4.4 唯讀 audit 發現 TDX 服務區判斷全建立在 `hsinchuConfig.js` 自承
+未驗證的 KM 表上，且座標缺席時 fail-open（"service-area-deferred-to-
+ingestion"）。真實洩漏：台61線39.6K實為桃園觀音，被KM表誤判新竹。核心驗收：
+「TDX 必須先證明位於新竹縣/市才進AI，無法證明就不進」；PBS 完全不在本輪範圍。
+
+**FIX A（地理 resolver）**：新模組 `src/tdx/hsinchuGeoResolver.js#
+resolveTdxHsinchuGeography()`——三態輸出 CONFIRMED_HSINCHU/OUTSIDE_HSINCHU/
+UNKNOWN，絕非 boolean。證據優先序：①座標對官方行政區界線（唯一能核發
+CONFIRMED 的權威）②KM表僅觀察用途，永不核發最終判定③明確行政區文字（含
+「往ＸＸ方向」與事件所在地區分）。UNKNOWN 下游行為等同 OUTSIDE_HSINCHU
+（0 Queue/0 AI/0 LINE），絕不預設為新竹。
+
+**BOUNDARY_AUTHORITY**=內政部國土測繪中心｜**BOUNDARY_DATASET**=直轄市、縣市
+界線（TWD97經緯度）｜**BOUNDARY_DATASET_ID**=7442｜**BOUNDARY_SOURCE_CRS**=
+TWD97經緯度(EPSG:3824)｜**BOUNDARY_INCLUDED_AREAS**=新竹市,新竹縣｜
+**BOUNDARY_FETCH_DATE**=2026-09-02T13:05:01Z｜**BOUNDARY_SOURCE_VERSION_OR_
+METADATA_DATE**=taiwan-atlas npm 2021.9.20（`counties-10t.json`，MIT
+license，逐位元組鏡像 dataset 7442，此 sandbox 無法直連 data.gov.tw，人類
+裁決核准此鏡像來源——見下方決策記錄）｜**BOUNDARY_TRANSFORMATION**=無數值轉換
+（TDX PositionLon/Lat 視為WGS84，與TWD97對台灣地區僅差公分級，沿用本專案
+`data/road-location/`既有WGS84慣例，非本輪新猜測；決策記錄非邊界幾何本身的
+猜測）。驗證：`topojson-client`真實解碼＋`@turf/boolean-point-in-polygon`
+交叉驗證10個已知參考點（新竹市政府/竹北市/湖口/新豐/關西 vs 桃園市政府/
+苗栗市/頭份/竹南/台北市政府等5鄰近縣市），全部正確；新豐鄉初始猜測座標偏差
+邊界，改用`towns-10t.json`+`@turf/centroid`驗證真實鄉公所座標後修正。
+
+**FIX B（道路管理政策閘門，補充令）**：新模組 `src/tdx/
+roadManagementPolicyGate.js#resolveTdxRoadManagementEligibility()`，跑在地理
+閘門之後——機動路肩開放/關閉永不進AI；一般施工需`blockedLanes>=2`才有資格進
+AI，資料不足(缺失/無法解析/負數/非整數)一律`UNKNOWN_BLOCKED_LANES`不進AI，
+禁止fail-open。Escape valve（重用`anomalyClassification.js#
+detectNonCollisionAnomaly`+獨立事故/完全封閉關鍵字，非重造`classify.js`第二
+套系統）防止「施工造成雙向完全封閉」被誤判為一般施工擋下。`blockedLanes`
+新增進`aiCandidate.js#buildAiCandidate()`結構化AI輸入（PBS恆為null，純新增
+欄位）。V2.4.4 denylist硬閘門與AI prompt第四類錨點均保留為第二層safety net。
+
+**架構銜接**：`normalize.js`保留完整座標證據(positions[]/longitude/latitude，
+重用`hsinchuFilter.js#extractPositions`)；`serviceArea.js`TDX分支改委派同一個
+`resolveTdxHsinchuGeography()`，`aiCandidate.js`Gate2與
+`aiApprovedPbsBroadcast.js`既有V2.4.4 Gate3自動使用同一canonical結果，Gate B
+(LINE前複查)零新增程式碼；`crossSourceDedup.js#buildCanonicalEvent()`補上座標
+傳遞(否則PBS+TDX合併事件會因缺座標退化為UNKNOWN誤擋)。
+
+**部署政策**：`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`維持"false"
+(FETCH/QUEUE維持"true")，進入觀察期，待人類確認桃園/苗栗/頭份/竹南=0
+candidate、真實新竹事件正常通過、UNKNOWN正確攔截後才另行決定開啟。
+
+**測試**：`test/tdxHsinchuGeoResolver.test.js`(19項，CASE1-10+39.6K永久回歸鎖定)
+／`test/tdxRoadManagementPolicyGate.test.js`(21項，CASE1-10)全過；既有~22個檔案
+的TDX fixture補上座標證據(含發現`crossSourceDedup.js`座標傳遞缺口)；`git stash
+-u`同commit精確基準52項失敗，全量迴歸NEW_FAILURES=0。**未觸碰**：Windows
+PBS/pbs-relay/PBS本機篩選/PBS AI候選/PBS LINE路徑/Workers AI模型/AI prompt
+路肩政策原文(僅結構輸入新增blockedLanes)/Incident Memory/CCTV/LINE
+messageFormat/60字上限。`APP_VERSION`V2.4.4→V2.4.5（MINOR）。
+
 ## 修正紀錄｜V2.4.4 — TDX_SCOPE_POLICY_AND_MESSAGE_FIDELITY_FIX（2026-09-02，壓縮摘要）
 
 **背景**：TDX重接AI後3問題——(A)台61線39K+600(實為桃園觀音)誤發LINE；(B)例行施工/機動路肩開關等一般道路管理事件誤發；(C)TDX訊息仍是通用模板，description/blockedLanes未進LINE。
@@ -760,77 +808,22 @@ side effect（LINE/Shared Feed），沿用此PARTIAL設計未變動，Durable Ob
 accepted）。既有Debug API JSON schema完全不變。新增52項測試（原33項）涵蓋施工令
 20項清單，NEW FAILURES=0（1404/1371/33基線）。
 
-## 封版紀錄｜PBS Windows Local Edge Debug Push Integration（V1.9.6）（2026-08-27，壓縮摘要）
+## 封版紀錄｜PBS Windows Local Edge Debug Push Integration（V1.9.6）（2026-08-27，深度壓縮）
 
-治理封版令：Windows本機完成常駐邊緣篩選＋Debug Push整合（接上V1.9.5的Cloudflare
-Debug-only接收端），本輪只寫入Engineering Memory，不merge、不新增Cloudflare
-runtime變更、不整合LINE/CCTV/Business KV、不退休既有PBS輪詢。**冪等狀態已由
-V1.9.7更新為PARTIAL，見該條目，此處不再重複舊的NOT_PERSISTENT/PENDING_BEFORE_
-PRODUCTION描述**。
-
-**最新程式事實**（本Session獨立驗證）：`LOCAL_PROTOTYPE_BRANCH=
-feature/pbs-local-edge-filter-prototype`、`LOCAL_PROTOTYPE_HEAD=
-95ecdc4718f836ff36c974e829b549f262e6b936`、`MERGED_TO_MAIN=NO`（git merge-base
-確認）。`git worktree`乾淨簽出+`node --test`：118項全通過、0失敗，與人類回報一致
-（前一輪缺`cache.js`的落差已在此commit補上）。Windows端執行期狀態（Task
-Scheduler是否真的常駐、Cloudflare Secret Dashboard狀態、Claude Browser mock
-驗證畫面）本sandbox無法連線驗證，按人類回報記錄，明確標示非本Session證實。
-
-**完整架構**：PBS來源→Windows每3分鐘抓取→Local Edge Filter（重用Production
-`src/pbs/hsinchuFilter.js`／`src/pbs/roadName.js`）→事件生命週期比較→
-NEW/UPDATED/CLEARED/UNCHANGED/MISSING_PENDING_CLEAR→SHOULD_PUSH判斷→
-（NO停在Windows／YES經Debug Push Client）→`POST /internal/pbs-debug-push`→
-Cloudflare Debug-only Receiver→驗證/best-effort duplicate/log/ACK。明確不進
-LINE/CCTV/R2/Shared Feed/正式Business KV/正式Pipeline。完整圖見
-`03_ARCHITECTURE.md`。
-
-**兩個真實bug修正**（本Session已讀程式碼確認）：(1) 服務區——舊寬鬆矩形
-（lat24.45~24.95/lng120.80~121.35）誤收國3 55.8K鶯歌／國1 68.1K楊梅，修正為直接
-import Production的`isPbsEventHsinchuRelevant`／`normalizePbsRoad`；(2) CLEARED——
-舊單輪缺席即CLEARED的誤判，修正為明確解除文字（已排除/排除/已解除/解除）立即
-CLEARED，或連續2輪成功fetch缺席才`CONFIRMED_CLEARED`（`missingCount>=2`），fetch
-失敗不累加、中途重現則歸零。人類回報以真實案例（UID 11508260013-5，國3 96.7K
-寶山休息站）驗證。
-
-**Windows常駐模式**（人類回報）：Task Scheduler `TrafficReporter-PBS-
-LocalMonitor`，3分鐘間隔，watchdog/lock/state recovery/JSONL log（7天保留）。
-`REBOOT_TEST=PENDING`但manual restart/watchdog/state recovery皆PASS。已知UX：
-可能顯示Node console視窗，真人決定暫不修改，不算blocker。
-
-**Secret治理教訓（永久規則，最重要）**：`PBS_DEBUG_PUSH_SECRET`曾只存在於新
-Worker Version（9ddc58ea）而Active Deployment仍是舊版（47f54b17），導致持續503。
-Root Cause：**Secret在Dashboard存在≠已進入服務流量的Active Production
-Version**。真人promote後才恢復。未來新增/修改任何Cloudflare Secret後，必須確認
-該Secret所在Version是否為目前Active Deployment。
-
-**Debug Push Client**（本Session已讀程式碼確認）：`debugPushClient.js`，
-5000ms timeout、最多2次總嘗試、只重試timeout/network/5xx（4xx不重試）、503立即
-停止。requestId格式：`pbs:<id>:<lifecycle>:<fingerprint前16碼>`。
-
-**SHOULD_PUSH串接**：僅NEW/UPDATED/CLEARED送出。`PBS_DEBUG_PUSH_ENABLED`預設
-false，真人已設true。人類回報`NO_CHANGE_NO_PUSH=PASS`（無變化時對Cloudflare的
-request數為0，本Session未重跑）。
-
-**Mock驗證證據**（人類回報）：NEW/DUPLICATE/UPDATED/CLEARED四情境皆PASS，
-Workers Logs交叉驗證四種LOG_FOUND皆YES，LINE/CCTV/R2/Shared
-Feed/Business_KV_SIDE_EFFECT皆0，SECRET_LEAK=NO。
-
-**現行PBS輪詢**：`PBS_30_MIN_POLLING=PRESERVED`，Cloudflare既有輪詢完全保留，
-仍是正式路徑，退休時機在路線圖Phase 6，不得提前。
-
-**路線圖**：Phase1（目前）Real Debug Observation → Phase2 Persistent
-Idempotency Design（**V1.9.7已完成，見該條目**）→ Phase3 Debug Receiver→
-Production Business Pipeline（仍LINE disabled）→ Phase4 LINE limited
-activation → Phase5 Windows Edge成為主要觸發 → Phase6長期觀察後才評估PBS輪詢
-退休。
-
-**Emergency kill switch**：Windows User Environment設`PBS_DEBUG_PUSH_
-ENABLED=false`+重啟`TrafficReporter-PBS-LocalMonitor`即可停止，不需動PBS
-monitor/Secret/Cloudflare/既有輪詢。
-
-不要誤讀：feature branch未merge main；Windows Debug Push僅止於Debug-only接收端，
-未進正式Business Pipeline；Cloudflare既有PBS輪詢未被取代；不要修改Windows
-Secret或Task Scheduler。
+治理封版令：Windows 本機常駐邊緣篩選＋Debug Push 整合（接上 V1.9.5 的 Cloudflare
+Debug-only 接收端）。架構：PBS→Windows 3分鐘抓取→Local Edge Filter（重用
+Production `hsinchuFilter.js`/`roadName.js`）→生命週期比較→SHOULD_PUSH→
+`POST /internal/pbs-debug-push`→Debug-only Receiver（不進 LINE/CCTV/R2/Shared
+Feed/正式 Business KV）。兩個真實 bug 已修：服務區舊寬鬆矩形誤收國3
+55.8K鶯歌／國1 68.1K楊梅（改 import Production resolver）；CLEARED 單輪缺席
+誤判（改連續2輪缺席或明確解除文字才 CLEARED）。**Secret 治理教訓（永久規則）**：
+Secret 在 Dashboard 存在 ≠ 已進入 Active Production Version——曾因新 Secret
+只在新 Worker Version、Active Deployment 仍是舊版而持續 503，真人 promote 後
+恢復；未來新增/修改任何 Secret 後必須確認其 Version 是否為 Active Deployment。
+現行 PBS 輪詢完全保留，退休時機在路線圖 Phase 6（未到）。冪等狀態後續由
+V1.9.7 更新為 PARTIAL，見該條目。完整細節（Mock 驗證證據、路線圖分期、
+Windows Task Scheduler 設定）已隨版本推進而失去時效性，如需考古見 git 歷史
+本檔案舊版本。
 
 ## TDX 還原程序（RESTORE TDX）
 

@@ -1542,7 +1542,29 @@
 // management prompt anchor + exception carve-outs, no-hardcoded-type-based
 // notify proof, TDX description/blockedLanes fidelity capped at 60 chars)
 // and 07_KNOWN_ISSUES.md for the full investigation record.
-export const APP_VERSION = 'V2.4.4';
+//
+// V2.4.5 — V2_4_5_TDX_HSINCHU_GEO_RESOLVER + V2_4_5_TDX_ROAD_MANAGEMENT_
+// POLICY_GATE (2026-09-02, MINOR). Core acceptance: "TDX 必須先證明事件位
+// 於新竹縣或新竹市，才有資格進 AI；無法證明就是不進 AI。PBS 完全不屬於
+// 本輪施工範圍." Replaces V2.4.4's denylist-only patch with a genuine
+// positive-authority resolver — see src/tdx/hsinchuGeoResolver.js's own
+// header for the full three-tier evidence design (coordinates against the
+// real official 內政部國土測繪中心 boundary polygon [data.gov.tw dataset
+// 7442] > demoted KM heuristic, observability-only > explicit
+// administrative text), and src/tdx/roadManagementPolicyGate.js's own
+// header for the supplement order's deterministic shoulder-open/close and
+// blocked-lane-count gate. V2.4.4's own denylist gate
+// (resolveHsinchuOnlyProductionEligibility) and AI prompt anchor both
+// stay as a second-layer safety net — neither was removed this round.
+// DEPLOYMENT POLICY unchanged from V2.4.4: TDX_ROADEVENT_PRODUCTION_
+// NOTIFY_ENABLED stays "false" (FETCH=true, QUEUE=true) — this round
+// enters its own observation period; re-enabling is a separate future
+// human decision. See test/tdxHsinchuGeoResolver.test.js /
+// test/tdxRoadManagementPolicyGate.test.js for the order's own CASE 1-10
+// acceptance suites (plus the permanent 39.6K/桃園觀音 regression lock)
+// and 07_KNOWN_ISSUES.md for the full investigation + boundary-data
+// provenance record.
+export const APP_VERSION = 'V2.4.5';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

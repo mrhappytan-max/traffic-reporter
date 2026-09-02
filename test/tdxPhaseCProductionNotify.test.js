@@ -87,6 +87,12 @@ function failingAi() {
   return { calls, async run(model, input) { calls.push({ model, input }); throw new Error('AI binding unavailable'); } };
 }
 
+// V2.4.5 — both fixtures now carry a real coordinate confirmed (this
+// round, against the official NLSC 新竹市／新竹縣 boundary — see
+// tdx/hsinchuGeoResolver.js) to sit inside 新竹市／新竹縣, so they still
+// represent what they always meant to (a genuine Hsinchu TDX accident)
+// under the new coordinate-backed service-area gate — see that module's
+// own test suite for the full CASE 1-10 geography acceptance record.
 function freewayAccidentEvent(overrides = {}) {
   return normalizeRoadEvent(
     {
@@ -94,6 +100,15 @@ function freewayAccidentEvent(overrides = {}) {
       EffectiveTime: NOW.toISOString(), LastUpdateTime: NOW.toISOString(),
       Location: { FreeExpressHighway: { Road: '國道一號', Direction: '南向', StartKM: '97K+700', EndKM: '97K+700' } },
       Impact: { BlockedLanes: 1 },
+      // Same coordinate as pbsRawEvent() below (121.0/24.8) — several
+      // tests in this file rely on incidentMemory.js's own proximityMatch
+      // treating a PBS+TDX sighting of "the same incident" as nearby;
+      // since both now carry real coordinates, proximityMatch prefers
+      // haversine distance over the KM difference it used before this
+      // round (see that function's own logic) — matching the coordinate
+      // exactly preserves every existing "same incident" test's intent.
+      // Confirmed (this round) inside 新竹市 by the official NLSC polygon.
+      Positions: [{ PositionLon: 121.0, PositionLat: 24.8 }],
       ...overrides,
     },
     'freeway'
@@ -107,6 +122,7 @@ function highwayAccidentEvent(overrides = {}) {
       EffectiveTime: NOW.toISOString(), LastUpdateTime: NOW.toISOString(),
       Location: { FreeExpressHighway: { Road: '台1線', Direction: '南向', StartKM: '100K+000', EndKM: '100K+000' } },
       Impact: { BlockedLanes: 1 },
+      Positions: [{ PositionLon: 121.0134, PositionLat: 24.8388 }], // 竹北市/新竹縣, official-polygon-confirmed
       ...overrides,
     },
     'highway'

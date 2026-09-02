@@ -16,6 +16,10 @@ function createMockKV() {
   };
 }
 
+// V2.4.5 — carries a real coordinate, confirmed this round inside 新竹市
+// by the official NLSC polygon (see tdx/hsinchuGeoResolver.js), so this
+// fixture still represents what it always meant to (a genuine Hsinchu
+// TDX accident) under the new coordinate-backed service-area gate.
 function accidentEvent(overrides = {}) {
   return {
     source: 'freeway',
@@ -28,6 +32,8 @@ function accidentEvent(overrides = {}) {
     startTime: '2026-08-15T07:30:00+08:00',
     endTime: null,
     updatedAt: '2026-08-15T07:30:00+08:00',
+    longitude: 120.9686,
+    latitude: 24.8066,
     ...overrides,
   };
 }
@@ -249,6 +255,9 @@ test('forecast event crossing into the 60-minute window is pushed once, then not
     // only broadcasts with an impact keyword — see broadcastRules.js).
     description: '8月15日9時至10時施工，車道封閉',
     updatedAt: '2026-08-15T08:00:00+08:00',
+    // V2.4.5 — confirmed this round inside 新竹縣 by the official NLSC polygon.
+    longitude: 121.0134,
+    latitude: 24.8388,
   };
 
   // 08:05: 09:00 start is 55 minutes away -> inside the 60-min window -> push once.
@@ -519,6 +528,9 @@ test('20. construction/closure/control events are unaffected by clustering or co
     startTime: null,
     endTime: null,
     updatedAt: '2026-08-15T10:50:00+08:00',
+    // V2.4.5 — confirmed this round inside 新竹市 by the official NLSC polygon.
+    longitude: 120.9686,
+    latitude: 24.8066,
   };
 
   const first = await runLineBroadcast(env, { allEvents: [constructionEvent], dedupeAvailable: true, now });

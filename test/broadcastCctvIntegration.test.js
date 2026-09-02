@@ -68,6 +68,10 @@ function r2Bucket() {
   };
 }
 
+// V2.4.5 — carries a real coordinate, confirmed this round inside 新竹市
+// by the official NLSC polygon (see tdx/hsinchuGeoResolver.js), so this
+// fixture still represents what it always meant to (a genuine Hsinchu
+// TDX accident) under the new coordinate-backed service-area gate.
 function accidentEvent(overrides = {}) {
   return {
     source: 'freeway',
@@ -82,6 +86,8 @@ function accidentEvent(overrides = {}) {
     startTime: '2026-08-15T07:30:00+08:00',
     endTime: null,
     updatedAt: '2026-08-15T07:30:00+08:00',
+    longitude: 120.9686,
+    latitude: 24.8066,
     ...overrides,
   };
 }

@@ -33,9 +33,31 @@
 // reach this module at all, so natural re-delivery protection falls out
 // of the SAME dedupe.js machinery this project already trusts for TDX,
 // never a second/parallel idempotency scheme.
+//
+// V2.4.5 (V2_4_5_TDX_HSINCHU_GEO_RESOLVER + supplement
+// V2_4_5_TDX_ROAD_MANAGEMENT_POLICY_GATE) — GATE A. This function is the
+// literal "TDX event 在進入 AI Queue 前" point the order names — two
+// deterministic, synchronous, zero-I/O gates now run here, in order,
+// BEFORE Queue.send() is ever called for an event:
+//   1. tdx/hsinchuGeoResolver.js#resolveTdxHsinchuGeography() — must be
+//      CONFIRMED_HSINCHU, or the event is dropped: 0 Queue, 0 KV, 0 AI
+//      inference, 0 Incident Memory (order section 十二's own stated
+//      purpose — don't spend those resources on an out-of-area event).
+//   2. tdx/roadManagementPolicyGate.js#resolveTdxRoadManagementEligibility()
+//      — dynamic shoulder open/close and under-threshold routine
+//      construction are dropped the same way; a genuine major event
+//      (accident/complete-closure/hazard-anomaly) is never caught by this
+//      gate regardless of `type` — see that module's own header.
+// Neither gate is an AI call and neither gate is a second copy of the
+// OTHER (traffic/serviceArea.js's own V2.4.5 TDX branch delegates to the
+// SAME resolveTdxHsinchuGeography() this function calls — one canonical
+// geography authority, reused, not duplicated — see that module's own
+// V2.4.5 comment).
 
 import { buildPbsAiQueueMessage, computeIdempotencyKeyHash } from '../pbs/debugPush.js';
 import { computeFingerprint } from '../traffic/dedupe.js';
+import { resolveTdxHsinchuGeography, HSINCHU_GEO_STATUS } from './hsinchuGeoResolver.js';
+import { resolveTdxRoadManagementEligibility } from './roadManagementPolicyGate.js';
 
 function safeErrorMessage(err) {
   if (err && typeof err.message === 'string') return err.message;
@@ -49,15 +71,59 @@ function safeErrorMessage(err) {
  *   buildSummary already exposes (dedupe.js#classifyEvents output) —
  *   never re-classified here.
  * @param {Date} now
- * @returns {Promise<{attempted:number, enqueued:number, failed:number, reason?:string}>}
+ * @returns {Promise<{attempted:number, enqueued:number, failed:number,
+ *   droppedOutsideHsinchu:number, droppedUnknownHsinchu:number,
+ *   droppedRoadManagement:number, reason?:string}>}
  */
 export async function enqueueTdxRoadEvents(env, { newEvents = [], updatedEvents = [] } = {}, now = new Date()) {
-  const toEnqueue = [
+  const candidates = [
     ...newEvents.map((event) => ({ event, lifecycle: 'NEW' })),
     ...updatedEvents.map((event) => ({ event, lifecycle: 'UPDATED' })),
   ];
+  const attempted = candidates.length;
+  if (attempted === 0) {
+    return { attempted: 0, enqueued: 0, failed: 0, droppedOutsideHsinchu: 0, droppedUnknownHsinchu: 0, droppedRoadManagement: 0 };
+  }
+
+  // GATE A, step 1 — geography. Filters BEFORE the road-management gate
+  // (order section 六's own explicit execution order: "地理不符合 -> DROP
+  // -> 不進道路政策 -> 不進AI").
+  let droppedOutsideHsinchu = 0;
+  let droppedUnknownHsinchu = 0;
+  const geoPassed = [];
+  for (const candidate of candidates) {
+    const geo = resolveTdxHsinchuGeography(candidate.event);
+    if (geo.status === HSINCHU_GEO_STATUS.CONFIRMED_HSINCHU) {
+      geoPassed.push(candidate);
+    } else {
+      if (geo.status === HSINCHU_GEO_STATUS.OUTSIDE_HSINCHU) droppedOutsideHsinchu += 1;
+      else droppedUnknownHsinchu += 1;
+      console.log(
+        `[tdx-queue-ingress][geo-gate] source=${candidate.event.source} eventId=${candidate.event.rawId} ` +
+          `lifecycle=${candidate.lifecycle} status=${geo.status} reason=${geo.reason} — dropped, 0 Queue/0 AI`
+      );
+    }
+  }
+
+  // GATE A, step 2 — road-management policy (supplement order). Only
+  // events that already passed the geography gate reach this check.
+  let droppedRoadManagement = 0;
+  const toEnqueue = [];
+  for (const candidate of geoPassed) {
+    const policy = resolveTdxRoadManagementEligibility(candidate.event);
+    if (policy.eligible) {
+      toEnqueue.push(candidate);
+    } else {
+      droppedRoadManagement += 1;
+      console.log(
+        `[tdx-queue-ingress][road-management-gate] source=${candidate.event.source} eventId=${candidate.event.rawId} ` +
+          `lifecycle=${candidate.lifecycle} reason=${policy.reason} — dropped, 0 Queue/0 AI`
+      );
+    }
+  }
+
   if (toEnqueue.length === 0) {
-    return { attempted: 0, enqueued: 0, failed: 0 };
+    return { attempted, enqueued: 0, failed: 0, droppedOutsideHsinchu, droppedUnknownHsinchu, droppedRoadManagement };
   }
 
   const queue = env && env.PBS_AI_QUEUE;
@@ -66,7 +132,15 @@ export async function enqueueTdxRoadEvents(env, { newEvents = [], updatedEvents 
     // debugPush.js's own HTTP ingress already uses for a missing Queue
     // binding — never silently claim these were enqueued.
     console.error(`[tdx-queue-ingress] PBS_AI_QUEUE binding missing — 0 of ${toEnqueue.length} TDX event(s) enqueued`);
-    return { attempted: toEnqueue.length, enqueued: 0, failed: toEnqueue.length, reason: 'queue-not-configured' };
+    return {
+      attempted,
+      enqueued: 0,
+      failed: toEnqueue.length,
+      droppedOutsideHsinchu,
+      droppedUnknownHsinchu,
+      droppedRoadManagement,
+      reason: 'queue-not-configured',
+    };
   }
 
   let enqueued = 0;
@@ -102,5 +176,5 @@ export async function enqueueTdxRoadEvents(env, { newEvents = [], updatedEvents 
     }
   }
 
-  return { attempted: toEnqueue.length, enqueued, failed };
+  return { attempted, enqueued, failed, droppedOutsideHsinchu, droppedUnknownHsinchu, droppedRoadManagement };
 }

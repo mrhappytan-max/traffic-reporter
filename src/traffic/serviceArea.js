@@ -32,85 +32,80 @@
 //
 // IT REUSES THE EXISTING CANONICAL DEFINITION — IT DOES NOT INVENT ONE
 // --------------------------------------------------------------------
-// No new geographic engine, no new bounding box, no new KM table, and no
-// widening or narrowing of the service area. This dispatches to the
-// resolvers the product already trusts:
+// No new geographic engine invented HERE, no widening or narrowing of the
+// service area. This dispatches to the ONE canonical resolver each source
+// trusts:
 //
 //   PBS events    -> pbs/hsinchuFilter.js's isPbsEventHsinchuRelevant
 //                    (coordinates first, then road+KM, then place names
-//                     only as a corroborated fallback)
-//   TDX events    -> traffic/hsinchuFilter.js's isHsinchuRelevant
-//                    (FREEWAY_RULES / HIGHWAY_RULES + the bounding box in
-//                     traffic/hsinchuConfig.js)
+//                     only as a corroborated fallback) — UNCHANGED by
+//                     V2.4.5; see that round's own explicit "PBS 與 TDX
+//                     的服務區判定必須分開" boundary.
+//   TDX events    -> tdx/hsinchuGeoResolver.js's
+//                    resolveTdxHsinchuGeography() (V2.4.5) — coordinates
+//                    checked against real official 新竹市／新竹縣 polygons
+//                    first, then (observability-only) the KM heuristic,
+//                    then explicit administrative-region text. See that
+//                    module's own header for the full design and
+//                    07_KNOWN_ISSUES.md's V2.4.5 entry for why this
+//                    replaced the OLD traffic/hsinchuFilter.js#
+//                    isHsinchuRelevant() dispatch below.
 //
-// The canonical area in hsinchuConfig.js covers 新竹市 (24.804/120.965)
-// and 竹北 (24.839/121.013), while 八堵 (25.103/121.718) falls outside.
-// HISTORICAL NOTE (superseded by V2.4.4, see this file's own V2.4.4
-// comment below) — this paragraph originally also listed 竹南
-// (24.686/120.876) and 頭份 (24.688/120.908) as intentionally covered;
-// both are Miaoli County towns, and a direct 2026-09-01 human order now
-// states the current, highest-priority canonical service area as EXACTLY
-// 新竹市／新竹縣 — 頭份／竹南 are no longer in scope. HSINCHU_BOUNDING_BOX
-// itself (a secondary, KM-unparseable-only fallback) is UNCHANGED this
-// round and may still geometrically include them; the new
-// resolveHsinchuOnlyProductionEligibility() hard gate is what actually
-// excludes them from a real LINE send now, by name, regardless of which
-// coordinate/KM path admitted the event.
+// HISTORICAL NOTE — PRE-V2.4.5 TDX DESIGN, SUPERSEDED
+// -----------------------------------------------------
+// Before V2.4.5, this TDX branch called traffic/hsinchuFilter.js's own
+// isHsinchuRelevant() (the SAME resolver TDX ingestion already used at
+// fetch time — see tdx/sources.js), backed only by hsinchuConfig.js's own
+// admittedly "best-effort, NOT verified against official 公路局/國道局
+// 里程樁 data" KM ranges and a loose HSINCHU_BOUNDING_BOX. When neither a
+// coordinate nor a KM survived normalization onto the event (which was
+// EVERY TDX event, structurally — tdx/normalize.js never carried
+// latitude/longitude forward before V2.4.5), this branch FAIL-OPENED
+// ("service-area-deferred-to-ingestion") rather than re-confirming
+// anything, "trusting" ingestion's own earlier admission. A real
+// Production leak (台61線 39K+600, actually 桃園市觀音區— not that
+// fail-open branch specifically, but the same wrong-KM-table root cause;
+// see 07_KNOWN_ISSUES.md's V2.4.4 entry) proved the underlying KM table
+// itself is not trustworthy enough to be the sole authority either way.
+// V2.4.5's own direct human order: "TDX 對TDX必須取消這種Production
+// fail-open行為... 沒有證據=UNKNOWN=不通知" (PBS's own behavior explicitly
+// UNCHANGED by that same order). This paragraph is kept as a historical
+// record of why the design changed, same convention as this file's own
+// V2.4.4 HISTORICAL NOTE below.
 //
-// WHY PBS AND TDX ARE TREATED DIFFERENTLY (this is not an oversight)
+// WHY PBS AND TDX WERE (AND STILL ARE) TREATED DIFFERENTLY
 // -------------------------------------------------------------------
 // A PBS event carries its own geography all the way to the broadcast
 // layer — latitude/longitude, normalized road, and the description the
 // ingestion filter itself reads. So this gate can re-run the EXACT
 // function ingestion ran and reach the same verdict. For PBS the gate is
-// therefore FAIL-CLOSED: unplaceable means blocked.
+// therefore FAIL-CLOSED: unplaceable means blocked — UNCHANGED by V2.4.5.
 //
-// A normalized TDX event does not. tdx/normalize.js keeps road/KM but not
-// the raw `Positions`, and ingestion (traffic/hsinchuFilter.js) admits an
-// event on EITHER coordinates OR road+KM. So a TDX event admitted at
-// ingestion on its coordinates arrives here with the deciding evidence
-// already discarded. Re-judging it fail-closed would silently stop
-// broadcasting perfectly valid TDX traffic the moment KM is missing —
-// a bigger bug than the one this module exists to fix, and one that would
-// only appear after TDX is restored, i.e. exactly when nobody is looking
-// for it. (Measured, not assumed: doing so broke 35 existing tests whose
-// TDX fixtures carry a road but no KM.)
-//
-// So for TDX sources the gate blocks only on POSITIVE evidence of being
-// outside — a road+KM that the canonical rules place outside the area.
-// An unplaceable TDX event is left to the layer that still has the
-// evidence: ingestion, which is fail-closed and unchanged.
-//
-// That asymmetry is safe because the two layers compose:
-//   ingestion        — fail-closed admission, sees ALL the evidence
-//   this gate        — catches anything that reaches broadcast while
-//                      demonstrably outside the area (the 八堵 shape)
+// A TDX event, as of V2.4.5, ALSO carries its own coordinate evidence all
+// the way to this gate (tdx/normalize.js now preserves `positions`/
+// `latitude`/`longitude` — see that module's own V2.4.5 comment), closing
+// the exact gap that used to force the fail-open branch above. TDX is
+// therefore now ALSO effectively fail-closed in practice: no reliable
+// coordinate/KM/text evidence either way resolves to
+// resolveTdxHsinchuGeography()'s own UNKNOWN state, which this gate maps
+// to `eligible:false` — the same outcome as a confirmed OUTSIDE_HSINCHU,
+// per that module's own explicit design (UNKNOWN never gets more trust
+// than a confirmed negative).
 //
 // This gate only ever SUBTRACTS. It can never make something eligible
 // that the existing rules rejected.
 
 import { isPbsEventHsinchuRelevant } from '../pbs/hsinchuFilter.js';
-import { isHsinchuRelevant } from './hsinchuFilter.js';
+import { resolveTdxHsinchuGeography, HSINCHU_GEO_STATUS } from '../tdx/hsinchuGeoResolver.js';
 
-/** TDX-side sources whose geography traffic/hsinchuFilter.js knows how to resolve. */
+/** TDX-side sources whose geography tdx/hsinchuGeoResolver.js knows how to resolve. */
 const TDX_SOURCE_KINDS = new Set(['freeway', 'highway']);
-
-/**
- * Does this TDX event carry geography this gate can actually judge?
- * True only when there is a usable coordinate pair or a real KM value —
- * i.e. when "not inside" genuinely means "outside" rather than "unknown".
- */
-function hasPlaceableTdxGeography(event) {
-  if (event.latitude != null && event.longitude != null) return true;
-  const km = [event.startKM, event.endKM];
-  return km.some((v) => v !== undefined && v !== null && v !== '' && Number.isFinite(Number(String(v).replace(/[^0-9.\-]/g, ''))));
-}
 
 /**
  * Is this event inside the product's service area?
  *
- * Pure and synchronous — no I/O, no env, no TDX. Safe to call from the
- * broadcast gate, a dry run, or a test.
+ * Pure and synchronous — no I/O, no env, no TDX network call. Safe to
+ * call from the broadcast gate, a dry run, or a test.
  *
  * @param {object} event - a normalized unified event
  * @returns {{eligible: boolean, reason: string}} `reason` is always set on
@@ -130,22 +125,15 @@ export function resolveServiceAreaEligibility(event) {
   }
 
   if (TDX_SOURCE_KINDS.has(event.source)) {
-    // isHsinchuRelevant takes the raw record purely to read coordinates;
-    // a normalized TDX event has none, so coordinates are supplied only
-    // when the event itself happens to carry them.
-    const raw =
-      event.latitude != null && event.longitude != null
-        ? { Positions: [{ PositionLon: event.longitude, PositionLat: event.latitude }] }
-        : {};
-    if (isHsinchuRelevant(event, raw)) return { eligible: true, reason: 'service-area-tdx' };
-
-    // Not confirmed inside. Only BLOCK when we can positively place it
-    // outside; otherwise defer to ingestion, which still had the evidence
-    // this event no longer carries. See the header for why this is not
-    // fail-closed.
-    return hasPlaceableTdxGeography(event)
-      ? { eligible: false, reason: 'outside-service-area' }
-      : { eligible: true, reason: 'service-area-deferred-to-ingestion' };
+    // V2.4.5 — delegates entirely to the ONE canonical TDX geography
+    // authority (tdx/hsinchuGeoResolver.js), never a second/parallel
+    // judgment. CONFIRMED_HSINCHU -> eligible; OUTSIDE_HSINCHU and
+    // UNKNOWN both -> ineligible (order section 十一/十三: "沒有證據=
+    // UNKNOWN=不通知" — UNKNOWN is never treated as a pass here).
+    const geo = resolveTdxHsinchuGeography(event);
+    return geo.status === HSINCHU_GEO_STATUS.CONFIRMED_HSINCHU
+      ? { eligible: true, reason: `service-area-tdx:${geo.reason}` }
+      : { eligible: false, reason: `service-area-tdx:${geo.reason}` };
   }
 
   // An unrecognised source cannot be placed by either resolver. Fail
@@ -175,12 +163,17 @@ export function isWithinServiceArea(event) {
 // always disclosed these KM ranges as "best-effort... NOT verified
 // against official 公路局/國道局 里程樁 data" — this is the first
 // confirmed case of that disclosed risk actually firing in Production.
-// This round narrows the most exposed ranges (see hsinchuConfig.js's own
-// V2.4.4 comment) as a partial mitigation, but this session still has NO
-// live mapping/official-mileage data access to fully re-verify every
-// range with confidence — so KM/coordinate resolution ALONE is no longer
-// treated as sufficient at the one point that actually gates a real LINE
-// send.
+// CORRECTION (V2.4.5) — this paragraph previously claimed "This round
+// narrows the most exposed ranges" as V2.4.4's own fix; that was never
+// true of what actually shipped and contradicted hsinchuConfig.js's own
+// V2.4.4 comment, which explicitly documents that an early attempt to
+// narrow those ranges was REVERTED (it broke ~30 existing tests) and the
+// numbers were deliberately left unchanged, relying on THIS gate's text
+// denylist instead. V2.4.5 has since replaced KM/coordinate resolution
+// for TDX with a real official-boundary-backed resolver (tdx/
+// hsinchuGeoResolver.js) as the actual positive authority — this gate's
+// own denylist below is now a SECOND, independent safety net on top of
+// that (order section 十六: kept deliberately, not merged or removed).
 //
 // THIS is the "geographic hard gate" order section 七 explicitly asks
 // for and explicitly permits ("不是 semantic judgement，而是產品服務區

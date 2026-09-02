@@ -199,6 +199,23 @@ export function buildCanonicalEvent(tdxEvent, pbsEvent) {
     description: tdxEvent.description || pbsEvent.description,
     startKM: tdxEvent.startKM,
     endKM: tdxEvent.endKM,
+    // V2.4.5 — this canonical event keeps `source: tdxEvent.source` (a
+    // TDX source kind, e.g. 'freeway'/'highway'), so broadcastPipeline.js's
+    // resolveServiceAreaEligibility() routes it through the TDX branch
+    // (resolveTdxHsinchuGeography) exactly like any other TDX event — it
+    // does NOT get PBS's own service-area treatment just because a PBS
+    // sighting corroborated it. That resolver needs the SAME coordinate
+    // evidence tdxEvent itself carries (normalize.js's V2.4.5 Positions
+    // preservation); without this, a merged event would carry only
+    // road/KM (never authoritative on its own) and incorrectly resolve
+    // UNKNOWN -> fail-closed, even though the underlying TDX sighting was
+    // already CONFIRMED_HSINCHU at Gate A (tdxQueueIngress.js). Preserving
+    // it here is not a new eligibility decision — it's carrying forward a
+    // decision already made from real evidence.
+    ...(tdxEvent.positions ? { positions: tdxEvent.positions } : {}),
+    ...(tdxEvent.longitude != null && tdxEvent.latitude != null
+      ? { longitude: tdxEvent.longitude, latitude: tdxEvent.latitude }
+      : {}),
     startTime: tdxEvent.startTime || pbsEvent.startTime || pbsEvent.happenedAt || null,
     endTime: tdxEvent.endTime ?? pbsEvent.endTime ?? null,
     updatedAt: [tdxEvent.updatedAt, pbsEvent.updatedAt].filter(Boolean).sort().at(-1) || null,

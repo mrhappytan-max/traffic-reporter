@@ -365,6 +365,9 @@ test('CASE 11: TDX freeway notify=true event -> 1 real LINE push, Phase C unchan
       EffectiveTime: NOW.toISOString(), LastUpdateTime: NOW.toISOString(),
       Location: { FreeExpressHighway: { Road: '國道一號', Direction: '南向', StartKM: '97K+700', EndKM: '97K+700' } },
       Impact: { BlockedLanes: 1 },
+      // V2.4.5 — service-area gate evidence; official-polygon-confirmed
+      // inside 新竹市 (near 國道一號 97K).
+      Positions: [{ PositionLon: 120.9686, PositionLat: 24.8066 }],
     },
     'freeway'
   );

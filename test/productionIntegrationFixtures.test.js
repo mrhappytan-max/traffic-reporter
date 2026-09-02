@@ -115,6 +115,9 @@ function fixtureARaw() {
       FreeExpressHighway: { Road: '國道一號', Direction: '北向', StartKM: '93K+500', EndKM: '93K+000' },
     },
     Impact: { BlockedLanes: 1 },
+    // V2.4.5 — service-area gate evidence; official-polygon-confirmed
+    // inside 新竹市 (near 國道一號 93K).
+    Positions: [{ PositionLon: 120.9686, PositionLat: 24.8066 }],
   };
 }
 

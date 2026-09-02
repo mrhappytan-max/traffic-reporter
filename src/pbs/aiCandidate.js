@@ -188,6 +188,21 @@ export function buildAiCandidate(normalizedEvent, { lifecycle, generatedAt }) {
     displayKM: typeof normalizedEvent.displayKM === 'number' ? normalizedEvent.displayKM : null,
     eventType: normalizedEvent.type,
     sourceDetail: normalizedEvent.sourceDetail || '',
+    // V2.4.5 (V2_4_5_TDX_ROAD_MANAGEMENT_POLICY_GATE, order section 七/八)
+    // — a TDX event that reaches this point has already passed
+    // roadManagementPolicyGate.js's own deterministic lane-count gate
+    // (tdxQueueIngress.js's Gate A); the AI's only remaining job for a
+    // routine-construction event is "is this specific already-eligible
+    // event worth notifying a driver about", and it must see the same
+    // deterministic blockedLanes fact the gate itself used — never
+    // re-derived from whether the free-text description happens to
+    // mention a lane count. PBS never sets normalizedEvent.blockedLanes,
+    // so this is always null there (same "always present, null when
+    // absent" shape this file's own pre-existing `displayKM` field
+    // already uses) — a purely additive JSON field in the AI prompt, per
+    // buildAiUserPrompt's own V2.4.5 comment, never a behavior change to
+    // PBS's own decision.
+    blockedLanes: typeof normalizedEvent.blockedLanes === 'number' ? normalizedEvent.blockedLanes : null,
     // order section 四 — metadata / signal, never a gate. Reuses the
     // existing, unmodified resolver read-only; see this module's header
     // comment for the exact scoping.

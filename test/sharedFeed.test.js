@@ -67,6 +67,10 @@ function accidentEvent(overrides = {}) {
     updatedAt: '2026-08-19T05:55:00.000Z',
     startKM: '88K+000',
     blockedLanes: 1,
+    // V2.4.5 — service-area gate evidence; official-polygon-confirmed
+    // inside 新竹市 (near 國道一號 88K).
+    longitude: 120.9686,
+    latitude: 24.8066,
     ...overrides,
   };
 }

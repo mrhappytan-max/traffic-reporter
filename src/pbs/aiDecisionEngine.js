@@ -151,6 +151,19 @@ const MEMORY_CONTEXT_PROMPT_SUFFIX = `
 /**
  * Only the fields the model actually needs (order section 五) — never a
  * whole PBS batch, trace, KV state, LINE state, or CCTV metadata.
+ *
+ * V2.4.5 (V2_4_5_TDX_ROAD_MANAGEMENT_POLICY_GATE, order section 七/八) —
+ * `blockedLanes` added as a structured, deterministic fact (same
+ * "always present, null when unknown" shape `displayKM` already uses)
+ * so the model sees the SAME lane-count roadManagementPolicyGate.js's
+ * own gate already used, never a re-derivation from whether `comment`
+ * happens to mention a number. Lane-count counting itself stays
+ * deterministic code (that gate); this is the only remaining AI
+ * question for an already-gate-eligible event — "is this specific event
+ * worth notifying a driver about" — never "does this count as many
+ * lanes". PBS candidates always carry `blockedLanes: null` here (PBS
+ * never sets it) — purely additive, never a behavior change to PBS's
+ * own decision.
  */
 function buildAiUserPrompt(candidate) {
   const summary = {
@@ -161,6 +174,7 @@ function buildAiUserPrompt(candidate) {
     eventType: candidate.eventType || '',
     comment: candidate.comment || '',
     sourceDetail: candidate.sourceDetail || '',
+    blockedLanes: typeof candidate.blockedLanes === 'number' ? candidate.blockedLanes : null,
   };
   return JSON.stringify(summary);
 }

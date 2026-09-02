@@ -452,7 +452,9 @@ test('18. restoring TRAFFIC_SOURCE_MODE=ALL does not disturb either always-on ga
   const placeable = normalizePbsEvent(rawT68({ comment: '西向在8.3公里處發生交通事故' }));
   assert.equal(broadcastDecision(placeable, allEnv).allowed, true);
 
-  const tdxEvent = { source: 'freeway', rawId: 'FRW-1', type: 'accident', road: '國道一號', direction: '南向', startKM: '93K+000', endKM: '93K+800' };
+  // V2.4.5 — service-area gate evidence; official-polygon-confirmed
+  // inside 新竹市 (near 國道一號 93K).
+  const tdxEvent = { source: 'freeway', rawId: 'FRW-1', type: 'accident', road: '國道一號', direction: '南向', startKM: '93K+000', endKM: '93K+800', longitude: 120.9686, latitude: 24.8066 };
   assert.equal(broadcastDecision(tdxEvent, allEnv).allowed, true, 'TDX traffic must survive the restore path');
 });
 

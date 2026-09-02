@@ -39,7 +39,12 @@ function findRule(rules, roadName) {
   return null;
 }
 
-function extractPositions(raw) {
+// V2.4.5 — exported so tdx/normalize.js (this round) and tdx/
+// hsinchuGeoResolver.js (V2.4.5's own resolver) can reuse this SAME
+// field-name-tolerant extraction instead of a third/fourth independent
+// copy. Behavior for every existing caller in this file is byte-for-byte
+// unchanged — this is purely an added `export`.
+export function extractPositions(raw) {
   const points = [];
 
   const pushPoint = (obj) => {

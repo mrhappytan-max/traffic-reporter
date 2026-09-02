@@ -167,7 +167,9 @@ test('buildAiRequest schema/shape is untouched by the prompt rewrite', () => {
   assert.equal(request.model, '@cf/zai-org/glm-4.7-flash');
   assert.equal(request.input.messages.length, 2);
   const userPayload = JSON.parse(request.input.messages[1].content);
-  assert.deepEqual(Object.keys(userPayload).sort(), ['areaNm', 'comment', 'displayKM', 'direction', 'eventType', 'road', 'sourceDetail'].sort());
+  // V2.4.5 — blockedLanes added (order section 七/八): see
+  // aiCandidate.js/aiDecisionEngine.js's own V2.4.5 comments.
+  assert.deepEqual(Object.keys(userPayload).sort(), ['areaNm', 'blockedLanes', 'comment', 'displayKM', 'direction', 'eventType', 'road', 'sourceDetail'].sort());
 });
 
 // =============================================================================

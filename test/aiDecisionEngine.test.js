@@ -73,7 +73,13 @@ test('buildAiRequest: fixed model id, chat-shaped messages, minimal candidate fi
   assert.equal(request.input.messages[0].role, 'system');
   assert.equal(request.input.messages[1].role, 'user');
   const userPayload = JSON.parse(request.input.messages[1].content);
-  assert.deepEqual(Object.keys(userPayload).sort(), ['areaNm', 'comment', 'displayKM', 'direction', 'eventType', 'road', 'sourceDetail'].sort());
+  // V2.4.5 — blockedLanes added (order section 七/八): a deterministic
+  // structured fact, always present (null when the candidate carries
+  // none — same shape as displayKM), so the model never has to re-derive
+  // a lane count from free text. See aiCandidate.js/aiDecisionEngine.js's
+  // own V2.4.5 comments.
+  assert.deepEqual(Object.keys(userPayload).sort(), ['areaNm', 'blockedLanes', 'comment', 'displayKM', 'direction', 'eventType', 'road', 'sourceDetail'].sort());
+  assert.equal(userPayload.blockedLanes, null); // this fixture's candidate never sets it
   // Never a full PBS batch / trace / KV state / LINE state / CCTV metadata:
   assert.ok(!('notify' in userPayload));
   assert.ok(!('locationQuality' in userPayload));

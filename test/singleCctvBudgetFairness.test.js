@@ -41,6 +41,10 @@ const TEST_CODEC = { decodeJpeg, encodeJpeg };
 
 // The real Production regression fixture (section 十一): 3 dynamic-
 // shoulder OPEN events, same tick, all 國道一號 南向.
+// V2.4.5 — carries a real coordinate, confirmed this round inside 新竹市
+// by the official NLSC polygon (tdx/hsinchuGeoResolver.js), so these
+// fixtures still represent what they always meant to (a real Hsinchu
+// event) under the new coordinate-backed service-area gate.
 function shoulderEventAt(rawId, startKM, endKM, overrides = {}) {
   return {
     source: 'freeway',
@@ -55,6 +59,8 @@ function shoulderEventAt(rawId, startKM, endKM, overrides = {}) {
     endTime: null,
     updatedAt: '2026-08-21T13:55:00+08:00',
     dynamicShoulder: { state: 'OPEN', evidence: { field: 'Description', value: 'x' } },
+    longitude: 120.9686,
+    latitude: 24.8066,
     ...overrides,
   };
 }
@@ -63,6 +69,7 @@ const EVENT_A = shoulderEventAt('SHOULDER-A', '84K+500', '86K+200');
 const EVENT_B = shoulderEventAt('SHOULDER-B', '87K+290', '90K+900');
 const EVENT_C = shoulderEventAt('SHOULDER-C', '91K+590', '93K+320');
 
+// V2.4.5 — same coordinate-preservation note as shoulderEventAt() above.
 function accidentEvent(overrides = {}) {
   return {
     source: 'freeway',
@@ -76,6 +83,8 @@ function accidentEvent(overrides = {}) {
     startTime: '2026-08-21T13:55:00+08:00',
     endTime: null,
     updatedAt: '2026-08-21T13:55:00+08:00',
+    longitude: 120.9686,
+    latitude: 24.8066,
     ...overrides,
   };
 }

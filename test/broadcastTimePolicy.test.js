@@ -66,6 +66,12 @@ function nightConstructionEvent(overrides = {}) {
     endKM: '49K+000',
     description: '台61線8月20日21時至翌日6時封閉車道施工',
     updatedAt: '2026-08-20T12:00:00+08:00',
+    // V2.4.5 — service-area evidence: confirmed this round inside 新竹市
+    // by the official NLSC polygon (see tdx/hsinchuGeoResolver.js) — the
+    // hsinchuConfig.js KM range above is no longer authoritative on its
+    // own (order V2_4_5_TDX_HSINCHU_GEO_RESOLVER section 九).
+    longitude: 120.9686,
+    latitude: 24.8066,
     pipelineTraceUpstream: buildUpstreamSnapshot({
       eventType: '施工',
       rawDirection: '北向',
@@ -90,6 +96,9 @@ function dayConstructionEvent(overrides = {}) {
     endKM: '91K+000',
     description: '台1線8月15日9時至17時封閉車道施工',
     updatedAt: '2026-08-15T08:00:00+08:00',
+    // V2.4.5 — confirmed this round inside 新竹市 by the official NLSC polygon.
+    longitude: 120.9686,
+    latitude: 24.8066,
     pipelineTraceUpstream: buildUpstreamSnapshot({
       eventType: '施工',
       rawDirection: '南向',
@@ -263,6 +272,8 @@ test('12: a genuine, structured-time accident is completely unaffected by this r
       EffectiveTime: '2026-08-20T20:13:00+08:00', LastUpdateTime: '2026-08-20T20:13:48+08:00',
       Location: { FreeExpressHighway: { Road: '國道一號', Direction: '北向', StartKM: '93K+500', EndKM: '93K+000' } },
       Impact: { BlockedLanes: 1 },
+      // V2.4.5 — confirmed this round inside 新竹市 by the official NLSC polygon.
+      Positions: [{ PositionLon: 120.9686, PositionLat: 24.8066 }],
     },
     'freeway'
   );

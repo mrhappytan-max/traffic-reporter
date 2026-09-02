@@ -137,6 +137,10 @@ function freeway3Event(overrides = {}) {
     endTime: null,
     updatedAt: '2026-08-21T15:49:00+08:00',
     dynamicShoulder: { state: 'OPEN', evidence: { field: 'Description', value: 'x' } },
+    // V2.4.5 — service-area gate evidence; official-polygon-confirmed
+    // inside 新竹縣 (竹北市 vicinity, near 國道三號 102K).
+    longitude: 121.0134,
+    latitude: 24.8388,
     ...overrides,
   };
 }
@@ -154,6 +158,9 @@ function freeway3AccidentEvent(overrides = {}) {
     startTime: '2026-08-21T13:55:00+08:00',
     endTime: null,
     updatedAt: '2026-08-21T13:55:00+08:00',
+    // V2.4.5 — service-area gate evidence, same rationale as freeway3Event.
+    longitude: 121.0134,
+    latitude: 24.8388,
     ...overrides,
   };
 }
@@ -172,6 +179,10 @@ function freeway1ShoulderEvent(overrides = {}) {
     endTime: null,
     updatedAt: '2026-08-21T16:15:00+08:00',
     dynamicShoulder: { state: 'OPEN', evidence: { field: 'Description', value: 'x' } },
+    // V2.4.5 — service-area gate evidence; official-polygon-confirmed
+    // inside 新竹市 (near 國道一號 87-90K).
+    longitude: 120.9686,
+    latitude: 24.8066,
     ...overrides,
   };
 }
@@ -189,6 +200,9 @@ function freeway1AccidentEvent(overrides = {}) {
     startTime: '2026-08-21T13:55:00+08:00',
     endTime: null,
     updatedAt: '2026-08-21T13:55:00+08:00',
+    // V2.4.5 — service-area gate evidence, same rationale as freeway1ShoulderEvent.
+    longitude: 120.9686,
+    latitude: 24.8066,
     ...overrides,
   };
 }

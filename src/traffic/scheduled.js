@@ -201,16 +201,23 @@ export async function runScheduledTdxSync(env, now = new Date()) {
   // enqueued (it simply never appears in either array). This never calls
   // runLineBroadcast, directly or indirectly — see tdxQueueIngress.js's
   // own module comment.
-  let tdxQueueIngress = { attempted: 0, enqueued: 0, failed: 0 };
+  let tdxQueueIngress = { attempted: 0, enqueued: 0, failed: 0, droppedOutsideHsinchu: 0, droppedUnknownHsinchu: 0, droppedRoadManagement: 0 };
   if (tdxScheduleState === 'scheduled' && isTdxRoadEventQueueIngressEnabled(env)) {
     try {
       tdxQueueIngress = await enqueueTdxRoadEvents(env, { newEvents: summary.newEvents, updatedEvents: summary.updatedEvents }, now);
     } catch (err) {
       console.error(`[cron][tdx-queue-ingress] failed: ${err && err.message}`);
     }
+    // V2.4.5 — droppedOutsideHsinchu/droppedUnknownHsinchu (Gate A, tdx/
+    // hsinchuGeoResolver.js) and droppedRoadManagement (Gate A, tdx/
+    // roadManagementPolicyGate.js) are new, purely-additive observability
+    // fields — see tdxQueueIngress.js's own V2.4.5 comment.
     console.log(
       `[cron][tdx-queue-ingress] attempted=${tdxQueueIngress.attempted} enqueued=${tdxQueueIngress.enqueued} ` +
-        `failed=${tdxQueueIngress.failed}${tdxQueueIngress.reason ? ` reason=${tdxQueueIngress.reason}` : ''}`
+        `failed=${tdxQueueIngress.failed} droppedOutsideHsinchu=${tdxQueueIngress.droppedOutsideHsinchu ?? 0} ` +
+        `droppedUnknownHsinchu=${tdxQueueIngress.droppedUnknownHsinchu ?? 0} ` +
+        `droppedRoadManagement=${tdxQueueIngress.droppedRoadManagement ?? 0}` +
+        `${tdxQueueIngress.reason ? ` reason=${tdxQueueIngress.reason}` : ''}`
     );
   }
 

@@ -82,6 +82,12 @@ function contextAwareMockAi({ onContext } = {}) {
   };
 }
 
+// V2.4.5 — carries a real coordinate, the SAME one pbsRawEvent() below
+// uses (121.0/24.8, confirmed this round inside 新竹市 by the official
+// NLSC polygon — see tdx/hsinchuGeoResolver.js). Matching it exactly
+// preserves every existing "PBS+TDX describe the same incident" proximity
+// match in this file (incidentMemory.js#proximityMatch prefers haversine
+// distance over KM difference once both events carry coordinates).
 function freewayAccidentEvent(overrides = {}) {
   return normalizeRoadEvent(
     {
@@ -89,6 +95,7 @@ function freewayAccidentEvent(overrides = {}) {
       EffectiveTime: NOW.toISOString(), LastUpdateTime: NOW.toISOString(),
       Location: { FreeExpressHighway: { Road: '國道一號', Direction: '南向', StartKM: '97K+700', EndKM: '97K+700' } },
       Impact: { BlockedLanes: 1 },
+      Positions: [{ PositionLon: 121.0, PositionLat: 24.8 }],
       ...overrides,
     },
     'freeway'
@@ -107,6 +114,8 @@ function pbsRawEvent(overrides = {}) {
   };
 }
 
+// V2.4.5 — carries a real coordinate, confirmed this round inside 新竹縣
+// (竹北市) by the official NLSC polygon.
 function highwayAccidentEvent(overrides = {}) {
   return normalizeRoadEvent(
     {
@@ -114,6 +123,7 @@ function highwayAccidentEvent(overrides = {}) {
       EffectiveTime: NOW.toISOString(), LastUpdateTime: NOW.toISOString(),
       Location: { FreeExpressHighway: { Road: '台1線', Direction: '南向', StartKM: '100K+000', EndKM: '100K+000' } },
       Impact: { BlockedLanes: 1 },
+      Positions: [{ PositionLon: 121.0134, PositionLat: 24.8388 }],
       ...overrides,
     },
     'highway'
@@ -561,7 +571,13 @@ test('CASE 16: a TDX event that would have been ineligible under the OLD V1.5 wh
   const ai = { calls: [], async run(model, input) { this.calls.push(input); return { response: JSON.stringify({ notify: true, impact: 'HIGH', reason: '施工造成長時間單向通行', confidence: 0.9 }) }; } };
   const env = await baseEnv({ AI: ai });
   const event = normalizeRoadEvent(
-    { EventID: 'FRW-CONST', EventType: '施工', Description: '北向92K路面刨鋪施工', EffectiveTime: NOW.toISOString(), LastUpdateTime: NOW.toISOString(), Location: { FreeExpressHighway: { Road: '國道一號', Direction: '北向', StartKM: '92K+000', EndKM: '92K+000' } } },
+    {
+      EventID: 'FRW-CONST', EventType: '施工', Description: '北向92K路面刨鋪施工',
+      EffectiveTime: NOW.toISOString(), LastUpdateTime: NOW.toISOString(),
+      Location: { FreeExpressHighway: { Road: '國道一號', Direction: '北向', StartKM: '92K+000', EndKM: '92K+000' } },
+      // V2.4.5 — confirmed this round inside 新竹市 by the official NLSC polygon.
+      Positions: [{ PositionLon: 120.9686, PositionLat: 24.8066 }],
+    },
     'freeway'
   );
   const message = await buildQueueMessage({ source: 'freeway', event });
