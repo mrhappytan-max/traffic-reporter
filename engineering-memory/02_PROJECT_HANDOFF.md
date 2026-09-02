@@ -577,6 +577,24 @@ V2.3.2／V2.3.3 是三個連續 PATCH（LINE 地圖座標直連 fallback、CCTV
 
 ## V2.4.5 — TDX_HSINCHU_GEO_RESOLVER ＋ TDX_ROAD_MANAGEMENT_POLICY_GATE（2026-09-02，加在下方 V2.4.4 之上）
 
+**補正（V2_4_5_OFFICIAL_HSINCHU_BOUNDARY_DATA_HOTFIX_CONTINUE，同日稍晚，
+不升版）**：地理正面權威資料來源已從下方第 1 點所述的 `taiwan-atlas` npm
+第三方鏡像，正式替換為**人類直接自 data.gov.tw dataset 7442 下載並上傳**
+的官方 shapefile（`COUNTY_MOI_1090820`，ISO 19115 metadata 記載
+creation/revision=2020-08-20，CRS=EPSG:3824——此 sandbox 仍無法直連
+data.gov.tw，這次是人類直接下載後上傳，不是找到另一個第三方鏡像）。與舊
+taiwan-atlas 2021.9.20 鏡像做過完整幾何差異比對（10 個參考點、
+新竹/桃園與新竹/苗栗交界密集網格、全區域網格），確認**無實質差異**（僅
+0.04% 為緊貼邊界線的單一網格誤差，屬舊版簡化/量化雜訊，非真正行政區界
+變動）——新竹市/縣的縣市層級邊界自 2014 年直轄市改制後即未變動，此為預期
+結果。舊 taiwan-atlas 鏡像保留於
+`data/hsinchu-boundary/raw/historical-taiwan-atlas-2021/` 作歷史比對用
+途，不再是 Runtime 權威。`scripts/updateHsinchuBoundaryData.mjs` 改為讀
+取 shapefile（透過 `shapefile` npm 套件，新 devDependency，`topojson-client`
+保留但目前無程式碼引用）。Resolver 本身（`resolveTdxHsinchuGeography()`
+三態輸出、證據優先序、既有測試）**完全未重寫**，只換了它讀的資料檔。完整
+比對記錄與完工回報見 `07_KNOWN_ISSUES.md`。
+
 **核心驗收**：「TDX 必須先證明事件位於新竹縣或新竹市，才有資格進 AI；無法
 證明就是不進 AI。PBS 完全不屬於本輪施工範圍。」
 

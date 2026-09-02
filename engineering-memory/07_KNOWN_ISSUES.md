@@ -157,124 +157,45 @@ CCTV是enrichment非eligibility，三道播報閘門完全未動（八堵事故�
 失敗一律退回TEXT-ONLY。通則：資料來源被關閉時，要搜尋所有「以來源為條件」的判斷式——它們
 不會報錯，只會安靜讓整條路徑永遠不成立；後台「空白理由」是bug不是畫面。
 
-## 治理變更紀錄｜DRIVE_SYNC_GOVERNANCE_V2（2026-08-25）
+## 治理變更紀錄｜DRIVE_SYNC_GOVERNANCE_V2（2026-08-25，深度壓縮）
 
-**這一輪沒有改任何產品程式。** 它改的是「版本資料怎麼進到雲端」這件事本身。
+**這輪沒改任何產品程式，改的是「版本資料怎麼進雲端」本身。**
 
-### 舊流程（已退休）
+**舊流程（已退休）**：Claude 直接用 Google Drive Connector 逐檔上傳+byte驗證，非因不正確
+（每輪都確實同步過），而是成本——Agent逐檔上傳佔流量、拖長封版時間。
 
-每次封版時，Claude 直接用 Google Drive Connector 把 changed files
-逐檔上傳、逐檔 byte 驗證、把舊檔移進 `_archive_<sha>`。
+**新流程（唯一正式路徑）**：`Claude 修改 → Git commit → GitHub(main) → GitHub Actions →
+Google Drive Sync`。`CLAUDE_DRIVE_READ=ALLOWED`／`CLAUDE_DRIVE_WRITE=FORBIDDEN`。GitHub =
+CODE + ENGINEERING MEMORY WRITE SOURCE；Google Drive = READABLE MIRROR；永久順序 GitHub
+first, Drive second。Claude 只負責寫進 GitHub，不負責搬檔案到 Drive。
 
-### 為什麼退休
+**三個狀態必須分開講，不得混用**：`GITHUB_ENGINEERING_MEMORY`（是否已commit進GitHub）／
+`GITHUB_TO_DRIVE_SYNC`（GitHub端是否已同步到Drive）／`CLAUDE_DRIVE_UPLOAD`（Claude是否直
+接寫入Drive，生效後永遠NO）。舊的`MEETING_ROOM_CLOUD_SYNC=PASS`已棄用。
 
-**不是因為它不正確**——它確實有效，也確實每次都完成了同步，
-之前每一輪記錄的 `Google Drive Delta Sync = PASS` 都是真的。
+**誠實回報規則（永久）**：自動同步結果未知時，誠實標`GITHUB_SEAL=PASS`／
+`GITHUB_TO_DRIVE_SYNC=PENDING`，不得為了讓 Drive 看起來最新而人工補上傳，也不得把
+PENDING硬報成PASS——這是雙向規則，PASS已可證實後也不得留著過期的PENDING。
 
-退休的理由是**成本**：Agent 後台逐檔上傳佔用大量流量、速度慢、
-佔用執行時間、拉長每一次封版、增加 Agent 成本。
-一份 39KB 的 07_KNOWN_ISSUES.md 要整份重打並上傳一次，
-這件事本身比它承載的資訊量貴得多。
+**本輪實測記錄**：下令時預期`GITHUB_TO_DRIVE_SYNC=PENDING`（自動同步當時被認為未建置），
+實際發現真人已平行建好自動同步機制（`.github/workflows/sync-engineering-memory.yml` +
+`scripts/syncEngineeringMemory.mjs` + `drive-sync-manifest.json`，GitHub OIDC + Google
+Workload Identity Federation短效憑證，missing→create/changed→update/unchanged→skip，不
+自動刪除其他Drive檔案）。推送後唯讀實測確認10份canonical檔案byte size與modifiedTime皆
+相符，最終狀態更正為`GITHUB_TO_DRIVE_SYNC=PASS`（實測非假設）。先前所有Connector完成的
+同步紀錄全部保留不改寫，只補標`LEGACY_CLAUDE_CONNECTOR_SYNC=RETIRED`。
 
-### 新流程（唯一正式路徑）
+**尚未解決的結構問題（刻意不自行決定）**：`engineering-memory/`（GitHub Actions→Drive
+mirror）與`meeting-room-export/`（`export-meeting-room.mjs`產生，無自動消費者）是兩棵並
+存的canonical樹，需真人裁決是否合併或退休其中一棵；本輪只確保兩邊內容一致。另注意
+`00_CURRENT_STATE.md`結尾有一段真人手寫、非export產生器產出的段落，覆寫此檔前務必確認
+該段仍在。
 
-`Claude 修改產品/Engineering Memory → Git commit → GitHub(branch/main) → GitHub → Google Drive Sync → Google Drive 工程記憶`。`CLAUDE_DRIVE_READ=ALLOWED`／`CLAUDE_DRIVE_WRITE=FORBIDDEN`。
-
-- **GitHub** = CODE SOURCE OF TRUTH ＋ ENGINEERING MEMORY WRITE SOURCE
-- **Google Drive** = READABLE ENGINEERING MEMORY MIRROR
-- 永久順序：**GitHub first, Drive second**
-
-Claude 只負責「把該同步的內容正確寫進 GitHub」，不負責搬檔案到 Drive。
-
-### 三個狀態必須分開講
-
-`GITHUB_ENGINEERING_MEMORY`(本次記憶是否已commit進GitHub)／`GITHUB_TO_DRIVE_SYNC`(GitHub端是否已同步到Drive)／`CLAUDE_DRIVE_UPLOAD`(Claude是否直接寫入，生效後永遠NO)——三者必須分開講。舊的 `MEETING_ROOM_CLOUD_SYNC = PASS` 已棄用——它沒說「是誰同步的」。
-
-### 自動同步還沒好時怎麼標
-
-**不得**為了讓 Drive 看起來是最新版而人工補上傳。誠實標 `GITHUB_SEAL=PASS`／`GITHUB_ENGINEERING_MEMORY=SEALED`／`GITHUB_TO_DRIVE_SYNC=PENDING`／`CLAUDE_DRIVE_UPLOAD=NO`，然後停止。**把 PENDING 硬補成 PASS 是假報**——同步延遲只是慢，假報會讓未來所有人相信一個不存在的狀態。
-
-### 本輪就是這條規則的第一次實踐（而且結果和預期不同）
-
-下這道治理令時，GitHub → Drive 自動同步被認為尚未建置，
-所以預期的結果是 `GITHUB_TO_DRIVE_SYNC = PENDING`。
-
-**實際情況不是這樣。** 推送時發現 `origin/main` 已經前進了三個 commit——
-真人在同一時間、平行地把自動同步做好了：
-`.github/workflows/sync-engineering-memory.yml`(push到main且動到engineering-memory/**就觸發)、
-`scripts/syncEngineeringMemory.mjs`(同步腳本)、`scripts/drive-sync-manifest.json`(要同步的10個canonical檔案)、
-`test/syncEngineeringMemory.test.js`(測試)。
-
-認證用 GitHub OIDC + Google Workload Identity Federation 短效憑證，
-不建立長期 Service Account JSON key。同步語意是
-missing → create、changed → update、unchanged → skip，**不自動刪除** Drive 上其他檔案。
-
-處理方式：**merge，不 rebase、不 force push**。兩邊在實質上完全一致——
-真人做的是機制，本輪寫的是規則。
-
-**推送後以唯讀方式實測確認**（不是假設）：
-Drive 上 10 份 canonical 檔案的 modifiedTime 全部是 2026-08-25T07:44，
-且每一份的 byte size 與本機 `engineering-memory/` 逐一相符。
-所以本輪最終狀態是 `GITHUB_SEAL=PASS`／`GITHUB_ENGINEERING_MEMORY=SEALED`／
-`GITHUB_TO_DRIVE_SYNC=PASS`(實測，非假設)／`CLAUDE_DRIVE_UPLOAD=NO`(本輪0次Drive寫入呼叫)。
-
-本節初稿曾寫 `PENDING`（當時屬實），在實測到 PASS 之後才更正。
-**這條規則是雙向的**：不得把 PENDING 報成 PASS，
-也不得在 PASS 已可證實之後still 留著一個過期的 PENDING。
-
-### 一個尚未解決的結構問題（本輪刻意不自行決定）
-
-現在有**兩棵樹**放著同一份 canonical 內容：
-
-| 目錄 | 誰在維護 | 誰在讀 |
-|---|---|---|
-| `engineering-memory/` | 目前靠手動同步 | GitHub Actions → Drive mirror（`drive-sync-manifest.json`） |
-| `meeting-room-export/` | `scripts/export-meeting-room.mjs` 產生 | 無自動消費者 |
-
-本輪把新治理內容同時寫進兩邊，讓它們一致。
-但「靠人記得同步兩棵樹」正是這套治理要消滅的漂移風險。
-
-需要真人裁決：**把 export 產生器直接指向 `engineering-memory/`，或退休其中一棵樹。**
-本輪不自行決定，因為那是結構調整，而且真人此刻正在這個區域施工。
-
-另外注意：`engineering-memory/00_CURRENT_STATE.md` 結尾有一段
-**不是 export 產生器產出的**「Engineering Memory 同步治理」段落（真人手寫）。
-本輪更新該檔時是先從 `origin/main` 讀出那一段、原文保留後才覆寫其餘內容。
-**未來任何人要覆寫這個檔案之前，請先確認那一段還在。**
-
-### 歷史紀錄怎麼處理
-
-先前所有由 Claude Connector 完成的同步紀錄**全部保留、不改寫成失敗**，
-只補上身分標記 `LEGACY_CLAUDE_CONNECTOR_SYNC = RETIRED`。
-它們當時真的完成了；只是那個機制以後不再使用。
-
-### 同時生效的封版節奏規則
-
-`ONE TASK → ONE CLOSEOUT → ONE SEALED STATE`。
-
-任何 Bug／功能／架構更動完成後不得直接開始下一件，必須先走完
-tests → NEW FAILURES = 0 → commit → main → 必要 deploy →
-Engineering Memory → GitHub push → 確認同步狀態 → SEALED →
-Current Task = none → STOP。
-
-禁止「A 還沒封版就開 B，然後回頭又改 A」——那正是
-main／Drive／Agent 記憶三邊版本漂移的成因。
-
-### 本輪一併修掉的一個「會叫下一個 Agent 違規」的地方
-
-`scripts/finalize-release.mjs` 原本在結尾印：
-
-```
-GOOGLE_DRIVE_CONNECTOR_SYNC_REQUIRED
-(The Claude Agent session must now perform the real Connector sync itself...)
-```
-
-那段文字會**主動指示**下一個 Agent 去做現在已被禁止的事。
-已改成印出新的治理狀態與「只寫 GitHub」的指示。
-（只改輸出文字，沒有實作任何自動同步。）
-
-**通則**：改規則的時候，要把「會叫人違反新規則的舊指示」一起找出來改掉；
-留著一句與規則相反的提示，等於沒改。
+**同時生效的封版節奏規則**：`ONE TASK → ONE CLOSEOUT → ONE SEALED STATE`——tests→NEW
+FAILURES=0→commit→main→必要deploy→Engineering Memory→GitHub push→確認同步狀態→
+SEALED→Current Task=none→STOP，禁止A未封版就開B、之後回頭再改A（這正是三邊版本漂移的
+成因）。本輪一併修掉`scripts/finalize-release.mjs`結尾一段會**主動指示**下個Agent違反新
+規則（去做已禁止的Connector同步）的殘留文字，只改輸出訊息，未實作任何自動同步。
 
 ## 修正紀錄｜CCTV 名冊 7 天過期死結（國1 93K 事件）（2026-08-25，壓縮摘要）
 
@@ -299,64 +220,19 @@ deploy當下自動發生、不需對Production KV做任何寫入。以完全空�
 不要誤讀：不要把expirationTtl加回去；不要為取得名冊重開TDX；不要新增未驗證道路；
 不要手動編輯生成檔。
 
-## 治理變更紀錄｜正式版本線校正（PRODUCTION_VERSION_LINEAGE_RECONCILIATION）（2026-08-25）
+## 治理變更紀錄｜正式版本線校正（PRODUCTION_VERSION_LINEAGE_RECONCILIATION）（2026-08-25，深度壓縮）
 
-### 發現了什麼
-
-表層問題是「V1.8.7.7 之後有 7 次 Production 更新沒配版本號」。
-查下去發現底下還有一層更嚴重的：
-
-**唯一權威來源 `src/version.js` 自 2026-08-21 的 V1.8.6.9 之後從未被更新過。**
-
-也就是說，整個 V1.8.7.0～V1.8.7.14 期間，`GET /version` 一直回報 **V1.8.6.9**。
-它對「部署了哪個 commit」講的是實話，對「部署了哪個版本」講的是兩個月前的舊話。
-
-### Root Cause
-
-不是一次疏忽，是**三個地方各自以為自己知道版本**：
-
-| 來源 | 當時的值 | 餵給誰 |
-|---|---|---|
-| `src/version.js` 的 `APP_VERSION` | `V1.8.6.9` | `GET /version`、`/admin/deployment-status` |
-| export 掃 commit message 找最新 `V\d+\.\d+\.\d+` | `V1.8.7.7` | Engineering Memory（SYSTEM_STATE、00、02…） |
-| `ENGINEERING_STATUS.md` 人工標記 | 各自為政 | 人看的文件 |
-
-**從 commit message 掃出來的版本號，是沒有人負責的版本號**——
-有人剛好在標題打了就會動，沒人打就默默停住。這正是它停在 V1.8.7.7 的原因。
-
-### 修正
-
-1. **`src/version.js` 確立為 ONE CANONICAL VERSION SOURCE**，`APP_VERSION` 校正為 `V1.8.7.14`。
-2. **`scripts/export-meeting-room.mjs` 改讀 `src/version.js`**；commit message 掃描降級為
-   drift 警告；讀不到權威來源時**直接拋錯**，而不是退回猜測——退回猜測正是釀成三週漂移的那一步。
-3. **`06_VERSION_HISTORY.md` 補記 V1.8.7.8～V1.8.7.14**（七列，全部對應既有 commit）。
-4. **新增 `test/versionLineage.test.js`（7 項）**，鎖住規則的**形狀**：
-   單一來源、其他一律衍生、掃描結果不得再被賦值回版本欄位。
-   刻意**不鎖當下的數字**——否則只是多出第四個要同步的地方，等於重造同一個問題。
-
-### 補記，不是重新部署
-
-V1.8.7.8～V1.8.7.14 七次變更**在補記之前就已經 merge 進 main 並自動部署**。
-本次只建立「版本號 ↔ 既有 commit ↔ 既有部署」的對照：
-**沒有 rebase、沒有 amend、沒有 force push、沒有改 commit timestamp、沒有偽造部署，
-也沒有把任何未上線的東西寫成已上線。**
-
-### 永久規則（Release Gate）
-
-- 任何**進 Production 且改變 runtime 行為**的變更，必須在**同一個 commit 內** bump
-  `src/version.js` 的 `APP_VERSION`。
-- **任務名稱 ≠ 版本號。** `CCTV_METADATA_RECOVERY`、`PBS_ACCIDENT_CCTV_ENRICHMENT_FIX`、
-  `TDX_QUOTA_PROTECTION` 都是工程標籤，不能取代版本號。
-- **正式產品永遠只有一條連續版本線 `V1.8.7.x`**，不得出現 V1／V2／V57.x／CCTV V1 等平行版本線。
-- 開工前先寫 `CURRENT_VERSION` 與 `TARGET_VERSION`，並確認 TARGET 是 CURRENT 的合法下一版。
-- 純文件／治理／Drive sync 工具／測試整理**不 bump 版本**，但仍須有 commit。
-
-### 不要誤讀
-
-- **不要在 `src/version.js` 以外的地方宣告產品版本號**——其他地方一律 import 或衍生。
-- **不要讓 export 回頭從 commit message 取版本**；`versionLineage` 第 6 項就是在擋這件事。
-- **不要把 `package.json` 的 `0.1.0` 當成產品版本**——那是 npm 套件版本，與版本線無關。
-- **不要把補記當成新部署**。
+**發現**：`src/version.js` 自 V1.8.6.9 後兩個月未更新，`GET /version` 講的是舊話；同時
+export 掃描 commit message 另外冒出一個沒人負責的第二版本號（V1.8.7.7），與人工文件標記
+三方各自為政。**修正**：`src/version.js` 確立為唯一權威來源，校正為 V1.8.7.14；
+export script 改讀它，commit message 掃描降級為 drift 警告、讀不到權威來源時直接拋錯（不
+退回猜測）；`06_VERSION_HISTORY.md` 補記缺漏七列；新增 `test/versionLineage.test.js`
+鎖住規則形狀（單一來源、其他衍生），刻意不鎖當下數字。**補記非重新部署**——七次變更早
+已 merge/部署，本次只建立版本號↔commit↔部署對照，無 rebase/amend/force push/偽造部署。
+**永久規則**：Production runtime 變更須在同一 commit 內 bump `APP_VERSION`；任務名稱≠版
+本號；純文件/治理不 bump 但仍需 commit；不得在 `src/version.js` 外宣告版本號、不得把
+`package.json` 的 `0.1.0` 當產品版本。（版本線格式本身已由下方「三段式版本治理切換」
+取代，此節保留純粹是這次事故的教訓記錄。）
 
 ## 治理變更紀錄｜三段式版本治理切換（THREE_PART_VERSIONING_TRANSITION）（2026-08-25）
 
@@ -472,6 +348,57 @@ PBS 閘門排除仍視為有意義。fixture 實測 QUIET/NORMAL/HIGH writes/day
 ## 補登紀錄｜WINDOWS_PBS_GEOGRAPHIC_FILTER_REPAIR（2026-08-30，人類回報，本 Cloud Session 未獨立驗證）
 
 **狀態：`HUMAN_REPORTED_NOT_INDEPENDENTLY_VERIFIED`。** 人類回報：Windows PBS 本機篩選舊邏輯先套用 `isAccident()` 事故關鍵字語意閘門，才進新竹縣市地理判斷，導致非事故型事件（落石／坍方／封路／施工／積水等）即使位於新竹縣市仍可能在 Windows 端被直接丟棄，從未進入 Cloudflare/AI。回報修正：移除 `isAccident()` 語意閘門，改用 point-in-polygon（data.gov.tw dataset 7442 縣市界線）取代原本的矩形邊界，新竹市/縣**所有**事件類型皆納入候選，語意判斷完全交給 AI；同批資料驗證回報 `BEFORE_KEEP_COUNT=11 → AFTER_KEEP_COUNT=29`（找回 18 筆），`TESTS=124 passed/0 failed`。**本 Cloud Session 的獨立查證**：目前 `main`／本分支的 `pbs-relay/src/localPrototype.js` 仍保留 `isAccident()` 並仍作為候選閘門使用（見該檔第 56/108 行），`pbs-relay/` 完整 git 歷史（含 `feature/pbs-local-edge-filter-prototype` 分支）中**未找到**對應此修正的 commit，故無法核對回報的 point-in-polygon 實作、dataset 7442 引用或 11→29/124 測試數字。與既有 `PBS Windows Local Edge Debug Push Integration`（V1.9.6）記錄採同一誠實原則：**本節只記錄「人類回報了什麼」，不代表本 Session 已驗證程式碼或測試結果為真**——待對應 commit 出現於本 repo（或人類提供可核對的 diff/測試輸出）後，下一輪應改記為已驗證版本，並同步更新 `pbs-relay/` 程式碼本身（本輪禁止修改）。
+
+## 補正紀錄｜V2_4_5_OFFICIAL_HSINCHU_BOUNDARY_DATA_HOTFIX_CONTINUE（2026-09-02 同日稍晚，不升版，壓縮摘要）
+
+**背景**：V2.4.5 原輪用 taiwan-atlas npm 2021.9.20 鏡像作為 TDX 地理正面權威，非直連
+data.gov.tw（此 sandbox 仍全面 EGRESS_BLOCKED，本輪重測仍相同）。人類先前先下 STOP（見
+前一份 `V2_4_5_OFFICIAL_HSINCHU_BOUNDARY_DATA_HOTFIX` 報告），之後**直接自 data.gov.tw
+dataset 7442 下載官方 shapefile 並上傳**至本 session，本輪據此續工。
+
+**誠實揭露**：上傳檔案 `COUNTY_MOI_1090820`（民國109年08月20日）的 ISO 19115 metadata
+本身記載 creation/revision=**2020-08-20**——比原本 2021.9.20 的第三方鏡像**日期更早**，
+與人類「已提供最新版」的敘述表面矛盾，本輪未略過此點直接宣稱完成，而是完整查證後才決定
+採用（理由見下方）。
+
+**驗證過程**：ZIP SHA-256=`0c6fca34a92b92ef3e9a41957e403cb89e814bb64942ca7c7e51c746f913d49d`；
+`.shp/.shx/.dbf/.prj/.CPG`五檔齊全，另附官方 ISO metadata XML；`.prj`=
+`GCS_TWD_1997`/`GRS_1980`，XML 內另明確記載 CRS=`EPSG:3824`（兩者互相印證，非單一來源
+推論）；DBF `COUNTYNAME` 確認 22 縣市齊全，含新竹市(COUNTYID=O/10018)與新竹縣
+(COUNTYID=J/10004)；用 Python `pyshp` 與 Node `shapefile`(mbostock) 兩套獨立套件交叉解
+碼幾何，結果一致——新竹市4,027點/新竹縣15,069點，皆單一 ring，遠高於舊鏡像的246/965點
+精度。
+
+**幾何差異比對**（用 resolver 自己的 ray-casting 演算法，比對舊 taiwan-atlas 與新官方
+shapefile）：10 個參考點（市政府/竹北/湖口/新豐 vs 桃園市政府/桃園觀音/苗栗市/頭份/竹南/
+台北市政府）全部一致；新竹/桃園交界密集網格(~300m)僅1/4,131點不同(0.024%)；新竹/苗栗交
+界僅1/5,751點不同(0.017%)；全區域網格僅19/47,089點不同(0.0403%)，且每個差異點都是緊貼
+既有邊界線的單一網格（舊版簡化量化雜訊，非真正邊界變動）。另用真實苗栗縣 shapefile 頂點
+（非隨手猜座標）驗證交界內外兩側正確判定。**結論：BOUNDARY_CHANGED=NO**——新竹市/縣屬縣
+市層級行政區，自2014年直轄市改制後未再變動，此結果符合預期。
+
+**為何仍採用**：儘管標稱日期較舊，此檔案(1)是人類直接官方下載，非第三方鏡像，溯源鏈更
+強；(2)幾何比對證實無實質差異；(3)精度遠高於舊版（未簡化原始 SHP vs 已量化 TopoJSON）。
+三點合計構成正當採用理由，非單純接受"較新"的表面說法。
+
+**實作**：`scripts/updateHsinchuBoundaryData.mjs` 改讀 shapefile（新 devDependency
+`shapefile`，mbostock 套件，BSD-3-Clause），舊 `topojson-client` 保留但目前無程式碼引
+用。原始檔存至 `data/hsinchu-boundary/raw/nlsc-shp-2020/`，舊 taiwan-atlas 鏡像移至
+`raw/historical-taiwan-atlas-2021/` 作歷史比對用途，非刪除。`hsinchuGeoResolver.js` 本
+身**完全未重寫**，只換其讀取的資料檔；三態輸出/證據優先序/既有政策全部不變。新增 2 項
+邊界測試（真實苗栗縣頂點驗證的交界內外側）。**部署政策不變**：NOTIFY 仍 `"false"`。
+
+**BOUNDARY_AUTHORITY**=內政部國土測繪中心測繪資訊課｜**BOUNDARY_DATASET**=直轄市、縣市
+界線(EPSG:3824)｜**BOUNDARY_DATASET_ID**=7442｜**BOUNDARY_SOURCE_VERSION**=
+COUNTY_MOI_1090820（ISO metadata creation/revision=2020-08-20）｜**BOUNDARY_FETCH_DATE**
+=2026-09-02（人類下載後上傳本 session）｜**BOUNDARY_SOURCE_CRS**=EPSG:3824(TWD97經緯
+度)｜**RUNTIME_BOUNDARY_CRS**=同上，未轉換｜**BOUNDARY_TRANSFORMATION**=無數值轉換
+（TDX座標視為WGS84，公分級差異，沿用既有工程判斷）。
+
+**測試**：`test/tdxHsinchuGeoResolver.test.js`(21項，含2項新邊界測試)全過；CASE1-8全部
+重跑通過（新竹市/竹北/湖口新豐→CONFIRMED；桃園觀音/頭份/竹南→OUTSIDE；台61線39.6K→
+OUTSIDE/Queue0/AI0/LINE0；無證據→UNKNOWN）。全量迴歸 NEW_FAILURES=0（比對V2.4.5原輪同一
+份`git stash -u`精確基準52項）。`APP_VERSION`不變，仍V2.4.5。
 
 ## 修正紀錄｜V2.4.5 — TDX_HSINCHU_GEO_RESOLVER ＋ TDX_ROAD_MANAGEMENT_POLICY_GATE（2026-09-02，壓縮摘要）
 

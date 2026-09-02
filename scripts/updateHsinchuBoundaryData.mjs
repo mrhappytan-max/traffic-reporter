@@ -1,14 +1,27 @@
 #!/usr/bin/env node
-// V2.4.5 — deterministic importer: raw/counties-10t.json -> generated/hsinchuBoundary.js.
+// V2.4.5 — deterministic importer: raw/nlsc-shp-2020/COUNTY_MOI_1090820.shp
+// -> generated/hsinchuBoundary.js.
 //
 // Run via `npm run update:hsinchu-boundary-data`. Reads
-// data/hsinchu-boundary/raw/counties-10t.json (see raw/README.md for the
-// exact input contract and provenance), decodes the TopoJSON, extracts
+// data/hsinchu-boundary/raw/nlsc-shp-2020/COUNTY_MOI_1090820.{shp,dbf} (see
+// raw/README.md for the exact input contract and provenance — a direct
+// official NLSC download, human-supplied into this session because this
+// sandbox cannot reach data.gov.tw itself), decodes the shapefile, extracts
 // ONLY the 新竹市/新竹縣 county-level polygons, validates them, and
 // atomically replaces data/hsinchu-boundary/generated/hsinchuBoundary.js —
 // the ONLY file src/tdx/hsinchuGeoResolver.js actually reads at runtime
 // (bundled with the Worker, zero runtime fetches, zero runtime dependency
-// on topojson-client — this script is the only consumer of that package).
+// on the `shapefile` package — this script is the only consumer of it).
+//
+// V2_4_5_OFFICIAL_HSINCHU_BOUNDARY_DATA_HOTFIX_CONTINUE — this script
+// previously read a TopoJSON mirror (raw/counties-10t.json, taiwan-atlas
+// npm) via topojson-client. That source is preserved, unread, for
+// historical comparison at raw/historical-taiwan-atlas-2021/ (see that
+// directory's own README.md); topojson-client stays a devDependency only
+// so a future round can decode it again if it ever needs to re-run the
+// same geometry-diff-check methodology documented in SOURCE_META.json's
+// geometryDiffCheck block — it is not imported anywhere in this repo
+// right now.
 //
 // Design rules this script must never violate (same discipline as
 // scripts/updateRoadLocationData.mjs):
@@ -17,18 +30,20 @@
 //   - The generated file is only written after BOTH features (新竹市,
 //     新竹縣) decode successfully in memory; the write is atomic (temp
 //     path, then rename).
-//   - Coordinates are copied through exactly as topojson-client decodes
-//     them — no simplification, no rounding, no manual editing.
+//   - Coordinates are copied through exactly as the `shapefile` package
+//     decodes them — no simplification, no rounding, no manual editing.
 
 import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import * as topojson from 'topojson-client';
+import * as shapefile from 'shapefile';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const RAW_PATH = path.join(ROOT, 'data', 'hsinchu-boundary', 'raw', 'counties-10t.json');
+const RAW_DIR = path.join(ROOT, 'data', 'hsinchu-boundary', 'raw', 'nlsc-shp-2020');
+const SHP_PATH = path.join(RAW_DIR, 'COUNTY_MOI_1090820.shp');
+const DBF_PATH = path.join(RAW_DIR, 'COUNTY_MOI_1090820.dbf');
 const SOURCE_META_PATH = path.join(ROOT, 'data', 'hsinchu-boundary', 'raw', 'SOURCE_META.json');
 const GENERATED_PATH = path.join(ROOT, 'data', 'hsinchu-boundary', 'generated', 'hsinchuBoundary.js');
 
@@ -53,9 +68,11 @@ const TARGETS = [
  * this county" — so both shapes are normalized to a flat array of rings
  * (each ring itself an array of [lon,lat] pairs), which is exactly what
  * src/tdx/hsinchuGeoResolver.js's ray-casting check consumes. Validates
- * every ring is closed (first point === last point, standard GeoJSON/
- * TopoJSON convention) and has at least 4 points (a real polygon, not a
- * degenerate line/point).
+ * every ring is closed (first point === last point, standard GeoJSON
+ * convention — the `shapefile` package's own shp->geojson conversion
+ * already closes rings per the shapefile spec, this just re-confirms it
+ * rather than trusting silently) and has at least 4 points (a real
+ * polygon, not a degenerate line/point).
  */
 function normalizeToRings(geometry) {
   if (!geometry) fail('geometry missing');
@@ -95,27 +112,38 @@ function normalizeToRings(geometry) {
   return rings;
 }
 
-function main() {
-  if (!existsSync(RAW_PATH)) {
-    fail(`raw input not found: ${RAW_PATH} — see raw/README.md`);
+async function main() {
+  if (!existsSync(SHP_PATH) || !existsSync(DBF_PATH)) {
+    fail(`raw shapefile input not found at ${RAW_DIR} — see raw/README.md`);
   }
 
-  const rawBytes = readFileSync(RAW_PATH);
-  const rawSha256 = createHash('sha256').update(rawBytes).digest('hex');
-  const topology = JSON.parse(rawBytes.toString('utf8'));
-  if (topology.type !== 'Topology') fail(`raw file is not a TopoJSON Topology (type=${topology.type})`);
-  if (!topology.objects || !topology.objects.counties) fail('raw file has no objects.counties');
+  const shpBytes = readFileSync(SHP_PATH);
+  const shpSha256 = createHash('sha256').update(shpBytes).digest('hex');
 
-  const featureCollection = topojson.feature(topology, topology.objects.counties);
-  if (!featureCollection || !Array.isArray(featureCollection.features)) {
-    fail('topojson.feature() did not produce a FeatureCollection');
+  const source = await shapefile.open(SHP_PATH, DBF_PATH, { encoding: 'utf-8' });
+  const features = [];
+  let result;
+  while (!(result = await source.read()).done) {
+    features.push(result.value);
   }
+  if (features.length === 0) fail('shapefile produced 0 features');
 
   const sourceMeta = JSON.parse(readFileSync(SOURCE_META_PATH, 'utf8'));
 
+  // Cross-check the raw shapefile's own SHA-256 against SOURCE_META.json's
+  // recorded provenance value — catches a stale/mismatched raw file before
+  // it silently gets baked into the generated output.
+  if (sourceMeta.provenance && sourceMeta.provenance.stagedShpSha256 && sourceMeta.provenance.stagedShpSha256 !== shpSha256) {
+    fail(
+      `staged .shp SHA-256 (${shpSha256}) does not match SOURCE_META.json's recorded ` +
+        `provenance.stagedShpSha256 (${sourceMeta.provenance.stagedShpSha256}) — the raw file changed without ` +
+        `updating SOURCE_META.json, or vice versa. Update SOURCE_META.json to match before regenerating.`
+    );
+  }
+
   const counties = {};
   for (const target of TARGETS) {
-    const feature = featureCollection.features.find(
+    const feature = features.find(
       (f) => f.properties && f.properties.COUNTYNAME === target.countyName && f.properties.COUNTYCODE === target.countyCode
     );
     if (!feature) fail(`feature not found: COUNTYNAME=${target.countyName} COUNTYCODE=${target.countyCode}`);
@@ -135,11 +163,14 @@ function main() {
   const fileContent = `// AUTO-GENERATED by scripts/updateHsinchuBoundaryData.mjs — do not hand-edit.
 // Regenerate with: npm run update:hsinchu-boundary-data
 // See data/hsinchu-boundary/raw/README.md and raw/SOURCE_META.json for the
-// full provenance record (official source: 內政部國土測繪中心，
-// 直轄市、縣市界線（TWD97經緯度）, data.gov.tw dataset 7442 — redistributed
-// verbatim via the npm package taiwan-atlas@${sourceMeta.redistribution.npmVersion}).
+// full provenance record (official source: ${sourceMeta.sourceAgency}，
+// ${sourceMeta.sourceName}, data.gov.tw dataset ${sourceMeta.datasetId} —
+// downloaded directly by a human and staged verbatim, per
+// V2_4_5_OFFICIAL_HSINCHU_BOUNDARY_DATA_HOTFIX_CONTINUE; see
+// SOURCE_META.json's own "vintageHonesty" and "geometryDiffCheck" blocks
+// for why this specific file, dated ${sourceMeta.provenance.isoMetadataDates.creation}, was adopted).
 //
-// Coordinates are [longitude, latitude] pairs, TWD97 經緯度 (EPSG:3824) as
+// Coordinates are [longitude, latitude] pairs, ${sourceMeta.sourceCrs} as
 // published by the source — see SOURCE_META.json's own "notes" for this
 // project's documented CRS determination (no transformation applied; TWD97
 // and WGS84 differ by centimeters for Taiwan, far below TDX's own position
@@ -156,10 +187,9 @@ export const HSINCHU_BOUNDARY_METADATA = {
   sourceUrl: ${JSON.stringify(sourceMeta.sourceUrl)},
   datasetId: ${JSON.stringify(sourceMeta.datasetId)},
   sourceCrs: ${JSON.stringify(sourceMeta.sourceCrs)},
-  npmPackage: ${JSON.stringify(sourceMeta.redistribution.npmPackage)},
-  npmVersion: ${JSON.stringify(sourceMeta.redistribution.npmVersion)},
-  npmTarballShasum: ${JSON.stringify(sourceMeta.redistribution.npmTarballShasum)},
-  rawFileSha256: ${JSON.stringify(rawSha256)},
+  shapefileBaseName: ${JSON.stringify(sourceMeta.provenance.shapefileBaseName)},
+  isoMetadataCreationDate: ${JSON.stringify(sourceMeta.provenance.isoMetadataDates.creation)},
+  rawShpSha256: ${JSON.stringify(shpSha256)},
   generatedAt: ${JSON.stringify(generatedAt)},
 };
 
@@ -179,4 +209,7 @@ export const HSINCHU_COUNTY = ${JSON.stringify(counties.HSINCHU_COUNTY, null, 2)
   }
 }
 
-main();
+main().catch((err) => {
+  console.error(`FAILED: ${err.message}`);
+  process.exitCode = 1;
+});

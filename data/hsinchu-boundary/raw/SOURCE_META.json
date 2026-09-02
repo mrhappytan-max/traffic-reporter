@@ -1,30 +1,53 @@
 {
-  "sourceName": "直轄市、縣市界線（TWD97經緯度）",
-  "sourceAgency": "內政部國土測繪中心",
+  "sourceName": "直轄市、縣市界線(EPSG:3824)",
+  "sourceNameAlt": "直轄市、縣市界線（TWD97經緯度）",
+  "sourceAgency": "內政部國土測繪中心測繪資訊課",
+  "publishingAgency": "內政部地政司",
   "sourceUrl": "https://data.gov.tw/dataset/7442",
   "datasetId": "7442",
-  "sourceCrs": "TWD97 經緯度 (EPSG:3824)",
-  "redistribution": {
-    "note": "This Claude Code sandbox cannot reach data.gov.tw or any *.gov.tw host directly (confirmed this round via WebFetch — EGRESS_BLOCKED — and via curl — 403 policy denial from the egress proxy; same networkless constraint every prior round in this project has documented). The npm registry IS reachable from this sandbox (registry.npmjs.org is in the proxy's explicit noProxy allowlist). counties-10t.json below is staged VERBATIM, byte-for-byte, from the npm package that redistributes this exact official NLSC dataset unmodified as TopoJSON.",
-    "npmPackage": "taiwan-atlas",
-    "npmVersion": "2021.9.20",
-    "npmFile": "counties-10t.json",
-    "npmPackageHomepage": "https://github.com/dkaoster/taiwan-atlas",
-    "npmPackageLicense": "MIT",
-    "npmTarballUrl": "https://registry.npmjs.org/taiwan-atlas/-/taiwan-atlas-2021.9.20.tgz",
-    "npmTarballShasum": "cd803da66a1ea713f16a2f340f75011b39d98bc5",
-    "npmTarballIntegrity": "sha512-FZwzY/JiHwHQe0IqOPltHIKOIGWgPUWshtj6IMd+3pHd4tf+klWPy3wAAeCJePyrltT2mNeqBJhVkNlVDr4p/Q==",
-    "npmPackageOwnDescription": "Pre-built TopoJSON from the Ministry of the Interior.",
-    "npmPackageOwnDatasetAttribution": "This package's own README states counties-10t.json 'is derived from the Ministry of the Interior's 直轄市、縣市界線(TWD97經緯度)' — i.e. it names the exact same data.gov.tw dataset 7442 this file is."
+  "sourceCrs": "EPSG:3824 (TWD97 經緯度)",
+  "provenance": {
+    "note": "V2.4.5 official-boundary hotfix (V2_4_5_OFFICIAL_HSINCHU_BOUNDARY_DATA_HOTFIX_CONTINUE): this file was NOT downloaded by this session — this sandbox's egress proxy still blocks data.gov.tw/data.nat.gov.tw/whgis-nlsc.moi.gov.tw/nlsc.gov.tw and every other *.gov.tw host (re-confirmed this round via curl and WebFetch, same result as the V2.4.5 original round). It was downloaded directly from data.gov.tw dataset 7442 by a human and uploaded into this session as a ZIP, per explicit human authorization for this specific hotfix round.",
+    "uploadedZipSha256": "0c6fca34a92b92ef3e9a41957e403cb89e814bb64942ca7c7e51c746f913d49d",
+    "originalZipFilenameHint": "the uploaded archive's own visible name referenced 直轄市_縣市界線_TWD97 — consistent with dataset 7442's official title",
+    "stagedShpSha256": "f534543bc2e5f11bce439d76ab0ed0fde760ca50cf118e0c08fa1ab94ef396f7",
+    "shapefileBaseName": "COUNTY_MOI_1090820",
+    "filenameDateNote": "'1090820' is 民國109年08月20日 = 2020-08-20 in the Gregorian calendar — the NLSC internal shapefile naming convention embeds the compilation/revision date directly in the filename.",
+    "isoMetadataFile": "TW-01-301000100G-000017.xml (ISO 19115/19139 metadata, shipped alongside the shapefile in the same official download)",
+    "isoMetadataDates": {
+      "creation": "2020-08-20",
+      "revision": "2020-08-20",
+      "publication_1": "1900-01-01",
+      "publication_2": "2020-08-20",
+      "publication_3": "2020-08-20",
+      "note": "All four CI_Date entries in the ISO metadata read directly from the XML's own <gco:Date> elements — one publication date (1900-01-01) is a placeholder/unset sentinel value NLSC's own metadata template ships with, not a real date; the operative dates are creation=2020-08-20 and revision=2020-08-20, consistent with the filename."
+    },
+    "isoMetadataAbstract": "我國各直轄市及縣(市)行政區域界線圖資 — 描述各行政區域之空間範圍，提供地理資訊系統展示之參考底圖。",
+    "isoMetadataProjectReference": "109年度行政區域圖編製及界線維護作業 (\"FY109 [2020] Administrative Region Map Compilation and Boundary Maintenance Operations\") — confirms this shapefile is a genuine NLSC boundary-maintenance deliverable, not an ad-hoc or unofficial export.",
+    "isoMetadataCrsField": "EPSG:3824 (stated explicitly and literally inside the XML's own <gco:CharacterString>EPSG:3824</gco:CharacterString> — not inferred from the .prj file alone this round, cross-confirmed by both)."
   },
-  "fetchedAt": "2026-09-02T13:05:01.000Z",
-  "stagedFileSha256": "cd4be67df3c7497d3dd49106b17e6f337aeb2466140e4499287799892c15ac7b",
-  "stagedFileByteSize": 143939,
+  "vintageHonesty": {
+    "note": "IMPORTANT — read before assuming this is strictly newer than the V2.4.5-original taiwan-atlas 2021.9.20 mirror it replaces. This file's own official ISO metadata dates it 2020-08-20, which is CHRONOLOGICALLY EARLIER than taiwan-atlas's 2021.9.20 npm publish date. This was investigated and disclosed, not glossed over — see the V2_4_5_OFFICIAL_HSINCHU_BOUNDARY_DATA_HOTFIX_CONTINUE completion report (07_KNOWN_ISSUES.md) for the full record. This round's own web-search-only check (this sandbox cannot fetch data.gov.tw directly) surfaced that dataset 7442's page-level 'metadata update time' shows 2025-12-16, but that is unrelated to whether the underlying GEOMETRY changed and could not be independently confirmed by downloading the actual current file — a human downloaded THIS 2020-08-20 file directly from the same dataset 7442 at the time of this hotfix, which is presumed to be what is currently offered for download there.",
+    "whyStillAdopted": "Despite the older nominal date, this file was adopted as the new Production authority because: (1) it is a DIRECT official download (human-sourced, ISO-19115-metadata-verified, NLSC project-referenced) rather than a third-party npm mirror of unknown intermediate handling — a strictly stronger provenance chain regardless of the exact survey date; (2) a systematic geometry diff against the outgoing taiwan-atlas 2021.9.20 boundary (see this round's own diff-check evidence in 07_KNOWN_ISSUES.md) found NO material difference — only ~0.04% of a dense reference grid disagreed, and every disagreement was a single grid cell (~300m) directly astride the existing boundary line, consistent with taiwan-atlas's own boundary being a mapshaper-SIMPLIFIED/quantized version of the SAME underlying county-level administrative line, not a genuine geometry revision; (3) Hsinchu City/County's county-level administrative boundary has not changed since Taiwan's 2014 direct-controlled-municipality restructuring, so no substantive difference between any two vintages of this dataset was ever expected at this granularity; (4) this file is HIGHER precision (unsimplified raw SHP: 4,027 points for 新竹市, 15,069 for 新竹縣) than the outgoing quantized TopoJSON (246 / 965 points) — a genuine precision upgrade even though the nominal survey date is earlier."
+  },
+  "geometryDiffCheck": {
+    "method": "Point-in-polygon ray-casting (the SAME algorithm src/tdx/hsinchuGeoResolver.js#isPointInRings uses) evaluated for both the outgoing (taiwan-atlas 2021.9.20) and incoming (this file) Hsinchu City+County polygons, over (a) 10 known reference points spanning Hsinchu + 5 neighboring counties, (b) a dense ~300m grid across the 新竹/桃園 boundary region, (c) a dense ~300m grid across the 新竹/苗栗 boundary region, (d) a dense ~300m grid across the full extended bounding area.",
+    "referencePoints": "10/10 identical between old and new (新竹市政府/竹北市公所/湖口鄉/新豐鄉 all CONFIRMED both ways; 桃園市政府/桃園觀音區/苗栗市公所/頭份市公所/竹南鎮公所/台北市政府 all OUTSIDE both ways).",
+    "taoyuanBorderGrid": "1 / 4,131 points differ (0.024%) — a single boundary-edge cell.",
+    "miaoliBorderGrid": "1 / 5,751 points differ (0.017%) — a single boundary-edge cell.",
+    "fullRegionGrid": "19 / 47,089 points differ (0.0403%) — every disagreement is an isolated boundary-edge cell, none forms a contiguous region of material size.",
+    "conclusion": "BOUNDARY_CHANGED=NO at any scale relevant to this resolver's own accuracy needs. The observed micro-differences are simplification/quantization artifacts of the OUTGOING taiwan-atlas TopoJSON, not a real administrative boundary revision."
+  },
+  "hsinchuFeatures": {
+    "新竹市": { "COUNTYID": "O", "COUNTYCODE": "10018", "COUNTYENG": "Hsinchu City", "shapeType": "Polygon (single ring)", "pointCount": 4027 },
+    "新竹縣": { "COUNTYID": "J", "COUNTYCODE": "10004", "COUNTYENG": "Hsinchu County", "shapeType": "Polygon (single ring)", "pointCount": 15069 }
+  },
+  "totalFeaturesInShapefile": 22,
+  "fetchedAt": "2026-09-02T14:51:00.000Z",
   "notes": [
-    "This is the WHOLE-NATION county/city TopoJSON (all 22 counties/cities), staged verbatim for full traceability and so a future round can re-extract a different county without re-fetching anything.",
-    "scripts/updateHsinchuBoundaryData.mjs is the ONLY reader of this file — it decodes the TopoJSON (via the topojson-client npm package, a devDependency used only by this one-time/on-demand generator script, never bundled into the Cloudflare Worker) and extracts ONLY the 新竹市 (COUNTYID=O, COUNTYCODE=10018) and 新竹縣 (COUNTYID=J, COUNTYCODE=10004) features into data/hsinchu-boundary/generated/hsinchuBoundary.js — the only file src/tdx/hsinchuGeoResolver.js actually reads at runtime.",
-    "Geometry format: quantized, simplified TopoJSON arcs (not projected — plain TWD97 lon/lat degrees once decoded). Per the taiwan-atlas README this is 'derived from the Ministry of the Interior's 村里界圖/縣市界線 (TWD97經緯度)' at a published scale of 1:10,000.",
-    "V2.4.5 CRS determination (documented, not guessed): TDX RoadEvent PositionLon/PositionLat are treated as plain WGS84 decimal degrees — this is this project's OWN existing, already-shipped precedent (see data/road-location/raw/README.md's provincial-road column contract: 'lon_wgs84'/'lat_wgs84', explicitly WGS84, already compared directly against TDX-derived coordinates elsewhere in this codebase with no transformation and no reported discrepancy). TWD97 (this boundary dataset's source CRS) and WGS84 differ by only centimeters for Taiwan — several orders of magnitude smaller than TDX's own reported position accuracy and smaller than any county-boundary edge case this resolver needs to distinguish — so no numerical coordinate transformation is applied. This is a disclosed engineering judgment about a well-established, small, uncontroversial geodetic fact (TWD97 vs. WGS84), NOT a guess about the boundary GEOMETRY itself, which remains the unmodified official NLSC data.",
-    "Verified after extraction (this round, via a one-time script using topojson-client + @turf/boolean-point-in-polygon, not shipped in the repo): 新竹市政府/竹北市/湖口鄉/新豐鄉/關西鎮 town centroids all resolve inside the extracted polygons; 桃園市觀音區/頭份市/竹南鎮/三灣鄉/台北車站 all resolve outside both. See 07_KNOWN_ISSUES.md's V2.4.5 entry for the full verification record."
+    "This is the WHOLE-NATION county/city shapefile (all 22 counties/cities), staged verbatim (SHP/SHX/DBF/PRJ/CPG + the accompanying official ISO metadata XML) under raw/nlsc-shp-2020/ for full traceability.",
+    "scripts/updateHsinchuBoundaryData.mjs is the ONLY reader of this directory — it parses the shapefile (via the `shapefile` npm package, a devDependency used only by this one-time/on-demand generator script, never bundled into the Cloudflare Worker), extracts ONLY the 新竹市 (COUNTYID=O, COUNTYCODE=10018) and 新竹縣 (COUNTYID=J, COUNTYCODE=10004) features into data/hsinchu-boundary/generated/hsinchuBoundary.js — the only file src/tdx/hsinchuGeoResolver.js actually reads at runtime.",
+    "The outgoing taiwan-atlas 2021.9.20 TopoJSON is preserved, NOT deleted, at raw/historical-taiwan-atlas-2021/ — kept as a historical comparison / test fixture per this hotfix order's own section 七, no longer Production authority.",
+    "CRS: EPSG:3824 (TWD97 經緯度), confirmed both from the .prj file (GCS_TWD_1997, GRS_1980 spheroid) and literally from the ISO metadata XML's own CRS field. TDX RoadEvent PositionLon/PositionLat are treated as plain WGS84 decimal degrees — this project's own pre-existing engineering precedent (see data/road-location/raw/README.md); TWD97 and WGS84 differ by only centimeters for Taiwan, several orders of magnitude smaller than TDX's own reported position accuracy, so no numerical coordinate transformation is applied. This is a disclosed engineering judgment about a well-established, small, uncontroversial geodetic fact, not a guess about the boundary GEOMETRY itself."
   ]
 }

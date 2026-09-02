@@ -23,6 +23,7 @@
     "finalize:release": "node scripts/finalize-release.mjs"
   },
   "devDependencies": {
+    "shapefile": "^0.6.6",
     "topojson-client": "^3.1.0",
     "wrangler": "^4.123.0"
   },

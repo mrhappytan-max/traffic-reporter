@@ -48,11 +48,18 @@ TDX API → normalizeRoadEvent()（保留完整座標證據：positions[]／
         → tdx/hsinchuGeoResolver.js#resolveTdxHsinchuGeography()
           （Gate A 第一步——三態 CONFIRMED_HSINCHU／OUTSIDE_HSINCHU／
           UNKNOWN，絕不是 boolean；證據優先序：①座標對照官方行政區界線
-          （內政部國土測繪中心，data.gov.tw dataset 7442，經
-          taiwan-atlas npm 套件鏡像取得——本環境無法直連 data.gov.tw，
-          決策記錄見 07_KNOWN_ISSUES.md）②KM 表僅作觀察用途，絕不再單
-          獨核發 CONFIRMED/OUTSIDE ③明確行政區文字，含「往ＸＸ方向」與
-          事件本身所在地的區分）
+          （內政部國土測繪中心，data.gov.tw dataset 7442——**補正
+          （V2_4_5_OFFICIAL_HSINCHU_BOUNDARY_DATA_HOTFIX_CONTINUE，
+          2026-09-02）**：正式改為人類直接自 data.gov.tw 下載並上傳的官方
+          shapefile（`COUNTY_MOI_1090820`，ISO 19115 metadata 記載
+          creation/revision=2020-08-20，CRS=EPSG:3824），不再是第三方
+          npm 鏡像；原 taiwan-atlas 2021.9.20 鏡像保留為歷史比對用途於
+          `data/hsinchu-boundary/raw/historical-taiwan-atlas-2021/`，
+          兩者幾何差異已比對確認無實質差異（0.04% 邊界像素級誤差，見
+          07_KNOWN_ISSUES.md 完整比對記錄）。本環境仍無法直連
+          data.gov.tw，決策記錄見 07_KNOWN_ISSUES.md）②KM 表僅作觀察用
+          途，絕不再單獨核發 CONFIRMED/OUTSIDE ③明確行政區文字，含
+          「往ＸＸ方向」與事件本身所在地的區分）
         → tdx/roadManagementPolicyGate.js#resolveTdxRoadManagementEligibility()
           （Gate A 第二步，僅在地理閘門通過後才執行——機動路肩開放／關閉
           永不進 AI；一般施工需 blockedLanes>=2 才有資格進 AI，資料不足

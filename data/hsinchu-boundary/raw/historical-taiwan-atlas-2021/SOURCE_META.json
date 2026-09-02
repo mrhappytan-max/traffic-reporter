@@ -1,0 +1,30 @@
+{
+  "sourceName": "直轄市、縣市界線（TWD97經緯度）",
+  "sourceAgency": "內政部國土測繪中心",
+  "sourceUrl": "https://data.gov.tw/dataset/7442",
+  "datasetId": "7442",
+  "sourceCrs": "TWD97 經緯度 (EPSG:3824)",
+  "redistribution": {
+    "note": "This Claude Code sandbox cannot reach data.gov.tw or any *.gov.tw host directly (confirmed this round via WebFetch — EGRESS_BLOCKED — and via curl — 403 policy denial from the egress proxy; same networkless constraint every prior round in this project has documented). The npm registry IS reachable from this sandbox (registry.npmjs.org is in the proxy's explicit noProxy allowlist). counties-10t.json below is staged VERBATIM, byte-for-byte, from the npm package that redistributes this exact official NLSC dataset unmodified as TopoJSON.",
+    "npmPackage": "taiwan-atlas",
+    "npmVersion": "2021.9.20",
+    "npmFile": "counties-10t.json",
+    "npmPackageHomepage": "https://github.com/dkaoster/taiwan-atlas",
+    "npmPackageLicense": "MIT",
+    "npmTarballUrl": "https://registry.npmjs.org/taiwan-atlas/-/taiwan-atlas-2021.9.20.tgz",
+    "npmTarballShasum": "cd803da66a1ea713f16a2f340f75011b39d98bc5",
+    "npmTarballIntegrity": "sha512-FZwzY/JiHwHQe0IqOPltHIKOIGWgPUWshtj6IMd+3pHd4tf+klWPy3wAAeCJePyrltT2mNeqBJhVkNlVDr4p/Q==",
+    "npmPackageOwnDescription": "Pre-built TopoJSON from the Ministry of the Interior.",
+    "npmPackageOwnDatasetAttribution": "This package's own README states counties-10t.json 'is derived from the Ministry of the Interior's 直轄市、縣市界線(TWD97經緯度)' — i.e. it names the exact same data.gov.tw dataset 7442 this file is."
+  },
+  "fetchedAt": "2026-09-02T13:05:01.000Z",
+  "stagedFileSha256": "cd4be67df3c7497d3dd49106b17e6f337aeb2466140e4499287799892c15ac7b",
+  "stagedFileByteSize": 143939,
+  "notes": [
+    "This is the WHOLE-NATION county/city TopoJSON (all 22 counties/cities), staged verbatim for full traceability and so a future round can re-extract a different county without re-fetching anything.",
+    "scripts/updateHsinchuBoundaryData.mjs is the ONLY reader of this file — it decodes the TopoJSON (via the topojson-client npm package, a devDependency used only by this one-time/on-demand generator script, never bundled into the Cloudflare Worker) and extracts ONLY the 新竹市 (COUNTYID=O, COUNTYCODE=10018) and 新竹縣 (COUNTYID=J, COUNTYCODE=10004) features into data/hsinchu-boundary/generated/hsinchuBoundary.js — the only file src/tdx/hsinchuGeoResolver.js actually reads at runtime.",
+    "Geometry format: quantized, simplified TopoJSON arcs (not projected — plain TWD97 lon/lat degrees once decoded). Per the taiwan-atlas README this is 'derived from the Ministry of the Interior's 村里界圖/縣市界線 (TWD97經緯度)' at a published scale of 1:10,000.",
+    "V2.4.5 CRS determination (documented, not guessed): TDX RoadEvent PositionLon/PositionLat are treated as plain WGS84 decimal degrees — this is this project's OWN existing, already-shipped precedent (see data/road-location/raw/README.md's provincial-road column contract: 'lon_wgs84'/'lat_wgs84', explicitly WGS84, already compared directly against TDX-derived coordinates elsewhere in this codebase with no transformation and no reported discrepancy). TWD97 (this boundary dataset's source CRS) and WGS84 differ by only centimeters for Taiwan — several orders of magnitude smaller than TDX's own reported position accuracy and smaller than any county-boundary edge case this resolver needs to distinguish — so no numerical coordinate transformation is applied. This is a disclosed engineering judgment about a well-established, small, uncontroversial geodetic fact (TWD97 vs. WGS84), NOT a guess about the boundary GEOMETRY itself, which remains the unmodified official NLSC data.",
+    "Verified after extraction (this round, via a one-time script using topojson-client + @turf/boolean-point-in-polygon, not shipped in the repo): 新竹市政府/竹北市/湖口鄉/新豐鄉/關西鎮 town centroids all resolve inside the extracted polygons; 桃園市觀音區/頭份市/竹南鎮/三灣鄉/台北車站 all resolve outside both. See 07_KNOWN_ISSUES.md's V2.4.5 entry for the full verification record."
+  ]
+}

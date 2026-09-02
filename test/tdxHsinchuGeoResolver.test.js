@@ -213,6 +213,26 @@ test('CASE 10: text says 新竹市 but the real coordinate is 台北市政府 (1
 });
 
 // =============================================================================
+// CASE 11-12 — V2_4_5_OFFICIAL_HSINCHU_BOUNDARY_DATA_HOTFIX_CONTINUE: real
+// boundary-edge points, verified against the official NLSC shapefile's own
+// vertices (not hand-guessed), confirming point-in-polygon genuinely uses
+// the real official polygon edge on BOTH the 新竹/桃園 and 新竹/苗栗
+// borders — not a loose bounding box or the demoted KM table.
+// =============================================================================
+
+test('CASE 11: 新竹縣/苗栗縣 交界 — a point verified (via a real 苗栗縣 shapefile vertex, nudged 50m inward) to sit just inside 苗栗縣 -> OUTSIDE_HSINCHU', () => {
+  const event = { source: 'freeway', longitude: 120.9070, latitude: 24.7405 };
+  const result = resolveTdxHsinchuGeography(event);
+  assert.equal(result.status, HSINCHU_GEO_STATUS.OUTSIDE_HSINCHU);
+});
+
+test('CASE 12: the SAME longitude, ~170m further north (into 新竹縣) -> CONFIRMED_HSINCHU — proves the boundary line itself, not a loose box, decides it', () => {
+  const event = { source: 'freeway', longitude: 120.9070, latitude: 24.7420 };
+  const result = resolveTdxHsinchuGeography(event);
+  assert.equal(result.status, HSINCHU_GEO_STATUS.CONFIRMED_HSINCHU);
+});
+
+// =============================================================================
 // Structural / defensive checks.
 // =============================================================================
 

@@ -10,19 +10,19 @@
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
 | Current Version | V2.4.5（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | f0b3ad18ada1c841bb495622d567be5c967d1196（V2.4.5 commit 尚未落地前的快照，本表隨本輪 commit 一併更新） |
+| Source main HEAD | e8e4c77fdf16963d8ba1c6eb6bc132946d875b44（V2.4.5 原輪 commit；本補正 commit 尚未落地前的快照，本表隨本輪 commit 一併更新） |
 | Source main HEAD resolved from | origin/main |
 | Source working tree | dirty（本輪 V2.4.5 changeset，與本份快照同一 commit 一起送出） |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
 | Current Phase | Production maintenance｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，且本輪 V2.4.5 已把 TDX 服務區判斷從「未驗證 KM 表 + denylist patch」正式升級為「官方行政區界線 positive-authority resolver + 道路管理政策閘門」。`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED` 維持 false（FETCH/QUEUE 仍 true），繼續 PHASE_D_TDX_NOTIFY_OBSERVATION，待人類確認桃園/苗栗/頭份/竹南=0 candidate、真實新竹事件正常通過、UNKNOWN 正確攔截後再決定重新開啟。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一寫入來源，GitHub Actions 自動鏡像至 Drive |
-| Current Task | none。Latest completed task = V2_4_5_TDX_HSINCHU_GEO_RESOLVER + V2_4_5_TDX_ROAD_MANAGEMENT_POLICY_GATE，status = SEALED（前序歷程見 SYSTEM_STATE.json／06_VERSION_HISTORY.md）。CURRENT_RUNTIME_PHASE=PHASE_D_TDX_NOTIFY_OBSERVATION（不變）：`TDX_ROADEVENT_FETCH_ENABLED`/`QUEUE_INGRESS_ENABLED`="true"，`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`="false"。雲端治理：Claude 對 Drive 唯讀，GitHub 為唯一寫入來源。V2.4.5：新模組 `src/tdx/hsinchuGeoResolver.js`（座標對照官方界線 dataset 7442 為唯一正面權威）＋`src/tdx/roadManagementPolicyGate.js`（機動路肩開放/關閉永不進AI，一般施工需blockedLanes>=2）；V2.4.4 denylist與AI prompt錨點皆保留為第二層safety net；`blockedLanes`新增進AI結構化輸入。觀察中：同 V2.4.4 的三項確認條件，未變 |
+| Current Task | none。Latest completed task = V2_4_5_OFFICIAL_HSINCHU_BOUNDARY_DATA_HOTFIX_CONTINUE，status = SEALED（不升版，仍 V2.4.5；前序歷程見 SYSTEM_STATE.json／06_VERSION_HISTORY.md）。CURRENT_RUNTIME_PHASE=PHASE_D_TDX_NOTIFY_OBSERVATION（不變）：`TDX_ROADEVENT_FETCH_ENABLED`/`QUEUE_INGRESS_ENABLED`="true"，`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`="false"。雲端治理：Claude 對 Drive 唯讀，GitHub 為唯一寫入來源。V2.4.5 原輪：新模組 `src/tdx/hsinchuGeoResolver.js`＋`src/tdx/roadManagementPolicyGate.js`；V2.4.4 denylist與AI prompt錨點皆保留為第二層safety net；`blockedLanes`新增進AI結構化輸入。**本補正輪**：地理正面權威從 taiwan-atlas npm 第三方鏡像改為人類直接自 data.gov.tw dataset 7442 下載的官方 shapefile（`COUNTY_MOI_1090820`，ISO metadata 2020-08-20），與舊鏡像幾何差異比對確認無實質差異（<0.05% 邊界像素級誤差），舊鏡像保留為歷史比對用途。觀察中：同 V2.4.4 的三項確認條件，未變 |
 | Latest Completed Version | V2.4.5 |
 | Known Blocker | 無 blocker。`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED` 目前為 false 是刻意的安全政策，非缺陷——FETCH/QUEUE 仍為 true。第一筆真實 TDX LINE 通知（Notify 重新開啟後）尚待現場證據——REAL_WORLD_CONFIRMATION_PENDING。AI 呼叫已有 45 秒 fail-fast timeout（V2.4.3），CLEARED 會取消舊事件 stale retry。EVENT_ID 11509010029-5 該筆歷史事件確切失敗階段仍無法獨立查證，未臆測。詳見 07_KNOWN_ISSUES.md |
 | Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
 | Next Action | 待辦：觀察真實 Production（FETCH=true／QUEUE=true／NOTIFY=false）確認只剩新竹縣市 candidate、一般施工不再誤判、TDX facts 可完整組成 LINE 預覽後，才由人類＋Claude Browser 決定改回 true——不得自行改回。一個月後依 ineligibleByReason 數據決定是否收緊主動播報政策 |
-| Export Generated At | 2026-09-02T14:19:53.000Z |
+| Export Generated At | 2026-09-02T15:08:33.000Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
 ## V1.9.9 Phase 1 封版（2026-08-28，另一個 session 完成，本 Cloud Session 未參與，port 進本模板僅為維持 template↔engineering-memory 一致）

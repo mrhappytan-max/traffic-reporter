@@ -39,10 +39,10 @@
     "openStructuralQuestion": "TWO trees currently hold the same canonical content: engineering-memory/ (what the mirror syncs) and meeting-room-export/ (what scripts/export-meeting-room.mjs generates). They are kept in step by hand today, which is exactly the drift risk this governance exists to prevent. Needs a human decision: either point the generator at engineering-memory/, or retire one tree. NOT decided unilaterally."
   },
   "git": {
-    "sourceMainHead": "f0b3ad18ada1c841bb495622d567be5c967d1196",
+    "sourceMainHead": "e8e4c77fdf16963d8ba1c6eb6bc132946d875b44",
     "sourceMainHeadResolvedFrom": "origin/main",
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
-    "sourceWorkingTree": "dirty (this round's V2.4.5 changeset, committed together with this snapshot)",
+    "sourceWorkingTree": "dirty (V2_4_5_OFFICIAL_HSINCHU_BOUNDARY_DATA_HOTFIX_CONTINUE changeset, committed together with this snapshot)",
     "selfReferenceNote": "sourceMainHead is the official main commit this snapshot DESCRIBES; exportArtifactCommit is the commit that CONTAINS this artifact and is intentionally never equal to it. Requiring the two to match would create a Git self-reference loop (every export changes the file, which changes the commit, which invalidates the recorded head). sourceMainHead is read from origin/main and is therefore stable across re-runs and across whichever branch the export was generated on.",
     "checkoutNote": "The transient checkout (branch/HEAD/date) this export happened to run from is deliberately NOT recorded here. It changes on every commit and would make every release look like a content change, defeating delta sync; it also says nothing about the snapshot itself. The snapshot is identified by sourceMainHead alone. Local sync evidence in .engineering/ still records the checkout for auditing.",
     "workingTreeNote": "sourceWorkingTree excludes meeting-room-export/, which this generator dirties by definition; it answers 'is the source tree clean', not 'did the export just write files'."
@@ -527,8 +527,8 @@
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-09-02T14:19:53.000Z",
-    "sourceMainHead": "f0b3ad18ada1c841bb495622d567be5c967d1196",
+    "generatedAt": "2026-09-02T15:08:33.000Z",
+    "sourceMainHead": "e8e4c77fdf16963d8ba1c6eb6bc132946d875b44",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
     "historyDir": "_history"
@@ -647,16 +647,26 @@
     "CURRENT_RUNTIME_PHASE": "PHASE_D_TDX_NOTIFY_OBSERVATION",
     "coreAcceptance": "TDX必須先證明事件位於新竹縣或新竹市，才有資格進AI；無法證明就是不進AI。PBS完全不屬於本輪施工範圍。",
     "trigger": "V2.4.4唯讀audit發現TDX服務區判斷全建立在未驗證KM表上，座標缺席時fail-open；真實洩漏台61線39.6K(桃園觀音)。",
-    "fixA_geoResolver": "新src/tdx/hsinchuGeoResolver.js#resolveTdxHsinchuGeography()——三態CONFIRMED_HSINCHU/OUTSIDE_HSINCHU/UNKNOWN。座標對照官方界線(內政部國土測繪中心 dataset 7442，經taiwan-atlas npm鏡像)為唯一正面權威；KM表降為觀察用途；UNKNOWN等同OUTSIDE_HSINCHU。",
+    "fixA_geoResolver": "新src/tdx/hsinchuGeoResolver.js#resolveTdxHsinchuGeography()——三態CONFIRMED_HSINCHU/OUTSIDE_HSINCHU/UNKNOWN。座標對照官方界線(內政部國土測繪中心 dataset 7442)為唯一正面權威；KM表降為觀察用途；UNKNOWN等同OUTSIDE_HSINCHU。",
     "boundaryData": {
-      "BOUNDARY_AUTHORITY": "內政部國土測繪中心",
-      "BOUNDARY_DATASET": "直轄市、縣市界線（TWD97經緯度）",
+      "note": "更新於 V2_4_5_OFFICIAL_HSINCHU_BOUNDARY_DATA_HOTFIX_CONTINUE（2026-09-02同日稍晚，不升版）——原taiwan-atlas npm鏡像已由人類直接下載的官方shapefile取代，見下方boundaryDataHotfix。",
+      "BOUNDARY_AUTHORITY": "內政部國土測繪中心測繪資訊課",
+      "BOUNDARY_DATASET": "直轄市、縣市界線(EPSG:3824)",
       "BOUNDARY_DATASET_ID": "7442",
-      "BOUNDARY_SOURCE_CRS": "TWD97經緯度(EPSG:3824)",
+      "BOUNDARY_SOURCE_CRS": "EPSG:3824 (TWD97經緯度)",
       "BOUNDARY_INCLUDED_AREAS": "新竹市,新竹縣",
-      "BOUNDARY_FETCH_DATE": "2026-09-02T13:05:01Z",
-      "BOUNDARY_SOURCE_VERSION_OR_METADATA_DATE": "taiwan-atlas npm 2021.9.20 (counties-10t.json, MIT license)",
+      "BOUNDARY_FETCH_DATE": "2026-09-02",
+      "BOUNDARY_SOURCE_VERSION_OR_METADATA_DATE": "COUNTY_MOI_1090820, ISO metadata creation/revision=2020-08-20",
       "BOUNDARY_TRANSFORMATION": "無數值轉換（TDX座標視為WGS84，與TWD97對台灣地區僅差公分級，沿用專案既有慣例，非邊界幾何本身的猜測）"
+    },
+    "boundaryDataHotfix": {
+      "task": "V2_4_5_OFFICIAL_HSINCHU_BOUNDARY_DATA_HOTFIX_CONTINUE",
+      "vintageHonesty": "上傳檔案ISO metadata日期(2020-08-20)早於原taiwan-atlas鏡像(2021.9.20)，已誠實揭露；採用理由：直接官方下載(非第三方鏡像)、精度更高(未簡化，4027/15069點 vs 舊246/965點)、幾何比對確認無實質差異。",
+      "geometryDiffCheck": "10參考點全一致；桃園交界1/4131點差異(0.024%)；苗栗交界1/5751點差異(0.017%)；全區域19/47089點差異(0.0403%)，皆為緊貼邊界線單一網格。BOUNDARY_CHANGED=NO。",
+      "historicalSourcePreserved": "data/hsinchu-boundary/raw/historical-taiwan-atlas-2021/（不刪除，作歷史比對用途）",
+      "resolverRewritten": "NO——僅換讀取的資料檔，resolveTdxHsinchuGeography()三態輸出/證據優先序/既有政策全部不變",
+      "testEvidence": "test/tdxHsinchuGeoResolver.test.js 21項全過（含2項新邊界測試）；CASE1-8重跑通過；全量迴歸NEW_FAILURES=0（同一份52項精確基準）",
+      "appVersion": "不變，仍V2.4.5"
     },
     "fixB_roadManagementGate": "新src/tdx/roadManagementPolicyGate.js#resolveTdxRoadManagementEligibility()，跑在地理閘門之後——機動路肩開放/關閉永不進AI；一般施工需blockedLanes>=2，資料不足一律UNKNOWN_BLOCKED_LANES不進AI；escape valve防止真正重大事故被誤判擋下。",
     "aiInputChange": "blockedLanes新增進aiCandidate.js/aiDecisionEngine.js結構化AI輸入，PBS恆為null，純新增欄位。",
