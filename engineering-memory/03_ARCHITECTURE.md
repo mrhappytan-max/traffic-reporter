@@ -4,6 +4,20 @@
 
 本檔案以 `src/` 實際模組結構整理，非憑記憶重寫。模組清單於 export 產生時由腳本重新掃描 `src/` 目錄核對（見本檔末尾「模組清單（自動掃描）」），若與下方敘述不符，以自動掃描結果與程式碼本身為準,並視為文件 Drift。
 
+## V2.4.8 — LINE 路況文字編輯與統一排版（本輪，2026-09-04）
+
+MINOR。PBS_DECISION_POLICY_MODIFIED=NO、TDX_DECISION_POLICY_MODIFIED=NO、GEO_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO、CCTV_LOGIC_MODIFIED=NO。修的是 `pbs/aiDecisionEngine.js`（schema/驗證）＋`traffic/messageFormat.js`（呈現）＋`traffic/aiApprovedPbsBroadcast.js`／`pbs/debugPush.js`（貫穿）＋`pbs/aiObservatoryIndex.js`／`View.js`（查修頁），不是任何決策邏輯本身。
+
+**架構**：既有單次 Workers AI 呼叫（`resolveAiDecision()`）JSON schema 新增 `cleanSummary`——AI 文字編輯產物，明確與 `reason`（決策解釋，仍舊從不顯示給司機，見 `messageFormat.js` 自己的 THREE-LAYER ARCHITECTURE 註解，本輪未變）區分開來。`validateAiDecisionResponse()` 把 cleanSummary 獨立驗證：非字串/空/超過 `CLEAN_SUMMARY_MAX_CHARS=100`（`aiDecisionEngine.js` 匯出常數）一律 `null`，絕不影響既有四欄位（notify/impact/reason/confidence）的驗證結果或整筆決策的 ok/invalid。新增 `cleanSummaryContradictsFacts(cleanSummary, candidate)`——純函式，兩個保守正則（車道數字「封閉N車道」形狀 vs canonical `blockedLanes`；北向/南向/東向/西向/雙向詞彙 vs canonical `direction`），矛盾時 `resolveAiDecision()` 直接把 cleanSummary null 掉，決策本身不受影響。`persistAiDecisionCache`/`readAiDecisionCache`（`aiDecisionCache.js`）未改動——`decision` 物件整包 JSON 序列化，`cleanSummary` 自動一起被快取/讀回。
+
+**呈現層**：`messageFormat.js#formatEventMessage(event, {cleanSummary})` 新增區塊式排版分支（headline / road+KM+車道數 / cleanSummary+`ACTION_CUE_LINES`(重用既有 TYPE_IMPACT_LINES 後半句) / 通報+地圖+更新時間，區塊間 `\n\n` 分隔）；`cleanSummary` 為 falsy 時走完全未改動的舊版單行排版（`.filter(Boolean).join('\n')`）——這是本輪唯一的「新增路徑，舊路徑逐位元組不變」設計，零回歸風險（除來源標示外，見下）。`aiApprovedPbsBroadcast.js#runAiApprovedPbsBroadcast()` 新增 `cleanSummary` 參數，直接轉呼叫 formatter；`debugPush.js#runAiDecisionPath()` 把 `decision.cleanSummary` 傳進去，並把 `cleanSummary`／`finalRenderedMessage`（`firstProduct.text`，即 `completedProduct.text`，從未重算）一起放進回傳物件，讓 `writeObservatoryRecord()` 的 `...outcomeFields` 展開自動吃到。
+
+**來源標示（唯一影響 fallback 路徑本身的變更）**：`messageFormat.js` 新增 `buildReporterLine(event)`，取代 `buildSourceDetailLine()`。`TDX_SOURCE_REPORTER_PREFIX = {freeway:'【TDX】高公局', highway:'【TDX】公路局'}`——純粹依 `event.source` 決定，`tdx/normalize.js` 從未設定 `sourceDetail`，這是 TDX 事件史上第一次出現通報行。PBS 側 `REPORTER_UNIT_ALIAS_PATTERNS`（陣列，最具體 pattern 優先：高速公路局/高公局→高公局；公路局→公路局；熱心聽眾→熱心聽眾；警察/警方→警方）+ `aliasReporterUnit()`（`sourceDetail` 為空或字面等於「警廣」時回傳空字串，避免「【警廣】警廣」的冗餘顯示；不認得的文字走既有 `SOURCE_DETAIL_MAX_CHARS=40` 截斷邏輯顯示原文）。PBS 現在永遠顯示「通報：【警廣】...」（含空單位時的裸前綴），此前空 sourceDetail 時整行省略——這是唯一連動修改既有測試斷言的變更點。
+
+**查修頁**：`aiObservatoryIndex.js#buildAiObservatoryRecord()` 新增 `cleanSummary`/`finalRenderedMessage`（皆預設 `null`，additive）；`aiObservatoryView.js` 新增 `renderAiTextEditSection()`，顯示於 SOURCE 區塊之後、GEO/ROAD_POLICY 區塊之前，PBS/TDX 卡片皆適用。
+
+**測試**：`test/v248AiLineMessageEditorAndUnifiedPresentation.test.js`（18項，CASE 1-14）。全量迴歸1788/1756/32，NEW_FAILURES=0。`APP_VERSION` V2.4.7→V2.4.8。
+
 ## V2.4.7 — TDX 地理資料缺失查修：description 文字 KM 後援（本輪，2026-09-03）
 
 PATCH，PBS_MODIFIED=NO、GEO_RESOLVER_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO、AI_POLICY_MODIFIED=NO。修的是 `tdx/normalize.js`＋`src/traffic/hsinchuFilter.js`，不是 `tdx/hsinchuGeoResolver.js`／`roadManagementPolicyGate.js` 本身的判定邏輯——那兩個模組完全未觸碰。

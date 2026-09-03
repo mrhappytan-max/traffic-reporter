@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "project": "traffic-reporter",
-  "verifiedFromRepoAt": "2026-09-03T00:30:00.000Z",
-  "verifiedFromCommit": "bc8c7aa (V2_4_6_TRACE_PAGE_TDX_AND_DECISION_REASON_SUMMARY; this snapshot precedes the V2.4.7 commit it ships in)",
+  "verifiedFromRepoAt": "2026-09-04T09:30:00.000Z",
+  "verifiedFromCommit": "6e8c96d (V2_4_6_TDX_GEO_INPUT_MISSING_DIAGNOSIS_AND_FIX; this snapshot precedes the V2.4.8 commit it ships in)",
   "note": "Everything in this file is derived from wrangler.jsonc/src/index.js in THIS repo checkout, verifiable by any future reader by re-running the export script. Fields the repo cannot itself verify (real Cloudflare Dashboard state) are explicitly marked unverified, never guessed.",
   "worker": {
     "name": "traffic-reporter",
@@ -243,5 +243,18 @@
     "safetyVerified": "CASE 7/7b in test/v247TdxGeoInputMissingFix.test.js: the recovered KM is read ONLY by hsinchuGeoResolver.js's Tier-2 KM-heuristic tier, which remains permanently OBSERVABILITY-ONLY and can never by itself produce CONFIRMED_HSINCHU. The real trigger event still correctly resolves UNKNOWN (0 Queue, 0 AI, 0 LINE) even after its KM is successfully recovered; only the trace page's own observability improves.",
     "testEvidence": "New test/v247TdxGeoInputMissingFix.test.js (12 tests: CASE 1-7 plus CASE 7b safety verification, plus extractKmTokenFromText unit coverage), all passing. Full regression 1770/1738/32, NEW_FAILURES=0 against a git-stash-u same-commit precise baseline.",
     "appVersion": "V2.4.6 -> V2.4.7 (PATCH)"
+  },
+  "v248AiLineMessageEditorAndUnifiedPresentation": {
+    "task": "V2_4_8_AI_LINE_MESSAGE_EDITOR_AND_UNIFIED_PRESENTATION",
+    "completedAt": "2026-09-04",
+    "scope": "MINOR. PBS_DECISION_POLICY_MODIFIED=NO, TDX_DECISION_POLICY_MODIFIED=NO, GEO_MODIFIED=NO, ROAD_POLICY_MODIFIED=NO, CCTV_LOGIC_MODIFIED=NO -- no wrangler.jsonc var changed this round.",
+    "goal": "PBS and TDX LINE messages had long diverged in layout/tone. This round unifies both into one consistent 'traffic reporter' voice via a new cleanSummary field produced by the SAME single existing Workers AI call (AI_SECOND_CALL_ADDED=NO) -- never a second model invocation.",
+    "designPrinciple": "AI is a text editor, never a fact generator. src/pbs/aiDecisionEngine.js's SYSTEM_PROMPT explicitly forbids cleanSummary from inventing/restating road/direction/km/lane-count/casualty numbers. validateAiDecisionResponse() accepts cleanSummary only when it is a non-empty string <= CLEAN_SUMMARY_MAX_CHARS=100, else null. New pure function cleanSummaryContradictsFacts(cleanSummary, candidate) applies two conservative regex checks (lane-count number, direction word) against the candidate's own real blockedLanes/direction fields; any mismatch discards cleanSummary back to null. This check runs completely independently of the notify/impact/reason/confidence decision -- a cleanSummary failure can NEVER block a real notify:true broadcast (text-polish is never allowed to become a single point of notification failure).",
+    "presentationFormatter": "src/traffic/messageFormat.js#formatEventMessage() gained a cleanSummary parameter. When present and valid, a new block-based unified layout is used; when absent/invalid, the function falls through to the pre-existing deterministic per-line formatter byte-for-byte unchanged (verified by full regression parity) -- this fallback path is the guaranteed-safe default for every event.",
+    "reporterLineChange": "buildReporterLine() (replacing the old buildSourceDetailLine()) now unconditionally shows a source/reporter line: TDX freeway/highway events render '通報：【TDX】高公局' / '通報：【TDX】公路局' -- tdx/normalize.js had never set any sourceDetail field before this round, so TDX events previously showed no reporter line at all. PBS events render '通報：【警廣】' plus the existing reporting-unit alias table, now always shown (with the empty-alias case rendering just the bare prefix) rather than sometimes omitted.",
+    "observatorySync": "src/pbs/aiObservatoryView.js gained renderAiTextEditSection(), a new static server-rendered block (no client-side JS, consistent with the existing Admin CSP default-src 'none') showing raw description -> AI-edited cleanSummary -> final rendered LINE text side by side. buildAiObservatoryRecord() gained cleanSummary/finalRenderedMessage fields, purely additive.",
+    "unchanged": "PBS/TDX decision policy (the four core AI schema fields' judgment criteria), hsinchuGeoResolver.js, roadManagementPolicyGate.js, CCTV pipeline, all four TDX/AI wrangler.jsonc switches (still all \"true\").",
+    "testEvidence": "New test/v248AiLineMessageEditorAndUnifiedPresentation.test.js (18 tests: the order's own CASE 1-14 plus sub-cases 6b/7b/12b/14b), all passing. 6 existing test files updated for the intentional reporter-line/source-labeling behavior change (not regressions): aiDecisionEngine.test.js, messageFormat.test.js, pbsAccidentTraceLocationQuality.test.js, v242InformationFidelityAndPolicy.test.js, dynamicShoulderMessageShort.test.js, pbsLineBroadcast.test.js. Full regression 1788/1756/32, NEW_FAILURES=0 against a git-stash-u same-commit precise baseline (32 pre-existing CCTV/frame-latency timing-dependent failures, unrelated to this round).",
+    "appVersion": "V2.4.7 -> V2.4.8 (MINOR)"
   }
 }

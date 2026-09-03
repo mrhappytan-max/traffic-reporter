@@ -522,29 +522,103 @@ function buildBlockedLanesLine(event) {
   return `⚠️ 封閉${count}車道`;
 }
 
+// V2.4.8 — V2_4_8_AI_LINE_MESSAGE_EDITOR_AND_UNIFIED_PRESENTATION (order
+// section 六/七/八/九/十). "通報：【來源層級】原始通報單位簡稱" — the
+// bracketed prefix names WHICH DATA PIPELINE this record came in through
+// (【TDX】 = direct from the TDX API, 【警廣】 = via the Windows PBS/警廣
+// relay), the suffix names WHO originally reported it (高公局/公路局/
+// 警方/熱心聽眾/...) — order section 九's own explicit "兩者不得混為一談":
+// 【警廣】高公局 means 高公局's own information reached this system via the
+// 警廣 pipeline; 【TDX】高公局 means the same agency's data came directly
+// from the TDX API. Deterministic, code-only mapping — the AI never
+// invents a reporting unit (order section八/十: "禁止 AI 自己發明通報機
+// 關"), and this function is never passed anything from an AI decision at
+// all, only the plain normalized `event`.
+const TDX_SOURCE_REPORTER_PREFIX = { freeway: '【TDX】高公局', highway: '【TDX】公路局' };
+
+// order section 八 — deterministic alias table over PBS's own `sourceDetail`
+// (raw.srcdetail) free text, most-specific pattern first (so, e.g., "高速
+// 公路局北區交控中心" matches the 高公局 alias before the more generic 公路局
+// one could ever apply — "高速公路局" does NOT contain the bare substring
+// "公路局" is false, it DOES contain it, which is exactly why this specific
+// pattern must be checked first). Never a free-text AI judgment — a fixed
+// regex table, same discipline as messageFormat.js's own PBS_CATEGORY_
+// ANOMALY_DETAIL / roadManagementPolicyGate.js's own keyword lists.
+const REPORTER_UNIT_ALIAS_PATTERNS = [
+  [/高速公路局|高公局/, '高公局'],
+  [/公路局/, '公路局'],
+  [/熱心聽眾/, '熱心聽眾'],
+  [/警察|警方/, '警方'],
+];
+
 /**
- * "通報：XXX" — PBS's own `sourceDetail` field (raw.srcdetail, e.g.
- * "熱心聽眾"/"新竹市警察局勤務中心"/"高速公路局交控中心"), shown VERBATIM,
- * never guessed or inferred when absent (order section 九: "只顯示原始
- * 提供的來源。AI 不得猜通報單位。"). Source-agnostic (checks the field,
- * not `event.source`) — safe for any future source that populates it.
+ * order section 十 — a sourceDetail that, after aliasing, is empty OR is
+ * literally just the pipeline name itself ("警廣" — a real PBS raw value
+ * seen in Production that names the relay channel, not a specific
+ * reporting unit) carries no MORE information than the 【警廣】 prefix
+ * already shows, so the suffix is omitted rather than showing the
+ * redundant "【警廣】警廣". Never fabricates a unit when the real data has
+ * none — falls through to the original (truncated) text for anything that
+ * doesn't match a known alias, since that's still real reported data, not
+ * a guess.
  *
- * @returns {string|null}
+ * @returns {string} '' when there is no reliable specific unit to show.
  */
-function buildSourceDetailLine(event) {
-  const detail = (event && event.sourceDetail ? String(event.sourceDetail) : '').trim();
-  if (!detail) return null;
-  const truncated = detail.length > SOURCE_DETAIL_MAX_CHARS ? `${detail.slice(0, SOURCE_DETAIL_MAX_CHARS)}…` : detail;
-  return `通報：${truncated}`;
+function aliasReporterUnit(sourceDetail) {
+  const trimmed = (sourceDetail ? String(sourceDetail) : '').trim();
+  if (!trimmed || trimmed === '警廣') return '';
+  for (const [pattern, alias] of REPORTER_UNIT_ALIAS_PATTERNS) {
+    if (pattern.test(trimmed)) return alias;
+  }
+  return trimmed.length > SOURCE_DETAIL_MAX_CHARS ? `${trimmed.slice(0, SOURCE_DETAIL_MAX_CHARS)}…` : trimmed;
 }
 
 /**
+ * "通報：【TDX】高公局" / "通報：【TDX】公路局" / "通報：【警廣】高公局" /
+ * "通報：【警廣】熱心聽眾" / "通報：【警廣】" — see this section's own header
+ * comment. TDX always gets a reporter line (source alone decides it,
+ * unconditionally); PBS always gets one too (even with no reliable
+ * sourceDetail — order section 十's own explicit "可顯示：通報：【警廣】",
+ * never omit the line entirely the way the pre-V2.4.8 behavor did). Any
+ * other source (cms/bus alerts/...) gets no reporter line, unchanged.
+ *
+ * @returns {string|null}
+ */
+function buildReporterLine(event) {
+  if (!event) return null;
+  if (event.source === 'freeway' || event.source === 'highway') {
+    return `通報：${TDX_SOURCE_REPORTER_PREFIX[event.source]}`;
+  }
+  if (event.source === 'pbs') {
+    return `通報：【警廣】${aliasReporterUnit(event.sourceDetail)}`;
+  }
+  return null;
+}
+
+// V2.4.8 (order section 五) — the action-cue HALF of each type's existing
+// two-line TYPE_IMPACT_LINES/BIDIRECTIONAL_IMPACT_LINES entry (e.g.
+// "事故影響通行\n請提前避開" -> just "請提前避開"), reused verbatim, never a
+// third independently-written wording. Used ONLY when a validated
+// cleanSummary is actually shown — cleanSummary itself now carries the
+// "what happened" declarative half these two-line entries used to open
+// with, so only the action cue survives alongside it. Absent for
+// 'other'/'alert' (whose existing impactLines is a single line with no
+// separate action-cue half — e.g. '請留意路況' already reads as a complete
+// thought a cleanSummary sentence like "…請留意。" already covers).
+const ACTION_CUE_LINES = { accident: '請提前避開', construction: '請注意車道', closure: '請改道行駛', control: '請配合疏導' };
+
+/**
  * @param {object} event - normalized unified event
- * @param {{ forecast?: boolean, minutesUntilStart?: number|null }} [options]
+ * @param {{ forecast?: boolean, minutesUntilStart?: number|null, cleanSummary?: string|null }} [options]
  *   forecast=true renders the "60分鐘路況預報" template for an event that
  *   hasn't started yet but falls inside the 60-minute window.
+ *   `cleanSummary` (V2.4.8, order section 五) — pbs/aiDecisionEngine.js's
+ *   own validated (or null'd) AI text-edit of this event's own
+ *   description; see this file's own V2.4.8 comment block below for the
+ *   presentation this produces when present, and the untouched pre-V2.4.8
+ *   fallback when absent/null.
  */
-export function formatEventMessage(event, { forecast = false, minutesUntilStart = null } = {}) {
+export function formatEventMessage(event, { forecast = false, minutesUntilStart = null, cleanSummary = null } = {}) {
   const { firstLine, secondLine, mapUrl, roadDirection, sectionLabel } = buildRoadLines(event);
   // V1.8.6.5: 📍 地圖 line — see the module comment above for why this is
   // independent of which location-label tier won firstLine.
@@ -611,8 +685,41 @@ export function formatEventMessage(event, { forecast = false, minutesUntilStart 
   // the de-dup check against roadDirection/sectionLabel is accurate.
   const factLine = buildSourceFactLine(event, { roadDirection, sectionLabel });
   const blockedLanesLine = buildBlockedLanesLine(event);
-  const sourceDetailLine = buildSourceDetailLine(event);
+  // V2.4.8 — was buildSourceDetailLine()/sourceDetailLine; see this file's
+  // own buildReporterLine() comment for the full source+unit design.
+  const reporterLine = buildReporterLine(event);
+  const timeLine = updatedHHMM ? `🕒 ${updatedHHMM}更新` : null;
 
+  // V2.4.8 — V2_4_8_AI_LINE_MESSAGE_EDITOR_AND_UNIFIED_PRESENTATION (order
+  // section 五/十八). A validated cleanSummary (already fact-checked by
+  // aiDecisionEngine.js — see that module's own cleanSummaryContradictsFacts)
+  // REPLACES the raw-text factLine and the declarative half of impactLines
+  // with a single clean, unified paragraph — canonical facts (road/
+  // direction/KM/blockedLanes/reporter) are still rendered by THIS file
+  // alone, from the SAME fields the fallback path below reads, never from
+  // cleanSummary itself (order section 三: "最終 LINE formatter 必須從
+  // canonical facts 取得這些值"). Blocks are separated by a blank line
+  // (order section 五's own worked examples) — a NEW visual grouping that
+  // only ever applies on THIS branch; the fallback branch immediately
+  // below is untouched, single-line-per-entry, byte-identical to every
+  // pre-V2.4.8 message.
+  if (cleanSummary) {
+    const actionCue = ACTION_CUE_LINES[event.type];
+    const blocks = [
+      `${emoji} ${label}`,
+      [firstLine, secondLine, blockedLanesLine].filter(Boolean).join('\n'),
+      [cleanSummary, actionCue].filter(Boolean).join('\n'),
+      [reporterLine, mapLine, timeLine].filter(Boolean).join('\n'),
+    ].filter(Boolean);
+    return blocks.join('\n\n');
+  }
+
+  // Pre-V2.4.8 deterministic fallback — unchanged. Reached whenever
+  // cleanSummary is null (order section 十五: missing/invalid/contradicting
+  // canonical facts/no AI decision engine involved at all, e.g. a source
+  // that never goes through pbs/aiDecisionEngine.js) — this is the SAME
+  // formatting every existing test/production message before V2.4.8 already
+  // expects, byte for byte.
   const lines = [
     `${emoji} ${label}`,
     firstLine,
@@ -620,9 +727,9 @@ export function formatEventMessage(event, { forecast = false, minutesUntilStart 
     factLine,
     blockedLanesLine,
     impactLines,
-    sourceDetailLine,
+    reporterLine,
     mapLine,
-    updatedHHMM ? `🕒 ${updatedHHMM}更新` : null,
+    timeLine,
   ].filter(Boolean);
 
   return lines.join('\n');

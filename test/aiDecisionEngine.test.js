@@ -98,7 +98,7 @@ test('buildAiRequest: system prompt never reproduces the retired MAJOR_ACCIDENT_
 test('validateAiDecisionResponse: a clean, valid response passes', () => {
   const result = validateAiDecisionResponse('{"notify": true, "impact": "HIGH", "reason": "雙向封閉，營業車必須改道", "confidence": 0.95}');
   assert.equal(result.ok, true);
-  assert.deepEqual(result.decision, { notify: true, impact: 'HIGH', reason: '雙向封閉，營業車必須改道', confidence: 0.95 });
+  assert.deepEqual(result.decision, { notify: true, impact: 'HIGH', reason: '雙向封閉，營業車必須改道', confidence: 0.95, cleanSummary: null });
 });
 
 test('validateAiDecisionResponse: tolerates surrounding prose around the JSON object', () => {

@@ -69,6 +69,19 @@ export const PBS_AI_MODEL_ID = '@cf/zai-org/glm-4.7-flash';
 const VALID_IMPACT_VALUES = new Set(['HIGH', 'LOW']);
 const REASON_MAX_CHARS = 80;
 
+// V2.4.8 — V2_4_8_AI_LINE_MESSAGE_EDITOR_AND_UNIFIED_PRESENTATION (order
+// section 二/四). `cleanSummary` is a TEXT-EDITING product, not a decision
+// explanation — never confused with `reason` (which stays exactly what it
+// always was: the AI's justification for its notify verdict, still never
+// shown to a driver — see messageFormat.js's own "THREE-LAYER
+// ARCHITECTURE" comment, unchanged this round). Nominal target is ~20-60
+// Chinese characters (order section 四); this cap is deliberately generous
+// slack above that so a normal-length real answer is never rejected, while
+// still catching a genuinely runaway/invalid response — anything over this
+// falls back to the existing deterministic formatter (order section
+// 十五), never truncated and shown half-cut.
+export const CLEAN_SUMMARY_MAX_CHARS = 100;
+
 // order section 三 — kept short and fixed on purpose (avoid burning
 // tokens/neurons and avoid re-introducing the old event-type whitelist
 // vocabulary this whole round exists to retire from the decision path).
@@ -121,8 +134,18 @@ notify=false——「道路管理狀態」不等於「值得營業駕駛立即�
 短時間、影響輕微、很快可通行，且不屬於一、二、四類例外的事件，通常不
 需要主動通知。
 
+另外，無論 notify 判斷結果為何，都請同時完成一項文字編輯工作——產生 cleanSummary：
+把這則事件原始通報文字（comment／description）整理成 1～2 句、約 20～60 個繁體中文字
+的乾淨事件摘要，只描述「發生了什麼事」。你在做的是文字編輯，不是事實生成：
+- 可以：修正錯字、修正標點、刪除重複詞句、刪除行政贅語、重整語序、把落落長的原文濃縮成
+  精簡的中文句子。
+- 絕對禁止：捏造原文沒有提到的事故細節、傷亡、壅塞長度，或自己猜測地點。
+- 絕對禁止：在 cleanSummary 裡重複寫出道路名稱、方向、公里數、封閉車道數字——這些一律由
+  系統直接從既有結構化資料顯示，不需要你重複生成，你只需要描述事件本身的性質（例如「發生
+  兩車追撞」「路肩有故障車輛」「路面散落物」）。
+
 只能輸出一個 JSON 物件，格式如下，不要有任何其他文字：
-{"notify": true 或 false, "impact": "HIGH" 或 "LOW", "reason": "繁體中文短句，不超過80字", "confidence": 0 到 1 之間的數字}`;
+{"notify": true 或 false, "impact": "HIGH" 或 "LOW", "reason": "繁體中文短句，不超過80字", "confidence": 0 到 1 之間的數字, "cleanSummary": "繁體中文事件摘要，約20~60字，禁止提及道路/方向/公里數/封閉車道數字，禁止捏造原文沒有的細節"}`;
 
 // V2.4.0 — appended to SYSTEM_PROMPT ONLY when the caller actually
 // supplies recentIncidentContext (traffic/incidentMemory.js's own
@@ -291,6 +314,20 @@ export function validateAiDecisionResponse(rawText, { expectMemoryFields = false
     confidence: parsed.confidence,
   };
 
+  // V2.4.8 (order section 十五) — `cleanSummary` is validated SEPARATELY
+  // from the four fields above, and its own invalidity NEVER invalidates
+  // the whole response ("文字美容不能成為通知單點故障...不得因 cleanSummary
+  // 出問題，把原本應該發送的重大事故整筆吞掉"). A missing/empty/non-string/
+  // too-long cleanSummary simply resolves to `null` here — the caller
+  // (messageFormat.js) already falls back to its own pre-existing
+  // deterministic formatting whenever `cleanSummary` is null, so this is
+  // the ONE place that decides "clean enough to use" vs "fall back",
+  // never a second/different check downstream.
+  decision.cleanSummary =
+    typeof parsed.cleanSummary === 'string' && parsed.cleanSummary.trim() && parsed.cleanSummary.trim().length <= CLEAN_SUMMARY_MAX_CHARS
+      ? parsed.cleanSummary.trim()
+      : null;
+
   if (expectMemoryFields) {
     if (typeof parsed.sameIncident !== 'boolean') return invalid('sameIncident-not-boolean');
     if (typeof parsed.materialChange !== 'boolean') return invalid('materialChange-not-boolean');
@@ -305,6 +342,55 @@ export function validateAiDecisionResponse(rawText, { expectMemoryFields = false
   }
 
   return { ok: true, decision };
+}
+
+// V2.4.8 (order section 十六) — "AI cleanSummary 不得與 canonical facts
+// 矛盾...最安全原則：road/direction/KM/blockedLanes 盡可能不要讓 AI 重複生
+// 成，讓 formatter 固定顯示，AI 只整理發生什麼事情". The prompt already
+// instructs the model never to restate these (see SYSTEM_PROMPT's own
+// V2.4.8 addition) — this is the code-level safety net for when a model
+// ignores that instruction anyway. Pure, synchronous, no I/O. Deliberately
+// narrow: only checks the two facts a free-text sentence could plausibly
+// state a WRONG number/word for (a lane count, a direction word) — it
+// does not attempt to parse or verify open-ended prose against every
+// possible fact, which would just be a second, unreliable judgment layer.
+// A false negative (a contradiction this check misses) degrades to
+// "cleanSummary shown as-is", the same risk already accepted by trusting
+// the model's own prompt-level instruction; a false positive (flagging a
+// clean summary that didn't actually contradict anything) degrades to
+// "fell back to the deterministic formatter" — never a broadcast
+// correctness problem either way.
+//
+// @param {string|null} cleanSummary
+// @param {{direction?: string, blockedLanes?: number|null}} candidate
+// @returns {boolean} true if cleanSummary is safe to use, false if it
+//   contradicts an already-known canonical fact (caller should treat this
+//   exactly like an invalid/missing cleanSummary — fall back).
+export function cleanSummaryContradictsFacts(cleanSummary, candidate) {
+  if (!cleanSummary || typeof cleanSummary !== 'string') return false; // nothing to contradict
+  const text = cleanSummary;
+
+  // Lane-count contradiction — "封閉N車道"/"N車道封閉"/"N線道封閉" shapes.
+  if (typeof candidate?.blockedLanes === 'number' && Number.isFinite(candidate.blockedLanes)) {
+    const laneMatch = text.match(/封閉\s*(\d+)\s*(?:車|線)道|(\d+)\s*(?:車|線)道(?:封閉|受阻)/);
+    if (laneMatch) {
+      const stated = Number(laneMatch[1] ?? laneMatch[2]);
+      if (Number.isFinite(stated) && stated !== candidate.blockedLanes) return true;
+    }
+  }
+
+  // Direction contradiction — any of the four cardinal/bidirectional
+  // words appearing in the summary that is NOT the candidate's own
+  // direction is treated as a contradiction (a genuine mention of the
+  // correct direction is harmless and not flagged).
+  const DIRECTION_WORDS = ['北向', '南向', '東向', '西向', '雙向'];
+  if (candidate?.direction) {
+    for (const word of DIRECTION_WORDS) {
+      if (word !== candidate.direction && text.includes(word)) return true;
+    }
+  }
+
+  return false;
 }
 
 // V2.4.3 — V2_4_3_AI_TIMEOUT_AND_STALE_RETRY_RELIABILITY_FIX (order
@@ -461,6 +547,17 @@ export async function resolveAiDecision(env, candidate, { eventId, fingerprint }
   const validation = validateAiDecisionResponse(aiResult.rawText, { expectMemoryFields });
   if (!validation.ok) {
     return { source: 'ai-call', ok: false, reason: validation.reason, detail: validation.detail, durationMs: Date.now() - startedAt, usage: aiResult.usage };
+  }
+
+  // V2.4.8 (order section 十六) — checked here, with `candidate` (the
+  // structured facts) in scope, which validateAiDecisionResponse() itself
+  // never has. A contradicting cleanSummary is nulled out — same "fall
+  // back, never invalidate the whole decision" treatment as any other
+  // cleanSummary invalidity (order section 十五) — the notify/impact/
+  // reason/confidence verdict this AI call already reached is completely
+  // unaffected either way.
+  if (cleanSummaryContradictsFacts(validation.decision.cleanSummary, candidate)) {
+    validation.decision.cleanSummary = null;
   }
 
   // Persist AFTER validation — an invalid response is never cached (a

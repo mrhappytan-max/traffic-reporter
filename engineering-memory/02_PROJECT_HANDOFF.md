@@ -575,6 +575,26 @@ CLOUDFLARE_QUEUE`。V2.2.0 把查修頁升級為四層事件生命週期檢視�
 V2.3.2／V2.3.3 是三個連續 PATCH（LINE 地圖座標直連 fallback、CCTV
 診斷工具修復、CCTV R2 讀回驗證），皆未改架構本身。
 
+## V2.4.8 — LINE 路況文字編輯與統一排版（2026-09-04，加在下方 V2.4.7 之上）
+
+**任務**：`V2_4_8_AI_LINE_MESSAGE_EDITOR_AND_UNIFIED_PRESENTATION`，MINOR。核心目標：PBS 警廣與 TDX 高公局／公路局不論原始本文格式如何，最終送到 LINE 的訊息都統一整理成「短、準、乾淨、容易掃讀、來源清楚」的同一個「路況播報員」聲音。
+
+**AI 只是文字編輯，不是事實產生器**：既有 `pbs/aiDecisionEngine.js` 單次 Workers AI 呼叫 SYSTEM_PROMPT 新增 cleanSummary 編輯指示（可修錯字/標點/贅語/濃縮長文，禁止提及道路/方向/公里數/封閉車道數字，禁止捏造原文沒有的細節），JSON schema 同步新增 `cleanSummary` 欄位——沒有新增第二次 AI 呼叫。`validateAiDecisionResponse()` 把 cleanSummary **獨立驗證**（非字串/空/超過 `CLEAN_SUMMARY_MAX_CHARS=100` 一律變成 `null`，絕不讓既有的 notify/impact/reason/confidence 四欄位驗證因此失敗——這是施工令§十五「文字美容不能成為通知單點故障」的直接落實）。新增 `cleanSummaryContradictsFacts(cleanSummary, candidate)`：用兩個保守的正則偵測 cleanSummary 文字裡是否寫出與 canonical `blockedLanes`（「封閉N車道」形狀，N≠canonical值）或 `direction`（出現北向/南向/東向/西向/雙向裡任一個「不是」canonical 值的詞）矛盾的內容，矛盾時在 `resolveAiDecision()` 內直接把 cleanSummary null 掉（notify 判斷本身完全不受影響，這只是「不採用這段文字」，不是拒絕整筆決策）。
+
+**canonical facts 的唯一權威永遠是 formatter，不是 AI**：`road`/`direction`/`startKM`/`endKM`/`displayKM`/`latitude`/`longitude`/`blockedLanes`/`eventType`/`description`/`updatedAt` 這些欄位，`messageFormat.js` 一律直接從 `event` 物件讀取顯示——cleanSummary 從頭到尾都不會、也不能提供這些值。
+
+**統一版型**：`formatEventMessage()` 新增第二種呈現路徑——呼叫端傳入非空、已驗證的 `cleanSummary` 時，改用區塊式排版（headline / road+KM+車道數 / cleanSummary+行動提示語（`ACTION_CUE_LINES`，重用既有 TYPE_IMPACT_LINES 的後半句，非新造文案）/ 通報+地圖+更新時間，區塊間空行分隔，照施工令§五範例）；`cleanSummary` 缺失時（涵蓋這輪之前所有既有呼叫點）走完全未改動的舊版單行排版——這正是全量迴歸 NEW_FAILURES=0 的原因（除了下面「來源標示」是本輪唯一同時影響 fallback 路徑的變更）。
+
+**來源標示（本輪唯一同時影響新舊兩種排版路徑的變更）**：新增 `buildReporterLine()`，取代舊的 `buildSourceDetailLine()`（原本只有 PBS 才顯示、`sourceDetail` 為空時整行省略）。現在恆定顯示：TDX 永遠顯示「通報：【TDX】高公局」／「通報：【TDX】公路局」（純粹依 `event.source` 決定——`tdx/normalize.js` 從未設定過 `sourceDetail`，這是 TDX 事件史上第一次出現通報行）；PBS 永遠顯示「通報：【警廣】」+ deterministic 別名對照表 `REPORTER_UNIT_ALIAS_PATTERNS`（高公局／公路局／熱心聽眾／警方，不認得的文字顯示原文截斷，`sourceDetail` 為空或字面就是「警廣」時只顯示裸前綴）。【來源層級】與【原始通報單位】刻意分開。這個變更連動更新了 5 個既有測試檔共 7 處斷言，皆為施工令明確要求的預期行為改變，非回歸。
+
+**查修頁同步**：`aiObservatoryIndex.js` 新增 `cleanSummary`／`finalRenderedMessage`（後者是 `completedProduct.text` 原文，一路帶到 Observatory 記錄，從未重算，保證與司機實收內容逐位元組相同）；`aiObservatoryView.js` 新增「AI 文字編輯」展開區塊，依序顯示【原始本文】→【AI 整理後】→【LINE 最終內容】。
+
+**測試**：新增 `test/v248AiLineMessageEditorAndUnifiedPresentation.test.js`（18項，含施工令§十九全部14個CASE：PBS原文各種髒亂/長文的cleanSummary效果、canonical facts不變、TDX機器式本文、KM/blockedLanes永不被AI改寫、cleanSummary無效時的fallback、TDX/PBS來源標示9種組合、查修頁三層預覽、notify決策不受影響）。全量迴歸1788/1756/32，與變更前基線（`git stash -u`同commit精確基準32項）完全相同失敗清單，NEW_FAILURES=0。`APP_VERSION` V2.4.7→V2.4.8。
+
+**未觸碰（施工令§二十明確列出）**：PBS Windows 本機篩選、TDX Geographic Resolver、TDX 道路管理政策閘門、notify eligibility 本身、Incident Memory、Queue、dedupe、`wrangler.jsonc` 全部四個 TDX/AI 開關（`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED` 維持 `"true"`）、行政區 polygon、CCTV 搜尋邏輯——本輪只處理 AI cleanSummary + LINE 統一版型 + 通報來源＋單位簡稱 + 查修頁預覽。
+
+**接手一定要知道**：往後若司機回報 LINE 訊息內容怪怪的，先查該筆事件查修頁的「AI 文字編輯」區塊——【原始本文】→【AI整理後】→【LINE最終內容】三層都在，可以直接判斷是原始資料本來就有問題、還是 AI 編輯出了問題、還是 fallback 排版本身的問題。
+
 ## V2.4.7 — TDX 地理資料缺失查修：description 文字 KM 後援（2026-09-03，加在下方 V2.4.6 之上）
 
 **任務**：`V2_4_6_TDX_GEO_INPUT_MISSING_DIAGNOSIS_AND_FIX`，PATCH。PBS_MODIFIED=NO、GEO_RESOLVER_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO、AI_POLICY_MODIFIED=NO。

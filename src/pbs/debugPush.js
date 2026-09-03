@@ -1297,6 +1297,12 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
       primarySource: memoryResult.primarySource,
       lastNotifiedAt: memoryResult.lastNotifiedAt,
       memoryWrite: memoryResult.written,
+      // V2.4.8 (order section 十七) — the trace page must be able to show
+      // 原文→AI整理 even for a notify:false event (no LINE ever happened,
+      // so there is no finalRenderedMessage to show — only ever produced
+      // by the real formatEventMessage() call inside
+      // runAiApprovedPbsBroadcast(), which this branch never reaches).
+      cleanSummary: decision.cleanSummary,
     }; // trace only — no LINE, no CCTV, no proactive broadcast (order section 九)
   }
 
@@ -1308,7 +1314,7 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
   const suppressLineNotify = (source === 'freeway' || source === 'highway') && !isTdxRoadEventProductionNotifyEnabled(env);
 
   try {
-    const broadcastResult = await runAiApprovedPbsBroadcast(env, { event: normalizedEvent, now, suppressLineNotify });
+    const broadcastResult = await runAiApprovedPbsBroadcast(env, { event: normalizedEvent, now, suppressLineNotify, cleanSummary: decision.cleanSummary });
     console.log(
       `[pbs-debug-push][ai-decision] event=AI_LINE_ATTEMPTED eventId=${eventId} lifecycle=${lifecycle} ` +
         `source=${source} suppressLineNotify=${suppressLineNotify} serviceAreaEligible=${broadcastResult.serviceAreaEligible} ` +
@@ -1363,6 +1369,17 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
       lastNotifiedAt: memoryResult.lastNotifiedAt,
       memoryWrite: memoryResult.written,
       suppressedForPhase: suppressLineNotify,
+      // V2.4.8 (order section 十七) — 【原始本文】/【AI 整理後】/【LINE 最終
+      // 內容】 for the trace page. `finalRenderedMessage` is the EXACT text
+      // formatEventMessage() produced (`firstProduct.text` — see
+      // aiApprovedPbsBroadcast.js's own completedProduct) — never
+      // recomputed a second time, so what the trace page shows is
+      // guaranteed byte-identical to what LINE actually received (when a
+      // push was attempted at all; still populated even when
+      // suppressLineNotify=true or 0 pending targets, since the text is
+      // built regardless of whether pushLineMessages() itself ran).
+      cleanSummary: decision.cleanSummary,
+      finalRenderedMessage: firstProduct ? firstProduct.text : null,
     };
   } catch (err) {
     console.error(`[pbs-debug-push][ai-decision] event=AI_LINE_FAILED eventId=${eventId} lifecycle=${lifecycle} failed: ${err && err.message}`);

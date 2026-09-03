@@ -9,21 +9,34 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V2.4.7（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | bc8c7aa（V2_4_6_TRACE_PAGE_TDX_AND_DECISION_REASON_SUMMARY commit；本輪 V2.4.7 commit 尚未落地前的快照，本表隨本輪 commit 一併更新） |
+| Current Version | V2.4.8（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | 6e8c96d（V2_4_6_TDX_GEO_INPUT_MISSING_DIAGNOSIS_AND_FIX commit；本輪 V2.4.8 commit 尚未落地前的快照，本表隨本輪 commit 一併更新） |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty（本輪 V2.4.7 changeset，與本份快照同一 commit 一起送出） |
+| Source working tree | dirty（本輪 V2.4.8 changeset，與本份快照同一 commit 一起送出） |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
-| Current Phase | Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，TDX 正式 LINE 通知維持開啟（PHASE_E_TDX_NOTIFY_LIVE，本輪未變動）。**本輪（V2.4.7）是 TDX normalize 小型修正**：`tdx/normalize.js` 新增 description 文字 KM 後援解析（僅在結構化 `Location.FreeExpressHighway.StartKM`/`EndKM` 皆缺席時才啟用，絕不覆蓋結構化欄位），修復真實事件（國3北向79K+000其他異常告警-散落物）areaNm/displayKM 全空的問題。地理判定仍正確維持 UNKNOWN（安全原則：KM本身不構成CONFIRMED_HSINCHU證據）。PBS／TDX 地理判定規則本身／道路管理政策／AI prompt/LINE 規則全部未變動 |
-| Current Task | none。Latest completed task = V2_4_6_TDX_GEO_INPUT_MISSING_DIAGNOSIS_AND_FIX，status = SEALED（V2.4.6→V2.4.7；前序歷程見 SYSTEM_STATE.json／06_VERSION_HISTORY.md）。CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何 wrangler.jsonc 開關）。**本輪內容**：§一唯讀 code-path 稽核確認 `normalizeRoadEvent()` 結構化欄位擷取本身無 bug（無條件擷取，該筆事件原始 payload 確實缺少所有結構化 KM 欄位）——真正缺口是 TDX normalize 從未有過 description 文字 KM 後援（PBS 早就有）。同時發現一個既有、無害、與本輪無關的小 quirk：`firstDefined(raw, paths, undefined)` 因 JS default parameter 語法，實際上永遠回傳 `''` 而非 `undefined`（未在源頭修正，只在新後援邏輯的觸發條件正確處理）。新增 `hsinchuFilter.js#extractKmTokenFromText()`（重用 `parseKM()` 既有 TDX KM token 格式），`normalizeRoadEvent()` 只在結構化 KM 皆缺席時呼叫，新增 `displayKM`（數字，PBS既有欄位同形狀，僅供顯示，`hsinchuGeoResolver.js` Tier-2 KM-heuristic 觀測層照樣讀 startKM/endKM，永遠非決定性）。 |
-| Latest Completed Version | V2.4.7 |
-| Known Blocker | 無 blocker，沿用 V2.4.5 封版的 REAL_WORLD_CONFIRMATION_PENDING（TDX 正式 LINE 通知現場觀察，本輪未變動）——本 session 無 Production 網路存取，需人類看真實 LINE/Cloudflare Logs 回報異常，異常回報時第一動作固定 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=false`。本輪（V2.4.7）本身是 normalize 資料完整性小修，無新增 runtime blocker |
-| Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING（沿用 V2.4.5 封版項目，與本輪 normalize 修正無關） |
+| Current Phase | Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，TDX 正式 LINE 通知維持開啟（PHASE_E_TDX_NOTIFY_LIVE，本輪未變動）。**本輪（V2.4.8）是 LINE 訊息文字編輯與統一排版**：既有單次 Workers AI 呼叫（notify/impact/reason/confidence）新增 `cleanSummary`（AI 文字編輯，禁止提及道路/方向/KM/車道數，禁止捏造事實），`cleanSummary` 缺失/超長/與 canonical facts 矛盾一律 fallback 至既有規則式排版、notify 決策完全不受影響。`messageFormat.js` 新增統一版型（cleanSummary 存在時區塊式排版）與「通報：【TDX】高公局/公路局」「通報：【警廣】單位簡稱」來源標示（全新、之前 TDX 從未有過通報行）。canonical facts（road/direction/KM/blockedLanes）永遠由 formatter 直接讀取，AI 絕不能重新生成。PBS/TDX 決策邏輯/地理判定/道路管理政策/AI prompt 語意錨點/CCTV 邏輯全部未變動 |
+| Current Task | none。Latest completed task = V2_4_8_AI_LINE_MESSAGE_EDITOR_AND_UNIFIED_PRESENTATION，status = SEALED（V2.4.7→V2.4.8；前序歷程見 SYSTEM_STATE.json／06_VERSION_HISTORY.md）。CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何 wrangler.jsonc 開關）。**本輪內容**：`aiDecisionEngine.js` SYSTEM_PROMPT 新增 cleanSummary 編輯指示＋schema 欄位；`validateAiDecisionResponse()` 把 cleanSummary 獨立驗證（無效只是 null，不使整筆決策失敗）；新增 `cleanSummaryContradictsFacts()`（車道數/方向文字矛盾偵測，於 `resolveAiDecision()` 呼叫，矛盾時 null 掉）；`messageFormat.js` 新增 `buildReporterLine()`（取代舊 `buildSourceDetailLine()`，TDX 恆定顯示、PBS sourceDetail deterministic 別名對照表）與 cleanSummary 存在時的區塊式排版（fallback 分支完全不變，零回歸風險）；`aiApprovedPbsBroadcast.js`/`debugPush.js` 把 cleanSummary 貫穿到 formatter 與 Observatory 記錄；`aiObservatoryIndex.js`/`View.js` 新增 cleanSummary/finalRenderedMessage 欄位與「AI 文字編輯」展開區塊。既有測試因通報行格式改變而更新（reporter line 現在恆定顯示，含 TDX 事件）。 |
+| Latest Completed Version | V2.4.8 |
+| Known Blocker | 無 blocker，沿用 V2.4.5 封版的 REAL_WORLD_CONFIRMATION_PENDING（TDX 正式 LINE 通知現場觀察，本輪未變動）——本 session 無 Production 網路存取，需人類看真實 LINE/Cloudflare Logs 回報異常，異常回報時第一動作固定 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=false`。本輪（V2.4.8）本身是文字排版/來源標示，無新增 runtime blocker |
+| Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING（沿用 V2.4.5 封版項目，與本輪文字編輯改版無關） |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 待辦（沿用）：人類觀察真實 Production TDX LINE 推播現場結果，異常時第一動作固定關閉 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`。往後查修頁看到「其他異常告警」類事件仍有 areaNm/displayKM 全空的情況，先查該事件原始 payload 是否真的連 description 文字都無 KM，而非假設 normalize 又壞了 |
-| Export Generated At | 2026-09-03T00:30:00.000Z |
+| Next Action | 待辦（沿用）：人類觀察真實 Production TDX LINE 推播現場結果，異常時第一動作固定關閉 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`。新增待辦：觀察真實 cleanSummary 品質（是否確實只描述事件本身、不重複生成事實），必要時調整 SYSTEM_PROMPT 文字（非本輪範圍，需另開任務）|
+| Export Generated At | 2026-09-04T09:30:00.000Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
+
+## V2.4.8 封版（2026-09-04）— LINE 路況文字編輯與統一排版
+
+- `V2_4_8_AI_LINE_MESSAGE_EDITOR_AND_UNIFIED_PRESENTATION`，MINOR。核心目標：PBS 警廣與 TDX 高公局／公路局不論原始本文格式如何，最終送到 LINE 的訊息都統一整理成「短、準、乾淨、容易掃讀、來源清楚」。
+- **AI 定位（施工令§一）**：AI 只負責文字編輯（修正錯字/標點/刪贅語/濃縮長文），絕不產生新事實（不改道路/方向/公里數/交流道/座標/封閉車道數/事件類型/時間/來源）。
+- **一次 AI 呼叫（§二）**：沿用既有單次 Workers AI 呼叫，`aiDecisionEngine.js` 的 SYSTEM_PROMPT 新增 cleanSummary 編輯指示，JSON schema 同時輸出 notify/impact/reason/confidence/cleanSummary，未新增任何第二次呼叫。
+- **canonical facts 不可被 AI 修改（§三）**：`validateAiDecisionResponse()` 把 cleanSummary 獨立驗證（缺失/非字串/超過 `CLEAN_SUMMARY_MAX_CHARS=100` 一律 null，不使 notify/impact/reason/confidence 這四個既有欄位的驗證失敗）。新增 `cleanSummaryContradictsFacts(cleanSummary, candidate)`——偵測 cleanSummary 文字裡是否出現與 canonical `blockedLanes`／`direction` 矛盾的車道數字或方向詞，矛盾時在 `resolveAiDecision()` 內直接 null 掉該 cleanSummary（notify 決策完全不受影響）。road/direction/KM/blockedLanes 永遠只由 `messageFormat.js` 從 event 既有結構化欄位讀取顯示，cleanSummary 從未、也不能提供這些值。
+- **統一版型（§五/§十八）**：`messageFormat.js#formatEventMessage()` 新增 cleanSummary 存在時的區塊式排版（headline／road+KM+車道數／cleanSummary+行動提示／通報+地圖+更新時間，區塊間空行分隔），舊版單行排版完全不變並作為 fallback（cleanSummary 缺失/無效/矛盾/notify=false 未走 AI 核准路徑時皆走 fallback，零回歸風險——這也是為什麼全量迴歸 NEW_FAILURES=0 的原因：現有測試從未帶 cleanSummary，全部繼續吃到 byte-identical 舊排版）。
+- **來源標示（§六-§十）**：新增 `buildReporterLine()`（取代舊的 PBS-only、空值時整行省略的 `buildSourceDetailLine()`）——TDX `source='freeway'/'highway'` 恆定顯示「通報：【TDX】高公局」／「通報：【TDX】公路局」（此前 TDX 從未有過通報行，因為 `tdx/normalize.js` 從未設定 `sourceDetail`）；PBS 恆定顯示「通報：【警廣】」+ deterministic 別名（`REPORTER_UNIT_ALIAS_PATTERNS`：高速公路局/高公局→高公局、公路局→公路局、熱心聽眾→熱心聽眾、警察/警方→警方，其餘顯示原文截斷，sourceDetail 為空或字面就是「警廣」本身時只顯示裸的「【警廣】」前綴，不猜單位）。【來源層級】與【原始通報單位】刻意分開兩個概念（§九）。
+- **查修頁同步（§十七）**：`aiObservatoryIndex.js#buildAiObservatoryRecord()` 新增 `cleanSummary`／`finalRenderedMessage`（`aiApprovedPbsBroadcast.js` 產出的 `completedProduct.text`，原樣捕捉、絕不重算）；`aiObservatoryView.js` 新增「AI 文字編輯」展開區塊，依序顯示【原始本文】（既有 rawComment）→【AI 整理後】cleanSummary →【LINE 最終內容】finalRenderedMessage。
+- **既有測試更新**：因通報行格式全面改變（TDX 從無到有、PBS 從「原文直顯」變成「固定前綴+別名」），更新了 `v242InformationFidelityAndPolicy.test.js`／`pbsAccidentTraceLocationQuality.test.js`／`messageFormat.test.js`／`dynamicShoulderMessageShort.test.js`／`pbsLineBroadcast.test.js` 共 7 處既有斷言，皆為施工令本身要求的、預期中的行為改變，非回歸。
+- **測試**：新增 `test/v248AiLineMessageEditorAndUnifiedPresentation.test.js`（18項，含施工令§十九全部14個CASE）。全量迴歸1788/1756/32，`git stash -u`同commit精確基準比對NEW_FAILURES=0。`APP_VERSION` V2.4.7→V2.4.8。
+- **未觸碰（§二十）**：PBS Windows 本機篩選、TDX Geographic Resolver、TDX 道路管理政策、notify eligibility 本身、Incident Memory、Queue、dedupe、`wrangler.jsonc` 全部四個 TDX/AI 開關（`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED` 維持 `"true"`）、行政區 polygon、CCTV 搜尋邏輯。
 
 ## V2.4.7 封版（2026-09-03）— TDX 地理資料缺失查修（description 文字 KM 後援）
 

@@ -240,6 +240,7 @@ test('13. accident formatter output is otherwise unchanged (V2.4.4 adds the desc
       '事故',
       '事故影響通行',
       '請提前避開',
+      '通報：【TDX】高公局',
       '📍 地圖 https://maps.google.com/?q=24.80605,121.00998',
       '🕒 18:00更新',
     ].join('\n')
@@ -257,6 +258,7 @@ test('14. construction formatter output is otherwise unchanged (V2.4.4 adds the 
       '國道一號 北向 車道封閉施工',
       '施工影響通行',
       '請注意車道',
+      '通報：【TDX】高公局',
       '📍 地圖 https://maps.google.com/?q=25.03210,121.28917',
       '🕒 18:00更新',
     ].join('\n')

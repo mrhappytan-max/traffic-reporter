@@ -280,6 +280,18 @@ PBS 閘門排除仍視為有意義。fixture 實測 QUIET/NORMAL/HIGH writes/day
 
 **狀態：`HUMAN_REPORTED_NOT_INDEPENDENTLY_VERIFIED`。** 人類回報：Windows PBS 本機篩選舊邏輯先套用 `isAccident()` 事故關鍵字語意閘門，才進新竹縣市地理判斷，導致非事故型事件（落石／坍方／封路／施工／積水等）即使位於新竹縣市仍可能在 Windows 端被直接丟棄，從未進入 Cloudflare/AI。回報修正：移除 `isAccident()` 語意閘門，改用 point-in-polygon（data.gov.tw dataset 7442 縣市界線）取代原本的矩形邊界，新竹市/縣**所有**事件類型皆納入候選，語意判斷完全交給 AI；同批資料驗證回報 `BEFORE_KEEP_COUNT=11 → AFTER_KEEP_COUNT=29`（找回 18 筆），`TESTS=124 passed/0 failed`。**本 Cloud Session 的獨立查證**：目前 `main`／本分支的 `pbs-relay/src/localPrototype.js` 仍保留 `isAccident()` 並仍作為候選閘門使用（見該檔第 56/108 行），`pbs-relay/` 完整 git 歷史（含 `feature/pbs-local-edge-filter-prototype` 分支）中**未找到**對應此修正的 commit，故無法核對回報的 point-in-polygon 實作、dataset 7442 引用或 11→29/124 測試數字。與既有 `PBS Windows Local Edge Debug Push Integration`（V1.9.6）記錄採同一誠實原則：**本節只記錄「人類回報了什麼」，不代表本 Session 已驗證程式碼或測試結果為真**——待對應 commit 出現於本 repo（或人類提供可核對的 diff/測試輸出）後，下一輪應改記為已驗證版本，並同步更新 `pbs-relay/` 程式碼本身（本輪禁止修改）。
 
+## 修正紀錄｜V2.4.8 — LINE 路況文字編輯與統一排版（2026-09-04，壓縮摘要）
+
+**任務** `V2_4_8_AI_LINE_MESSAGE_EDITOR_AND_UNIFIED_PRESENTATION`，MINOR，PBS_DECISION_POLICY_MODIFIED=NO、TDX_DECISION_POLICY_MODIFIED=NO、GEO_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO、CCTV_LOGIC_MODIFIED=NO。
+
+**目標**：PBS/TDX LINE 訊息長期各自一套排版、口吻不一致。本輪統一為單一「路況播報員」語氣，且不新增第二次 AI 呼叫——同一次既有 Workers AI 呼叫的回應新增 `cleanSummary` 欄位（`aiDecisionEngine.js`，`CLEAN_SUMMARY_MAX_CHARS=100`），與既有 notify/impact/reason/confidence 四欄位完全獨立驗證。
+
+**核心原則（AI＝文字編輯，AI≠事實產生器）**：SYSTEM_PROMPT 明確禁止 `cleanSummary` 新增/杜撰任何道路/方向/公里數/車道數/傷亡；新函式 `cleanSummaryContradictsFacts()` 用車道數字與方向詞兩道保守 regex 反查 candidate 真實欄位，任一矛盾即整個丟棄（設回 null），絕不擋下 notify:true 的真實廣播——文字美容失敗不得成為通知單點故障。`messageFormat.js#formatEventMessage()` 新增 `cleanSummary` 參數，僅在有效時走新排版分支，無效/缺席時完全回退既有決定性格式化器（此路徑本輪逐位元組未變動）。
+
+**來源標示（新，不受 cleanSummary 有無影響）**：TDX 事件首次顯示通報來源——`通報：【TDX】高公局`（國道）／`通報：【TDX】公路局`（省道），此前 `tdx/normalize.js` 從未設定過任何 `sourceDetail`。PBS 改為 `通報：【警廣】`＋既有別名表，即使原文為空也固定顯示前綴（原本可能整行省略）。查修頁 `aiObservatoryView.js` 新增區塊同步顯示「原文→AI 編輯後→最終 LINE 文字」三層。
+
+**測試**：新增 `test/v248AiLineMessageEditorAndUnifiedPresentation.test.js`（18 項，CASE 1-14 含子案例）；既有 6 個測試檔因來源標示行為刻意變更而同步改寫斷言（非回歸）。全量迴歸 1788/1756/32，NEW_FAILURES=0。`APP_VERSION` V2.4.7→V2.4.8。**未觸碰**：PBS/TDX 決策政策、地理 resolver、道路管理政策、AI prompt 的核心四欄位判準、CCTV、任何 `wrangler.jsonc` 開關。**通則**：允許 AI 修飾呈現文字時，驗證層必須把「文字合不合理」與「決策要不要播」徹底切開——前者失敗只能降級成沒有文字美容，不能連帶否決後者。詳見 `03_ARCHITECTURE.md`／`00_CURRENT_STATE.md`。
+
 ## 修正紀錄｜V2.4.7 — TDX 地理資料缺失查修：description 文字 KM 後援（2026-09-03，壓縮摘要）
 
 **任務** `V2_4_6_TDX_GEO_INPUT_MISSING_DIAGNOSIS_AND_FIX`，PATCH，PBS_MODIFIED=NO、GEO_RESOLVER_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO、AI_POLICY_MODIFIED=NO。
@@ -604,52 +616,13 @@ APP_VERSION 維持 `V1.9.9`。此問題與 V2.0.2 記載的「Dashboard-only 設
 易失狀態）在不同層次的兩次重演，V2.0.2 已將 canonical source 移至
 wrangler.jsonc 徹底解決；完整字串/布林矩陣測試細節見對應測試檔案本身。
 
-## 修正紀錄｜V1.9.9 Phase 3B — Workers AI Driver Impact Decision Integration（2026-08-28，壓縮摘要）
+## 修正紀錄｜V1.9.9 Phase 3B — Workers AI Driver Impact Decision Integration（2026-08-28，深度壓縮）
 
-Phase 2預留的AI candidate／cache key設計正式接上真實Workers AI呼叫。固定
-model `@cf/zai-org/glm-4.7-flash`，透過`env.AI.run(...)`。新模組：
-`src/pbs/aiConfig.js`（kill switch `PBS_AI_DECISION_ENABLED`，預設false，
-理由：避免Claude push程式碼後、GPT Work尚未建立AI binding前就因部署本身
-壞掉Production LINE推播）、`src/pbs/aiDecisionCache.js`（48h TTL，
-fail-open）、`src/pbs/aiDecisionEngine.js`（固定繁中prompt只判斷駕駛通行
-影響非事件類型，`validateAiDecisionResponse()`嚴格schema，不合格即
-`AI_DECISION_INVALID`絕不到LINE）、`src/traffic/aiApprovedPbsBroadcast.js`
-（`runAiApprovedPbsBroadcast()`，重用既有subscriptions/notified/
-incidentSuppression/messageFormat/CCTV/pushMessage，明確不呼叫
-`getBroadcastEligibility`/`getLinePushPolicyDecision`/`resolveLocationQuality`
-這三個要退休的內容判讀硬規則）。`debugPush.js`關鍵架構決策：AI開啟時與
-legacy `runLineBroadcast()`路徑互斥，同一事件絕不同時執行兩者，避免雙重
-判官造成LINE重複推播。cache key重用`computeAiDecisionCacheKeyHash
-({eventId,fingerprint})`（SHA-256），transport duplicate與cache hit皆0次
-AI呼叫。AI失敗（429/5xx/invalid response/binding missing）一律0 LINE、
-絕不fallback舊硬規則；未加retry（無可重用helper，施工令要求第一版簡單）。
-新增5個測試檔共57項全部首次PASS，1509/1476/33，NEW FAILURES=0。當時
-Production狀態AI_INTEGRATION=CODE_READY/AI_BINDING=PENDING_BROWSER_SETUP/
-AI_DECISION=DISABLED，尚未寫ACTIVE。**此輪記錄的Production狀態已被
-V2.0.0/V2.0.1/V2.0.2取代——最新狀態見SYSTEM_STATE.json的taskSeal與
-下方對應版本記錄，特別是V2.0.2 Config Drift Hotfix修正了kill switch
-Dashboard-only設定被deploy覆寫的根因問題。**
+首次接上真實Workers AI（model `@cf/zai-org/glm-4.7-flash`）判斷駕駛通行影響。新模組：`aiConfig.js`（kill switch `PBS_AI_DECISION_ENABLED`）、`aiDecisionCache.js`（48h TTL）、`aiDecisionEngine.js`（嚴格schema校驗）、`aiApprovedPbsBroadcast.js`（AI開啟時與legacy `runLineBroadcast()`互斥，避免雙重判官）。AI失敗（429/5xx/invalid/binding missing）一律0 LINE、絕不fallback舊硬規則。57項新測試全過，1509/1476/33，NEW FAILURES=0。**此輪記錄的Production狀態已被V2.0.0/V2.0.1/V2.0.2取代——特別是V2.0.2修正了kill switch Dashboard-only設定被deploy覆寫的根因問題，最新狀態見SYSTEM_STATE.json。**
 
-## 修正紀錄｜V1.9.9 Phase 2 — AI-ready Business Pipeline Simplification（2026-08-28，壓縮摘要）
+## 修正紀錄｜V1.9.9 Phase 2 — AI-ready Business Pipeline Simplification（2026-08-28，深度壓縮）
 
-為Phase 3 Workers AI全量判讀做準備。找到三個目前讓候選PBS事件在「內容判讀」
-階段被reject的既有硬規則：`broadcastPolicy.js`的`MAJOR_ACCIDENT_ONLY`、
-`broadcastRules.js`的V1.5 type/keyword whitelist（`getBroadcastEligibility`）、
-`locationQuality.js`的location quality hard-reject，三者皆位於真正的LINE
-決策函式`runLineBroadcast`內部。新增`src/pbs/aiCandidate.js`（純函式、零I/O）：
-`buildAiCandidate()`從Windows正規化事件建立最小candidate物件（source/eventId/
-lifecycle/road/direction/areaNm/comment/longitude/latitude/generatedAt +
-displayKM/eventType/sourceDetail/locationQuality，刻意不含notify/impact），
-`isWindowsPbsAiCandidateEligible()`只重用service area既有resolver作為唯一
-gate（不套用上述三個硬規則）。`src/pbs/debugPush.js`額外呼叫這兩個函式，與既有
-（完全未修改）`runLineBroadcast()`呼叫並行，純log觀察用（`PBS_AI_DECISION_MODE
-= 'PREPARED_NOT_ACTIVE'`），從未影響真實LINE決策。另預留（僅schema/helper，
-無任何KV讀寫）`computeAiDecisionCacheKeyHash({eventId,fingerprint})` =
-SHA-256、`AI_DECISION_CACHE_KV_PREFIX = 'debug:pbs-ai-decision-cache:v1'`，
-供Phase 3採用。新增28項測試（`test/pbsAiCandidate.test.js`13項 +
-`test/pbsDebugPush.test.js`施工令十五項最低清單）。1452/1419/33基線，
-NEW FAILURES=0。**V1.9.9 Phase 3B已將這裡預留的cache key設計正式接上真實
-Workers AI呼叫，見下方Phase 3B記錄。**
+為Phase 3 Workers AI判讀鋪路。找到三個當時擋下候選PBS事件的既有硬規則（`broadcastPolicy.js` MAJOR_ACCIDENT_ONLY／`broadcastRules.js` V1.5 whitelist／`locationQuality.js` hard-reject），新增`src/pbs/aiCandidate.js`（純函式）：`buildAiCandidate()`建最小candidate物件、`isWindowsPbsAiCandidateEligible()`只重用service area既有resolver為唯一gate。`debugPush.js`並行呼叫、純log觀察（`PBS_AI_DECISION_MODE='PREPARED_NOT_ACTIVE'`），從未影響真實LINE決策。預留`computeAiDecisionCacheKeyHash`/cache key schema供Phase 3B採用。新增28項測試，1452/1419/33基線，NEW FAILURES=0。
 
 ## 修正紀錄｜Windows PBS Push → Production Business Pipeline ＋ PBS 輪詢退休（V1.9.8）（2026-08-28，壓縮摘要）
 

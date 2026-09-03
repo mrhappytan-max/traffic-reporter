@@ -230,6 +230,15 @@ export function buildAiObservatoryRecord({
   // SAME field pbs/aiCandidate.js#buildAiCandidate() has carried since
   // V2.4.5 (`candidate.blockedLanes`) — also never previously stored here.
   suppressedForPhase = false,
+  // V2.4.8 (order section 十七) — 【原始本文】(rawComment above, already
+  // existing) →【AI 整理後】(cleanSummary) →【LINE 最終內容】
+  // (finalRenderedMessage), so a future reader can directly see whether
+  // the AI edited the text correctly without needing to re-run anything.
+  // Both null by default (every pre-V2.4.8 caller, and any outcome that
+  // never reached a valid AI decision at all — e.g. SERVICE_AREA_EXCLUDED/
+  // AI_CALL_FAILED/the V2.4.6 Gate A drop outcomes).
+  cleanSummary = null,
+  finalRenderedMessage = null,
 }) {
   return {
     timestamp: now.toISOString(),
@@ -262,6 +271,8 @@ export function buildAiObservatoryRecord({
     memoryWrite: Boolean(memoryWrite),
     timedOut: Boolean(timedOut),
     suppressedForPhase: Boolean(suppressedForPhase),
+    cleanSummary,
+    finalRenderedMessage,
   };
 }
 

@@ -314,6 +314,7 @@ test('12. regression — the real working "國1 南向｜新竹／科學園區�
       '事故',
       '事故影響通行',
       '請提前避開',
+      '通報：【TDX】高公局',
       '📍 地圖 https://maps.google.com/?q=24.80516,121.00984',
       '🕒 17:05更新',
     ].join('\n')

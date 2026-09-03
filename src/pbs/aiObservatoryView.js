@@ -415,6 +415,23 @@ function renderRawTextBlock(label, text) {
 // Text is derived purely from the SAME outcome/status this record already
 // carries (via outcomeMeta/layerStatusForTdx*) — never a re-check of the
 // actual gates, and never shown for a PBS record (PBS has no such gates).
+// V2.4.8 (order section 十七) — 【原始本文】(already shown just above, in
+// the SOURCE section's own rawComment block) →【AI 整理後】cleanSummary →
+// 【LINE 最終內容】finalRenderedMessage, so a future reader can directly
+// compare what the source said, what the AI edited it into, and what the
+// driver actually received — all three read straight off the record, this
+// view never re-derives or re-runs anything. Shown for every record that
+// has at least one of the two new fields (PBS and TDX alike — both share
+// the same single AI call, order section 二).
+function renderAiTextEditSection(record) {
+  if (!record.cleanSummary && !record.finalRenderedMessage) return '';
+  return `<div class="detail-section">
+    <h4>AI 文字編輯（原文 → AI 整理 → LINE 最終內容）</h4>
+    ${renderRawTextBlock('【AI 整理後 cleanSummary】', record.cleanSummary) || renderField('【AI 整理後 cleanSummary】', 'UNKNOWN / NOT RECORDED（cleanSummary 缺失或無效，已 fallback 至既有規則式排版）')}
+    ${renderRawTextBlock('【LINE 最終內容 finalRenderedMessage】', record.finalRenderedMessage) || renderField('【LINE 最終內容 finalRenderedMessage】', 'NOT RECORDED（本次未實際組出 LINE 訊息，例如 notify=false 或未實際嘗試推播）')}
+  </div>`;
+}
+
 function renderTdxGeoSection(record) {
   const status = layerStatusForTdxGeo(record);
   const text = status === 'fail' ? `❌ ${outcomeMeta(record).label}` : '✅ 通過（新竹縣市範圍內）';
@@ -465,6 +482,7 @@ function renderDetail(record, decision, idem) {
     ${renderField('送件時間（generatedAt，Asia/Taipei）', formatTaipeiInstant(record.generatedAt))}
     ${renderField('發生時間 / 更新時間', 'NOT RECORDED')}
   </div>
+  ${renderAiTextEditSection(record)}
   ${isTdx ? renderTdxGeoSection(record) : ''}
   ${isTdx ? renderTdxRoadPolicySection(record) : ''}
   <div class="detail-section">

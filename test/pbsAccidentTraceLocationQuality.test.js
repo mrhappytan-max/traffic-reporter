@@ -146,12 +146,18 @@ test('1. the real 13:48 台68 record reproduces the exact Production message, by
   // two new SOURCE-FACTS lines that were NOT part of the original
   // Production message this test reproduces: the comment's own fact text
   // ("西向發生交通事故，請小心通過" — event.description, previously never
-  // shown by messageFormat.js) and "通報：警廣" (event.sourceDetail,
+  // shown by messageFormat.js) and a 通報 line (event.sourceDetail,
   // previously never read by messageFormat.js at all). This is the exact
   // information-loss gap that round's own final report identifies and
   // fixes — see src/version.js's V2.4.2 changelog. The historical
   // Production message this fixture reproduces (bytes to the left of the
   // now-updated assertion) is preserved in this comment for the record.
+  // V2.4.8 — the real PBS raw sourceDetail for this Production event is
+  // literally "警廣" (the relay channel's own name, not a specific
+  // reporting unit) — messageFormat.js's new buildReporterLine() treats
+  // that as equivalent to "no reliable specific unit" (see its own
+  // aliasReporterUnit() comment) and shows only the fixed "通報：【警廣】"
+  // pipeline prefix, never the redundant "【警廣】警廣".
   assert.equal(
     formatEventMessage(event),
     [
@@ -161,7 +167,7 @@ test('1. the real 13:48 台68 record reproduces the exact Production message, by
       '西向發生交通事故，請小心通過',
       '事故影響通行',
       '請提前避開',
-      '通報：警廣',
+      '通報：【警廣】',
       '🕒 13:48更新',
     ].join('\n')
   );

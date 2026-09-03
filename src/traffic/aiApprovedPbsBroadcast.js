@@ -134,7 +134,7 @@ function eventKeyOf(event) {
  *   completedProducts:object[], lineErrors:string[],
  * }>}
  */
-export async function runAiApprovedPbsBroadcast(env, { event, now = new Date(), suppressLineNotify = false }) {
+export async function runAiApprovedPbsBroadcast(env, { event, now = new Date(), suppressLineNotify = false, cleanSummary = null }) {
   const result = {
     lineReady: false,
     withinBroadcastHours: isWithinBroadcastHours(now),
@@ -218,7 +218,12 @@ export async function runAiApprovedPbsBroadcast(env, { event, now = new Date(), 
   }
 
   const fingerprint = computeNotificationFingerprint(event);
-  const text = formatEventMessage(event, { forecast: false, minutesUntilStart: null });
+  // V2.4.8 — cleanSummary (pbs/aiDecisionEngine.js's own validated AI
+  // text-edit, already fact-checked) is passed straight through to the
+  // ONE shared formatter, same as every other option here — see
+  // messageFormat.js's own V2.4.8 comment for the presentation this
+  // produces.
+  const text = formatEventMessage(event, { forecast: false, minutesUntilStart: null, cleanSummary });
   const completedProduct = { eventKeyStr, fingerprint, text, event, imageUrl: null, imageExpiresAt: null };
   result.completedProducts.push(completedProduct);
 

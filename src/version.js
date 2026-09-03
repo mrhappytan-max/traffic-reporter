@@ -1696,7 +1696,77 @@
 // AI_POLICY_MODIFIED=NO. See test/v247TdxGeoInputMissingFix.test.js (12
 // tests, CASE 1-7 plus CASE 7b and extractKmTokenFromText unit coverage)
 // and 07_KNOWN_ISSUES.md for the full record.
-export const APP_VERSION = 'V2.4.7';
+//
+// V2.4.8 — V2_4_8_AI_LINE_MESSAGE_EDITOR_AND_UNIFIED_PRESENTATION
+// (2026-09-04, MINOR). Core goal: whatever PBS's own raw text or TDX's
+// own machine-generated text looks like, the message a driver actually
+// receives on LINE reads as one unified "路況播報員" voice — short,
+// accurate, clean, scannable, source-labeled. AI's role is explicitly
+// TEXT EDITING of the event's own already-known content, never a second
+// fact source (order section一：AI=文字編輯，AI≠事實產生器).
+//
+// ONE AI CALL, NOT TWO (order section二) — pbs/aiDecisionEngine.js's
+// existing single Workers AI call (already producing notify/impact/
+// reason/confidence) now ALSO produces `cleanSummary` in the SAME JSON
+// response (SYSTEM_PROMPT extended with explicit editing instructions and
+// an explicit "never restate road/direction/KM/lane-count, never invent
+// facts not in the original text" prohibition) — no second call anywhere.
+//
+// CANONICAL FACTS STAY CODE-ONLY (order section三) — cleanSummary is
+// validated SEPARATELY from the four existing fields
+// (validateAiDecisionResponse() now also resolves `decision.cleanSummary`,
+// null when missing/non-string/over CLEAN_SUMMARY_MAX_CHARS=100) and its
+// own invalidity NEVER invalidates the whole decision (order section十五：
+// 文字美容不能成為通知單點故障) — a real notify:true accident still reaches
+// LINE via the pre-existing deterministic formatter whenever cleanSummary
+// isn't usable. A NEW code-level safety net, aiDecisionEngine.js#
+// cleanSummaryContradictsFacts(), nulls out a cleanSummary that states a
+// lane-count or direction word contradicting the event's own canonical
+// blockedLanes/direction (order section十六) — road/direction/KM/
+// blockedLanes are still rendered EXCLUSIVELY by messageFormat.js from the
+// normalized event's own structured fields, never from AI text, in both
+// the new and the fallback presentation.
+//
+// UNIFIED PRESENTATION (order section五/十八) — messageFormat.js#
+// formatEventMessage() gains a NEW cleanSummary-driven block layout
+// (headline / road+KM+lanes / cleanSummary+action-cue / reporter+map+time,
+// blank-line-separated, order section五's own worked examples) used ONLY
+// when a validated, non-contradicting cleanSummary is passed in; the
+// pre-V2.4.8 single-line-per-entry deterministic layout is completely
+// UNCHANGED and remains the fallback for every other case, including
+// every pre-V2.4.8 caller that never passes cleanSummary at all — zero
+// regression risk for existing messages.
+//
+// SOURCE + REPORTING-UNIT LABELING, NOW ALWAYS SHOWN (order section六-十)
+// — "通報：【來源層級】原始通報單位" replaces the old (PBS-only, silent-
+// when-empty) sourceDetail line: 【TDX】高公局／【TDX】公路局 for TDX
+// (source alone decides it, unconditionally — TDX never had ANY reporter
+// line before this round, since tdx/normalize.js never sets
+// `sourceDetail`); 【警廣】+ a deterministic alias of PBS's own
+// `sourceDetail` (高公局/公路局/警方/熱心聽眾, or the original text
+// truncated if unrecognized, or nothing when sourceDetail is empty or is
+// literally just the pipeline name "警廣" itself) for PBS — always shown,
+// even with no reliable unit (order section十: never omit the line, never
+// let AI invent a unit). The bracketed prefix names WHICH PIPELINE the
+// data came in through; the suffix names WHO originally reported it —
+// deliberately never conflated (order section九).
+//
+// TRACE PAGE (order section十七) — aiObservatoryIndex.js's record gained
+// `cleanSummary`/`finalRenderedMessage` (the EXACT text formatEventMessage()
+// produced, captured once, never recomputed); aiObservatoryView.js renders
+// a new "AI 文字編輯" section showing 【原始本文】(the existing rawComment)
+// →【AI 整理後】→【LINE 最終內容】together.
+//
+// EXPLICITLY UNCHANGED THIS ROUND (order section二十): PBS Windows local
+// filtering, TDX Geographic Resolver, TDX road-management policy gate,
+// notify eligibility itself, Incident Memory, the Queue, dedupe,
+// TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED and every other wrangler.jsonc
+// switch, the administrative-boundary polygon, CCTV search/eligibility
+// logic — PBS_DECISION_POLICY_MODIFIED=NO, TDX_DECISION_POLICY_MODIFIED=NO,
+// GEO_MODIFIED=NO, ROAD_POLICY_MODIFIED=NO, CCTV_LOGIC_MODIFIED=NO. See
+// test/v248AiLineMessageEditorAndUnifiedPresentation.test.js (order's own
+// CASE 1-14 acceptance suite) and 07_KNOWN_ISSUES.md for the full record.
+export const APP_VERSION = 'V2.4.8';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

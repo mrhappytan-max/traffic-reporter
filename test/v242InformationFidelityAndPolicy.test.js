@@ -75,10 +75,14 @@ test('CASE 1: PBS 坍方 event preserves road/direction/KM AND the key facts (�
 });
 
 // =============================================================================
-// CASE 2 — sourceDetail ("熱心聽眾") must render as "通報：熱心聽眾".
+// CASE 2 — sourceDetail ("熱心聽眾") must render as "通報：【警廣】熱心聽眾".
+// V2.4.8 — V2_4_8_AI_LINE_MESSAGE_EDITOR_AND_UNIFIED_PRESENTATION now
+// always prefixes the pipeline-level "【警廣】" tag for a PBS event, and
+// aliases the raw sourceDetail deterministically — see messageFormat.js's
+// own buildReporterLine()/aliasReporterUnit() comments.
 // =============================================================================
 
-test('CASE 2: PBS sourceDetail renders as "通報：熱心聽眾"', () => {
+test('CASE 2: PBS sourceDetail renders as "通報：【警廣】熱心聽眾"', () => {
   const event = {
     source: 'pbs',
     type: 'accident',
@@ -90,20 +94,20 @@ test('CASE 2: PBS sourceDetail renders as "通報：熱心聽眾"', () => {
     updatedAt: '2026-09-01T20:22:00+08:00',
   };
   const text = formatEventMessage(event);
-  assert.match(text, /通報：熱心聽眾/);
+  assert.match(text, /通報：【警廣】熱心聽眾/);
 });
 
-test('sourceDetail absent -> no 通報 line at all (never guessed)', () => {
+test('sourceDetail absent -> still shows the fixed "通報：【警廣】" pipeline prefix, never a guessed unit (V2.4.8)', () => {
   const event = { source: 'pbs', type: 'accident', road: '國道一號', direction: '北向', startKM: '90K+000', description: '事故' };
   const text = formatEventMessage(event);
-  assert.doesNotMatch(text, /通報：/);
+  assert.match(text, /通報：【警廣】$/m);
 });
 
-test('sourceDetail longer than the cap is truncated with an ellipsis, never silently dropped', () => {
+test('sourceDetail longer than the cap, and not matching any known alias, is truncated with an ellipsis after the 【警廣】 prefix, never silently dropped', () => {
   const longDetail = '新' .repeat(60);
   const event = { source: 'pbs', type: 'accident', road: '國道一號', direction: '北向', startKM: '90K+000', description: '事故', sourceDetail: longDetail };
   const text = formatEventMessage(event);
-  assert.match(text, /通報：新+…/);
+  assert.match(text, /通報：【警廣】新+…/);
 });
 
 // =============================================================================
@@ -308,7 +312,10 @@ test('CASE 12: a normal PBS accident notification is unchanged in its existing f
   assert.equal(lines[2], '95K+000');
   assert.ok(lines.includes('事故影響通行'));
   assert.ok(lines.includes('請提前避開'));
-  assert.ok(lines.includes('通報：國道公路警察局'));
+  // V2.4.8 — "國道公路警察局" deterministically aliases to "警方" (see
+  // messageFormat.js's own REPORTER_UNIT_ALIAS_PATTERNS), shown behind the
+  // fixed 【警廣】 pipeline prefix — never the raw unaliased text anymore.
+  assert.ok(lines.includes('通報：【警廣】警方'));
   assert.equal(lines[lines.length - 1], '🕒 12:35更新');
 });
 

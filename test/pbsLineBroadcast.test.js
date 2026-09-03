@@ -224,10 +224,17 @@ test('3. PBS + TDX describe the SAME incident -> exactly 1 message (canonical me
   assert.equal(pushed.length, 1); // NOT 2 — this is the whole point of the merge
   assert.equal(result.pbs.canonicalEventCount, 1);
   assert.equal(result.pbs.crossSourceDuplicateCount, 1);
-  // The merged message still reads exactly like an ordinary TDX-sourced
-  // message — no "PBS"/"TDX" label anywhere the driver would see it.
+  // V2.4.8 — V2_4_8_AI_LINE_MESSAGE_EDITOR_AND_UNIFIED_PRESENTATION
+  // deliberately REVERSES the old "never show PBS/TDX to the driver"
+  // principle this test originally asserted (order section 六/九): a
+  // "通報：【來源層級】單位" line is now a REQUIRED, intentional part of
+  // every message, precisely so a driver (and a future debugger) can tell
+  // which data pipeline an event came in through. The merged canonical
+  // event here still carries `source: tdxEvent.source` (crossSourceDedup.js
+  // — a real, documented, pre-existing merge convention, unchanged this
+  // round), so it correctly shows the TDX reporter line.
   const text = pushed[0].messages[0].text;
-  assert.doesNotMatch(text, /pbs|tdx/i);
+  assert.match(text, /通報：【TDX】高公局/);
 });
 
 test('4. PBS + TDX describe DIFFERENT incidents -> V2.4.0: exactly 1 message (only PBS\'s own unique event; TDX\'s own unmatched event no longer reaches the legacy path, LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT)', async () => {
