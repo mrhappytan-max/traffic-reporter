@@ -252,6 +252,11 @@ export function buildAiObservatoryRecord({
     displayKM: candidate && typeof candidate.displayKM === 'number' ? candidate.displayKM : null,
     eventType: (candidate && candidate.eventType) || null,
     blockedLanes: candidate && typeof candidate.blockedLanes === 'number' ? candidate.blockedLanes : null,
+    // V2.4.10 (order section 十七) — which GEO tier actually confirmed
+    // this TDX event (e.g. 'FREEWAY_KM_VERIFIED_RANGE'), so the trace
+    // page can show "not polygon, KM fallback" — never read by any
+    // decision. Always null for PBS.
+    geoEvidenceType: (candidate && candidate.geoEvidenceType) || null,
     rawComment: (candidate && candidate.comment) || '',
     rawSourceDetail: (candidate && candidate.sourceDetail) || '',
     longitude: candidate && typeof candidate.longitude === 'number' ? candidate.longitude : null,

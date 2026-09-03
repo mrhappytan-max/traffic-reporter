@@ -432,10 +432,30 @@ function renderAiTextEditSection(record) {
   </div>`;
 }
 
+// V2.4.10 (order section 十七) — labels for `record.geoEvidenceType`
+// (aiObservatoryIndex.js's new field, sourced from
+// hsinchuGeoResolver.js's own `evidence.type`), so a future reader can
+// tell "polygon passed this" apart from "KM range fallback passed this"
+// apart from "explicit place-name text passed this" — never re-derives
+// or re-checks the decision, purely displays what was already recorded.
+const GEO_EVIDENCE_TYPE_LABELS = {
+  OFFICIAL_COORDINATE_POLYGON: '✅ 官方座標行政區',
+  EXPLICIT_PLACE_NAME: '✅ 明確地名',
+  FREEWAY_KM_VERIFIED_RANGE: '✅ 國道公里範圍',
+};
+
 function renderTdxGeoSection(record) {
   const status = layerStatusForTdxGeo(record);
   const text = status === 'fail' ? `❌ ${outcomeMeta(record).label}` : '✅ 通過（新竹縣市範圍內）';
-  return `<div class="detail-section"><h4>② GEO（地理判定）</h4><div class="row"><div class="label">結果</div><div class="value">${text}</div></div></div>`;
+  const evidenceLabel = GEO_EVIDENCE_TYPE_LABELS[record.geoEvidenceType] || (status === 'fail' ? '❌ 無足夠證據' : null);
+  const evidenceRow = evidenceLabel
+    ? `<div class="row"><div class="label">地理判定來源</div><div class="value">${evidenceLabel}${
+        record.geoEvidenceType === 'FREEWAY_KM_VERIFIED_RANGE' && record.road && typeof record.displayKM === 'number'
+          ? `<br>證據：${escapeHtml(record.road)} ${record.displayKM}K → VERIFIED_FREEWAY_KM_RANGE`
+          : ''
+      }</div></div>`
+    : '';
+  return `<div class="detail-section"><h4>② GEO（地理判定）</h4><div class="row"><div class="label">結果</div><div class="value">${text}</div></div>${evidenceRow}</div>`;
 }
 function renderTdxRoadPolicySection(record) {
   const status = layerStatusForTdxRoadPolicy(record);

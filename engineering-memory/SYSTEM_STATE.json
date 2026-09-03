@@ -39,10 +39,10 @@
     "openStructuralQuestion": "TWO trees currently hold the same canonical content: engineering-memory/ (what the mirror syncs) and meeting-room-export/ (what scripts/export-meeting-room.mjs generates). They are kept in step by hand today, which is exactly the drift risk this governance exists to prevent. Needs a human decision: either point the generator at engineering-memory/, or retire one tree. NOT decided unilaterally."
   },
   "git": {
-    "sourceMainHead": "f2d743d (V2_4_8_AI_LINE_MESSAGE_EDITOR_AND_UNIFIED_PRESENTATION; this snapshot precedes the V2.4.9 commit it ships in)",
+    "sourceMainHead": "96b5f44 (V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS; this snapshot precedes the V2.4.10 commit it ships in)",
     "sourceMainHeadResolvedFrom": "origin/main",
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
-    "sourceWorkingTree": "dirty (V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS changeset, committed together with this snapshot)",
+    "sourceWorkingTree": "dirty (V2_4_10_TDX_FREEWAY_KM_HSINCHU_DETERMINISTIC_GEO_FALLBACK changeset, committed together with this snapshot)",
     "selfReferenceNote": "sourceMainHead is the official main commit this snapshot DESCRIBES; exportArtifactCommit is the commit that CONTAINS this artifact and is intentionally never equal to it. Requiring the two to match would create a Git self-reference loop (every export changes the file, which changes the commit, which invalidates the recorded head). sourceMainHead is read from origin/main and is therefore stable across re-runs and across whichever branch the export was generated on.",
     "checkoutNote": "The transient checkout (branch/HEAD/date) this export happened to run from is deliberately NOT recorded here. It changes on every commit and would make every release look like a content change, defeating delta sync; it also says nothing about the snapshot itself. The snapshot is identified by sourceMainHead alone. Local sync evidence in .engineering/ still records the checkout for auditing.",
     "workingTreeNote": "sourceWorkingTree excludes meeting-room-export/, which this generator dirties by definition; it answers 'is the source tree clean', not 'did the export just write files'."
@@ -247,23 +247,29 @@
     }
   },
   "taskSeal": {
-    "task": "V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS",
+    "task": "V2_4_10_TDX_FREEWAY_KM_HSINCHU_DETERMINISTIC_GEO_FALLBACK",
     "status": "SEALED",
     "sealedAt": "2026-09-04",
-    "sealedBy": "human directive (路況工程部｜P0 實機異常查修令 TDX KM FALLBACK PRODUCTION PATH VERIFICATION)",
-    "releaseVersion": "V2.4.9",
-    "previousVersion": "V2.4.8",
-    "nature": "PATCH — Production 查修頁P0異常查修。GEO_RESOLVER_MODIFIED=NO、PBS_MODIFIED=NO、AI_MODIFIED=NO、LINE_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO。",
-    "trigger": "Production 查修頁兩筆真實TDX事件（國1北向101K+300施工、南向100K+000天候）displayKM/座標顯示—，GEO=UNKNOWN/Gate A排除，儘管V2.4.7已加description文字KM後援。",
-    "rootCauseChain": "直接runtime trace（非猜測）逐層驗證：extractKmTokenFromText()/parseKM()/normalizeRoadEvent()全部正確，displayKM已正確落在canonical事件物件；resolveTdxHsinchuGeography()讀真正event物件，正確收到KM進觀測層且正確維持UNKNOWN（安全行為非bug，本輪未修改GEO resolver）。真正bug：tdxQueueIngress.js#buildTdxPseudoCandidate()——V2.4.6建立、Gate A排除事件專用的查修頁記錄本地candidate builder，早於V2.4.7才加的displayKM欄位從未同步更新，導致Gate A排除的TDX事件寫入查修頁時displayKM永遠null。通過Gate A進AI的事件走真正的aiCandidate.js#buildAiCandidate()（V2.4.5起就有displayKM），未受影響（CASE4c驗證）。",
-    "fix": "buildTdxPseudoCandidate()補一行，把event.displayKM原樣帶入回傳物件，與旁邊longitude/latitude同慣例。不動Gate A決策、GEO resolver、Queue、AI、LINE、道路管理政策、PBS。",
-    "productionVersionDisclosure": "本session對Production *.workers.dev無直接網路存取（curl一律403），無法讀取實際部署的GET /version。本輪判斷完全基於程式碼runtime trace，不依賴Production是否已跑最新版；push後依既有唯一部署路徑（push main→Cloudflare Workers Builds自動部署）生效。",
-    "testEvidence": "新增test/v248TdxKmFallbackProductionRuntimeDiagnosis.test.js（8項，CASE1-5＋Gate A drop KV write best-effort迴歸鎖）。全量迴歸1796/1764/32，git stash -u同commit精確基準比對NEW_FAILURES=0。",
-    "unchanged": "GEO resolver、道路管理政策閘門、Queue、AI決策政策核心四欄位、LINE、PBS、任何wrangler.jsonc開關（四個TDX/AI開關維持全true）。",
-    "sealCommit": "見 git log 訊息 V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS（單一 commit，SHA 因自我參照而略去，同前例）",
-    "readerNote": "CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何開關）。通則：欄位在本體物件正確不保證在每個獨立建構的影子物件（此處為debug-only pseudo-candidate）裡也存在——新欄位上線需反查所有同形狀物件的獨立建構點。完整記錄見 07_KNOWN_ISSUES.md「修正紀錄｜V2.4.9」章節。"
+    "sealedBy": "human directive (路況工程部｜V2.4.10 TDX 國道公里數第二正向地理證據設計／施工令)",
+    "releaseVersion": "V2.4.10",
+    "previousVersion": "V2.4.9",
+    "nature": "MINOR — 新增第二套決定性正向地理證據（已驗證國道路線＋已驗證公里範圍），解決TDX事件有KM無座標無areaNm永遠停UNKNOWN的問題。GEO_RESOLVER_MODIFIED=YES（additive only）、PBS_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO、AI_POLICY_MODIFIED=NO、LINE_POLICY_MODIFIED=NO。",
+    "dataProvenance": "交叉比對本repo已bundled兩份官方政府資料集——國道百公尺里程樁（data.gov.tw 95016，交通部高速公路局）與縣市界線（data.gov.tw 7442，內政部國土測繪中心，V2.4.5已bundled）——用既有isPointInRings()同一演算法逐0.1km點檢驗，非Google摘要/論壇/AI記憶。原始連續區間國1=75.2-107.3K、國3=74.6-109.4K，兩端各縮0.5km保守邊界：最終國1=75.7-106.8K、國3=75.1-108.9K，正確排除已知橫跨交界的香山交流道（109K）。",
+    "fix": "新模組src/tdx/hsinchuFreewayKmRanges.js（靜態表＋純函式resolveVerifiedHsinchuFreewayKm()，零KV/I/O）；hsinchuGeoResolver.js新Tier4，只在座標與文字皆無證據時查、只查freeway來源、只能回CONFIRMED或不決定永不回OUTSIDE。座標優先靠既有Tier1「有結果即return」結構保證，衝突情境架構上不可能發生。",
+    "safetyVerified": "GEO確認≠LINE發送——101K+300施工事件GEO確認但Road Policy仍因blockedLanes未知fail-closed（V2.4.5未改）；100K+000天候事件GEO確認且非道路管理事件類型正常進Queue，notify仍完全交給既有AI決定。三筆真實觸發事件（101K+300/100K+000/79K+000）現正確CONFIRMED_HSINCHU。",
+    "testEvidence": "新增test/v2410TdxFreewayKmHsinchuDeterministicGeoFallback.test.js（18項，施工令§十九CASE1-16全覆蓋，含PBS/AI/LINE零import結構鎖）。既有V2.4.7/V2.4.9測試檔6處斷言因刻意行為改變更新並加註SUPERSEDED，非回歸。全量迴歸1814/1782/32，git stash -u同commit精確基準比對NEW_FAILURES=0。",
+    "unchanged": "PBS Windows/pbs-relay（結構測試鎖零import）、Road Policy閘門本身、AI prompt/model、LINE政策、Queue、CCTV、任何wrangler.jsonc開關（四個TDX/AI開關維持全true）。",
+    "sealCommit": "見 git log 訊息 V2_4_10_TDX_FREEWAY_KM_HSINCHU_DETERMINISTIC_GEO_FALLBACK（單一 commit，SHA 因自我參照而略去，同前例）",
+    "readerNote": "CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何開關）。若官方里程樁或行政區界線資料集更新，重跑 `npm run verify:hsinchu-freeway-km-ranges` 核對表格是否仍準確。完整記錄見 07_KNOWN_ISSUES.md「修正紀錄｜V2.4.10」章節。"
   },
   "taskSealHistory": [
+    {
+      "task": "V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS",
+      "status": "SEALED",
+      "sealedAt": "2026-09-04",
+      "releaseVersion": "V2.4.9",
+      "summary": "Production查修頁兩筆TDX事件displayKM顯示—，diagnose查明KM parser/normalize/geo resolver全部正確，真正bug是tdxQueueIngress.js#buildTdxPseudoCandidate()漏帶displayKM欄位，補一行修復。GEO resolver/決策政策/道路政策/CCTV全未觸碰（完整記錄見07_KNOWN_ISSUES.md）。"
+    },
     {
       "task": "V2_4_8_AI_LINE_MESSAGE_EDITOR_AND_UNIFIED_PRESENTATION",
       "status": "SEALED",
@@ -508,7 +514,7 @@
   ],
   "version": {
     "packageJsonVersion": "0.1.0",
-    "latestCompleted": "V2.4.9",
+    "latestCompleted": "V2.4.10",
     "canonicalSource": "src/version.js 的 APP_VERSION — 唯一權威。packageJsonVersion 是 npm 套件版本（0.1.0），與產品版本線無關，不要混用。"
   },
   "production": {
@@ -517,22 +523,22 @@
     "deployMethod": "push to main -> Cloudflare Workers Builds auto-deploy",
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
-  "currentPhase": "Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline。PHASE_E_TDX_NOTIFY_LIVE（本輪未變動）。**V2.4.9（本輪，2026-09-04，P0實機異常查修）**：Production查修頁兩筆TDX Gate A排除事件displayKM顯示—，diagnose查明KM parser/normalize/geo resolver全部正確（已用直接runtime trace證實），真正bug是`tdxQueueIngress.js#buildTdxPseudoCandidate()`（Gate A排除專用的查修頁記錄candidate builder）漏帶V2.4.7才加的displayKM欄位，補一行修復。GEO resolver/決策政策/道路政策/CCTV全未觸碰。本session無Production網路存取，實機觀察委由人類；異常第一動作固定改回false。雲端同步治理V2生效：Claude對Drive唯讀、GitHub為唯一寫入來源",
-  "currentTask": "none（無進行中工作）。Latest completed task = V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.4.9。本輪內容：逐層runtime trace確認extractKmTokenFromText()/normalizeRoadEvent()/resolveTdxHsinchuGeography()全部正確，GEO正確維持UNKNOWN（安全非bug）；真正bug是`buildTdxPseudoCandidate()`未帶displayKM欄位進查修頁記錄，已修復（僅補一個欄位傳遞）。通過Gate A進AI的事件走真正的`aiCandidate.js#buildAiCandidate()`，本就未受影響。GEO resolver/決策政策/道路政策/Queue/AI/LINE/PBS/wrangler.jsonc全部未觸碰。全量迴歸NEW_FAILURES=0。下一件事：等人類回報V2.4.5 seal-deploy的真實Production觀察結果（與本輪無關）；待Production部署本輪修正後，人類回頭核對查修頁上先前顯示—的TDX Gate A排除事件是否已正確顯示displayKM；異常時rollback協定見07_KNOWN_ISSUES.md。",
-  "knownBlocker": "無blocker，沿用V2.4.5封版的觀察中狀態——TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED已改true，第一筆真實TDX LINE通知現場結果待人類回報——REAL_WORLD_CONFIRMATION_PENDING（與本輪V2.4.9查修頁欄位修正無關，本輪未新增任何runtime blocker）。本session無Production網路存取無法自行觀察。異常時第一動作固定改回false止血。詳見07_KNOWN_ISSUES.md",
+  "currentPhase": "Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline。PHASE_E_TDX_NOTIFY_LIVE（本輪未變動）。**V2.4.10（本輪，2026-09-04）**：TDX GEO Resolver新增第二正向證據層——交叉比對兩份已bundled官方資料集（國道百公尺里程樁×縣市界線，用既有isPointInRings()演算法）得出國1/國3經新竹市/縣的驗證公里範圍（各縮0.5km安全邊界），新Tier4只在無座標無地名文字時查、只查freeway、範圍外一律UNKNOWN非OUTSIDE、座標永遠優先。三筆先前卡UNKNOWN的真實事件現正確CONFIRMED_HSINCHU。GEO確認≠LINE發送，Road Policy/AI/LINE政策全數未動，PBS完全未觸碰。本session無Production網路存取，實機觀察委由人類；異常第一動作固定改回false。雲端同步治理V2生效：Claude對Drive唯讀、GitHub為唯一寫入來源",
+  "currentTask": "none（無進行中工作）。Latest completed task = V2_4_10_TDX_FREEWAY_KM_HSINCHU_DETERMINISTIC_GEO_FALLBACK，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.4.10。本輪內容：新模組`hsinchuFreewayKmRanges.js`（靜態驗證表＋純函式，零KV/I/O）接入`hsinchuGeoResolver.js`新Tier4；`aiCandidate.js`/`buildTdxPseudoCandidate()`/`aiObservatoryIndex.js`/`aiObservatoryView.js`新增`geoEvidenceType`觀測欄位；`scripts/verifyHsinchuFreewayKmRanges.mjs`可重跑驗證資料衍生過程。GEO resolver是additive-only（新增一個tier，既有邏輯逐位元組不變）；道路政策/AI決策政策核心四欄位/LINE/PBS/Queue/CCTV/wrangler.jsonc全部未觸碰。全量迴歸NEW_FAILURES=0。下一件事：等人類回報V2.4.5 seal-deploy的真實Production觀察結果（與本輪無關）；觀察Production是否有更多TDX事件因新tier正確進Queue/AI；若官方資料集更新，重跑驗證腳本核對；異常時rollback協定見07_KNOWN_ISSUES.md。",
+  "knownBlocker": "無blocker，沿用V2.4.5封版的觀察中狀態——TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED已改true，第一筆真實TDX LINE通知現場結果待人類回報——REAL_WORLD_CONFIRMATION_PENDING（與本輪V2.4.10 GEO新增證據層無關，本輪未新增任何runtime blocker）。本session無Production網路存取無法自行觀察。異常時第一動作固定改回false止血。詳見07_KNOWN_ISSUES.md",
   "realWorldConfirmation": {
     "status": "REAL_WORLD_CONFIRMATION_PENDING",
     "subject": "V1.8.7.7 CCTV gray broken image fix"
   },
-  "nextAction": "待辦（沿用）：人類觀察真實Production TDX LINE推播——新竹縣市正常通過、桃園/苗栗/頭份/竹南=0推播、路肩開關=0推播、施工0-1車道=0推播、LINE內容無誤。異常時第一動作固定改回false止血。新增待辦：待Production部署V2.4.9後，人類回頭核對查修頁上先前顯示—的TDX Gate A排除事件是否已正確顯示displayKM。一個月後依ineligibleByReason數據決定是否收緊主動播報政策",
+  "nextAction": "待辦（沿用）：人類觀察真實Production TDX LINE推播——新竹縣市正常通過、桃園/苗栗/頭份/竹南=0推播、路肩開關=0推播、施工0-1車道=0推播、LINE內容無誤。異常時第一動作固定改回false止血。新增待辦：觀察Production是否有更多TDX高公局事件因V2.4.10新tier而正確進Queue/AI；若官方里程樁或行政區界線資料集更新，重跑`npm run verify:hsinchu-freeway-km-ranges`核對表格是否仍準確。一個月後依ineligibleByReason數據決定是否收緊主動播報政策",
   "authorityLevels": {
     "levelA_selfServiceReadOnly": "own repo git log, own Worker/KV/test results only",
     "levelB_requiresHumanApproval": "interactive login/OAuth, private dashboards, real KV content, any other department's resources (read or write)",
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-09-04T10:15:00.000Z",
-    "sourceMainHead": "f2d743d",
+    "generatedAt": "2026-09-04T11:00:00.000Z",
+    "sourceMainHead": "96b5f44",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
     "historyDir": "_history"
@@ -711,5 +717,18 @@
     "explicitlyUnchanged": "GEO resolver、道路管理政策閘門、Queue、AI決策政策核心四欄位、LINE、PBS、任何wrangler.jsonc開關（四個TDX/AI開關維持全true）。",
     "testEvidence": "新增test/v248TdxKmFallbackProductionRuntimeDiagnosis.test.js（8項，CASE1-5＋KV outage迴歸鎖）。全量迴歸1796/1764/32，git stash -u同commit精確基準比對NEW_FAILURES=0。",
     "appVersion": "V2.4.8 -> V2.4.9（PATCH）"
+  },
+  "V2_4_10_TDX_FREEWAY_KM_HSINCHU_DETERMINISTIC_GEO_FALLBACK": {
+    "completedAt": "2026-09-04",
+    "CURRENT_RUNTIME_PHASE": "PHASE_E_TDX_NOTIFY_LIVE（本輪未變動）",
+    "coreGoal": "TDX高公局事件常見「有國道+方向+KM無座標無areaNm」形狀先前永遠停UNKNOWN。新增第二套決定性正向證據：已驗證國道路線＋已驗證公里範圍，明確禁止恢復舊式「大範圍KM猜縣市」。",
+    "dataProvenance": "交叉比對本repo已bundled兩份官方政府資料集——國道百公尺里程樁（data.gov.tw 95016，交通部高速公路局，0.1km解析度）與縣市界線（data.gov.tw 7442，內政部國土測繪中心，V2.4.5已bundled）——用hsinchuGeoResolver.js既有isPointInRings()同一演算法逐點檢驗，非Google摘要/論壇/AI記憶。原始連續區間國1=75.2-107.3K、國3=74.6-109.4K（邊界銳利無雜訊）。兩端各縮0.5km保守安全邊界：最終國1=75.7-106.8K、國3=75.1-108.9K，正確排除已知橫跨新竹市/苗栗縣交界的香山交流道（109K，原始範圍內但安全邊界剛好外）。",
+    "newModule": "src/tdx/hsinchuFreewayKmRanges.js（靜態驗證表＋純函式resolveVerifiedHsinchuFreewayKm({road,displayKM})，零KV/I/O，重用既有canonicalFreewayRoad()）；scripts/verifyHsinchuFreewayKmRanges.mjs（可重跑獨立驗證，資料集更新時應重跑核對）。",
+    "resolverIntegration": "hsinchuGeoResolver.js新增Tier4（LEVEL 3），只在座標與明確地名文字皆無證據時才查，只查source==='freeway'；只能回CONFIRMED_HSINCHU或不決定，永不回OUTSIDE_HSINCHU（範圍外=無證據≠負面證據）。座標優先透過既有「Tier1有結果即return」結構保證，衝突情境架構上不可能發生，不需GEO_EVIDENCE_CONFLICT仲裁。",
+    "safetyVerified": "GEO確認≠LINE發送：101K+300施工事件GEO現在確認，但roadManagementPolicyGate.js（V2.4.5未改）仍因blockedLanes未知fail-closed；100K+000天候事件GEO確認且非道路管理事件類型，正常進Queue，notify仍完全交給既有AI決定，本輪未動aiDecisionEngine.js任何一行。三筆真實觸發事件（101K+300/100K+000/79K+000）現正確CONFIRMED_HSINCHU。",
+    "observatorySync": "aiObservatoryIndex.js新增geoEvidenceType欄位（哪層確認的，純觀測不影響決策），掛在event物件上跟著Queue訊息淺拷貝與buildTdxPseudoCandidate()自然帶過去，不需改共用buildPbsAiQueueMessage()簽章，PBS完全不受影響；aiObservatoryView.js GEO區塊新增地理判定來源顯示。",
+    "pbsUnaffected": "結構測試（test/v2410TdxFreewayKmHsinchuDeterministicGeoFallback.test.js CASE13）掃描所有src/pbs/*.js斷言零import hsinchuFreewayKmRanges.js。",
+    "testEvidence": "新增test/v2410TdxFreewayKmHsinchuDeterministicGeoFallback.test.js（18項，施工令§十九CASE1-16全覆蓋）。既有test/v247TdxGeoInputMissingFix.test.js/test/v248TdxKmFallbackProductionRuntimeDiagnosis.test.js共6處斷言因刻意行為改變更新並加註SUPERSEDED，非回歸。全量迴歸1814/1782/32，git stash -u同commit精確基準比對NEW_FAILURES=0。",
+    "appVersion": "V2.4.9 -> V2.4.10（MINOR）"
   }
 }

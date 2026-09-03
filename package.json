@@ -15,6 +15,7 @@
     "smoke:wasm": "node scripts/wranglerSmoke/runWasmSmoke.mjs",
     "update:road-location-data": "node scripts/updateRoadLocationData.mjs",
     "update:hsinchu-boundary-data": "node scripts/updateHsinchuBoundaryData.mjs",
+    "verify:hsinchu-freeway-km-ranges": "node scripts/verifyHsinchuFreewayKmRanges.mjs",
     "check:deployment-policy": "node scripts/check-deployment-policy.mjs",
     "verify:production": "node scripts/verify-production-deploy.mjs",
     "deploy:verify": "node scripts/verify-production-deploy.mjs",

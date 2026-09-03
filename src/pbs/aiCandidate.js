@@ -207,5 +207,13 @@ export function buildAiCandidate(normalizedEvent, { lifecycle, generatedAt }) {
     // existing, unmodified resolver read-only; see this module's header
     // comment for the exact scoping.
     locationQuality: resolveLocationQuality(normalizedEvent),
+    // V2.4.10 (order section 十七) — observability-only, never a gate:
+    // tdxQueueIngress.js's Gate A already stamps a genuinely
+    // CONFIRMED_HSINCHU TDX event's own `geoEvidenceType` (e.g.
+    // 'FREEWAY_KM_VERIFIED_RANGE') directly onto the normalized event
+    // object before it reaches the Queue, purely so the trace page can
+    // later show WHICH geo tier actually confirmed this event — never
+    // read by any decision. Always null for PBS (never set there).
+    geoEvidenceType: normalizedEvent.geoEvidenceType || null,
   };
 }

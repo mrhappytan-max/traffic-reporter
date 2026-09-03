@@ -98,7 +98,7 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 | 欄位 | 值 |
 |---|---|
-| Latest completed | V2.4.9 |
+| Latest completed | V2.4.10 |
 | package.json version | 0.1.0 |
 | Production status | DEPLOYED |
 | Production verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
@@ -442,6 +442,14 @@ V2.0.2 之後到 V2.4.0 之間的四個版本，這份精簡接班版未逐版�
 CLOUDFLARE_QUEUE`。V2.2.0 把查修頁升級為四層事件生命週期檢視。V2.3.1／
 V2.3.2／V2.3.3 是三個連續 PATCH（LINE 地圖座標直連 fallback、CCTV
 診斷工具修復、CCTV R2 讀回驗證），皆未改架構本身。
+
+## V2.4.10 — TDX 國道公里數第二正向地理證據（2026-09-04，加在下方 V2.4.9 之上）
+
+TDX｜高公局事件常見「有國道+方向+KM，無座標無areaNm」形狀先前永遠停 UNKNOWN。新增第二套決定性正向證據：`src/tdx/hsinchuFreewayKmRanges.js`——交叉比對兩份已有官方資料集（國道百公尺里程樁 dataset 95016 × 縣市界線 dataset 7442，用既有 `isPointInRings()` 同一演算法逐0.1km點檢驗）得出國1/國3實際經過新竹市/縣的公里範圍，兩端各縮0.5km保守邊界（國1=75.7-106.8K、國3=75.1-108.9K）。純函式 `resolveVerifiedHsinchuFreewayKm({road,displayKM})`，零KV/I/O。
+
+接入 `hsinchuGeoResolver.js` 新 LEVEL 3（只在座標與明確地名文字皆無證據時才查，只查 freeway 來源），只能回 CONFIRMED_HSINCHU 或不決定，永不回 OUTSIDE（範圍外=無證據≠OUTSIDE）。座標永遠優先——有座標時這個新 tier 根本不會被呼叫。三筆先前卡 UNKNOWN 的真實事件（101K+300/100K+000/79K+000）現正確 CONFIRMED。GEO確認≠LINE發送：101K+300施工事件GEO確認但Road Policy仍因blockedLanes未知fail-closed（V2.4.5政策不變）。
+
+查修頁新增 `geoEvidenceType` 觀測欄位（哪層確認的，不影響決策）。新測試18項（施工令CASE1-16全覆蓋）；既有兩個測試檔（V2.4.7/V2.4.9）數項斷言因刻意行為改變而更新，皆加註SUPERSEDED說明。全量迴歸1814/1782/32，NEW_FAILURES=0。`APP_VERSION` V2.4.9→V2.4.10。**未觸碰**：PBS（結構測試鎖住零import）、Road Policy/AI prompt/LINE政策/Queue/CCTV/wrangler.jsonc全部開關。
 
 ## V2.4.9 — TDX KM Fallback Production Runtime Diagnosis（2026-09-04，P0 實機異常查修，加在下方 V2.4.8 之上）
 

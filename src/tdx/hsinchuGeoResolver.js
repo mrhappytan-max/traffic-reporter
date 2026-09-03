@@ -86,6 +86,7 @@
 import { HSINCHU_CITY, HSINCHU_COUNTY, HSINCHU_BOUNDARY_METADATA } from '../../data/hsinchu-boundary/generated/hsinchuBoundary.js';
 import { FREEWAY_RULES, HIGHWAY_RULES, KM_BOUNDARY_BUFFER_KM } from '../traffic/hsinchuConfig.js';
 import { parseKM, extractPositions as extractRawPositions } from '../traffic/hsinchuFilter.js';
+import { resolveVerifiedHsinchuFreewayKm, FREEWAY_KM_EVIDENCE_TYPE } from './hsinchuFreewayKmRanges.js';
 
 export const HSINCHU_GEO_STATUS = Object.freeze({
   CONFIRMED_HSINCHU: 'CONFIRMED_HSINCHU',
@@ -201,6 +202,7 @@ function resolveByCoordinates(event) {
       reason: 'coordinate_outside_authoritative_boundary',
       evidence: {
         tier: 'coordinate',
+        type: 'OFFICIAL_COORDINATE_POLYGON',
         checkedPoints: points,
         outsidePoint: outside,
         boundarySource: HSINCHU_BOUNDARY_METADATA.sourceName,
@@ -219,6 +221,7 @@ function resolveByCoordinates(event) {
     reason: 'coordinate_inside_authoritative_boundary',
     evidence: {
       tier: 'coordinate',
+      type: 'OFFICIAL_COORDINATE_POLYGON',
       checkedPoints: points,
       matchedCounties: [matchedCounty, matchedCity].filter(Boolean),
       boundarySource: HSINCHU_BOUNDARY_METADATA.sourceName,
@@ -341,7 +344,7 @@ function resolveByText(event) {
     return {
       status: HSINCHU_GEO_STATUS.CONFIRMED_HSINCHU,
       reason: 'text_explicit_hsinchu_county_or_city',
-      evidence: { tier: 'text', matchedText: text.includes('新竹市') ? '新竹市' : '新竹縣' },
+      evidence: { tier: 'text', type: 'EXPLICIT_PLACE_NAME', matchedText: text.includes('新竹市') ? '新竹市' : '新竹縣' },
     };
   }
   const matchedDistrict = [...HSINCHU_CITY_DISTRICTS, ...HSINCHU_COUNTY_TOWNSHIPS].find((name) => text.includes(name));
@@ -349,7 +352,7 @@ function resolveByText(event) {
     return {
       status: HSINCHU_GEO_STATUS.CONFIRMED_HSINCHU,
       reason: 'text_explicit_hsinchu_district_or_township',
-      evidence: { tier: 'text', matchedText: matchedDistrict },
+      evidence: { tier: 'text', type: 'EXPLICIT_PLACE_NAME', matchedText: matchedDistrict },
     };
   }
 
@@ -358,11 +361,51 @@ function resolveByText(event) {
     return {
       status: HSINCHU_GEO_STATUS.OUTSIDE_HSINCHU,
       reason: `text_explicit_non_hsinchu_place:${matchedOther}`,
-      evidence: { tier: 'text', matchedText: matchedOther },
+      evidence: { tier: 'text', type: 'EXPLICIT_PLACE_NAME', matchedText: matchedOther },
     };
   }
 
   return null;
+}
+
+// ---------------------------------------------------------------------
+// Tier 4 (NEW, V2.4.10) — verified freeway KM range. order section 二's
+// own LEVEL 3 ("國道 + 已驗證 KM range"), consulted only after Tier 1
+// (coordinates) and Tier 3 (text) both found no evidence — see this
+// module's header + tdx/hsinchuFreewayKmRanges.js's own header comment
+// for the full data-provenance record (two official government datasets
+// cross-referenced, never a guess).
+//
+// order section 三 — KM fallback ONLY when coordinates are absent. This
+// is satisfied structurally, not by a runtime check here: the public
+// entry point below only ever reaches this tier when resolveByCoordinates
+// already returned null (meaning the event carried literally NO usable
+// coordinate at all) — a coordinate that exists is handled exclusively by
+// Tier 1 and this tier is never even called, so there is no scenario
+// where a coordinate result and a KM-range result could conflict and need
+// arbitrating (GEO_EVIDENCE_CONFLICT never arises by construction).
+//
+// order section 十一 — this tier NEVER returns OUTSIDE_HSINCHU. A KM
+// outside every verified range, an unrecognized road, or a missing
+// displayKM all mean exactly the same thing here: "no positive evidence
+// at this tier" (null) — the caller falls through to UNKNOWN, never
+// treats absence-from-the-table as a negative signal.
+function resolveByVerifiedFreewayKmRange(event) {
+  if (!event || event.source !== 'freeway') return null; // order section 七/十八 — freeway (TDX｜高公局) only, never highway/PBS
+  const match = resolveVerifiedHsinchuFreewayKm({ road: event.road, displayKM: event.displayKM });
+  if (!match) return null;
+
+  return {
+    status: HSINCHU_GEO_STATUS.CONFIRMED_HSINCHU,
+    reason: 'freeway_km_inside_verified_range',
+    evidence: {
+      tier: 'freeway_km_range',
+      type: FREEWAY_KM_EVIDENCE_TYPE,
+      road: match.road,
+      km: match.km,
+      matchedRange: match.matchedRange,
+    },
+  };
 }
 
 // ---------------------------------------------------------------------
@@ -391,16 +434,29 @@ export function resolveTdxHsinchuGeography(event) {
   const textResult = resolveByText(event);
   if (textResult) return textResult;
 
-  // Neither tier 1 nor tier 3 reached a verdict — tier 2 (KM) is recorded
-  // as observability evidence only, never as the decision (see this
-  // module's own header + describeKmHeuristic's own comment).
+  // V2.4.10 — new Tier 4, order section 二's LEVEL 3. Only ever produces
+  // CONFIRMED_HSINCHU or no verdict (never OUTSIDE_HSINCHU — order section
+  // 十一); only reached because coordinateResult was null, i.e. this event
+  // carried no usable coordinate at all (order section 三).
+  const freewayKmRangeResult = resolveByVerifiedFreewayKmRange(event);
+  if (freewayKmRangeResult) return freewayKmRangeResult;
+
+  // Tier 1, Tier 3, and the new Tier 4 all found no verdict — the OLD
+  // unverified tier 2 (KM heuristic) is recorded as observability evidence
+  // only, never as the decision (see this module's own header +
+  // describeKmHeuristic's own comment). The new verified freeway-KM-range
+  // check above already ran and found no match either — noted here too so
+  // a human reading this UNKNOWN result on the trace page can tell
+  // "checked the verified table, no match" apart from "not a freeway
+  // event at all".
   return {
     status: HSINCHU_GEO_STATUS.UNKNOWN,
     reason: 'no_reliable_geographic_evidence',
     evidence: {
       tier: 'none',
       kmHeuristic: describeKmHeuristic(event),
-      note: 'no valid coordinates, no confident text match — order section 十一: UNKNOWN fails closed exactly like OUTSIDE_HSINCHU',
+      verifiedFreewayKmRangeChecked: event.source === 'freeway',
+      note: 'no valid coordinates, no confident text match, no verified freeway KM range match — order section 十一: UNKNOWN fails closed exactly like OUTSIDE_HSINCHU',
     },
   };
 }

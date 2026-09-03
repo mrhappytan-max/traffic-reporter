@@ -11,13 +11,20 @@
 // hsinchuFilter.js's own TDX-KM-token shape (parseKM's pattern) via a new
 // extractKmTokenFromText(), never a second/independent KM-string format.
 //
-// SAFETY (order section 四, verified by CASE 7 below): a successfully
-// parsed KM is stored as `startKM`/`endKM` in the SAME string shape a
-// structured field already carries, so it only ever reaches
-// hsinchuGeoResolver.js's Tier-2 KM-heuristic tier — which remains
-// permanently OBSERVABILITY-ONLY (unchanged this round) and can never by
-// itself produce CONFIRMED_HSINCHU. Zero change to any Gate A drop
-// decision, the geo resolver's own tier logic, the road-management gate,
+// SAFETY (order section 四, verified by CASE 7 below, AS OF V2.4.7): a
+// successfully parsed KM is stored as `startKM`/`endKM` in the SAME string
+// shape a structured field already carries, so at the time this round
+// shipped it only ever reached hsinchuGeoResolver.js's Tier-2 KM-heuristic
+// tier — permanently OBSERVABILITY-ONLY, never able to produce
+// CONFIRMED_HSINCHU on its own. **V2.4.10 update**: this remains true of
+// that SAME old, unverified heuristic tier — but a separate, genuinely
+// VERIFIED freeway-KM-range tier (src/tdx/hsinchuFreewayKmRanges.js,
+// backed by real official government data) was added on top, and now
+// legitimately DOES confirm 79K+000 as CONFIRMED_HSINCHU — see CASE 7's
+// own updated comment below for the full explanation, and
+// 07_KNOWN_ISSUES.md's V2.4.10 entry for the complete record. Zero change
+// to any Gate A drop decision, the geo resolver's own tier logic, the
+// road-management gate,
 // the AI prompt, or LINE policy.
 
 import { test } from 'node:test';
@@ -145,16 +152,30 @@ test('CASE 6: a PBS event (never touches tdx/normalize.js at all) is completely 
 // evidence, and the event is still NOT AI-eligible.
 // =======================================================================
 
-test('CASE 7: KM successfully parsed (79K+000, inside the KM-heuristic table\'s observability range) but no coordinate/place-name evidence -> Geographic Resolver still UNKNOWN, never CONFIRMED_HSINCHU from KM alone', () => {
+// SUPERSEDED BY V2.4.10 (V2_4_10_TDX_FREEWAY_KM_HSINCHU_DETERMINISTIC_GEO_
+// FALLBACK): at the time this test was written, "KM alone" meant only the
+// OLD, admittedly-unverified traffic/hsinchuConfig.js heuristic table
+// (observability-only, order section 九's own explicit "never
+// authoritative" rule) — this test correctly proved that table could
+// never confirm anything. V2.4.10 added a SEPARATE, genuinely VERIFIED
+// LEVEL 3 evidence tier (src/tdx/hsinchuFreewayKmRanges.js, backed by two
+// cross-referenced official government datasets — see that module's own
+// header for the full provenance/derivation record), which is a
+// positive-authority tier by design, not the old heuristic. 79K+000 on
+// 國道三號 is genuinely inside 新竹縣 (verified range 75.1K–108.9K) — this
+// is in fact the exact real Production event this whole V2.4.7-through-
+// V2.4.10 saga started from (see 07_KNOWN_ISSUES.md). Updated to assert
+// the new, correct, verified-tier CONFIRMED_HSINCHU result. CASE 7b right
+// below (a real coordinate) still separately proves the coordinate tier
+// remains the highest-priority authority — unaffected by this change.
+test('CASE 7: KM successfully parsed (79K+000) -> now CONFIRMED_HSINCHU via the V2.4.10 verified freeway-KM-range tier (the OLD unverified heuristic table still never decides anything on its own)', () => {
   const event = normalizeRoadEvent(freewayRaw(), 'freeway');
   assert.equal(event.displayKM, 79); // KM WAS recovered
   const geo = resolveTdxHsinchuGeography(event);
-  assert.equal(geo.status, HSINCHU_GEO_STATUS.UNKNOWN); // still UNKNOWN -> still 0 AI, 0 LINE
-  assert.notEqual(geo.status, HSINCHU_GEO_STATUS.CONFIRMED_HSINCHU);
-  // The KM-heuristic tier now has real evidence to show (observability
-  // improvement), but it is explicitly documented as never authoritative.
-  assert.equal(geo.evidence.kmHeuristic.kmAvailable, true);
-  assert.equal(geo.evidence.tier, 'none'); // no tier actually DECIDED the outcome
+  assert.equal(geo.status, HSINCHU_GEO_STATUS.CONFIRMED_HSINCHU); // V2.4.10 — was UNKNOWN before this round
+  assert.equal(geo.evidence.tier, 'freeway_km_range');
+  assert.equal(geo.evidence.type, 'FREEWAY_KM_VERIFIED_RANGE');
+  assert.equal(geo.evidence.km, 79);
 });
 
 test('CASE 7b: the SAME event WITH a real coordinate inside Hsinchu -> CONFIRMED_HSINCHU via the coordinate tier, proving KM alone never decided CASE 7\'s UNKNOWN result', () => {

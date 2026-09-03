@@ -1794,7 +1794,56 @@
 // LINE_MODIFIED=NO, ROAD_POLICY_MODIFIED=NO, Queue send/enqueue decision
 // unchanged. See test/v248TdxKmFallbackProductionRuntimeDiagnosis.test.js
 // and 07_KNOWN_ISSUES.md for the full record.
-export const APP_VERSION = 'V2.4.9';
+// V2.4.10 — V2_4_10_TDX_FREEWAY_KM_HSINCHU_DETERMINISTIC_GEO_FALLBACK
+// (路況工程部｜TDX 國道公里數第二正向地理證據設計／施工令). A common
+// TDX｜高公局 event shape (road+direction+KM, NO coordinates, NO areaNm)
+// previously stayed permanently UNKNOWN even after V2.4.7's own
+// description-text KM recovery, because the only KM tier that existed
+// (traffic/hsinchuConfig.js's own admittedly-unverified table) was
+// deliberately, permanently observability-only (order section 一's own
+// explicit ban on reviving "large loose KM range" as positive authority).
+//
+// Adds a SEPARATE, genuinely VERIFIED LEVEL 3 evidence tier
+// (src/tdx/hsinchuFreewayKmRanges.js) for exactly 國道一號/國道三號,
+// derived by cross-referencing TWO independent official government
+// datasets already bundled in this repo (國道百公尺里程樁, data.gov.tw
+// 95016, 交通部高速公路局; 直轄市、縣市界線, data.gov.tw 7442, 內政部
+// 國土測繪中心) at 0.1km resolution, using the SAME point-in-polygon
+// function hsinchuGeoResolver.js's own Tier 1 coordinate check already
+// trusts — never a guess, never a web-search summary, never AI memory.
+// A 0.5km conservative safety margin is trimmed from each end (order
+// section 六); a KM outside the verified range NEVER becomes
+// OUTSIDE_HSINCHU, only UNKNOWN (order section 十一 — absence of positive
+// evidence is not negative evidence). Consulted ONLY when coordinates are
+// absent (order section 三) — a coordinate, when present, is handled
+// exclusively by the existing Tier 1 and this new tier is never even
+// reached, so a coordinate/KM conflict cannot arise by construction.
+//
+// The three real Production events this whole V2.4.7-through-V2.4.10 saga
+// started from (國1北向101K+300施工, 國1南向100K+000天候, 國3北向79K+000
+// 散落物 — see 07_KNOWN_ISSUES.md) now all correctly resolve
+// CONFIRMED_HSINCHU. GEO CONFIRMED never bypasses Road Policy or AI/LINE
+// eligibility (order section 十三/十四) — those remain fully independent,
+// unchanged gates; a routine-construction event with unrecoverable
+// blockedLanes still fail-closes exactly as V2.4.5 always required.
+//
+// Pure/synchronous/zero-I/O by construction (order section 十五/十六) — no
+// KV, no D1/R2/Durable Object, a plain array lookup over at most two
+// roads. PBS entirely untouched (order section 十八) — a structural test
+// (test/v2410TdxFreewayKmHsinchuDeterministicGeoFallback.test.js's own
+// CASE 13) asserts no pbs/ module ever imports the new table. Observatory
+// (order section 十七): aiObservatoryIndex.js's record gained
+// `geoEvidenceType`, and aiObservatoryView.js's GEO section now shows
+// WHICH tier confirmed a TDX event (official coordinate polygon /
+// explicit place name / verified freeway KM range), so a future reader
+// can tell "polygon passed this" apart from "KM fallback passed this".
+//
+// GEO_RESOLVER_MODIFIED=YES (additive new tier only — Tier 1/Tier 3's own
+// decision logic byte-for-byte unchanged), PBS_MODIFIED=NO,
+// ROAD_POLICY_MODIFIED=NO, AI_POLICY_MODIFIED=NO, LINE_POLICY_MODIFIED=NO.
+// See test/v2410TdxFreewayKmHsinchuDeterministicGeoFallback.test.js (the
+// order's own CASE 1-16) and 07_KNOWN_ISSUES.md for the full record.
+export const APP_VERSION = 'V2.4.10';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

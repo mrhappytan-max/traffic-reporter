@@ -119,6 +119,10 @@ function buildTdxPseudoCandidate(event, generatedAt) {
     longitude: event && typeof event.longitude === 'number' ? event.longitude : null,
     latitude: event && typeof event.latitude === 'number' ? event.latitude : null,
     blockedLanes: event && typeof event.blockedLanes === 'number' ? event.blockedLanes : null,
+    // V2.4.10 (order section 十七) — mirrors aiCandidate.js#buildAiCandidate()'s
+    // own new geoEvidenceType field; see this file's enqueueTdxRoadEvents()
+    // for where it gets stamped onto `event` before this is called.
+    geoEvidenceType: (event && event.geoEvidenceType) || null,
     generatedAt,
   };
 }
@@ -190,6 +194,13 @@ export async function enqueueTdxRoadEvents(env, { newEvents = [], updatedEvents 
   const geoPassed = [];
   for (const candidate of candidates) {
     const geo = resolveTdxHsinchuGeography(candidate.event);
+    // V2.4.10 (order section 十七) — stamped directly onto the normalized
+    // event object (never a separate side-channel) so it rides along
+    // unchanged through both possible downstream paths: buildTdxPseudoCandidate()
+    // below for a DROP, or buildPbsAiQueueMessage()'s shallow event copy →
+    // aiCandidate.js#buildAiCandidate() for a PASS. Purely observability —
+    // read by nothing that makes a decision.
+    candidate.event.geoEvidenceType = (geo.evidence && geo.evidence.type) || null;
     if (geo.status === HSINCHU_GEO_STATUS.CONFIRMED_HSINCHU) {
       geoPassed.push(candidate);
     } else {

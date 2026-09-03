@@ -4,6 +4,20 @@
 
 本檔案以 `src/` 實際模組結構整理，非憑記憶重寫。模組清單於 export 產生時由腳本重新掃描 `src/` 目錄核對（見本檔末尾「模組清單（自動掃描）」），若與下方敘述不符，以自動掃描結果與程式碼本身為準,並視為文件 Drift。
 
+## V2.4.10 — TDX 國道公里數第二正向地理證據（本輪，2026-09-04）
+
+MINOR。PBS_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO、AI_POLICY_MODIFIED=NO、LINE_POLICY_MODIFIED=NO。GEO_RESOLVER_MODIFIED=YES（additive only——Tier1/Tier3既有決策邏輯逐位元組不變，只新增一個 Tier4）。
+
+**新模組**：`src/tdx/hsinchuFreewayKmRanges.js`——TDX ONLY 靜態驗證表＋純函式 `resolveVerifiedHsinchuFreewayKm({road, displayKM})`。資料衍生方法（施工令§五要求政府開放資料，禁止Google摘要/論壇/AI記憶當權威）：交叉比對本repo已bundled的兩份官方資料集——`data/road-location/generated/freeway.js`（國道百公尺里程樁，data.gov.tw 95016，交通部高速公路局，0.1km解析度座標）與`data/hsinchu-boundary/generated/hsinchuBoundary.js`（縣市界線，data.gov.tw 7442，內政部國土測繪中心，V2.4.5已bundled）——用既有匯出的`isPointInRings()`（同一套ray-casting演算法）逐0.1km里程樁點檢驗。結果：國1原始連續區間75.2-107.3K，國3原始74.6-109.4K（邊界銳利無雜訊，已用±1.5km窗口核對）。§六要求保守邊界，兩端各縮0.5km：最終國1=75.7-106.8K、國3=75.1-108.9K，正確排除已知橫跨新竹市/苗栗縣交界的香山交流道（109K，原始範圍內但安全邊界剛好外）。`scripts/verifyHsinchuFreewayKmRanges.mjs`提供可重跑的獨立驗證，資料集更新時應重跑核對。
+
+**接入 GEO Resolver**：`hsinchuGeoResolver.js`新增`resolveByVerifiedFreewayKmRange()`（新Tier4，施工令§二自己的LEVEL 3），插入順序：Tier1（座標）→既有Tier3（明確地名文字）→新Tier4（國道公里範圍）→UNKNOWN。只在`event.source==='freeway'`時查（省道/PBS皆不查）；只能回傳CONFIRMED_HSINCHU或不決定（null→UNKNOWN），永不主動回傳OUTSIDE_HSINCHU（施工令§十一：範圍外=無證據≠負面證據，避免誤判）。**座標優先順序的實作方式**：`resolveTdxHsinchuGeography()`裡`coordinateResult`一有結果就立即return，新Tier4只在`coordinateResult`為null（事件完全沒有座標）時才會被呼叫——這代表「座標與KM範圍衝突」這個情境在架構上根本不可能發生，不需要額外的GEO_EVIDENCE_CONFLICT仲裁邏輯（施工令自己也只說「可以記錄」，非強制）。
+
+**Road Policy/AI/LINE完全獨立（施工令§十三/十四驗證）**：101K+300施工事件（`type=construction`，`blockedLanes`缺失）GEO現在CONFIRMED，但`roadManagementPolicyGate.js`（V2.4.5，本輪未改一行）仍正確回傳`eligible=false, reason='construction-unknown-blocked-lanes'`——GEO修好不代表施工事件會通知，這是正確行為。100K+000天候事件（`type=other`，非道路管理事件類型）GEO CONFIRMED且Road Policy放行，正常進Queue，是否實際notify=true完全交給既有AI決策，本輪未動`aiDecisionEngine.js`任何一行。
+
+**查修頁（施工令§十七）**：`evidence.type`加到`hsinchuGeoResolver.js`各正面/文字tier（座標='OFFICIAL_COORDINATE_POLYGON'、文字='EXPLICIT_PLACE_NAME'、新tier='FREEWAY_KM_VERIFIED_RANGE'）；`tdxQueueIngress.js`直接把`geo.evidence.type`標記到`candidate.event.geoEvidenceType`（掛在event物件上，跟著Queue訊息淺拷貝自然帶過去，不需改共用`buildPbsAiQueueMessage()`簽章，PBS不受影響）；`aiCandidate.js`/`buildTdxPseudoCandidate()`/`aiObservatoryIndex.js`都新增此欄位讀取（mirror既有displayKM pattern，純觀測不影響決策）；`aiObservatoryView.js`GEO區塊新增「地理判定來源」列（✅官方座標行政區／✅明確地名／✅國道公里範圍／❌無足夠證據），KM range放行時額外顯示證據明細。
+
+**測試**：新增`test/v2410TdxFreewayKmHsinchuDeterministicGeoFallback.test.js`（18項，施工令§十九CASE1-16全覆蓋，含PBS零import結構鎖、AI/LINE檔案零import結構鎖、純函式零I/O驗證）。既有`test/v247TdxGeoInputMissingFix.test.js`CASE7、`test/v248TdxKmFallbackProductionRuntimeDiagnosis.test.js`CASE3/4a/4b/5/最後一項共6處斷言因這輪刻意的、預期中的行為改變（先前正確地卡在UNKNOWN的KM現在正確地CONFIRMED了）而更新，皆加註「SUPERSEDED BY V2.4.10」完整說明保留歷史脈絡，非回歸。全量迴歸1814/1782/32，`git stash -u`同commit精確基準比對NEW_FAILURES=0。`APP_VERSION` V2.4.9→V2.4.10。
+
 ## V2.4.9 — TDX KM Fallback Production Runtime Diagnosis（本輪，2026-09-04，P0 實機異常查修）
 
 PATCH。GEO_RESOLVER_MODIFIED=NO、PBS_MODIFIED=NO、AI_MODIFIED=NO、LINE_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO。修的是 `src/tdx/tdxQueueIngress.js#buildTdxPseudoCandidate()` 一個函式，新增一個欄位。
@@ -262,109 +276,21 @@ Google Maps。`CCTV_RUNTIME_TDX_CALLS=0`。
 完整逐版本文字記錄 → `06_VERSION_HISTORY.md`／`07_KNOWN_ISSUES.md`；17
 個 CASE 測試全文 → `test/tdxUnifiedAiPipeline.test.js`。
 
-## V2.3.0 — PBS AI Queue Reliability：Cloudflare Queues 取代 ctx.waitUntil（2026-08-30）
+## V2.3.0 — PBS AI Queue Reliability：Cloudflare Queues 取代 ctx.waitUntil（2026-08-30，壓縮摘要）
 
-**真實 Production 事故**（與 V2.1.0 修的是不同一種失敗模式）：`EVENT_ID=
-11508290166-0` 成功抵達 Cloudflare 並啟動 Workers AI 呼叫
-（16:49:03.112），但呼叫本身在 `ctx.waitUntil()` 自己的背景執行時間
-預算到期前未能回傳——與 Windows 自身的短 HTTP timeout（V2.1.0 已解決）
-完全無關的另一種限制。16:49:32.912 平台強制取消整個 task（"waitUntil()
-tasks did not complete within the allowed time after invocation end and
-have been cancelled"），AI 決策永久遺失，冪等紀錄卡死 `PROCESSING`。
-`REAL_INCIDENT_ROOT_CAUSE = WAITUNTIL_BACKGROUND_WINDOW_EXCEEDED`。
+**真實 Production 事故**：`EVENT_ID=11508290166-0` 成功啟動 Workers AI 呼叫，但呼叫在 `ctx.waitUntil()` 自身背景執行時間預算到期前未回傳，平台強制取消整個 task，AI 決策永久遺失、冪等紀錄卡死 PROCESSING。`REAL_INCIDENT_ROOT_CAUSE=WAITUNTIL_BACKGROUND_WINDOW_EXCEEDED`（與V2.1.0修的Windows短HTTP timeout是不同的另一種限制）。
 
-**架構變更**：`ctx.waitUntil()` 全面退休做為 AI 背景執行載體
-（`WAITUNTIL_AI_PROCESSING = 'RETIRED'`），改用**唯一一個** Cloudflare
-Queue（`pbs-ai-processing-queue`／binding `PBS_AI_QUEUE`）：
+**架構變更**：`ctx.waitUntil()`全面退休做為AI背景執行載體，改用唯一一個Cloudflare Queue（`pbs-ai-processing-queue`／binding`PBS_AI_QUEUE`，`wrangler.jsonc`為唯一正典來源）：HTTP ingress只驗證/冪等accept(PROCESSING)/Observatory早期寫入(PROCESSING_STARTED)/`Queue.send()`，send成功才ACK；獨立Queue Consumer（同一Worker新增`queue(batch,env,ctx)` export，非第二個Worker）承接AI candidate→AI決策→LINE/Shared Feed→Observatory最終寫入(COMPLETED)，與原始HTTP request/ctx完全無關。`Queue.send()`失敗絕不假報accepted:true(回真實503)。
 
-```
-Windows 送出事件
-    ↓
-Cloudflare：auth → 驗證 → 冪等 accept（寫入 status=PROCESSING）
-    → Observatory 早期寫入（PROCESSING_STARTED）
-    ↓
-Queue.send() —— 只有 send 成功才 ACK「已收件」
-    ↓                                    ↓
-Windows 收到回應，不需等待               Queue Consumer（獨立 invocation，
-                                          與原始 HTTP request/ctx 完全無關）：
-                                          AI candidate → AI 決策
-                                          → LINE/Shared Feed → Observatory
-                                          最終寫入 → status=COMPLETED
-```
+**重試邊界（關鍵設計）**：`AI_CALL_FAILED`（呼叫未可靠完成）可Queue重試，`MAX_QUEUE_RETRIES=3`；既有`AI_DECISION_INVALID`（答案格式無效）fail-closed完全不放寬、絕不重試。新終態`AI_OUTCOME.PROCESSING_FAILED`（重試耗盡後Consumer寫入，同時標記冪等COMPLETED）。`QUEUE_DELIVERY_MODEL=AT_LEAST_ONCE`，業務`BUSINESS_OUTCOME_MODEL=EFFECTIVELY_ONCE`：每次遞送先查冪等記錄，已COMPLETED的重複遞送直接ack略過，重用既有transport idempotency/AI decision cache/notified-state。
 
-`AI_BACKGROUND_EXECUTION = 'CLOUDFLARE_QUEUE'`，`QUEUE_ROLE =
-'RELIABLE_AI_BUSINESS_PROCESSING'`。`wrangler.jsonc` 的 `queues` 區塊為
-**唯一正典設定來源**（沿用 `TRAFFIC_SOURCE_MODE`／
-`PBS_AI_DECISION_ENABLED` 既有的 anti-drift 慣例，絕非 Dashboard-only）。
-Producer = 這個 Worker 自己的 HTTP ingress（`handlePbsDebugPush`）；
-Consumer = 同一個 Worker 的新 `queue(batch, env, ctx)` export——**沒有
-第二個 Worker 專案**。`Queue.send()` 失敗時絕不回報 `accepted:true`（回
-真實 503），既有 `PROCESSING_STALE_MS`（60 秒）自然復原孤兒 PROCESSING
-記錄，未新增第二套 orphan-recovery 機制。
+**開發期間測試驅動發現並修正的Observatory KV key-identity bug**：Queue Consumer是獨立invocation，自己的`now`與HTTP ingress原始接受時間不同，直接沿用會讓最終寫入建立第二筆KV紀錄而非覆寫早期PROCESSING_STARTED——修正為從queue message的`acceptedFirstAcceptedAt`重建`observatoryNow`專供兩次Observatory寫入key使用，真實`now`仍用於業務決策與`completedAt`。`RAW_PBS_TEXT_POLICY=IMMUTABLE_END_TO_END_UNTIL_AI`不變（event逐字淺拷貝，從未截斷改寫）。
 
-**重試邊界（本輪關鍵設計決策）**：`AI_CALL_FAILED`（呼叫本身未可靠完成
-——網路／5xx／容量／timeout／binding missing）現在可 Queue 重試，
-`MAX_QUEUE_RETRIES = 3`（與 `wrangler.jsonc` 的 `max_retries: 3` 一致，
-確保本身的確定性終止邏輯先於任何未設定的平台 DLQ／drop 生效）。**既有**
-`AI_DECISION_INVALID`（呼叫已完成但答案格式無效）fail-closed 政策
-**完全不放寬**——絕不重試，第一次嘗試即為終態，與 V2.1.0／V2.2.0 完全
-相同。只有真正「工作未可靠完成」的情況才重試，不對已完成但無效的答案
-重新提問。
+**成本**：KV `puts=4N+2`（與V2.2.0同公式，僅拆到兩次invocation）、`gets=6N`（+1/事件）。Queue：成功2次operation，重試耗盡最差5次；50/100/200 events/day最差250/500/1000次，遠低於10,000/日免費額度。
 
-**新終態**：`AI_OUTCOME.PROCESSING_FAILED`——重試耗盡後由 Queue
-Consumer 自己寫入，同時標記冪等 `COMPLETED`（永久失敗的事件絕不能一直
-顯示 PROCESSING），並 ack 該 message，不依賴未設定的 Cloudflare
-DLQ／drop 靜默解釋。「使用最小新增狀態，不建立大型狀態機」——只有這一個
-新終態。
+**未觸碰**：Windows PBS filter、AI Prompt/model、service area、LINE formatter、TDX、CCTV、Shared Feed、Observatory整體UI（僅新增PROCESSING_FAILED詞彙）。`BROWSER_ACTION_REQUIRED=YES`：真實Queue資源需Dashboard/`wrangler queues create`建立，sandbox無法驗證。
 
-**重複遞送保護**：`QUEUE_DELIVERY_MODEL = 'AT_LEAST_ONCE'`（Cloudflare
-Queues 本身保證），業務結果要求 `BUSINESS_OUTCOME_MODEL =
-'EFFECTIVELY_ONCE'`：`processQueuedPbsEvent` 每次遞送**第一步**都先重新
-檢查冪等記錄，已 `COMPLETED` 的重複遞送直接 ack 略過（0 額外 AI 呼叫、0
-額外 LINE 推播），重用既有 transport idempotency／AI decision cache／
-notified-state／incident suppression，未新增第二套去重機制。
-
-**Observatory KV key-identity 修正**（開發期間測試驅動發現，非原始設計
-預期）：Queue Consumer 是獨立 invocation，自己的 `now = new Date()` 與
-HTTP ingress 原始接受時間不同，若直接沿用會讓最終寫入建立**第二筆** KV
-紀錄，而非覆寫早期 `PROCESSING_STARTED` 紀錄（打破 V2.2.0 的「同一把
-key 覆寫」設計）。修正：從 queue message 自帶的 `acceptedFirstAcceptedAt`
-重建 `observatoryNow`，**只**供兩次 Observatory 寫入的 KV key 使用；
-真實當下 `now` 仍完整保留給所有真正的業務決策（AI 呼叫、LINE 播報時段
-閘門）與 `markProcessingComplete` 的 `completedAt`（正確反映真實完成
-時間，非接受時間）。
-
-`RAW_PBS_TEXT_POLICY = IMMUTABLE_END_TO_END_UNTIL_AI`（V2.1.0 命名）不變
-——queue message 的 `event` 欄位為原始物件的逐字淺拷貝
-（`buildPbsAiQueueMessage`），從未截斷／摘要／改寫／重新生成。
-
-**成本**：KV 實測 `puts = 4N + 2`（與 V2.2.0 完全相同公式，額外 0 次
-寫入／事件——四筆寫入只是拆到兩次 Worker invocation），`gets = 6N`
-（+1／事件，Queue Consumer 自己的冪等 re-check）。Queue operations
-工程估算（sandbox 無即時 Cloudflare 帳單存取）：成功事件 2 次
-operation（1 send + 1 consume-ack），重試耗盡最差情況 5 次 operation
-（1 send + 4 次 consume attempt）；50/100/200 events/day 最差情況分別
-250/500/1000 次，遠低於官方文件 10,000/日免費額度。
-
-**本輪未觸碰**：Windows PBS filter、Windows 自身 HTTP timeout、PBS
-原始文字內容、AI Prompt／model／semantic policy、service area、LINE
-formatter、driverSummary、hourly reminder、TDX、CCTV、Shared Feed
-product logic、LINE 廣播規則、Observatory 頁面**整體** UI（只有
-HTTP-ingress → AI 工作載體機制，以及 Observatory 的 outcome 詞彙新增
-`PROCESSING_FAILED`，有變動）。
-
-**`BROWSER_ACTION_REQUIRED = YES`**：真實 Cloudflare Queue 資源
-（`pbs-ai-processing-queue`）需要在 Cloudflare Dashboard 或以
-`wrangler queues create pbs-ai-processing-queue` 建立——本 sandbox 無
-即時 Cloudflare API／Dashboard 存取權限，**不得假設資源已存在**，也
-**不得**宣稱 Production-ready，需待真人／Claude Browser 完成建立與
-驗證後才能視為完整生效。
-
-詳見 `src/pbs/debugPush.js` 的完整 module comment、
-`test/pbsDebugPushBackgroundProcessing.test.js`（HTTP-ingress 層生命週期
-分離）、`test/pbsAiQueueReliability.test.js`（Queue 可靠性、重試邊界、
-真實事故迴歸 fixture）、`07_KNOWN_ISSUES.md`／`PRODUCT_DECISIONS.md` 的
-完整記錄。
+詳見`src/pbs/debugPush.js`module comment、`test/pbsAiQueueReliability.test.js`、`07_KNOWN_ISSUES.md`完整記錄。
 
 ## V2.2.0 — AI Decision Observatory 四層事件生命週期查修頁（2026-08-29）
 

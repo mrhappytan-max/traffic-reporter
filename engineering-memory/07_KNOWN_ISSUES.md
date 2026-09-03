@@ -280,6 +280,20 @@ PBS 閘門排除仍視為有意義。fixture 實測 QUIET/NORMAL/HIGH writes/day
 
 **狀態：`HUMAN_REPORTED_NOT_INDEPENDENTLY_VERIFIED`。** 人類回報：Windows PBS 本機篩選舊邏輯先套用 `isAccident()` 事故關鍵字語意閘門，才進新竹縣市地理判斷，導致非事故型事件（落石／坍方／封路／施工／積水等）即使位於新竹縣市仍可能在 Windows 端被直接丟棄，從未進入 Cloudflare/AI。回報修正：移除 `isAccident()` 語意閘門，改用 point-in-polygon（data.gov.tw dataset 7442 縣市界線）取代原本的矩形邊界，新竹市/縣**所有**事件類型皆納入候選，語意判斷完全交給 AI；同批資料驗證回報 `BEFORE_KEEP_COUNT=11 → AFTER_KEEP_COUNT=29`（找回 18 筆），`TESTS=124 passed/0 failed`。**本 Cloud Session 的獨立查證**：目前 `main`／本分支的 `pbs-relay/src/localPrototype.js` 仍保留 `isAccident()` 並仍作為候選閘門使用（見該檔第 56/108 行），`pbs-relay/` 完整 git 歷史（含 `feature/pbs-local-edge-filter-prototype` 分支）中**未找到**對應此修正的 commit，故無法核對回報的 point-in-polygon 實作、dataset 7442 引用或 11→29/124 測試數字。與既有 `PBS Windows Local Edge Debug Push Integration`（V1.9.6）記錄採同一誠實原則：**本節只記錄「人類回報了什麼」，不代表本 Session 已驗證程式碼或測試結果為真**——待對應 commit 出現於本 repo（或人類提供可核對的 diff/測試輸出）後，下一輪應改記為已驗證版本，並同步更新 `pbs-relay/` 程式碼本身（本輪禁止修改）。
 
+## 修正紀錄｜V2.4.10 — TDX 國道公里數第二正向地理證據（2026-09-04，壓縮摘要）
+
+**任務** `V2_4_10_TDX_FREEWAY_KM_HSINCHU_DETERMINISTIC_GEO_FALLBACK`，MINOR，PBS/ROAD_POLICY/AI_POLICY/LINE_POLICY_MODIFIED=NO。GEO_RESOLVER_MODIFIED=YES（additive only，既有Tier邏輯不變，只新增一個Tier）。
+
+**目標**：TDX事件常見「有國道+方向+KM，無座標無areaNm」形狀，即使V2.4.7能解析KM仍因缺乏正向新竹證據永遠停UNKNOWN。新增第二套決定性正向證據：驗證國道路線＋驗證公里範圍，禁止恢復舊式「大範圍KM猜縣市」。
+
+**資料來源方法（禁止Google摘要/論壇/AI記憶當權威）**：交叉比對已bundled兩份官方資料集——國道百公尺里程樁（data.gov.tw 95016）與縣市界線（data.gov.tw 7442，V2.4.5已bundled）——用既有`isPointInRings()`逐0.1km點檢驗，得原始連續區間（國1=75.2-107.3K、國3=74.6-109.4K，邊界銳利）。兩端各縮0.5km保守邊界：最終國1=75.7-106.8K、國3=75.1-108.9K——正確排除已知橫跨交界的香山交流道（109K）。
+
+**新模組**：`hsinchuFreewayKmRanges.js`（靜態表＋純函式`resolveVerifiedHsinchuFreewayKm()`，零KV/I/O）；`scripts/verifyHsinchuFreewayKmRanges.mjs`（可重跑驗證）。接入`hsinchuGeoResolver.js`新Tier4：只在座標與文字皆無證據時查，只查freeway來源，只能回CONFIRMED或不決定，永不回OUTSIDE。座標優先靠既有「Tier1有結果即return」結構保證，衝突情境架構上不可能發生。
+
+**驗證**：GEO確認≠LINE發送——101K+300施工事件GEO確認但Road Policy仍因blockedLanes未知fail-closed；100K+000天候事件GEO確認且非道路管理事件類型，正常進Queue，notify仍交給既有AI決定。查修頁新增`geoEvidenceType`純觀測欄位。
+
+**測試**：新增`test/v2410TdxFreewayKmHsinchuDeterministicGeoFallback.test.js`（18項，CASE1-16全覆蓋，含PBS/AI/LINE零import結構鎖）。既有V2.4.7/V2.4.9測試檔6處斷言因刻意行為改變更新，皆加註SUPERSEDED，非回歸。全量迴歸1814/1782/32，NEW_FAILURES=0。`APP_VERSION` V2.4.9→V2.4.10。未觸碰：PBS、Road Policy/AI/LINE政策/Queue/CCTV/wrangler.jsonc開關。詳見`03_ARCHITECTURE.md`。
+
 ## 修正紀錄｜V2.4.9 — TDX KM Fallback Production Runtime Diagnosis（P0 實機異常查修，2026-09-04，壓縮摘要）
 
 **任務** `V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS`，PATCH，GEO_RESOLVER_MODIFIED=NO、PBS_MODIFIED=NO、AI_MODIFIED=NO、LINE_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO。
@@ -513,17 +527,17 @@ messageFormat/60字上限。`APP_VERSION`V2.4.4→V2.4.5（MINOR）。
 
 **測試**：`test/v242InformationFidelityAndPolicy.test.js` CASE1-12全過。全量迴歸1790 tests NEW_FAILURES=0。`APP_VERSION` V2.4.1→V2.4.2（MINOR）。
 
-## 修正紀錄｜V2.4.0 — TDX_FREEWAY_PROVINCIAL_TO_UNIFIED_AI_PIPELINE（2026-09-01，Phase B）
+## 修正紀錄｜V2.4.0 — TDX_FREEWAY_PROVINCIAL_TO_UNIFIED_AI_PIPELINE（2026-09-01，Phase B，深度壓縮）
 
-**背景**：先前一輪唯讀架構稽核（`TDX_FREEWAY_PROVINCIAL_TO_AI_MAIN_AUDIT`）確認 TDX 國道/省道 RoadEvent 可在不重造第二套決策系統的前提下重新加入既有的 Queue/AI 架構，前提是跨來源（PBS＋TDX）同一實體事故要能被 AI 自己判斷「是否同一起、是否有實質變化」，而非各來源獨立各判各的。
+**背景**：先前唯讀架構稽核確認TDX國道/省道RoadEvent可在不重造第二套決策系統前提下重新加入既有Queue/AI架構，前提是跨來源（PBS＋TDX）同一實體事故要能被AI自己判斷「是否同一起」。
 
-**修正**：新模組 `src/traffic/incidentMemory.js`（Recent Incident Memory，Cloudflare KV `traffic:incident-memory:v1`，8h TTL，`MEMORY_KV_GETS_PER_EVENT<=1`／`MEMORY_KV_PUTS_PER_EVENT<=1`、`WRITE_ON_CHANGE=YES`），road+direction → 1000m/1.5km 內 → 最近 8h → 最多 5 筆候選的三層 prefilter，並排除事件自己剛寫入的紀錄（`selectMemoryCandidates` 的 `excludeEventId`，避免事件把自己的 sighting 誤判為附近另一起事故，進而讓 AI decision cache 誤判為「有新 context」而多打一次 AI）。新模組 `src/tdx/tdxQueueIngress.js`：TDX 新／更新事件送進**同一個** `PBS_AI_QUEUE`，沿用 `dedupe.js`／`debugPush.js` 既有 fingerprint／idempotency／訊息建構，絕非第二套 Queue。`src/pbs/debugPush.js#processQueuedPbsEvent` 依 `source` 分派：`pbs` 維持原本 `normalizePbsEvent` 路徑，`freeway`／`highway` 直接使用已正規化的 RoadEvent，絕不互相套用對方的原始 shape。AI schema 新增 `sameIncident`／`materialChange`（僅在有 memory context 時要求），AI decision cache key 併入 `memoryContextFingerprint`（未提供時與本輪之前完全相同的 hash，向下相容）。
+**修正**：新模組`incidentMemory.js`（Recent Incident Memory，KV`traffic:incident-memory:v1`，8h TTL，road+direction→1000m/1.5km內→最近8h→最多5筆候選三層prefilter，排除事件自己剛寫入的紀錄避免誤判）。新模組`tdxQueueIngress.js`：TDX事件送進同一個`PBS_AI_QUEUE`，沿用既有fingerprint/idempotency，非第二套Queue。`debugPush.js#processQueuedPbsEvent`依`source`分派，pbs/freeway/highway各自normalize路徑不互相套用。AI schema新增`sameIncident`/`materialChange`，cache key併入`memoryContextFingerprint`。
 
-**Phase B 閘門**：`suppressLineNotify = source === 'freeway' || source === 'highway'` **硬寫死**在 `debugPush.js` 單一呼叫點，非任何 `wrangler.jsonc` 變數——AI 真的跑、Memory 真的讀寫，但 TDX 來源的事件本輪還不會真正推播 LINE；要進 Phase C 需要未來一次明確的程式碼變更（移除這個硬寫死的 `true`），絕非改設定值就能達成。**`LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT`**：`scheduled.js` 的 `broadcastEvents` 不再包含 `summary.allEvents`——即使單獨打開 `TDX_ROADEVENT_FETCH_ENABLED`，TDX 事件也無法回到舊 V1.5 硬規則 LINE 路徑。三個新 `wrangler.jsonc` 開關（`TDX_ROADEVENT_FETCH_ENABLED`／`TDX_ROADEVENT_QUEUE_INGRESS_ENABLED`／`TDX_CCTV_METADATA_REFRESH_ENABLED`）預設全部 `"false"`，疊加在 `TRAFFIC_SOURCE_MODE` 之上非取代。`incidentSuppression.js` 不大拆，保留為短期重複推播安全網。
+**Phase B閘門**：`suppressLineNotify=source==='freeway'||'highway'`硬寫死在`debugPush.js`單一呼叫點，非wrangler變數——AI真的跑、Memory真的讀寫，但TDX事件本輪還不會真正推播LINE，進Phase C需未來明確程式碼變更。`LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT`：`scheduled.js`不再含`summary.allEvents`，TDX事件無法回到舊V1.5硬規則LINE路徑。三個新開關（FETCH/QUEUE_INGRESS/CCTV_METADATA_REFRESH）預設皆`"false"`。
 
-**明確未觸碰**：CCTV 整條 metadata-cache→選鏡→compose→R2-put→R2-read-back-verify→LINE 管線（V2.3.3 原封不動）、VD／CMS／其他 Traffic API（未復原）、CCTV metadata refresh Cron（維持 MANUAL/ON-DEMAND）、Google Maps。`CCTV_RUNTIME_TDX_CALLS=0`。
+**未觸碰**：CCTV整條pipeline（V2.3.3原封不動）、VD/CMS等其他Traffic API、Google Maps。`CCTV_RUNTIME_TDX_CALLS=0`。
 
-**測試**：新增 `test/tdxUnifiedAiPipeline.test.js`（order 自訂 17 個 CASE 全過：跨來源同事故辨識、30分/70分/第三小時記憶延續、>8h 記憶排除、TDX 失敗不影響 PBS、CCTV 0 額外 TDX 呼叫、Memory 寫入成本 0/<=1、Observatory 開啟 0 AI/0 KV），另 8 個既有測試檔（`broadcastEligibility`／`pbsLineBroadcast`／`v572TdxGatedFreewayBroadcast`／`pbsOnlyCrossSourceDedup`／`incidentRepeatSuppression`／`tdxUsageReduction`／`pipelineTraceIntegration`／`aiObservatoryView`）改寫以反映 TDX-legacy-retirement 的刻意行為變更。全量迴歸 1746/1712/34，與既有 34 項基準以 failure 名稱集合對照確認 NEW FAILURES=0，僅跑一次。`npm run check:deployment-policy` PASS；`wrangler deploy --dry-run` 確認 bindings 乾淨、唯一一個 Queue、三個新開關均為 `"false"`。`APP_VERSION` V2.3.3→V2.4.0（MINOR）。**本輪未啟用任何真實 TDX 抓取**——只建好機制，實際打開（Phase A：FETCH_ONLY）需要另一次明確的人類指示；**不得自行進 Phase C**。
+**測試**：新增`test/tdxUnifiedAiPipeline.test.js`（17 CASE全過）＋8個既有測試檔改寫反映TDX-legacy-retirement刻意行為變更。全量迴歸1746/1712/34，NEW_FAILURES=0。`APP_VERSION`V2.3.3→V2.4.0（MINOR）。本輪未啟用任何真實TDX抓取，只建好機制；不得自行進Phase C。
 
 ## 修正紀錄｜V2.3.3 — CCTV_R2_READBACK_VERIFY_BEFORE_LINE（2026-08-31，壓縮摘要）
 
