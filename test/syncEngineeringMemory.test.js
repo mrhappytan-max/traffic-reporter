@@ -38,4 +38,22 @@ test("sync creates missing, updates changed, skips unchanged, and never deletes"
   });
   assert.deepEqual(summary, { checked: 3, created: 1, updated: 1, skipped: 1 });
   assert.equal(calls.some((call) => call.method === "DELETE"), false);
+
+  // 2026-09-04 (ENGINEERING_MEMORY_KNOWN_ISSUES_VOLUME_02_CREATE) --
+  // regression lock for a real GitHub Actions failure: the destination
+  // Drive folder is a Shared Drive, and Drive API v3 silently evaluates
+  // create/update/list calls against the (quota-less) service account's
+  // own storage instead of the Shared Drive unless `supportsAllDrives=true`
+  // is passed -- createRemoteFile() failed in Production CI with exactly
+  // "Service Accounts do not have storage quota" the first time this sync
+  // ever needed to create a brand-new file. Every call this module makes
+  // must carry supportsAllDrives=true; the list/search call must also
+  // carry includeItemsFromAllDrives=true.
+  for (const call of calls) {
+    const url = new URL(call.url);
+    assert.equal(url.searchParams.get("supportsAllDrives"), "true", `${call.method} ${call.url} must set supportsAllDrives=true`);
+    if (call.method === "GET") {
+      assert.equal(url.searchParams.get("includeItemsFromAllDrives"), "true", `${call.url} must set includeItemsFromAllDrives=true`);
+    }
+  }
 });

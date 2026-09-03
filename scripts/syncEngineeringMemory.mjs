@@ -38,12 +38,36 @@ async function driveRequest(fetchImpl, accessToken, url, options = {}) {
   return response;
 }
 
+// 2026-09-04 (ENGINEERING_MEMORY_KNOWN_ISSUES_VOLUME_02_CREATE) -- REAL
+// FAILURE, ROOT-CAUSED (not a flake): the GitHub Actions run for this
+// exact commit failed with `Drive API 403: Service Accounts do not have
+// storage quota. Leverage shared drives ... or use OAuth delegation ...`
+// on createRemoteFile() specifically -- every pre-existing file's
+// find/update call succeeded (skipped/updated normally), only the CREATE
+// call for the brand-new 07_KNOWN_ISSUES_02.md failed. This is the
+// documented Drive API v3 behavior: a service account has zero personal
+// "My Drive" storage quota, and `files.create`/`files.update`/`files.list`
+// against a Shared Drive folder must pass `supportsAllDrives=true` (list
+// calls should also pass `includeItemsFromAllDrives=true`) or Drive
+// silently evaluates the operation against the caller's own (quota-less)
+// storage instead of the Shared Drive's. Reads/updates on files that
+// already existed happened to keep working without the flag in this
+// specific folder's configuration, which is why this bug was never
+// caught until the very first time this sync tried to CREATE a new file
+// under the current governance regime. Fixed by adding
+// `supportsAllDrives=true` to every Drive API v3 call this module makes
+// (and `includeItemsFromAllDrives=true` to the list/search call) --
+// harmless no-op if the destination folder is ever not a Shared Drive.
+const SHARED_DRIVE_PARAMS = { supportsAllDrives: "true" };
+
 async function findRemoteFile({ fetchImpl, accessToken, folderId, canonicalPath }) {
   const params = new URLSearchParams({
     q: buildLookupQuery(folderId, canonicalPath),
     fields: "files(id,name,md5Checksum,appProperties)",
     spaces: "drive",
     pageSize: "2",
+    includeItemsFromAllDrives: "true",
+    ...SHARED_DRIVE_PARAMS,
   });
   const response = await driveRequest(fetchImpl, accessToken, `${DRIVE_API}/files?${params}`);
   const { files = [] } = await response.json();
@@ -65,7 +89,8 @@ async function createRemoteFile({ fetchImpl, accessToken, folderId, canonicalPat
     content,
     Buffer.from(`\r\n--${boundary}--`),
   ]);
-  await driveRequest(fetchImpl, accessToken, `${DRIVE_UPLOAD_API}/files?uploadType=multipart&fields=id`, {
+  const params = new URLSearchParams({ uploadType: "multipart", fields: "id", ...SHARED_DRIVE_PARAMS });
+  await driveRequest(fetchImpl, accessToken, `${DRIVE_UPLOAD_API}/files?${params}`, {
     method: "POST",
     headers: { "content-type": `multipart/related; boundary=${boundary}` },
     body,
@@ -73,7 +98,8 @@ async function createRemoteFile({ fetchImpl, accessToken, folderId, canonicalPat
 }
 
 async function updateRemoteFile({ fetchImpl, accessToken, fileId, content }) {
-  await driveRequest(fetchImpl, accessToken, `${DRIVE_UPLOAD_API}/files/${encodeURIComponent(fileId)}?uploadType=media`, {
+  const params = new URLSearchParams({ uploadType: "media", ...SHARED_DRIVE_PARAMS });
+  await driveRequest(fetchImpl, accessToken, `${DRIVE_UPLOAD_API}/files/${encodeURIComponent(fileId)}?${params}`, {
     method: "PATCH",
     headers: { "content-type": "text/markdown; charset=UTF-8" },
     body: content,
