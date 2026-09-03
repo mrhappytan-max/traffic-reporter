@@ -64,6 +64,7 @@
 
 import { resolveServiceAreaEligibility } from '../traffic/serviceArea.js';
 import { resolveLocationQuality } from '../traffic/locationQuality.js';
+import { resolveDebrisSafetyRisk } from '../traffic/debrisRiskPolicy.js';
 
 // Self-describing status constants — same convention as debugPush.js's own
 // PBS_DEBUG_PUSH_IDEMPOTENCY_MODE etc.: exported so the final report, the
@@ -215,5 +216,13 @@ export function buildAiCandidate(normalizedEvent, { lifecycle, generatedAt }) {
     // later show WHICH geo tier actually confirmed this event — never
     // read by any decision. Always null for PBS (never set there).
     geoEvidenceType: normalizedEvent.geoEvidenceType || null,
+    // V2.4.11 (order section 十二) — deterministic, pure, zero-I/O debris
+    // safety risk classification (HIGH_RISK/AI_REVIEW/LOW_RISK), computed
+    // once here (same "candidate is the one place all derived fields live"
+    // convention as displayKM/blockedLanes/locationQuality/geoEvidenceType
+    // above), never recomputed at any gate-check or AI-prompt site. Always
+    // present; `isDebrisEvent:false` for every non-debris event — see
+    // traffic/debrisRiskPolicy.js's own header comment for the full design.
+    debrisRisk: resolveDebrisSafetyRisk(normalizedEvent),
   };
 }

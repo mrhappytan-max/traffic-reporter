@@ -937,6 +937,12 @@ PBS 官方來源 → Windows 每3分鐘抓取(localMonitor.js) → Local Edge Fi
 
 完整記錄（Secret 治理事故、六階段路線圖、Task Scheduler 細節、Emergency kill switch）→ `07_KNOWN_ISSUES.md`／`SYSTEM_STATE.json.pbsLocalEdgeFilterPrototype`。緊急停用：Windows 環境變數 `PBS_DEBUG_PUSH_ENABLED=false`+重啟本機排程；暫時恢復 Cloudflare 自身 PBS 輪詢：`PBS_30_MIN_POLLING_ENABLED=true` 並重新部署。
 
+## V2.4.11 — 散落物安全風險分級 ＋ LINE Push 額度保護（本輪，2026-09-04）
+
+新純函式模組 `src/traffic/debrisRiskPolicy.js#resolveDebrisSafetyRisk(event)`（零 KV／I/O，同步，自成一套關鍵字表，不 import GEO/道路政策/PBS classify 任何既有模組）。判定優先序（第一個命中者勝）：①`HIGH_RISK`——車道位置（內側/中間/外側/快/慢車道/車道中央/路中央/行車道）或大型危險物（整條輪胎/大片輪胎皮/大型金屬/鐵件/木板/棧板/家具/貨物/大型紙箱等）或多件數量（多塊/多個/散落多處/大量）或明確交通影響文字（影響通行/車輛閃避/占用車道/危險）或結構化`blockedLanes>=1`，任一命中即成立，且**優先於**路肩/已清除等訊號檢查（故「路肩大型物體部分侵入外側車道」仍正確判HIGH_RISK）；②`LOW_RISK`——僅在①未命中時才看：路肩／路外安全島／已清除／小型碎屑；③`AI_REVIEW`——散落物相關但證據不足（例：「95K+200路面發現散落物狀況」），交既有AI綜合研判。
+
+整合點：`aiCandidate.js#buildAiCandidate()`一次算出`candidate.debrisRisk`（沿用displayKM/blockedLanes/geoEvidenceType的"永遠存在、缺席為null"慣例）；`debugPush.js#runAiDecisionPath()`（PBS/TDX唯一共用入口）在`!candidate`判斷之後新增`LOW_RISK`短路，回傳新`AI_OUTCOME.DEBRIS_EXCLUDED_LOW_RISK`，0額外AI呼叫、0額外KV寫入（沿用同一筆既有Observatory write）；`aiDecisionEngine.js`把`debrisRisk`當作結構化事實傳給AI（從不越俎代庖決定notify），SYSTEM_PROMPT補充HIGH/LOW信心散落物判準，明確禁止AI替原文沒提到的散落物事實杜撰車道/占用/危險描述。`HIGH_RISK`／`AI_REVIEW`皆完整交由既有AI二次確認，從未直接發LINE。查修頁新增DEBRIS RISK唯讀展開區塊（🔴/🟡/🟢+evidence+reasons+最終決策原因），PBS/TDX共用同一顯示邏輯。未觸碰：GEO Resolver、道路管理政策、Queue、Incident Memory、CCTV、AI model、LINE token/quota系統。完整記錄見 `07_KNOWN_ISSUES_02.md`。
+
 ## 模組清單（自動掃描）
 
 - **src/./**: index.js, version.js
@@ -947,5 +953,5 @@ PBS 官方來源 → Windows 每3分鐘抓取(localMonitor.js) → Local Edge Fi
 - **src/pbs/**: aiCandidate.js, aiConfig.js, aiDecisionCache.js, aiDecisionEngine.js, aiObservatoryIndex.js, aiObservatoryView.js, classify.js, client.js, crossSourceDedup.js, debugPbs.js, debugPush.js, debugPushAuth.js, hsinchuFilter.js, lifecycle.js, normalize.js, pbsConfig.js, pipeline.js, roadName.js, vpcProbe.js
 - **src/security/**: adminAuth.js
 - **src/tdx/**: auth.js, cctvProbe.js, classify.js, client.js, debug.js, extract.js, fetchAll.js, hsinchuCctvProbe.js, hsinchuGeoResolver.js, normalize.js, roadManagementPolicyGate.js, sources.js, tdxQueueIngress.js, usageLedger.js, vdSpeed.js
-- **src/traffic/**: aiApprovedPbsBroadcast.js, anomalyClassification.js, broadcastHours.js, broadcastPipeline.js, broadcastPolicy.js, broadcastProvenance.js, broadcastRules.js, congestionCluster.js, congestionSeverity.js, congestionValidation.js, debugStatus.js, dedupe.js, deploymentStatus.js, deploymentStatusView.js, directionEquivalence.js, dynamicShoulderClassification.js, effectiveWindow.js, health.js, healthSnapshot.js, hsinchuConfig.js, hsinchuFilter.js, incidentMemory.js, incidentSuppression.js, kmLocationResolver.js, locationQuality.js, messageFormat.js, notified.js, parseChineseDate.js, pbsSchedule.js, pipeline.js, pipelineTrace.js, pipelineTraceView.js, roadIdentity.js, roadSectionLabel.js, scheduled.js, serviceArea.js, sharedFeed.js, sharedFeedHandler.js, sourceMode.js, subscriptions.js, tdxEventCache.js, tdxSchedule.js
+- **src/traffic/**: aiApprovedPbsBroadcast.js, anomalyClassification.js, broadcastHours.js, broadcastPipeline.js, broadcastPolicy.js, broadcastProvenance.js, broadcastRules.js, congestionCluster.js, congestionSeverity.js, congestionValidation.js, debrisRiskPolicy.js, debugStatus.js, dedupe.js, deploymentStatus.js, deploymentStatusView.js, directionEquivalence.js, dynamicShoulderClassification.js, effectiveWindow.js, health.js, healthSnapshot.js, hsinchuConfig.js, hsinchuFilter.js, incidentMemory.js, incidentSuppression.js, kmLocationResolver.js, locationQuality.js, messageFormat.js, notified.js, parseChineseDate.js, pbsSchedule.js, pipeline.js, pipelineTrace.js, pipelineTraceView.js, roadIdentity.js, roadSectionLabel.js, scheduled.js, serviceArea.js, sharedFeed.js, sharedFeedHandler.js, sourceMode.js, subscriptions.js, tdxEventCache.js, tdxSchedule.js
 - **src/util/**: contentEqual.js

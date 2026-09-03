@@ -57,3 +57,41 @@ Leverage shared drives, or use OAuth delegation instead.
 **本 session 的處理方式**：GitHub 側寫入（`GITHUB_ENGINEERING_MEMORY`）已完成且與 Volume 01 同一套治理原則一致；`GITHUB_TO_DRIVE_SYNC` 對本卷誠實標記 `BLOCKED_PENDING_HUMAN_ACTION`（不是暫時性的 PENDING，是需要人類到 Google Cloud/Workspace 主控台動作才能解除的阻塞），不偽造成功、不用任何非正式管道手動上傳搬運。`scripts/syncEngineeringMemory.mjs` 的 `supportsAllDrives=true` 修正**予以保留**——這是 Google 官方文件記載的正確作法，即使這次不是完整解方，也是必要的前置修正（若日後目的地真的搬到 Shared Drive，這個修正屆時就會生效）。
 
 **通則**：一個 API 呼叫失敗訊息裡如果明確列出兩條建議修法（本例「shared drives」或「OAuth delegation」），代表根因落在**帳號/資源層級的權限設計**，不是「少了一個 query 參數」這種程式碼層級的小修；先按官方建議修一次、驗證是否解決，若仍然失敗，必須誠實升級判讀，而不是重複套用同一個假設。
+
+## 修正紀錄｜V2.4.11 散落物安全風險分級／LINE Push 額度保護（2026-09-04）
+
+**任務**：`V2_4_11_DEBRIS_SAFETY_RISK_CLASSIFICATION_AND_PUSH_PROTECTION`（路況工程部｜V2.4.11 散落物安全風險分級／LINE Push 額度保護施工令）。MINOR。GEO_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO、QUEUE_MODIFIED=NO、INCIDENT_MEMORY_MODIFIED=NO、CCTV_MODIFIED=NO、PRODUCTION_FLAGS_MODIFIED=NO、AI_SECOND_CALL_ADDED=NO。
+
+**問題背景**：PBS/TDX 皆可能收到 掉落物／散落物／異物／輪胎皮／貨物掉落／不明物體 事件，形狀從真正危險的在途障礙物（例如國道中間車道有輪胎皮，可能導致閃避/碰撞/爆胎/失控）到毫無細節的模糊回報（例如「95K+200路面發現散落物狀況」，只有道路/方向/公里數/散落物四個字，完全沒有物體種類/大小/數量/車道位置/交通影響）都有。施工令明確禁止兩種極端做法：「所有散落物一律 LINE Push」（會淹沒真正重要的通知並浪費有限的 LINE Push 額度）與「所有散落物一律不通知」（會漏掉真正危險的在途障礙物）。每一則 LINE Push 都應該值得一位正在行駛中的駕駛分心查看。
+
+**設計原則（施工令§一）**：散落物是否值得通知，取決於「位置（是否在正常行駛車道內）」「物體種類/大小/重量」「數量」「是否已影響通行」「是否可能導致駕駛閃避/碰撞/爆胎/失控」的組合判斷，而不是單純的 `eventType === debris`。
+
+**新模組**：`src/traffic/debrisRiskPolicy.js#resolveDebrisSafetyRisk(event)`——純函式、同步、零 I/O（無 network/KV/D1/R2/Durable Object），自成一套本地關鍵字表，刻意不 import `pbs/classify.js` 的 `OBSTRUCTION_PATTERNS` 或 `traffic/anomalyClassification.js` 的規則（沿用本專案既有「每個模組各自保有可獨立閱讀的關鍵字表」慣例，例如 `aiCandidate.js` 自己的 `OTHER_TOP_LEVEL_PLACES`）。
+
+**分級邏輯（優先序，第一個命中者勝，施工令§二/三/五/六/七/八/十六/十七）**：
+1. **`HIGH_RISK`**——以下任一命中即成立，且**必定優先於**路肩/已清除等訊號檢查（這正是正確處理「路肩大型物體部分侵入外側車道」仍須判 HIGH_RISK 的關鍵設計）：
+   - 車道位置：內側/中間/外側/快/慢車道、車道中央、路中央、行車道（刻意不含泛用詞「路面」，故裸的「路面發現散落物狀況」不會被誤判為車道位置命中）
+   - 大型/堅硬/高危險物體：整條輪胎、大片輪胎皮、大型金屬、鐵件、木板、棧板、梯子、家具、貨物、大型紙箱或箱體、石塊、工具、車體零件、大型塑膠件（必須有原始文字支持，本模組從不自行判斷「AI 覺得它很大」）
+   - 多件/大範圍數量：多塊、多個、散落多處、大量、整批貨物、多件
+   - 明確交通影響文字：影響通行、車輛閃避、占用或佔用車道、封閉車道、阻礙交通、危險、緊急排除中
+   - **加分訊號（施工令§十二建議的加強）**：結構化 `blockedLanes>=1`（TDX 自己的結構化欄位）視為等同於明確交通影響——比自由文字更可靠的訊號
+   - `HIGH_RISK` 仍完整交由既有 AI 二次確認，**從未直接繞過 AI 送 LINE**（施工令§三明確禁止）
+2. **`LOW_RISK`**——僅在①未命中任何條件時才檢查：僅路肩（且無車道侵入、無大型危險物證據——這兩項因為①已檢查過而保證成立）、路外/安全島/邊坡/非行車區域、已清除/已排除/已恢復/已移除/已拖離/已無障礙（施工令§十七：已解除的散落物無需新 LINE）、明確小型碎屑且明確不影響車道
+3. **`AI_REVIEW`**——散落物相關但①②皆未命中（施工令§五真實範例：「95K+200路面發現散落物狀況」），交既有 AI 決策使用原始文字＋既有結構化事實綜合研判，本模組**從不**在此直接猜測 notify
+
+**AI Prompt 補充（施工令§九，`src/pbs/aiDecisionEngine.js` SYSTEM_PROMPT）**：既有 V2.4.2「二、預防性駕駛安全風險」段落補充散落物專屬判準——高信心 notify=true 候選（明確車道內/大型堅硬物/數量多/明確交通影響）與低信心、傾向 notify=false 候選（僅路肩路外/已清除/模糊描述無具體證據）。**明確禁止 AI 替原文沒有明確提到的散落物事實杜撰描述**（例如原文只寫「發現散落物狀況」，AI 不可以自行加上「大型掉落物」「占用車道」「車輛緊急閃避」等原文沒有的字眼）；資訊不足時應傾向 notify=false，而不是套用「散落物本身就是危險的」這種一般性推論。
+
+**整合點**：
+- `src/pbs/aiCandidate.js#buildAiCandidate()` 一次計算 `candidate.debrisRisk`，沿用 `displayKM`/`blockedLanes`/`geoEvidenceType` 的「永遠存在、缺席時為 null／`isDebrisEvent:false`」慣例。
+- `src/pbs/debugPush.js#runAiDecisionPath()`——經確認為 PBS 與 TDX **唯一共用的入口**（僅一個呼叫點）——在既有 `if (!candidate)` 判斷之後新增 LOW_RISK 短路，回傳新 `AI_OUTCOME.DEBRIS_EXCLUDED_LOW_RISK`，在任何 AI 呼叫**之前**排除，0 額外 AI 呼叫。既有的終局結果 vs 可重試結果判斷邏輯（只有 `AI_CALL_FAILED` 會重試）不需任何修改即可正確處理這個新結果（終局、寫入 Observatory、不重試）。
+- `src/pbs/aiDecisionEngine.js#buildAiUserPrompt()` 把 `candidate.debrisRisk` 當作額外結構化事實傳給 AI（從不是第二次決策）。
+- `src/pbs/aiObservatoryIndex.js`：新 `AI_OUTCOME.DEBRIS_EXCLUDED_LOW_RISK`；`buildAiObservatoryRecord()` 新增 `debrisRisk` 欄位（直接讀 `candidate.debrisRisk`，沿用 `geoEvidenceType` 同一種零額外 KV 寫入模式——同一筆既有的每事件 Observatory write 上多一個欄位，不是新的 write）；`deriveFinalDecisionReason()` 新增對應分支。
+- `src/pbs/aiObservatoryView.js`：新增「散落物安全風險分級（DEBRIS RISK）」唯讀展開區塊（🔴HIGH_RISK/🟡AI_REVIEW/🟢LOW_RISK＋evidence＋reasons＋FINAL_NOTIFY_REASON），PBS 與 TDX 記錄共用同一段顯示邏輯，server-rendered 零 client-side JavaScript（沿用既有 Admin CSP `default-src 'none'` 紀律）。
+
+**KV 成本**：`NEW_KV_READS/WRITES/LISTS/DELETES_PER_EVENT = 0`（施工令§十三明確要求）——沒有新 KV key、沒有風險快取、沒有 lookup table；`debrisRisk` 純粹是既有那一筆 Observatory write 上新增的欄位。
+
+**安全邊界（施工令§十九，本輪明確未觸碰）**：TDX GEO Resolver、Freeway KM 驗證範圍、PBS 地理閘門、道路管理政策（`roadManagementPolicyGate.js`）、Queue 架構、Incident Memory、dedupe、CCTV、Production flags、AI model、LINE token/quota 系統。
+
+**測試**：新增 `test/v2411DebrisSafetyRiskClassificationAndPushProtection.test.js`（25 項，涵蓋施工令§十八 CASE 1-19 全部要求——每個分級分支、路肩/數量優先序測試(§七/§十六驗證)、結構化 blockedLanes 加分訊號、PBS/TDX 透過同一函式的一致性、GEO/道路政策/LINE formatter 零干擾、0 KV 操作驗證、非散落物事件完全不受影響——外加端對端整合測試證明 LOW_RISK 短路真正跳過 AI 呼叫與 LINE 推播）。2 個既有測試檔（`test/aiDecisionEngine.test.js`、`test/v242InformationFidelityAndPolicy.test.js`）因 `buildAiRequest` user payload 新增 `debrisRisk` 欄位而更新 key 列表斷言（非回歸，附加欄位）。全量迴歸 1839/1807/32，`git stash -u` 同 commit 精確基準比對 NEW_FAILURES=0。`APP_VERSION` V2.4.10→V2.4.11（MINOR）。
+
+**通則**：一個「是否該通知」的判斷，如果只靠事件類型標籤（`eventType === debris`）就決定，永遠會在「漏掉真正危險的」與「淹沒真正重要的」兩個方向之一犯錯；正確做法是先用可驗證的結構化事實（位置、物體種類、數量、明確影響描述）做決定性分類，把少數清楚有害與少數清楚無害的情況直接排除或直接交給 AI 二次確認，中間真正模糊、證據不足的情況才完整交給既有語意判斷模型，且明確要求模型在證據不足時保守（notify=false），而不是替換成另一種同樣武斷的「一律」規則。

@@ -78,8 +78,16 @@ test('buildAiRequest: fixed model id, chat-shaped messages, minimal candidate fi
   // none — same shape as displayKM), so the model never has to re-derive
   // a lane count from free text. See aiCandidate.js/aiDecisionEngine.js's
   // own V2.4.5 comments.
-  assert.deepEqual(Object.keys(userPayload).sort(), ['areaNm', 'blockedLanes', 'comment', 'displayKM', 'direction', 'eventType', 'road', 'sourceDetail'].sort());
+  // V2.4.11 — debrisRisk added (order section 九): traffic/debrisRiskPolicy.js's
+  // own deterministic classification, same "always present, null when
+  // absent" shape as blockedLanes/displayKM.
+  assert.deepEqual(
+    Object.keys(userPayload).sort(),
+    ['areaNm', 'blockedLanes', 'comment', 'debrisRisk', 'displayKM', 'direction', 'eventType', 'road', 'sourceDetail'].sort()
+  );
   assert.equal(userPayload.blockedLanes, null); // this fixture's candidate never sets it
+  assert.equal(userPayload.debrisRisk.isDebrisEvent, false); // this fixture's candidate is a non-debris (accident) event
+  assert.equal(userPayload.debrisRisk.classification, null);
   // Never a full PBS batch / trace / KV state / LINE state / CCTV metadata:
   assert.ok(!('notify' in userPayload));
   assert.ok(!('locationQuality' in userPayload));

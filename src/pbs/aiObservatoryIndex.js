@@ -129,6 +129,17 @@ export const AI_OUTCOME = {
   ROAD_POLICY_EXCLUDED_SHOULDER_CLOSE: 'ROAD_POLICY_EXCLUDED_SHOULDER_CLOSE',
   ROAD_POLICY_EXCLUDED_INSUFFICIENT_LANES: 'ROAD_POLICY_EXCLUDED_INSUFFICIENT_LANES',
   ROAD_POLICY_EXCLUDED_UNKNOWN_LANES: 'ROAD_POLICY_EXCLUDED_UNKNOWN_LANES',
+  // V2.4.11 (order 路況工程部｜V2.4.11 散落物安全風險分級／LINE Push 額度
+  // 保護施工令, section 六/十一/十二/十三) — a candidate whose deterministic
+  // debrisRiskPolicy.js classification is LOW_RISK (shoulder-only/off-road/
+  // already-cleared/small-debris-outside-the-lane, with no other high-risk
+  // evidence) is excluded BEFORE any AI call, shared by PBS and TDX alike
+  // (src/pbs/debugPush.js#runAiDecisionPath — the single shared choke
+  // point). Distinct from every existing outcome above: unlike
+  // SERVICE_AREA_EXCLUDED/the TDX Gate A drops, a candidate DID exist here
+  // (road/direction/comment were fully parsed) — only the debris-specific
+  // risk judgment excluded it, never a geography or road-management gate.
+  DEBRIS_EXCLUDED_LOW_RISK: 'DEBRIS_EXCLUDED_LOW_RISK',
 };
 
 // V2.4.6 — the collapsed-card summary status this record ultimately
@@ -257,6 +268,13 @@ export function buildAiObservatoryRecord({
     // page can show "not polygon, KM fallback" — never read by any
     // decision. Always null for PBS.
     geoEvidenceType: (candidate && candidate.geoEvidenceType) || null,
+    // V2.4.11 (order section 十三/十四) — the SAME "always present, null
+    // when absent" shape geoEvidenceType above already uses. Read straight
+    // off `candidate.debrisRisk` (already computed once by
+    // pbs/aiCandidate.js#buildAiCandidate()) — purely additive, ZERO extra
+    // KV reads/writes: this is the same single Observatory write every
+    // event already produces, never a second write or a second index.
+    debrisRisk: (candidate && candidate.debrisRisk) || null,
     rawComment: (candidate && candidate.comment) || '',
     rawSourceDetail: (candidate && candidate.sourceDetail) || '',
     longitude: candidate && typeof candidate.longitude === 'number' ? candidate.longitude : null,
@@ -323,6 +341,11 @@ export function deriveFinalDecisionReason(record) {
       return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: '施工封鎖車道資料不足' };
     case AI_OUTCOME.SERVICE_AREA_EXCLUDED:
       return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: '非新竹縣市' };
+    // V2.4.11 (order section六/十四) — a deterministic, pre-AI exclusion;
+    // never confused with an AI notify=false verdict (the AI was never
+    // called for this event).
+    case AI_OUTCOME.DEBRIS_EXCLUDED_LOW_RISK:
+      return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: '散落物風險判定為低風險（路肩／路外／已清除／小型碎屑，未進入 AI 判讀）' };
     case AI_OUTCOME.AI_NOTIFY_FALSE:
       if (record.eventType === 'congestion') return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: '壅塞' };
       if (record.eventType === 'construction') return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: '一般施工' };

@@ -98,7 +98,7 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 | 欄位 | 值 |
 |---|---|
-| Latest completed | V2.4.10 |
+| Latest completed | V2.4.11 |
 | package.json version | 0.1.0 |
 | Production status | DEPLOYED |
 | Production verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
@@ -442,6 +442,14 @@ V2.0.2 之後到 V2.4.0 之間的四個版本，這份精簡接班版未逐版�
 CLOUDFLARE_QUEUE`。V2.2.0 把查修頁升級為四層事件生命週期檢視。V2.3.1／
 V2.3.2／V2.3.3 是三個連續 PATCH（LINE 地圖座標直連 fallback、CCTV
 診斷工具修復、CCTV R2 讀回驗證），皆未改架構本身。
+
+## V2.4.11 — 散落物安全風險分級／LINE Push 額度保護（2026-09-04，加在下方 V2.4.10 之上）
+
+PBS/TDX 常見「掉落物/散落物/異物/輪胎皮/貨物掉落」事件，從真正危險的在途障礙物到毫無細節的「路面發現散落物狀況」都有。新純函式模組 `src/traffic/debrisRiskPolicy.js#resolveDebrisSafetyRisk(event)`（零KV/I/O，自成一套關鍵字表，不依賴其他模組）依優先序判定：①`HIGH_RISK`——車道位置／大型危險物／多件數量／明確交通影響（含結構化`blockedLanes>=1`）任一命中，且優先於路肩/已清除訊號（故「路肩大型物體部分侵入外側車道」仍正確判HIGH_RISK）；②`LOW_RISK`——路肩/路外/已清除/小型碎屑；③`AI_REVIEW`——證據不足，交既有AI。
+
+整合：`aiCandidate.js`一次算出`candidate.debrisRisk`；`debugPush.js#runAiDecisionPath()`（PBS/TDX唯一共用入口）新增`LOW_RISK`短路，回傳新`AI_OUTCOME.DEBRIS_EXCLUDED_LOW_RISK`，0額外AI呼叫、0額外KV寫入；`aiDecisionEngine.js`把`debrisRisk`當結構化事實傳給AI，SYSTEM_PROMPT補充HIGH/LOW信心判準，明確禁止AI杜撰原文沒有的散落物事實。`HIGH_RISK`／`AI_REVIEW`仍完整交由既有AI二次確認，從未直接發LINE。查修頁新增DEBRIS RISK唯讀展開區塊。
+
+**測試**：新增`test/v2411DebrisSafetyRiskClassificationAndPushProtection.test.js`（25項，施工令CASE1-19全覆蓋＋PBS/TDX整合＋KV成本測試）。全量迴歸1839/1807/32，NEW_FAILURES=0。`APP_VERSION` V2.4.10→V2.4.11（MINOR）。**未觸碰**：GEO Resolver、道路管理政策、Queue、Incident Memory、CCTV、AI model、LINE token/quota系統、wrangler.jsonc全部開關。完整記錄見 `07_KNOWN_ISSUES_02.md`。
 
 ## V2.4.10 — TDX 國道公里數第二正向地理證據（2026-09-04，加在下方 V2.4.9 之上）
 

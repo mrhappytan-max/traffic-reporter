@@ -173,7 +173,12 @@ test('buildAiRequest schema/shape is untouched by the prompt rewrite', () => {
   const userPayload = JSON.parse(request.input.messages[1].content);
   // V2.4.5 — blockedLanes added (order section 七/八): see
   // aiCandidate.js/aiDecisionEngine.js's own V2.4.5 comments.
-  assert.deepEqual(Object.keys(userPayload).sort(), ['areaNm', 'blockedLanes', 'comment', 'displayKM', 'direction', 'eventType', 'road', 'sourceDetail'].sort());
+  // V2.4.11 — debrisRisk added (order section 九): same "always present,
+  // null when absent" shape as blockedLanes above.
+  assert.deepEqual(
+    Object.keys(userPayload).sort(),
+    ['areaNm', 'blockedLanes', 'comment', 'debrisRisk', 'displayKM', 'direction', 'eventType', 'road', 'sourceDetail'].sort()
+  );
 });
 
 // =============================================================================

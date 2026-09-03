@@ -1843,7 +1843,101 @@
 // ROAD_POLICY_MODIFIED=NO, AI_POLICY_MODIFIED=NO, LINE_POLICY_MODIFIED=NO.
 // See test/v2410TdxFreewayKmHsinchuDeterministicGeoFallback.test.js (the
 // order's own CASE 1-16) and 07_KNOWN_ISSUES.md for the full record.
-export const APP_VERSION = 'V2.4.10';
+// V2.4.11 — V2_4_11_DEBRIS_SAFETY_RISK_CLASSIFICATION_AND_PUSH_PROTECTION
+// (路況工程部｜V2.4.11 散落物安全風險分級／LINE Push 額度保護施工令). PBS/TDX
+// both surface 掉落物／散落物／異物／輪胎皮／貨物掉落／不明物體 events under
+// every shape from a genuine in-lane hazard to a bare "路面發現散落物狀況"
+// carrying no object/size/quantity/lane/impact information — blanket "any
+// debris -> LINE Push" and blanket "suppress all debris" were both forbidden
+// by this round's own order; eligibility must depend on WHERE it is, WHAT it
+// is, HOW MUCH of it there is, and whether it already affects travel, never
+// on `eventType === debris` alone.
+//
+// New deterministic, pure, synchronous classifier:
+// src/traffic/debrisRiskPolicy.js#resolveDebrisSafetyRisk(event) ->
+// {isDebrisEvent, classification: 'HIGH_RISK'|'AI_REVIEW'|'LOW_RISK'|null,
+// reasons, evidence}. NOT a second AI call (order section 二/十九 — reuses
+// the SAME existing PBS/TDX Workers AI call this project already makes).
+// Self-contained keyword pattern lists (never imports pbs/classify.js's
+// OBSTRUCTION_PATTERNS or traffic/anomalyClassification.js's rules — this
+// repo's established "each module stays independently readable"
+// convention). Zero I/O — no network, no KV, no D1/R2/Durable Object.
+//
+// HIGH_RISK (ANY sufficient, checked FIRST and unconditionally — order
+// section 三/七/八/十六): debris in a normal travel lane (內側/中間/外側/快/
+// 慢車道、車道中央、路中央、行車道) OR a large/hard/high-danger object
+// (整條輪胎/大片輪胎皮/大型金屬/鐵件/木板/棧板/梯子/家具/貨物/大型紙箱或
+// 箱體/石塊/工具/車體零件/大型塑膠) OR multiple/large quantity (多塊/多個/
+// 散落多處/大量/整批貨物/多件) OR an explicit traffic-impact statement
+// (影響通行/車輛閃避/占用或佔用車道/封閉車道/阻礙交通/危險/緊急排除) OR a
+// structured blockedLanes>=1 fact (a more reliable signal than free text for
+// the same criterion — order section 十二's own suggested enhancement).
+// Checking lane-position/hazard/quantity/impact FIRST — before shoulder/
+// cleared/small-debris signals are ever consulted — is what correctly keeps
+// "路肩大型物體部分侵入外側車道" HIGH_RISK (order section 七) and keeps a
+// bare "紙箱" word from ever being the sole decider either way (order
+// section 十六: no fixed size word list decides alone). A real Production
+// case (國3南向77K關西附近中間車道有輪胎皮, order section 四) now correctly
+// resolves HIGH_RISK.
+//
+// LOW_RISK (order section 六/七/十七, reached ONLY once no HIGH_RISK trigger
+// matched — so noLaneIntrusion/noMajorHazard already hold by construction):
+// shoulder-only (路肩) / off-road or non-travel-area (路外/安全島/邊坡/非行車
+// 區域) / already cleared (已清除/已排除/已恢復/已移除/已拖離/已無障礙) /
+// explicitly small debris outside the lane (小型碎屑). Excluded BEFORE any AI
+// call and BEFORE any LINE Push — the new integration point is the single
+// shared PBS+TDX choke point src/pbs/debugPush.js#runAiDecisionPath (order
+// section 十一: one code change, not two per-source gates), returning the new
+// AI_OUTCOME.DEBRIS_EXCLUDED_LOW_RISK outcome, which the pre-existing
+// terminal-vs-retryable outcome handling automatically treats correctly
+// (written to the Observatory, never retried) with zero code change to that
+// handling itself.
+//
+// AI_REVIEW (order section 五/八/九/十): a genuinely debris-related event
+// that matched neither bucket above — e.g. the order's own real example
+// "95K+200路面發現散落物狀況" (only road/direction/KM/debris, no object type/
+// size/quantity/lane/impact). Handed to the EXISTING AI decision call, never
+// decided here — src/pbs/aiCandidate.js#buildAiCandidate() now attaches
+// `candidate.debrisRisk` (same "always present, null-shaped when absent"
+// convention as displayKM/blockedLanes/geoEvidenceType), and
+// src/pbs/aiDecisionEngine.js#buildAiUserPrompt() forwards it as an
+// additional structured fact — never a second decision. SYSTEM_PROMPT's
+// existing V2.4.2 "二、預防性駕駛安全風險" section gained a debris-specific
+// refinement: explicit HIGH-confidence vs LOW-confidence notify-candidate
+// lists (order section 九), plus an explicit, repeated instruction that the
+// AI must NOT invent facts absent from the raw text (e.g. turning a bare
+// "發現散落物狀況" into "大型掉落物"/"占用車道"/"車輛緊急閃避" — order
+// section 五/八/十一) and should lean notify=false when evidence is
+// genuinely insufficient, never toward a "debris is inherently dangerous"
+// generalization.
+//
+// Non-debris events are completely unaffected — `isDebrisEvent:false`,
+// `classification:null`, no behavior change anywhere (order section 十九).
+//
+// OBSERVATORY (order section 十四) — src/pbs/aiObservatoryIndex.js's record
+// gained a `debrisRisk` field (read straight off `candidate.debrisRisk`,
+// same zero-extra-write pattern geoEvidenceType already established) and the
+// new DEBRIS_EXCLUDED_LOW_RISK outcome/reason; src/pbs/aiObservatoryView.js
+// gained a read-only "散落物安全風險分級（DEBRIS RISK）" detail section
+// (🔴HIGH_RISK/🟡AI_REVIEW/🟢LOW_RISK + evidence + reasons +
+// FINAL_NOTIFY_REASON), shared by PBS and TDX records alike, server-rendered
+// with zero client-side JavaScript (same Admin CSP discipline as every other
+// section on this page).
+//
+// NEW_KV_READS/WRITES/LISTS/DELETES_PER_EVENT = 0 (order section 十三) — no
+// new KV key, no counter, no cache, no lookup table; `debrisRisk` is a purely
+// additive field on the SAME single Observatory write every event already
+// produces. AI_SECOND_CALL_ADDED = NO. GEO_MODIFIED/ROAD_POLICY_MODIFIED/
+// QUEUE_MODIFIED/INCIDENT_MEMORY_MODIFIED/CCTV_MODIFIED/
+// PRODUCTION_FLAGS_MODIFIED = NO (order section 十九's explicit safety
+// boundary — TDX GEO Resolver, Freeway KM verified ranges, PBS geo filter,
+// Road Management Policy, Queue architecture, Incident Memory, dedupe, CCTV,
+// Production flags, the AI model, and the LINE token/quota system were not
+// touched).
+//
+// See test/v2411DebrisSafetyRiskClassificationAndPushProtection.test.js (the
+// order's own CASE 1-19+) and 07_KNOWN_ISSUES_02.md for the full record.
+export const APP_VERSION = 'V2.4.11';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

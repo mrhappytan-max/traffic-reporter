@@ -78,6 +78,10 @@ const OUTCOME_META = {
   [AI_OUTCOME.ROAD_POLICY_EXCLUDED_SHOULDER_CLOSE]: { emoji: '🚧', label: '道路政策：機動路肩關閉（Gate A 已排除）', cls: 'unknown' },
   [AI_OUTCOME.ROAD_POLICY_EXCLUDED_INSUFFICIENT_LANES]: { emoji: '🚧', label: '道路政策：施工封鎖車道數不足（Gate A 已排除）', cls: 'unknown' },
   [AI_OUTCOME.ROAD_POLICY_EXCLUDED_UNKNOWN_LANES]: { emoji: '🚧', label: '道路政策：施工封鎖車道資料不足（Gate A 已排除）', cls: 'unknown' },
+  // V2.4.11 (order section六/十四) — deterministic pre-AI debris-risk
+  // exclusion; distinct emoji/label so a reader never mistakes this for an
+  // AI notify=false verdict (the AI was never invoked for this event).
+  [AI_OUTCOME.DEBRIS_EXCLUDED_LOW_RISK]: { emoji: '🟢', label: '散落物：低風險（已排除，未進入 AI 判讀）', cls: 'info' },
 };
 // V2.4.3 (order section 十) — timeout variants of the two outcomes that
 // can carry `record.timedOut`. Kept as SEPARATE lookup entries rather
@@ -115,6 +119,9 @@ const STATUS_FILTER_OPTIONS = [
   // page's existing "AI_FAILED groups two outcomes" precedent above.
   ['TDX_GEO_EXCLUDED', 'TDX：地理排除（Gate A）'],
   ['TDX_ROAD_POLICY_EXCLUDED', 'TDX：道路政策排除（Gate A）'],
+  // V2.4.11 — its own filter entry, PBS and TDX alike (never grouped into
+  // AI_FAILED — this was never a failure, and the AI was never invoked).
+  [AI_OUTCOME.DEBRIS_EXCLUDED_LOW_RISK, '散落物：低風險（已排除）'],
 ];
 function matchesStatusFilter(record, statusFilter) {
   if (!statusFilter) return true;
@@ -235,6 +242,10 @@ function deriveAiStageFlags(outcome) {
   if (outcome === AI_OUTCOME.PROCESSING_STARTED) return { candidateCreated: null, aiCallStarted: null };
   if (outcome === AI_OUTCOME.SERVICE_AREA_EXCLUDED) return { candidateCreated: false, aiCallStarted: false };
   if (outcome === AI_OUTCOME.AI_NOT_INVOKED_LEGACY_PATH) return { candidateCreated: true, aiCallStarted: false };
+  // V2.4.11 — a candidate DID exist (road/direction/comment were fully
+  // parsed); only the debris LOW_RISK short-circuit excluded it before any
+  // AI call — same shape as AI_NOT_INVOKED_LEGACY_PATH above.
+  if (outcome === AI_OUTCOME.DEBRIS_EXCLUDED_LOW_RISK) return { candidateCreated: true, aiCallStarted: false };
   // V2.4.3 — cancelled BEFORE any candidate/AI work this attempt (see
   // processQueuedPbsEvent's own comment: the stale-cleared check runs
   // ahead of candidate building) — a PRIOR attempt may have reached AI,
@@ -295,6 +306,8 @@ function lineNotAttemptedReason(record) {
       return '施工封鎖車道數不足，道路管理政策 Gate A 已排除，未進入 Queue／AI';
     case AI_OUTCOME.ROAD_POLICY_EXCLUDED_UNKNOWN_LANES:
       return '施工封鎖車道資料不足，道路管理政策 Gate A 已排除，未進入 Queue／AI';
+    case AI_OUTCOME.DEBRIS_EXCLUDED_LOW_RISK:
+      return '散落物風險判定為低風險，未進入 AI 判讀';
     default:
       return 'UNKNOWN / NOT RECORDED';
   }
@@ -330,6 +343,9 @@ function layerStatusForAi(record) {
     case AI_OUTCOME.ROAD_POLICY_EXCLUDED_SHOULDER_CLOSE:
     case AI_OUTCOME.ROAD_POLICY_EXCLUDED_INSUFFICIENT_LANES:
     case AI_OUTCOME.ROAD_POLICY_EXCLUDED_UNKNOWN_LANES:
+    // V2.4.11 — never reached AI (excluded by the deterministic debris
+    // LOW_RISK short-circuit before any AI call).
+    case AI_OUTCOME.DEBRIS_EXCLUDED_LOW_RISK:
       return 'none';
     case AI_OUTCOME.AI_CALL_FAILED:
     case AI_OUTCOME.AI_DECISION_INVALID:
@@ -457,6 +473,39 @@ function renderTdxGeoSection(record) {
     : '';
   return `<div class="detail-section"><h4>② GEO（地理判定）</h4><div class="row"><div class="label">結果</div><div class="value">${text}</div></div>${evidenceRow}</div>`;
 }
+// V2.4.11 (order section 十四) — read-only DEBRIS RISK section: shows
+// traffic/debrisRiskPolicy.js's own classification (🔴HIGH_RISK/
+// 🟡AI_REVIEW/🟢LOW_RISK) with its evidence/reasons, plus this record's own
+// FINAL_DECISION_STATUS reason (deriveFinalDecisionReason, imported by this
+// module already) so a future reader can observe whether the AI is judging
+// debris too loosely or too strictly over time. Shown for PBS AND TDX alike
+// (order section 十一 — debris risk logic is shared, never source-specific)
+// — never shown at all for a non-debris event (`isDebrisEvent:false`),
+// matching renderAiTextEditSection's own "nothing to show, render nothing"
+// convention.
+const DEBRIS_RISK_META = {
+  HIGH_RISK: { emoji: '🔴', label: 'HIGH_RISK（高風險，交由 AI 再確認是否通報）' },
+  AI_REVIEW: { emoji: '🟡', label: 'AI_REVIEW（資訊不足，交由既有 AI 判讀）' },
+  LOW_RISK: { emoji: '🟢', label: 'LOW_RISK（低風險，已排除，未進入 AI 判讀）' },
+};
+function renderDebrisRiskSection(record, finalReason) {
+  const risk = record.debrisRisk;
+  if (!risk || !risk.isDebrisEvent) return '';
+  const meta = DEBRIS_RISK_META[risk.classification] || { emoji: 'ℹ️', label: risk.classification || '未知' };
+  const evidence = risk.evidence || {};
+  return `<div class="detail-section">
+    <h4>散落物安全風險分級（DEBRIS RISK）</h4>
+    <div class="row"><div class="label">分級</div><div class="value">${meta.emoji} ${escapeHtml(meta.label)}</div></div>
+    ${renderField('行車道位置 lanePosition', evidence.lanePosition)}
+    ${renderField('物體類型 objectType', evidence.objectType)}
+    ${renderField('數量／範圍 quantity', evidence.quantity)}
+    ${renderField('已清除 cleared', evidence.cleared ? 'TRUE' : 'FALSE')}
+    ${renderField('明確交通影響 trafficImpact', evidence.trafficImpact ? 'TRUE' : 'FALSE')}
+    ${renderField('判定理由 reasons', Array.isArray(risk.reasons) && risk.reasons.length ? risk.reasons.join('；') : null)}
+    ${renderField('最終通知結果原因 FINAL_NOTIFY_REASON', finalReason)}
+  </div>`;
+}
+
 function renderTdxRoadPolicySection(record) {
   const status = layerStatusForTdxRoadPolicy(record);
   const text = status === 'none' ? '⏭️ 未執行（地理已排除，未到此關卡）' : status === 'fail' ? `❌ ${outcomeMeta(record).label}` : '✅ 通過（非機動路肩管制／施工封鎖車道數足夠）';
@@ -467,6 +516,9 @@ function renderDetail(record, decision, idem) {
   const isTdx = record.source === 'freeway' || record.source === 'highway';
   const cacheLabel = record.cacheStatus === 'HIT' ? 'HIT（沿用先前已驗證的判讀，本次 0 次 AI 呼叫）' : record.cacheStatus === 'MISS' ? 'MISS（本次呼叫了 Workers AI）' : null;
   const stage = deriveAiStageFlags(record.outcome);
+  // V2.4.11 (order section 十四) — same canonical reason renderRow's own
+  // collapsed-card summary line uses; never a second/different judgment.
+  const debrisFinalReason = deriveFinalDecisionReason(record).reason;
   const cloudflareStatusLabel = !idem
     ? 'UNKNOWN / NOT RECORDED（冪等記錄已過期或未寫入，或本事件於 Gate A 就已排除、從未進入 Queue）'
     : idem.status === IDEMPOTENCY_STATUS.COMPLETED
@@ -505,6 +557,7 @@ function renderDetail(record, decision, idem) {
   ${renderAiTextEditSection(record)}
   ${isTdx ? renderTdxGeoSection(record) : ''}
   ${isTdx ? renderTdxRoadPolicySection(record) : ''}
+  ${renderDebrisRiskSection(record, debrisFinalReason)}
   <div class="detail-section">
     <h4>${queueSectionTitle}</h4>
     <div class="row"><div class="label">收件狀態</div><div class="value">${cloudflareStatusLabel}</div></div>

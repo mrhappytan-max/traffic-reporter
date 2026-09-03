@@ -317,6 +317,7 @@ import { runLineBroadcast } from '../traffic/broadcastPipeline.js';
 import { runSharedFeedPersist } from '../traffic/sharedFeed.js';
 import { toTaipeiParts } from '../traffic/broadcastHours.js';
 import { isWindowsPbsAiCandidateEligible, buildAiCandidate, PBS_AI_DECISION_MODE } from './aiCandidate.js';
+import { DEBRIS_RISK } from '../traffic/debrisRiskPolicy.js';
 import { resolvePbsAiDecisionEnabled } from './aiConfig.js';
 import { resolveAiDecision, PBS_AI_MODEL_ID } from './aiDecisionEngine.js';
 import { runAiApprovedPbsBroadcast } from '../traffic/aiApprovedPbsBroadcast.js';
@@ -1153,6 +1154,22 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
     // Outside the service area — already logged by the caller
     // (candidate=false reason=outside-service-area). No AI call, no LINE.
     return { outcome: AI_OUTCOME.SERVICE_AREA_EXCLUDED };
+  }
+
+  // V2.4.11 (order section 十一/十二/十三) — the single shared PBS+TDX
+  // choke point (this function has exactly one call site, used by both
+  // sources — see this function's own header) for the new deterministic
+  // debris LOW_RISK short-circuit. Checked BEFORE any AI call: a debris
+  // event this repo can already determine is shoulder-only/off-road/
+  // already-cleared/small-and-outside-the-lane, with no other high-risk
+  // evidence, is never worth spending an AI call or a LINE Push on (order
+  // section 六/十). `candidate.debrisRisk` was already computed once by
+  // pbs/aiCandidate.js#buildAiCandidate() — never re-derived here, zero
+  // additional KV reads/writes, zero second AI call. Every other debris
+  // classification (HIGH_RISK/AI_REVIEW) and every non-debris event falls
+  // straight through to the existing AI decision path, unchanged.
+  if (candidate.debrisRisk && candidate.debrisRisk.isDebrisEvent && candidate.debrisRisk.classification === DEBRIS_RISK.LOW_RISK) {
+    return { outcome: AI_OUTCOME.DEBRIS_EXCLUDED_LOW_RISK };
   }
 
   // V2.4.0 — order section 九's gets<=1/event budget: exactly one read

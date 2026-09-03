@@ -255,22 +255,29 @@
     }
   },
   "taskSeal": {
-    "task": "V2_4_10_TDX_FREEWAY_KM_HSINCHU_DETERMINISTIC_GEO_FALLBACK",
+    "task": "V2_4_11_DEBRIS_SAFETY_RISK_CLASSIFICATION_AND_PUSH_PROTECTION",
     "status": "SEALED",
     "sealedAt": "2026-09-04",
-    "sealedBy": "human directive (路況工程部｜V2.4.10 TDX 國道公里數第二正向地理證據設計／施工令)",
-    "releaseVersion": "V2.4.10",
-    "previousVersion": "V2.4.9",
-    "nature": "MINOR — 新增第二套決定性正向地理證據（已驗證國道路線＋已驗證公里範圍），解決TDX事件有KM無座標無areaNm永遠停UNKNOWN的問題。GEO_RESOLVER_MODIFIED=YES（additive only）、PBS_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO、AI_POLICY_MODIFIED=NO、LINE_POLICY_MODIFIED=NO。",
-    "dataProvenance": "交叉比對本repo已bundled兩份官方政府資料集——國道百公尺里程樁（data.gov.tw 95016，交通部高速公路局）與縣市界線（data.gov.tw 7442，內政部國土測繪中心，V2.4.5已bundled）——用既有isPointInRings()同一演算法逐0.1km點檢驗，非Google摘要/論壇/AI記憶。原始連續區間國1=75.2-107.3K、國3=74.6-109.4K，兩端各縮0.5km保守邊界：最終國1=75.7-106.8K、國3=75.1-108.9K，正確排除已知橫跨交界的香山交流道（109K）。",
-    "fix": "新模組src/tdx/hsinchuFreewayKmRanges.js（靜態表＋純函式resolveVerifiedHsinchuFreewayKm()，零KV/I/O）；hsinchuGeoResolver.js新Tier4，只在座標與文字皆無證據時查、只查freeway來源、只能回CONFIRMED或不決定永不回OUTSIDE。座標優先靠既有Tier1「有結果即return」結構保證，衝突情境架構上不可能發生。",
-    "safetyVerified": "GEO確認≠LINE發送——101K+300施工事件GEO確認但Road Policy仍因blockedLanes未知fail-closed（V2.4.5未改）；100K+000天候事件GEO確認且非道路管理事件類型正常進Queue，notify仍完全交給既有AI決定。三筆真實觸發事件（101K+300/100K+000/79K+000）現正確CONFIRMED_HSINCHU。",
-    "testEvidence": "新增test/v2410TdxFreewayKmHsinchuDeterministicGeoFallback.test.js（18項，施工令§十九CASE1-16全覆蓋，含PBS/AI/LINE零import結構鎖）。既有V2.4.7/V2.4.9測試檔6處斷言因刻意行為改變更新並加註SUPERSEDED，非回歸。全量迴歸1814/1782/32，git stash -u同commit精確基準比對NEW_FAILURES=0。",
-    "unchanged": "PBS Windows/pbs-relay（結構測試鎖零import）、Road Policy閘門本身、AI prompt/model、LINE政策、Queue、CCTV、任何wrangler.jsonc開關（四個TDX/AI開關維持全true）。",
-    "sealCommit": "見 git log 訊息 V2_4_10_TDX_FREEWAY_KM_HSINCHU_DETERMINISTIC_GEO_FALLBACK（單一 commit，SHA 因自我參照而略去，同前例）",
-    "readerNote": "CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何開關）。若官方里程樁或行政區界線資料集更新，重跑 `npm run verify:hsinchu-freeway-km-ranges` 核對表格是否仍準確。完整記錄見 07_KNOWN_ISSUES.md「修正紀錄｜V2.4.10」章節。"
+    "sealedBy": "human directive (路況工程部｜V2.4.11 散落物安全風險分級／LINE Push 額度保護施工令)",
+    "releaseVersion": "V2.4.11",
+    "previousVersion": "V2.4.10",
+    "nature": "MINOR — 新增散落物安全風險分級（HIGH_RISK/AI_REVIEW/LOW_RISK），保護LINE Push額度同時不漏真正危險散落物。GEO_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO、QUEUE_MODIFIED=NO、AI_SECOND_CALL_ADDED=NO。",
+    "fix": "新模組src/traffic/debrisRiskPolicy.js（純函式resolveDebrisSafetyRisk()，零KV/I/O，自成一套關鍵字表不依賴其他模組）。優先序：車道位置／大型危險物／數量／明確交通影響(含結構化blockedLanes)任一命中即HIGH_RISK(仍交AI再確認)；否則路肩/路外/已清除/小型碎屑即LOW_RISK(不進AI不進LINE)；否則AI_REVIEW(交既有AI)。",
+    "integration": "aiCandidate.js新增candidate.debrisRisk欄位；debugPush.js#runAiDecisionPath()（PBS/TDX共用唯一入口）於!candidate判斷後新增LOW_RISK短路，回傳DEBRIS_EXCLUDED_LOW_RISK，0額外AI呼叫；aiDecisionEngine.js buildAiUserPrompt新增debrisRisk結構化欄位＋SYSTEM_PROMPT補充HIGH/LOW信心散落物判準；aiObservatoryIndex.js/View.js新增觀測欄位與DEBRIS RISK顯示區塊，0額外KV寫入。",
+    "safetyVerified": "HIGH_RISK仍完整交由既有AI二次確認，從未直接發LINE；AI不得為原文沒有的散落物事實杜撰車道/占用/危險等描述，資訊不足傾向notify=false。",
+    "testEvidence": "新增test/v2411DebrisSafetyRiskClassificationAndPushProtection.test.js（施工令§十八CASE1-19全覆蓋＋PBS/TDX整合＋KV成本測試）。全量迴歸1839/1807/32，git stash -u同commit精確基準比對NEW_FAILURES=0。",
+    "unchanged": "TDX GEO Resolver、Freeway KM驗證範圍、PBS地理閘門、道路管理政策、Queue架構、Incident Memory、dedupe、CCTV、AI model、LINE token/quota系統、任何wrangler.jsonc開關。",
+    "sealCommit": "見 git log 訊息 V2_4_11_DEBRIS_SAFETY_RISK_CLASSIFICATION_AND_PUSH_PROTECTION（單一 commit，SHA 因自我參照而略去，同前例）",
+    "readerNote": "CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何開關）。完整記錄見 07_KNOWN_ISSUES_02.md（Volume 02，本輪新記錄寫入這裡，Volume 01已滿禁止再寫入）。"
   },
   "taskSealHistory": [
+    {
+      "task": "V2_4_10_TDX_FREEWAY_KM_HSINCHU_DETERMINISTIC_GEO_FALLBACK",
+      "status": "SEALED",
+      "sealedAt": "2026-09-04",
+      "releaseVersion": "V2.4.10",
+      "summary": "新增第二套決定性正向地理證據（已驗證國道路線＋公里範圍，交叉比對里程樁×縣市界線資料集），解決TDX有KM無座標無areaNm永遠停UNKNOWN的問題。GEO additive-only，PBS/道路政策/AI/LINE全未觸碰（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）。"
+    },
     {
       "task": "V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS",
       "status": "SEALED",
@@ -522,7 +529,7 @@
   ],
   "version": {
     "packageJsonVersion": "0.1.0",
-    "latestCompleted": "V2.4.10",
+    "latestCompleted": "V2.4.11",
     "canonicalSource": "src/version.js 的 APP_VERSION — 唯一權威。packageJsonVersion 是 npm 套件版本（0.1.0），與產品版本線無關，不要混用。"
   },
   "production": {
@@ -531,14 +538,14 @@
     "deployMethod": "push to main -> Cloudflare Workers Builds auto-deploy",
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
-  "currentPhase": "Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline。PHASE_E_TDX_NOTIFY_LIVE（本輪未變動）。**V2.4.10（本輪，2026-09-04）**：TDX GEO Resolver新增第二正向證據層——交叉比對兩份已bundled官方資料集（國道百公尺里程樁×縣市界線，用既有isPointInRings()演算法）得出國1/國3經新竹市/縣的驗證公里範圍（各縮0.5km安全邊界），新Tier4只在無座標無地名文字時查、只查freeway、範圍外一律UNKNOWN非OUTSIDE、座標永遠優先。三筆先前卡UNKNOWN的真實事件現正確CONFIRMED_HSINCHU。GEO確認≠LINE發送，Road Policy/AI/LINE政策全數未動，PBS完全未觸碰。本session無Production網路存取，實機觀察委由人類；異常第一動作固定改回false。雲端同步治理V2生效：Claude對Drive唯讀、GitHub為唯一寫入來源",
-  "currentTask": "none（無進行中工作）。Latest completed task = V2_4_10_TDX_FREEWAY_KM_HSINCHU_DETERMINISTIC_GEO_FALLBACK，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.4.10。本輪內容：新模組`hsinchuFreewayKmRanges.js`（靜態驗證表＋純函式，零KV/I/O）接入`hsinchuGeoResolver.js`新Tier4；`aiCandidate.js`/`buildTdxPseudoCandidate()`/`aiObservatoryIndex.js`/`aiObservatoryView.js`新增`geoEvidenceType`觀測欄位；`scripts/verifyHsinchuFreewayKmRanges.mjs`可重跑驗證資料衍生過程。GEO resolver是additive-only（新增一個tier，既有邏輯逐位元組不變）；道路政策/AI決策政策核心四欄位/LINE/PBS/Queue/CCTV/wrangler.jsonc全部未觸碰。全量迴歸NEW_FAILURES=0。下一件事：等人類回報V2.4.5 seal-deploy的真實Production觀察結果（與本輪無關）；觀察Production是否有更多TDX事件因新tier正確進Queue/AI；若官方資料集更新，重跑驗證腳本核對；異常時rollback協定見07_KNOWN_ISSUES.md。",
-  "knownBlocker": "無blocker，沿用V2.4.5封版的觀察中狀態——TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED已改true，第一筆真實TDX LINE通知現場結果待人類回報——REAL_WORLD_CONFIRMATION_PENDING（與本輪V2.4.10 GEO新增證據層無關，本輪未新增任何runtime blocker）。本session無Production網路存取無法自行觀察。異常時第一動作固定改回false止血。詳見07_KNOWN_ISSUES.md",
+  "currentPhase": "Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline。PHASE_E_TDX_NOTIFY_LIVE（本輪未變動）。**V2.4.11（本輪，2026-09-04）**：新增散落物安全風險分級（debrisRiskPolicy.js，HIGH_RISK/AI_REVIEW/LOW_RISK），LOW_RISK於既有PBS/TDX共用AI決策入口短路排除，0額外AI呼叫、0額外KV寫入；HIGH_RISK仍完整交由既有AI二次確認，從未直接發LINE。GEO/道路政策/Queue/Incident Memory/CCTV/AI model/LINE token系統全數未動。雲端同步治理V2生效：Claude對Drive唯讀、GitHub為唯一寫入來源。",
+  "currentTask": "none（無進行中工作）。Latest completed task = V2_4_11_DEBRIS_SAFETY_RISK_CLASSIFICATION_AND_PUSH_PROTECTION，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.4.11。完整記錄見本檔 taskSeal 欄位／07_KNOWN_ISSUES_02.md／06_VERSION_HISTORY.md。下一件事：觀察Production散落物LOW_RISK排除是否符合預期、AI是否對HIGH_RISK/AI_REVIEW判斷過鬆或過嚴（Observatory DEBRIS RISK區塊可供觀察）；等人類回報V2.4.5 seal-deploy的真實Production觀察結果（與本輪無關）。",
+  "knownBlocker": "無blocker，沿用V2.4.5封版的觀察中狀態——TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED已改true，第一筆真實TDX LINE通知現場結果待人類回報——REAL_WORLD_CONFIRMATION_PENDING（與本輪V2.4.11散落物分級無關，本輪未新增任何runtime blocker）。另：GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES，見07_KNOWN_ISSUES_02.md。本session無Production網路存取無法自行觀察。異常時第一動作固定改回false止血。",
   "realWorldConfirmation": {
     "status": "REAL_WORLD_CONFIRMATION_PENDING",
     "subject": "V1.8.7.7 CCTV gray broken image fix"
   },
-  "nextAction": "待辦（沿用）：人類觀察真實Production TDX LINE推播——新竹縣市正常通過、桃園/苗栗/頭份/竹南=0推播、路肩開關=0推播、施工0-1車道=0推播、LINE內容無誤。異常時第一動作固定改回false止血。新增待辦：觀察Production是否有更多TDX高公局事件因V2.4.10新tier而正確進Queue/AI；若官方里程樁或行政區界線資料集更新，重跑`npm run verify:hsinchu-freeway-km-ranges`核對表格是否仍準確。一個月後依ineligibleByReason數據決定是否收緊主動播報政策",
+  "nextAction": "待辦（沿用）：人類觀察真實Production TDX LINE推播——新竹縣市正常通過、桃園/苗栗/頭份/竹南=0推播、路肩開關=0推播、施工0-1車道=0推播、LINE內容無誤。異常時第一動作固定改回false止血。新增待辦：觀察Production散落物HIGH_RISK/AI_REVIEW/LOW_RISK實際分布是否符合預期（Observatory DEBRIS RISK區塊）；一個月後依ineligibleByReason數據決定是否收緊主動播報政策。",
   "authorityLevels": {
     "levelA_selfServiceReadOnly": "own repo git log, own Worker/KV/test results only",
     "levelB_requiresHumanApproval": "interactive login/OAuth, private dashboards, real KV content, any other department's resources (read or write)",

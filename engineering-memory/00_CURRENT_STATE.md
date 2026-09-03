@@ -11,21 +11,31 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V2.4.10（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | 96b5f44（V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS commit；本輪 V2.4.10 commit 尚未落地前的快照，本表隨本輪 commit 一併更新） |
+| Current Version | V2.4.11（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | 96b5f44（V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS commit；本輪 V2.4.11 commit 尚未落地前的快照，本表隨本輪 commit 一併更新） |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty（本輪 V2.4.10 changeset，與本份快照同一 commit 一起送出） |
+| Source working tree | dirty（本輪 V2.4.11 changeset，與本份快照同一 commit 一起送出） |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
-| Current Phase | Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，TDX 正式 LINE 通知維持開啟（PHASE_E_TDX_NOTIFY_LIVE，本輪未變動）。**本輪（V2.4.10）新增 TDX GEO 第二正向證據**：新模組 `src/tdx/hsinchuFreewayKmRanges.js`——把國道一號/國道三號經新竹市/縣的公里範圍，透過交叉比對兩份官方政府資料集（國道百公尺里程樁 dataset 95016＋直轄市縣市界線 dataset 7442，用既有 `isPointInRings()` 同一演算法）計算並加 0.5km 安全邊界，接入 `hsinchuGeoResolver.js` 新 LEVEL 3 tier（只在無座標時使用，座標永遠優先，範圍外一律 UNKNOWN 非 OUTSIDE）。三筆先前卡在 UNKNOWN 的真實事件（101K+300/100K+000/79K+000）現正確 CONFIRMED_HSINCHU；GEO 確認≠LINE 發送，Road Policy/AI/LINE 政策全數未動。PBS 完全未觸碰。純函式零 KV/I/O |
-| Current Task | none。Latest completed task = V2_4_10_TDX_FREEWAY_KM_HSINCHU_DETERMINISTIC_GEO_FALLBACK，status = SEALED（V2.4.9→V2.4.10；前序歷程見 SYSTEM_STATE.json／06_VERSION_HISTORY.md）。CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何 wrangler.jsonc 開關）。**本輪內容**：`hsinchuFreewayKmRanges.js`（靜態驗證表＋純函式 `resolveVerifiedHsinchuFreewayKm()`）＋ `hsinchuGeoResolver.js` 新 Tier 4；`aiCandidate.js`/`buildTdxPseudoCandidate()`/`aiObservatoryIndex.js`/`aiObservatoryView.js` 新增 `geoEvidenceType` 觀測欄位（哪一層確認的，永不影響決策）；`scripts/verifyHsinchuFreewayKmRanges.mjs` 可重跑驗證資料衍生過程。 |
-| Latest Completed Version | V2.4.10 |
-| Known Blocker | 無 blocker，沿用 V2.4.5 封版的 REAL_WORLD_CONFIRMATION_PENDING（TDX 正式 LINE 通知現場觀察，本輪未變動）——本 session 無 Production 網路存取，需人類看真實 LINE/Cloudflare Logs 回報異常，異常回報時第一動作固定 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=false`。本輪（V2.4.10）本身是 GEO 新增正向證據層，無新增 runtime blocker |
-| Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING（沿用 V2.4.5 封版項目，與本輪 GEO 新增證據層無關） |
+| Current Phase | Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，TDX 正式 LINE 通知維持開啟（PHASE_E_TDX_NOTIFY_LIVE，本輪未變動）。**本輪（V2.4.11）新增散落物安全風險分級**：新模組 `src/traffic/debrisRiskPolicy.js#resolveDebrisSafetyRisk()`（純函式，零KV/I/O）依優先序判定 HIGH_RISK（車道位置/大型危險物/數量/明確交通影響任一命中，仍交AI二次確認）／LOW_RISK（路肩/路外/已清除/小型碎屑，於PBS/TDX共用AI決策入口短路排除，0額外AI呼叫、0額外KV寫入）／AI_REVIEW（證據不足，交既有AI）。GEO/道路政策/Queue/CCTV/AI model/LINE token系統全數未動 |
+| Current Task | none。Latest completed task = V2_4_11_DEBRIS_SAFETY_RISK_CLASSIFICATION_AND_PUSH_PROTECTION，status = SEALED（V2.4.10→V2.4.11；前序歷程見 SYSTEM_STATE.json／06_VERSION_HISTORY.md）。CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何 wrangler.jsonc 開關）。**本輪內容**：`debrisRiskPolicy.js`＋`aiCandidate.js`的`candidate.debrisRisk`欄位＋`debugPush.js#runAiDecisionPath()`新LOW_RISK短路（新`AI_OUTCOME.DEBRIS_EXCLUDED_LOW_RISK`）＋`aiDecisionEngine.js`新debrisRisk結構化欄位與SYSTEM_PROMPT補充＋查修頁新DEBRIS RISK顯示區塊。 |
+| Latest Completed Version | V2.4.11 |
+| Known Blocker | 無 blocker，沿用 V2.4.5 封版的 REAL_WORLD_CONFIRMATION_PENDING（TDX 正式 LINE 通知現場觀察，本輪未變動）——本 session 無 Production 網路存取，需人類看真實 LINE/Cloudflare Logs 回報異常，異常回報時第一動作固定 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=false`。另：`GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES`（見07_KNOWN_ISSUES_02.md）。本輪（V2.4.11）本身無新增 runtime blocker |
+| Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING（沿用 V2.4.5 封版項目，與本輪散落物分級無關） |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 待辦（沿用）：人類觀察真實 Production TDX LINE 推播現場結果，異常時第一動作固定關閉 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`。新增待辦：觀察 Production 是否有更多 TDX 高公局事件因這個新 tier 而正確進入 Queue/AI，若官方里程樁或行政區界線資料集更新，重跑 `npm run verify:hsinchu-freeway-km-ranges` 核對表格是否仍準確 |
+| Next Action | 待辦（沿用）：人類觀察真實 Production TDX LINE 推播現場結果，異常時第一動作固定關閉 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`。新增待辦：觀察 Production 散落物 HIGH_RISK/AI_REVIEW/LOW_RISK 實際分布是否符合預期（查修頁 DEBRIS RISK 區塊可觀察） |
 | Export Generated At | 2026-09-04T11:00:00.000Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
+
+## V2.4.11 封版（2026-09-04）— 散落物安全風險分級／LINE Push 額度保護
+
+- `V2_4_11_DEBRIS_SAFETY_RISK_CLASSIFICATION_AND_PUSH_PROTECTION`，MINOR，GEO_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO、QUEUE_MODIFIED=NO、AI_SECOND_CALL_ADDED=NO。
+- **問題**：PBS/TDX 掉落物/散落物事件從真正危險的在途障礙物到毫無細節的模糊回報都有；不能「一律通知」也不能「一律不通知」。
+- **新模組**：`src/traffic/debrisRiskPolicy.js#resolveDebrisSafetyRisk(event)`（純函式，零KV/I/O，自成一套關鍵字表）。優先序：①車道位置（內側/中間/外側/快/慢車道/車道中央/路中央/行車道）或大型危險物（整條輪胎/大片輪胎皮/大型金屬/鐵件/木板/棧板/家具/貨物/大型紙箱）或多件數量或明確交通影響文字（或結構化`blockedLanes>=1`）任一命中即`HIGH_RISK`，且優先於路肩/已清除訊號檢查（故「路肩大型物體部分侵入外側車道」仍正確判HIGH_RISK，「紙箱」單字不會單獨決定分級）；②否則路肩/路外/已清除/小型碎屑即`LOW_RISK`；③否則`AI_REVIEW`（例：「95K+200路面發現散落物狀況」，交既有AI綜合研判）。
+- **整合**：`aiCandidate.js`新增`candidate.debrisRisk`欄位（沿用displayKM/blockedLanes/geoEvidenceType慣例）；`debugPush.js#runAiDecisionPath()`（PBS/TDX唯一共用入口）於`!candidate`判斷後新增`LOW_RISK`短路，回傳新`AI_OUTCOME.DEBRIS_EXCLUDED_LOW_RISK`，0額外AI呼叫、0額外KV寫入；`aiDecisionEngine.js`把`debrisRisk`當結構化事實傳給AI，SYSTEM_PROMPT補充HIGH/LOW信心散落物判準，明確禁止AI替原文沒提到的散落物事實杜撰車道/占用/危險描述；`HIGH_RISK`／`AI_REVIEW`仍完整交由既有AI二次確認，從未直接發LINE。
+- **查修頁**：`aiObservatoryIndex.js`新增`debrisRisk`觀測欄位；`aiObservatoryView.js`新增DEBRIS RISK唯讀展開區塊（🔴HIGH_RISK/🟡AI_REVIEW/🟢LOW_RISK＋evidence＋reasons＋最終決策原因），PBS/TDX共用同一顯示邏輯。
+- **測試**：新增`test/v2411DebrisSafetyRiskClassificationAndPushProtection.test.js`（25項，施工令§十八CASE1-19全覆蓋＋PBS/TDX整合＋KV成本測試）。全量迴歸1839/1807/32，`git stash -u`同commit精確基準比對NEW_FAILURES=0。`APP_VERSION` V2.4.10→V2.4.11。
+- **未觸碰**：TDX GEO Resolver、Freeway KM驗證範圍、PBS地理閘門、道路管理政策、Queue、Incident Memory、CCTV、AI model、LINE token/quota系統、wrangler.jsonc任何開關。完整記錄見 `07_KNOWN_ISSUES_02.md`。
 
 ## V2.4.10 封版（2026-09-04）— TDX 國道公里數第二正向地理證據
 

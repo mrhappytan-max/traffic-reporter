@@ -102,6 +102,27 @@ impact 可以判斷為 LOW 或 HIGH，但不要只因為「看起來是一般事
 封閉、車道阻斷等——原則上 notify=true。即使現在還沒塞車，這類資訊仍
 有提前減速、換道、提高警覺的安全價值，不需要等到造成壅塞才通知。
 
+　關於「散落物／掉落物」類事件，請特別注意以下細分（V2.4.11，避免把
+　所有散落物一律當成同等重要，浪費有限的通知額度，也避免漏掉真正危險
+　的散落物）：
+　高信心應該 notify=true 的散落物情況：明確描述在正常行車道內（內側／
+　中間／外側／快／慢車道、車道中央、路中央、行車道）、明確描述是大型／
+　堅硬／高危險物體（整條輪胎、大片輪胎皮、大型金屬、鐵件、木板、棧板、
+　家具、貨物、大型紙箱或箱體、石塊等）、明確描述數量多或範圍大（多塊、
+　多個、散落多處、大量）、或原文已明確描述交通影響（影響通行、車輛
+　閃避、占用車道、封閉車道、危險）。
+　低信心、傾向 notify=false 的散落物情況：原文只說明在路肩／路外／安全
+　島／邊坡等非行車區域，且沒有其他侵入車道或高危險證據；原文已明確
+　說明已清除／已排除／已恢復正常；原文只是模糊描述「發現散落物」、
+　「疑似散落物」而完全沒有提供物體種類、大小、數量、車道位置或交通
+　影響等任何具體證據——資訊不足時，請傾向 notify=false，而不是因為
+　「散落物本身就是危險的」這種一般性推論就 notify=true。
+　絕對禁止：憑空替原文加入它沒有明確提到的事實，例如原文只寫「發現
+　散落物狀況」，你不可以自行判斷或描述成「大型掉落物」「占用車道」
+　「車輛緊急閃避」——只能根據原文與下方提供的結構化事實（若有提供
+　debrisRisk 欄位，其 evidence／reasons 是既有規則已經從原文抽取出的
+　結構化證據，可以參考，但不可以覆寫或誇大原文的意思）做出判斷。
+
 三、單純車流量大／一般壅塞（沒有事故、坍方、掉落物等具體事件）：
 單純的車多、車流略多、尖峰時段的一般壅塞、下雨天可預期的車流，原則上
 notify=false，避免這類日常、可預期的車流資訊，把真正重要的事故／坍方／
@@ -198,6 +219,15 @@ function buildAiUserPrompt(candidate) {
     comment: candidate.comment || '',
     sourceDetail: candidate.sourceDetail || '',
     blockedLanes: typeof candidate.blockedLanes === 'number' ? candidate.blockedLanes : null,
+    // V2.4.11 (order section 九) — traffic/debrisRiskPolicy.js's own
+    // deterministic classification, already computed once by
+    // pbs/aiCandidate.js#buildAiCandidate() — never re-derived here. The
+    // clearest LOW_RISK cases are already excluded BEFORE this AI call is
+    // ever made (see debugPush.js#runAiDecisionPath's own V2.4.11 short-
+    // circuit); a non-null HIGH_RISK/AI_REVIEW value here is an additional
+    // structured fact for the model, never a second decision — "always
+    // present, null when absent" convention, same as blockedLanes above.
+    debrisRisk: candidate.debrisRisk || null,
   };
   return JSON.stringify(summary);
 }
