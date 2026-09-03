@@ -111,7 +111,36 @@ export const AI_OUTCOME = {
   AI_NOTIFY_TRUE: 'AI_NOTIFY_TRUE',
   AI_NOTIFY_FALSE: 'AI_NOTIFY_FALSE',
   STALE_AFTER_CLEARED: 'STALE_AFTER_CLEARED',
+  // V2.4.6 (order 路況工程部｜V2.4.6 查修頁資訊改版施工令, section 七/八) —
+  // TDX events dropped at tdx/tdxQueueIngress.js's own Gate A, BEFORE any
+  // Queue message is ever created (see that module's own V2.4.5 comment).
+  // Before this round, a Gate A drop produced a `console.log` line only —
+  // zero persisted record, so the event vanished from this Observatory
+  // entirely (order section 七's own "為什麼這筆 TDX 不見了？卻完全沒有
+  // 證據"). These six values are written ADDITIVELY by
+  // tdxQueueIngress.js#enqueueTdxRoadEvents() itself, directly from the
+  // ALREADY-COMPUTED resolveTdxHsinchuGeography()/
+  // resolveTdxRoadManagementEligibility() return values — this module
+  // never re-runs either judgment, and nothing about the actual Gate A
+  // drop decision changes because these values now also get a KV record.
+  GEO_EXCLUDED_OUTSIDE_HSINCHU: 'GEO_EXCLUDED_OUTSIDE_HSINCHU',
+  GEO_EXCLUDED_UNKNOWN: 'GEO_EXCLUDED_UNKNOWN',
+  ROAD_POLICY_EXCLUDED_SHOULDER_OPEN: 'ROAD_POLICY_EXCLUDED_SHOULDER_OPEN',
+  ROAD_POLICY_EXCLUDED_SHOULDER_CLOSE: 'ROAD_POLICY_EXCLUDED_SHOULDER_CLOSE',
+  ROAD_POLICY_EXCLUDED_INSUFFICIENT_LANES: 'ROAD_POLICY_EXCLUDED_INSUFFICIENT_LANES',
+  ROAD_POLICY_EXCLUDED_UNKNOWN_LANES: 'ROAD_POLICY_EXCLUDED_UNKNOWN_LANES',
 };
+
+// V2.4.6 — the collapsed-card summary status this record ultimately
+// represents (order section 二/十一's own "未展開就能知道為什麼發／不發").
+// Kept as a SEPARATE, small closed enum from AI_OUTCOME itself — a status
+// is a coarse grouping OF several outcomes, not a new outcome value.
+export const FINAL_DECISION_STATUS = Object.freeze({
+  SENT: 'SENT',
+  NOT_SENT: 'NOT_SENT',
+  PROCESSING_FAILED: 'PROCESSING_FAILED',
+  PENDING: 'PENDING',
+});
 
 function safeErrorMessage(err) {
   if (err && typeof err.message === 'string') return err.message;
@@ -188,6 +217,19 @@ export function buildAiObservatoryRecord({
   // AI_CALL_FAILED record and a fully-exhausted PROCESSING_FAILED one —
   // see aiObservatoryView.js's own outcomeMeta().
   timedOut = false,
+  // V2.4.6 (order section 三) — `suppressedForPhase` was ALREADY computed
+  // by debugPush.js#runAiDecisionPath (TDX Phase B/C
+  // TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED gate — see that function's own
+  // `suppressLineNotify`) and already returned to its caller, but was
+  // silently dropped before this record was ever built (this function
+  // never declared the parameter, so the object-destructuring simply
+  // discarded it). Surfacing it here is purely additive: no new judgment,
+  // just no longer throwing away a fact the runtime already produced —
+  // this is what lets the trace page show "未發送：TDX通知開關關閉" instead
+  // of a generic AI_NOT_INVOKED_LEGACY_PATH label. `blockedLanes` is the
+  // SAME field pbs/aiCandidate.js#buildAiCandidate() has carried since
+  // V2.4.5 (`candidate.blockedLanes`) — also never previously stored here.
+  suppressedForPhase = false,
 }) {
   return {
     timestamp: now.toISOString(),
@@ -200,6 +242,7 @@ export function buildAiObservatoryRecord({
     areaNm: (candidate && candidate.areaNm) || null,
     displayKM: candidate && typeof candidate.displayKM === 'number' ? candidate.displayKM : null,
     eventType: (candidate && candidate.eventType) || null,
+    blockedLanes: candidate && typeof candidate.blockedLanes === 'number' ? candidate.blockedLanes : null,
     rawComment: (candidate && candidate.comment) || '',
     rawSourceDetail: (candidate && candidate.sourceDetail) || '',
     longitude: candidate && typeof candidate.longitude === 'number' ? candidate.longitude : null,
@@ -218,7 +261,71 @@ export function buildAiObservatoryRecord({
     lastNotifiedAt,
     memoryWrite: Boolean(memoryWrite),
     timedOut: Boolean(timedOut),
+    suppressedForPhase: Boolean(suppressedForPhase),
   };
+}
+
+// V2.4.6 (order section 三) — the ONE canonical, pure composition of
+// "why was this event finally sent or not sent", derived exclusively from
+// fields this record ALREADY stores (outcome/eventType/blockedLanes/
+// suppressedForPhase/lineSent/lineAttempted) — never a new judgment, never
+// re-running geography/policy/AI. aiObservatoryView.js's collapsed-card
+// summary line (order section 二/十一) and its TDX pipeline-stage strip
+// both call this SAME function — one canonical reason, never two.
+//
+// The order's own example vocabulary (section 二): 壅塞／一般施工／機動路肩
+// 開放／機動路肩關閉／施工僅封1車道／非新竹縣市／地理位置無法確認／AI判定
+// 影響低／通知時段外／TDX通知開關關閉／AI處理失敗／背景重試失敗 — every
+// branch below maps to one of these using only already-persisted data;
+// "通知時段外" has no persisted signal in this record today (no existing
+// outcome/field distinguishes it), so it is deliberately NOT guessed at —
+// order section 三's own "UI 絕不可以自行猜測" — an event whose real
+// upstream reason this record can't distinguish falls through to the
+// nearest accurate existing label instead of a fabricated one.
+export function deriveFinalDecisionReason(record) {
+  if (!record || typeof record !== 'object') {
+    return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: 'UNKNOWN / NOT RECORDED' };
+  }
+  if (record.lineSent) {
+    return { status: FINAL_DECISION_STATUS.SENT, reason: '重大事故' };
+  }
+  switch (record.outcome) {
+    case AI_OUTCOME.GEO_EXCLUDED_OUTSIDE_HSINCHU:
+      return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: '非新竹縣市' };
+    case AI_OUTCOME.GEO_EXCLUDED_UNKNOWN:
+      return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: '地理位置無法確認' };
+    case AI_OUTCOME.ROAD_POLICY_EXCLUDED_SHOULDER_OPEN:
+      return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: '機動路肩開放' };
+    case AI_OUTCOME.ROAD_POLICY_EXCLUDED_SHOULDER_CLOSE:
+      return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: '機動路肩關閉' };
+    case AI_OUTCOME.ROAD_POLICY_EXCLUDED_INSUFFICIENT_LANES:
+      return {
+        status: FINAL_DECISION_STATUS.NOT_SENT,
+        reason: typeof record.blockedLanes === 'number' ? `施工僅封${record.blockedLanes}車道` : '施工封鎖車道資料不足',
+      };
+    case AI_OUTCOME.ROAD_POLICY_EXCLUDED_UNKNOWN_LANES:
+      return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: '施工封鎖車道資料不足' };
+    case AI_OUTCOME.SERVICE_AREA_EXCLUDED:
+      return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: '非新竹縣市' };
+    case AI_OUTCOME.AI_NOTIFY_FALSE:
+      if (record.eventType === 'congestion') return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: '壅塞' };
+      if (record.eventType === 'construction') return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: '一般施工' };
+      return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: 'AI判定影響低' };
+    case AI_OUTCOME.AI_CALL_FAILED:
+    case AI_OUTCOME.AI_DECISION_INVALID:
+      return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: 'AI處理失敗' };
+    case AI_OUTCOME.PROCESSING_FAILED:
+      return { status: FINAL_DECISION_STATUS.PROCESSING_FAILED, reason: '背景重試失敗' };
+    case AI_OUTCOME.STALE_AFTER_CLEARED:
+      return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: '事件已解除（取消重試）' };
+    case AI_OUTCOME.AI_NOT_INVOKED_LEGACY_PATH:
+      if (record.suppressedForPhase) return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: 'TDX通知開關關閉' };
+      return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: '既有規則判定不符合播報資格' };
+    case AI_OUTCOME.PROCESSING_STARTED:
+      return { status: FINAL_DECISION_STATUS.PENDING, reason: '處理中／未完成' };
+    default:
+      return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: 'UNKNOWN / NOT RECORDED' };
+  }
 }
 
 function opaqueSuffix(idempotencyKeyHash) {

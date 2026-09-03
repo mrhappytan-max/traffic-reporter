@@ -20,7 +20,7 @@
 // exception). Expand/collapse via native <details>/<summary>; filters via
 // a plain GET <form>.
 
-import { listAiObservatoryEntries, AI_OUTCOME, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT } from './aiObservatoryIndex.js';
+import { listAiObservatoryEntries, AI_OUTCOME, FINAL_DECISION_STATUS, deriveFinalDecisionReason, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT } from './aiObservatoryIndex.js';
 import { computeAiDecisionCacheKeyHash, buildAiDecisionCacheKvKey } from './aiCandidate.js';
 import { readAiDecisionCache } from './aiDecisionCache.js';
 import { PBS_AI_MODEL_ID } from './aiDecisionEngine.js';
@@ -67,6 +67,17 @@ const OUTCOME_META = {
   // separate CLEARED push) — distinct from every failure outcome above:
   // this was never a failure, it is a stale retry correctly stood down.
   [AI_OUTCOME.STALE_AFTER_CLEARED]: { emoji: '⏹️', label: '事件已解除，取消舊 AI 重試', cls: 'info' },
+  // V2.4.6 (order section 七/八) — TDX Gate A drops (tdx/tdxQueueIngress.js
+  // — geography or road-management policy, BEFORE any Queue/AI work).
+  // These never reached AI at all; distinct emoji/label from every AI-
+  // outcome above so a reader never mistakes "dropped before AI" for "AI
+  // judged this".
+  [AI_OUTCOME.GEO_EXCLUDED_OUTSIDE_HSINCHU]: { emoji: '🗺️', label: '地理：非新竹縣市（Gate A 已排除）', cls: 'unknown' },
+  [AI_OUTCOME.GEO_EXCLUDED_UNKNOWN]: { emoji: '🗺️', label: '地理：位置無法確認（Gate A 已排除）', cls: 'unknown' },
+  [AI_OUTCOME.ROAD_POLICY_EXCLUDED_SHOULDER_OPEN]: { emoji: '🚧', label: '道路政策：機動路肩開放（Gate A 已排除）', cls: 'unknown' },
+  [AI_OUTCOME.ROAD_POLICY_EXCLUDED_SHOULDER_CLOSE]: { emoji: '🚧', label: '道路政策：機動路肩關閉（Gate A 已排除）', cls: 'unknown' },
+  [AI_OUTCOME.ROAD_POLICY_EXCLUDED_INSUFFICIENT_LANES]: { emoji: '🚧', label: '道路政策：施工封鎖車道數不足（Gate A 已排除）', cls: 'unknown' },
+  [AI_OUTCOME.ROAD_POLICY_EXCLUDED_UNKNOWN_LANES]: { emoji: '🚧', label: '道路政策：施工封鎖車道資料不足（Gate A 已排除）', cls: 'unknown' },
 };
 // V2.4.3 (order section 十) — timeout variants of the two outcomes that
 // can carry `record.timedOut`. Kept as SEPARATE lookup entries rather
@@ -99,12 +110,36 @@ const STATUS_FILTER_OPTIONS = [
   // AI_FAILED: a stale-cancelled retry was never a failure at all.
   [AI_OUTCOME.STALE_AFTER_CLEARED, '事件已解除（取消重試）'],
   ['DUPLICATE', '重複事件'],
+  // V2.4.6 — TDX Gate A drops, grouped under two filter buckets (geo /
+  // road-management) rather than four separate entries — matches this
+  // page's existing "AI_FAILED groups two outcomes" precedent above.
+  ['TDX_GEO_EXCLUDED', 'TDX：地理排除（Gate A）'],
+  ['TDX_ROAD_POLICY_EXCLUDED', 'TDX：道路政策排除（Gate A）'],
 ];
 function matchesStatusFilter(record, statusFilter) {
   if (!statusFilter) return true;
   if (statusFilter === 'AI_FAILED') return record.outcome === AI_OUTCOME.AI_CALL_FAILED || record.outcome === AI_OUTCOME.AI_DECISION_INVALID;
   if (statusFilter === 'DUPLICATE') return false; // see renderDuplicateNote() — never persisted, see this module's own header comment
+  if (statusFilter === 'TDX_GEO_EXCLUDED') return record.outcome === AI_OUTCOME.GEO_EXCLUDED_OUTSIDE_HSINCHU || record.outcome === AI_OUTCOME.GEO_EXCLUDED_UNKNOWN;
+  if (statusFilter === 'TDX_ROAD_POLICY_EXCLUDED') {
+    return (
+      record.outcome === AI_OUTCOME.ROAD_POLICY_EXCLUDED_SHOULDER_OPEN ||
+      record.outcome === AI_OUTCOME.ROAD_POLICY_EXCLUDED_SHOULDER_CLOSE ||
+      record.outcome === AI_OUTCOME.ROAD_POLICY_EXCLUDED_INSUFFICIENT_LANES ||
+      record.outcome === AI_OUTCOME.ROAD_POLICY_EXCLUDED_UNKNOWN_LANES
+    );
+  }
   return record.outcome === statusFilter;
+}
+
+// V2.4.6 (order section 四) — three distinct source badges, never lumping
+// TDX's two agencies together: knowing which government agency's data is
+// involved matters when debugging (order's own "知道是哪個政府單位的資料
+// 很重要"). `record.source` has carried 'freeway'/'highway' since V2.4.0 —
+// this is the first place anything actually reads it for display.
+const SOURCE_LABELS = { pbs: 'PBS', freeway: 'TDX｜高公局', highway: 'TDX｜公路局' };
+function sourceLabel(source) {
+  return SOURCE_LABELS[source] || source || 'PBS';
 }
 
 function taipeiParts(iso) {
@@ -205,6 +240,18 @@ function deriveAiStageFlags(outcome) {
   // ahead of candidate building) — a PRIOR attempt may have reached AI,
   // but that is not what this record now represents.
   if (outcome === AI_OUTCOME.STALE_AFTER_CLEARED) return { candidateCreated: false, aiCallStarted: false };
+  // V2.4.6 — TDX Gate A drops: dropped before any candidate/AI work at
+  // all (see tdx/tdxQueueIngress.js's own comment).
+  if (
+    outcome === AI_OUTCOME.GEO_EXCLUDED_OUTSIDE_HSINCHU ||
+    outcome === AI_OUTCOME.GEO_EXCLUDED_UNKNOWN ||
+    outcome === AI_OUTCOME.ROAD_POLICY_EXCLUDED_SHOULDER_OPEN ||
+    outcome === AI_OUTCOME.ROAD_POLICY_EXCLUDED_SHOULDER_CLOSE ||
+    outcome === AI_OUTCOME.ROAD_POLICY_EXCLUDED_INSUFFICIENT_LANES ||
+    outcome === AI_OUTCOME.ROAD_POLICY_EXCLUDED_UNKNOWN_LANES
+  ) {
+    return { candidateCreated: false, aiCallStarted: false };
+  }
   // PROCESSING_FAILED: retries were genuinely attempted, so a candidate
   // and at least one AI call attempt did happen — just never reliably
   // completed.
@@ -236,6 +283,18 @@ function lineNotAttemptedReason(record) {
       return '背景處理已重試仍未能可靠完成，安全不通報';
     case AI_OUTCOME.STALE_AFTER_CLEARED:
       return '事件已解除，已取消後續 AI 重試';
+    case AI_OUTCOME.GEO_EXCLUDED_OUTSIDE_HSINCHU:
+      return '地理判定非新竹縣市，Gate A 已排除，未進入 Queue／AI';
+    case AI_OUTCOME.GEO_EXCLUDED_UNKNOWN:
+      return '地理位置無法確認，Gate A 已排除，未進入 Queue／AI';
+    case AI_OUTCOME.ROAD_POLICY_EXCLUDED_SHOULDER_OPEN:
+      return '機動路肩開放，道路管理政策 Gate A 已排除，未進入 Queue／AI';
+    case AI_OUTCOME.ROAD_POLICY_EXCLUDED_SHOULDER_CLOSE:
+      return '機動路肩關閉，道路管理政策 Gate A 已排除，未進入 Queue／AI';
+    case AI_OUTCOME.ROAD_POLICY_EXCLUDED_INSUFFICIENT_LANES:
+      return '施工封鎖車道數不足，道路管理政策 Gate A 已排除，未進入 Queue／AI';
+    case AI_OUTCOME.ROAD_POLICY_EXCLUDED_UNKNOWN_LANES:
+      return '施工封鎖車道資料不足，道路管理政策 Gate A 已排除，未進入 Queue／AI';
     default:
       return 'UNKNOWN / NOT RECORDED';
   }
@@ -262,6 +321,15 @@ function layerStatusForAi(record) {
     case AI_OUTCOME.SERVICE_AREA_EXCLUDED:
     case AI_OUTCOME.AI_NOT_INVOKED_LEGACY_PATH:
     case AI_OUTCOME.STALE_AFTER_CLEARED:
+    // V2.4.6 — TDX Gate A drops never reach AI at all (dropped before any
+    // Queue message exists) — same 'none' bucket as the other pre-AI
+    // exclusions above.
+    case AI_OUTCOME.GEO_EXCLUDED_OUTSIDE_HSINCHU:
+    case AI_OUTCOME.GEO_EXCLUDED_UNKNOWN:
+    case AI_OUTCOME.ROAD_POLICY_EXCLUDED_SHOULDER_OPEN:
+    case AI_OUTCOME.ROAD_POLICY_EXCLUDED_SHOULDER_CLOSE:
+    case AI_OUTCOME.ROAD_POLICY_EXCLUDED_INSUFFICIENT_LANES:
+    case AI_OUTCOME.ROAD_POLICY_EXCLUDED_UNKNOWN_LANES:
       return 'none';
     case AI_OUTCOME.AI_CALL_FAILED:
     case AI_OUTCOME.AI_DECISION_INVALID:
@@ -281,16 +349,59 @@ function layerStatusForLine(record) {
   return 'none'; // includes PROCESSING_FAILED — LINE was never reached
 }
 
+function renderFlowStripFromLayers(layers) {
+  return `<div class="flow-strip">${layers
+    .map(([label, status]) => `<div class="flow-chip flow-${status}"><span class="flow-icon">${LAYER_STATUS_ICON[status]}</span><span class="flow-label">${escapeHtml(label)}</span></div>`)
+    .join('<span class="flow-sep">→</span>')}</div>`;
+}
+
+const GEO_EXCLUDED_OUTCOMES = new Set([AI_OUTCOME.GEO_EXCLUDED_OUTSIDE_HSINCHU, AI_OUTCOME.GEO_EXCLUDED_UNKNOWN]);
+const ROAD_POLICY_EXCLUDED_OUTCOMES = new Set([
+  AI_OUTCOME.ROAD_POLICY_EXCLUDED_SHOULDER_OPEN,
+  AI_OUTCOME.ROAD_POLICY_EXCLUDED_SHOULDER_CLOSE,
+  AI_OUTCOME.ROAD_POLICY_EXCLUDED_INSUFFICIENT_LANES,
+  AI_OUTCOME.ROAD_POLICY_EXCLUDED_UNKNOWN_LANES,
+]);
+
+// V2.4.6 (order section 六) — TDX's own pipeline-stage sequence,
+// SOURCE→GEO→ROAD_POLICY→QUEUE→AI→LINE — distinct from PBS's ①-④ strip
+// above (order section 十: existing PBS cards must not regress; this is a
+// SEPARATE renderer, the PBS one is untouched). Every stage's status is
+// derived purely from the already-stored `outcome` (and, for QUEUE, the
+// existing transport-idempotency record) — GEO/ROAD_POLICY are inferred
+// from Gate A's own execution order (geo runs before road-management,
+// which runs before Queue.send() — see tdx/tdxQueueIngress.js's own
+// comment) applied to the outcome this record already carries, never a
+// re-check of the actual gates.
+function layerStatusForTdxGeo(record) {
+  return GEO_EXCLUDED_OUTCOMES.has(record.outcome) ? 'fail' : 'ok';
+}
+function layerStatusForTdxRoadPolicy(record) {
+  if (GEO_EXCLUDED_OUTCOMES.has(record.outcome)) return 'none'; // never reached — geo dropped first
+  return ROAD_POLICY_EXCLUDED_OUTCOMES.has(record.outcome) ? 'fail' : 'ok';
+}
+function layerStatusForTdxQueue(record, idem) {
+  if (GEO_EXCLUDED_OUTCOMES.has(record.outcome) || ROAD_POLICY_EXCLUDED_OUTCOMES.has(record.outcome)) return 'none'; // dropped before Queue.send()
+  return layerStatusForCloudflare(idem);
+}
+
 function renderFlowStrip(record, idem) {
-  const layers = [
+  if (record.source === 'freeway' || record.source === 'highway') {
+    return renderFlowStripFromLayers([
+      ['① SOURCE', 'ok'],
+      ['② GEO', layerStatusForTdxGeo(record)],
+      ['③ ROAD_POLICY', layerStatusForTdxRoadPolicy(record)],
+      ['④ QUEUE', layerStatusForTdxQueue(record, idem)],
+      ['⑤ AI', layerStatusForAi(record)],
+      ['⑥ LINE', layerStatusForLine(record)],
+    ]);
+  }
+  return renderFlowStripFromLayers([
     ['① PBS/Windows', layerStatusForPbsWindows(record)],
     ['② Cloudflare', layerStatusForCloudflare(idem)],
     ['③ AI', layerStatusForAi(record)],
     ['④ LINE', layerStatusForLine(record)],
-  ];
-  return `<div class="flow-strip">${layers
-    .map(([label, status]) => `<div class="flow-chip flow-${status}"><span class="flow-icon">${LAYER_STATUS_ICON[status]}</span><span class="flow-label">${escapeHtml(label)}</span></div>`)
-    .join('<span class="flow-sep">→</span>')}</div>`;
+  ]);
 }
 
 function renderRawTextBlock(label, text) {
@@ -300,38 +411,64 @@ function renderRawTextBlock(label, text) {
 
 // order section 二④ — the human-readable reason text a NOT-attempted LINE
 // layer must show, per outcome; see lineNotAttemptedReason() above.
+// V2.4.6 (order section 六) — GEO/ROAD_POLICY detail sections, TDX only.
+// Text is derived purely from the SAME outcome/status this record already
+// carries (via outcomeMeta/layerStatusForTdx*) — never a re-check of the
+// actual gates, and never shown for a PBS record (PBS has no such gates).
+function renderTdxGeoSection(record) {
+  const status = layerStatusForTdxGeo(record);
+  const text = status === 'fail' ? `❌ ${outcomeMeta(record).label}` : '✅ 通過（新竹縣市範圍內）';
+  return `<div class="detail-section"><h4>② GEO（地理判定）</h4><div class="row"><div class="label">結果</div><div class="value">${text}</div></div></div>`;
+}
+function renderTdxRoadPolicySection(record) {
+  const status = layerStatusForTdxRoadPolicy(record);
+  const text = status === 'none' ? '⏭️ 未執行（地理已排除，未到此關卡）' : status === 'fail' ? `❌ ${outcomeMeta(record).label}` : '✅ 通過（非機動路肩管制／施工封鎖車道數足夠）';
+  return `<div class="detail-section"><h4>③ ROAD_POLICY（道路管理政策）</h4><div class="row"><div class="label">結果</div><div class="value">${text}</div></div></div>`;
+}
+
 function renderDetail(record, decision, idem) {
+  const isTdx = record.source === 'freeway' || record.source === 'highway';
   const cacheLabel = record.cacheStatus === 'HIT' ? 'HIT（沿用先前已驗證的判讀，本次 0 次 AI 呼叫）' : record.cacheStatus === 'MISS' ? 'MISS（本次呼叫了 Workers AI）' : null;
   const stage = deriveAiStageFlags(record.outcome);
   const cloudflareStatusLabel = !idem
-    ? 'UNKNOWN / NOT RECORDED（冪等記錄已過期或未寫入）'
+    ? 'UNKNOWN / NOT RECORDED（冪等記錄已過期或未寫入，或本事件於 Gate A 就已排除、從未進入 Queue）'
     : idem.status === IDEMPOTENCY_STATUS.COMPLETED
       ? '✅ Cloudflare 已收件，已交由背景流程處理完成'
       : idem.status === IDEMPOTENCY_STATUS.PROCESSING
         ? '⏳ Cloudflare 已收件，已交由背景流程處理（尚未完成）'
         : '⚠️ 收件後處理未完成（狀態未知）';
+  const sectionOneTitle = isTdx ? '① SOURCE（TDX 原始資料）' : '① PBS / Windows';
+  const rawCommentLabel = isTdx ? '【TDX 原始描述（完整原文，未經摘要／截斷／改寫）】' : '【PBS 原始通報 comment（完整原文，未經摘要／截斷／改寫）】';
+  const rawSourceDetailLabel = isTdx ? '【TDX 原始地點描述（完整原文）】' : '【PBS 原始通報 sourceDetail（完整原文）】';
+  const queueSectionTitle = isTdx ? '④ QUEUE（Cloudflare／PBS_AI_QUEUE）' : '② Cloudflare';
+  const aiSectionTitle = isTdx ? '⑤ AI' : '③ AI';
+  const lineSectionTitle = isTdx ? '⑥ LINE' : '④ LINE';
 
   return `
 <div class="detail">
   ${renderFlowStrip(record, idem)}
   <div class="detail-section">
-    <h4>① PBS / Windows</h4>
+    <h4>${sectionOneTitle}</h4>
     ${renderField('EVENT_ID', record.eventId)}
+    ${renderField('來源', sourceLabel(record.source))}
     ${renderField('lifecycle', record.lifecycle)}
     ${renderField('道路 road（解析結果）', record.road)}
     ${renderField('方向 direction（解析結果）', record.direction)}
     ${renderField('areaNm（解析結果）', record.areaNm)}
     ${renderField('displayKM（解析結果）', record.displayKM)}
     ${renderField('事件類型（解析結果）', record.eventType)}
+    ${renderField('封閉車道數 blockedLanes', record.blockedLanes)}
     ${renderField('longitude', record.longitude)}
     ${renderField('latitude', record.latitude)}
-    ${renderRawTextBlock('【PBS 原始通報 comment（完整原文，未經摘要／截斷／改寫）】', record.rawComment) || renderField('【PBS 原始通報 comment】', null)}
-    ${renderRawTextBlock('【PBS 原始通報 sourceDetail（完整原文）】', record.rawSourceDetail)}
-    ${renderField('Windows 送件時間（generatedAt，Asia/Taipei）', formatTaipeiInstant(record.generatedAt))}
-    ${renderField('PBS 發生時間 / 更新時間', 'NOT RECORDED')}
+    ${renderRawTextBlock(rawCommentLabel, record.rawComment) || renderField(rawCommentLabel, null)}
+    ${renderRawTextBlock(rawSourceDetailLabel, record.rawSourceDetail)}
+    ${renderField('送件時間（generatedAt，Asia/Taipei）', formatTaipeiInstant(record.generatedAt))}
+    ${renderField('發生時間 / 更新時間', 'NOT RECORDED')}
   </div>
+  ${isTdx ? renderTdxGeoSection(record) : ''}
+  ${isTdx ? renderTdxRoadPolicySection(record) : ''}
   <div class="detail-section">
-    <h4>② Cloudflare</h4>
+    <h4>${queueSectionTitle}</h4>
     <div class="row"><div class="label">收件狀態</div><div class="value">${cloudflareStatusLabel}</div></div>
     ${renderField('Cloudflare 收到時間（Asia/Taipei）', formatTaipeiInstant(record.timestamp))}
     ${renderField('transport idempotency status', idem ? idem.status : null)}
@@ -340,7 +477,7 @@ function renderDetail(record, decision, idem) {
     ${renderField('是否為 transport duplicate', 'NO（本紀錄本身即代表首次接受；重複到達不會另外建立紀錄，見本頁下方「重複事件」說明）')}
   </div>
   <div class="detail-section">
-    <h4>③ AI</h4>
+    <h4>${aiSectionTitle}</h4>
     ${renderField('AI candidate created', triStateLabel(stage.candidateCreated, 'YES', 'NO'))}
     ${renderField('AI call started', triStateLabel(stage.aiCallStarted, 'YES', 'NO'))}
     ${renderField('Model', PBS_AI_MODEL_ID)}
@@ -351,7 +488,7 @@ function renderDetail(record, decision, idem) {
     ${renderField('reason', decision ? decision.reason : record.outcome === AI_OUTCOME.AI_CALL_FAILED || record.outcome === AI_OUTCOME.AI_DECISION_INVALID ? 'UNKNOWN / NOT RECORDED（判讀失敗，無有效 decision）' : 'UNKNOWN / NOT RECORDED')}
   </div>
   <div class="detail-section">
-    <h4>④ LINE</h4>
+    <h4>${lineSectionTitle}</h4>
     ${renderField('LINE attempted', record.lineAttempted ? 'YES' : 'NO')}
     ${renderField('LINE sent', record.lineSent ? 'YES' : 'NO')}
     ${!record.lineAttempted ? renderField('未執行原因', lineNotAttemptedReason(record)) : ''}
@@ -373,6 +510,26 @@ function lineSummaryBadge(record) {
   return '<span class="badge badge-line-none">⏭️ LINE 未發送</span>';
 }
 
+// V2.4.6 (order section 二/十一) — FINAL_DECISION_REASON_SUMMARY: the
+// collapsed card's own "為什麼發／不發" line, without needing to expand.
+// Composed EXCLUSIVELY by aiObservatoryIndex.js#deriveFinalDecisionReason
+// from data already stored on the record — this view never guesses or
+// re-derives the reason itself (order section 九: "UI 不是決策者"). Kept
+// deliberately short (order section 十一: "不要在收合狀態塞太多技術除錯
+// 文字") — full pipeline detail lives only in renderDetail() below.
+function finalReasonLine(record) {
+  const { status, reason } = deriveFinalDecisionReason(record);
+  const meta =
+    status === FINAL_DECISION_STATUS.SENT
+      ? { icon: '✅', label: '已發送' }
+      : status === FINAL_DECISION_STATUS.PROCESSING_FAILED
+        ? { icon: '⏱', label: 'AI處理失敗' }
+        : status === FINAL_DECISION_STATUS.PENDING
+          ? { icon: '⏳', label: '處理中' }
+          : { icon: '⏭', label: '未發送' };
+  return `<div class="final-reason final-reason-${status.toLowerCase()}">${meta.icon} ${escapeHtml(meta.label)} / 原因：${escapeHtml(reason)}</div>`;
+}
+
 function renderRow(record, decision, idem, now) {
   const meta = outcomeMeta(record);
   const timeLabel = formatTaipeiListTime(record.timestamp, now);
@@ -381,12 +538,13 @@ function renderRow(record, decision, idem, now) {
 <details class="obs-row">
   <summary>
     <span class="col-time">${escapeHtml(timeLabel)}</span>
-    <span class="col-source">PBS</span>
+    <span class="col-source col-source-${escapeHtml(record.source || 'pbs')}">${escapeHtml(sourceLabel(record.source))}</span>
     <span class="col-road">${escapeHtml(record.road || '')} ${escapeHtml(record.direction || '')}</span>
     <span class="col-type">${escapeHtml(record.eventType || '')}</span>
     <span class="pill pill-${meta.cls}">${meta.emoji} ${escapeHtml(meta.label)}</span>
     ${impactBadge}
     ${lineSummaryBadge(record)}
+    ${finalReasonLine(record)}
   </summary>
   ${renderDetail(record, decision, idem)}
 </details>`;
@@ -464,6 +622,13 @@ const PAGE_STYLE = `
   .obs-row[open] { background: #20242c; }
   .col-time { font-variant-numeric: tabular-nums; color: #9aa1ac; font-size: 13px; min-width: 42px; }
   .col-source { font-size: 12px; background: #262b34; color: #c3c9d1; border-radius: 6px; padding: 1px 6px; }
+  .col-source-freeway { background: #0f2038; color: #58a6ff; }
+  .col-source-highway { background: #12261a; color: #3fb950; }
+  .final-reason { flex-basis: 100%; font-size: 13px; color: #c3c9d1; margin-top: 2px; }
+  .final-reason-sent { color: #3fb950; }
+  .final-reason-not_sent { color: #9aa1ac; }
+  .final-reason-processing_failed { color: #e3b341; }
+  .final-reason-pending { color: #58a6ff; }
   .col-road { font-weight: 600; color: #f2f3f5; }
   .col-type { color: #9aa1ac; font-size: 13px; }
   .pill { display: inline-block; border-radius: 999px; padding: 2px 10px; font-size: 13px; font-weight: 600; }
@@ -516,7 +681,7 @@ ${renderFilterForm(filters)}
 ${renderDuplicateNote(filters.status)}
 ${!kvAvailable ? '<div class="empty">⚠️ 無法讀取 KV，暫無資料</div>' : count === 0 ? '<div class="empty">這個篩選條件下沒有資料</div>' : rows}
 <div class="footer">
-  <a href="/admin/pipeline-trace-view">Pipeline Trace 查修頁（TDX／legacy PBS）</a>
+  <a href="/admin/pipeline-trace-view">Pipeline Trace 查修頁（舊版規則式播報流程，本頁已涵蓋 TDX 高公局／公路局）</a>
   <a href="/debug/pbs">PBS Relay 除錯頁</a>
   <a href="/health">系統健康頁</a>
 </div>

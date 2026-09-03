@@ -39,10 +39,10 @@
     "openStructuralQuestion": "TWO trees currently hold the same canonical content: engineering-memory/ (what the mirror syncs) and meeting-room-export/ (what scripts/export-meeting-room.mjs generates). They are kept in step by hand today, which is exactly the drift risk this governance exists to prevent. Needs a human decision: either point the generator at engineering-memory/, or retire one tree. NOT decided unilaterally."
   },
   "git": {
-    "sourceMainHead": "31ae4ef6d84bbfd19fcab483ff80c2f9c7fc1b03",
+    "sourceMainHead": "979e5b8 (V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY; this snapshot precedes the V2.4.6 commit it ships in)",
     "sourceMainHeadResolvedFrom": "origin/main",
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
-    "sourceWorkingTree": "dirty (V2_4_5_OFFICIAL_HSINCHU_BOUNDARY_DATA_HOTFIX_CONTINUE changeset, committed together with this snapshot)",
+    "sourceWorkingTree": "dirty (V2_4_6_TRACE_PAGE_TDX_AND_DECISION_REASON_SUMMARY changeset, committed together with this snapshot)",
     "selfReferenceNote": "sourceMainHead is the official main commit this snapshot DESCRIBES; exportArtifactCommit is the commit that CONTAINS this artifact and is intentionally never equal to it. Requiring the two to match would create a Git self-reference loop (every export changes the file, which changes the commit, which invalidates the recorded head). sourceMainHead is read from origin/main and is therefore stable across re-runs and across whichever branch the export was generated on.",
     "checkoutNote": "The transient checkout (branch/HEAD/date) this export happened to run from is deliberately NOT recorded here. It changes on every commit and would make every release look like a content change, defeating delta sync; it also says nothing about the snapshot itself. The snapshot is identified by sourceMainHead alone. Local sync evidence in .engineering/ still records the checkout for auditing.",
     "workingTreeNote": "sourceWorkingTree excludes meeting-room-export/, which this generator dirties by definition; it answers 'is the source tree clean', not 'did the export just write files'."
@@ -247,21 +247,28 @@
     }
   },
   "taskSeal": {
-    "task": "V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY",
+    "task": "V2_4_6_TRACE_PAGE_TDX_AND_DECISION_REASON_SUMMARY",
     "status": "SEALED",
-    "sealedAt": "2026-09-02",
-    "sealedBy": "human directive (V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY 正式封版部署與實機驗證令)",
-    "releaseVersion": "V2.4.5",
-    "previousVersion": "V2.4.5（不升版，同版本封版部署）",
-    "nature": "config-only — 把TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED從false改為true，未新增任何程式碼。",
-    "preflightConfirmed": "working tree clean、local HEAD==origin/main(31ae4ef)、APP_VERSION=V2.4.5、Engineering Memory已同步、targeted tests 42/42 PASS、check:deployment-policy PASS、wrangler dry-run PASS。",
-    "featuresReconfirmed": "13項既有功能逐一確認存在（座標保留/geo resolver/OUTSIDE&UNKNOWN drop/39.6K/頭份/竹南/路肩開關/施工車道數/blockedLanes入AI/PBS未改）。",
-    "networkLimitation": "npm run verify:production仍回報PASS_NETWORK_VERIFICATION_BLOCKED——本session無Production網路存取，實機觀察須由人類執行，非Claude自行監看。",
-    "rollbackProtocol": "永久規則：發現任一異常（桃園/苗栗/頭份/竹南推播、路肩開關推播、0-1車道施工推播、新竹重大事件進不了AI、LINE內容錯誤），第一動作固定改回false止血，不得邊跑Production邊大改，止血後才走查修→測試→commit→push→docs sync→再部署→再開Notify全流程。",
-    "sealCommit": "見 git log 訊息 V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY（單一 commit，SHA 因自我參照而略去，同前例）",
-    "readerNote": "CURRENT_RUNTIME_PHASE=PHASE_E_TDX_NOTIFY_LIVE。異常回報時優先執行rollbackProtocol，完整記錄見07_KNOWN_ISSUES.md「封版部署紀錄」章節。"
+    "sealedAt": "2026-09-03",
+    "sealedBy": "human directive (路況工程部｜V2.4.6 查修頁資訊改版施工令)",
+    "releaseVersion": "V2.4.6",
+    "previousVersion": "V2.4.5",
+    "nature": "UI/observability-only — GET /admin/pbs-ai-observatory-view 收合卡片新增最終決策原因摘要、TDX 高公局/公路局來源正式顯示、Gate A 排除的 TDX 事件不再從查修頁消失。PBS_RUNTIME_MODIFIED=NO、TDX_DECISION_LOGIC_MODIFIED=NO。",
+    "sectionOneFinding": "查修頁正確目標＝GET /admin/pbs-ai-observatory-view（非舊版 pipeline-trace-view）。TDX 幾乎不出現＝(B)Gate A排除零紀錄 + (A)renderRow()硬編碼\"PBS\"字串 兩者組合。",
+    "fix": "tdxQueueIngress.js 新增 recordTdxGateDrop()（重用既有 buildAiObservatoryRecord/recordAiObservatoryEntry，6個新AI_OUTCOME值，Gate A決策本身不變）；新增 deriveFinalDecisionReason() 純函式（唯一權威，只讀既有欄位）；renderRow() 改讀 record.source 顯示三種來源徽章；buildAiObservatoryRecord() 補上此前被丟棄的 suppressedForPhase/blockedLanes 欄位；新增 TDX 專屬 SOURCE→GEO→ROAD_POLICY→QUEUE→AI→LINE 六段流程條。",
+    "testEvidence": "新增 test/v246TracePageTdxAndDecisionReasonSummary.test.js（20項，含施工令§十二全部8個CASE）。全量迴歸1758/1726/32，git stash -u同commit精確基準比對NEW_FAILURES=0。",
+    "unchanged": "PBS runtime、TDX決策邏輯（地理/道路管理政策判定本身）、AI prompt、LINE規則、wrangler.jsonc全部四個TDX/AI開關（TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED維持true）。",
+    "sealCommit": "見 git log 訊息 V2_4_6_TRACE_PAGE_TDX_AND_DECISION_REASON_SUMMARY（單一 commit，SHA 因自我參照而略去，同前例）",
+    "readerNote": "CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何開關）。往後 debug「為什麼這筆TDX不見了」先查 /admin/pbs-ai-observatory-view。完整記錄見 07_KNOWN_ISSUES.md「修正紀錄｜V2.4.6」章節。"
   },
   "taskSealHistory": [
+    {
+      "task": "V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY",
+      "status": "SEALED",
+      "sealedAt": "2026-09-02",
+      "releaseVersion": "V2.4.5",
+      "summary": "人類明確授權，config-only：TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED false→true，TDX真實LINE通知重新上線（PHASE_E_TDX_NOTIFY_LIVE）。13項既有功能逐一確認存在，未新增程式碼。本session無Production網路存取，實機觀察委由人類，異常時第一動作固定改回false（完整rollback協定見 07_KNOWN_ISSUES.md）。"
+    },
     {
       "task": "V2_4_5_TDX_HSINCHU_GEO_RESOLVER_AND_ROAD_MANAGEMENT_POLICY_GATE",
       "status": "SEALED",
@@ -274,103 +281,91 @@
       "status": "SEALED",
       "sealedAt": "2026-09-01",
       "releaseVersion": "V2.4.0",
-      "sealCommit": "2d23329",
-      "summary": "TDX國道/省道RoadEvent重新加入PBS既有的同一條Cloudflare Queue／同一個AI決策引擎（Phase B），新增Recent Incident Memory跨來源協調同一實體事故；三個新wrangler.jsonc開關本輪未啟用任何真實TDX抓取；suppressLineNotify硬寫死於TDX來源；LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT。17項CASE測試全過，1746/1712/34，NEW FAILURES=0。（V2.4.1-V2.4.4 的個別seal記錄因中間輪次未持續維護此陣列而缺席——非本輪職責，完整內容仍見06_VERSION_HISTORY.md/07_KNOWN_ISSUES.md，未遺失。）"
+      "summary": "TDX國道/省道RoadEvent重新加入PBS既有的同一條Cloudflare Queue／同一個AI決策引擎（Phase B），新增Re…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）"
     },
     {
       "task": "CCTV_R2_READBACK_VERIFY_BEFORE_LINE_V2_3_3",
       "status": "SEALED",
       "sealedAt": "2026-08-31",
       "releaseVersion": "V2.3.3",
-      "sealCommit": "b3035b2",
-      "summary": "CCTV R2 Read-Back Verify Before LINE：先前唯讀查核確認CCTV廣播await鏈本身安全但無法解釋一筆真實破圖事故，新增publishedImage.js#verifyPublishedImageReadable()在R2 put成功後、imageUrl回傳前做一次純內部R2 GET確認物件存在/Content-Type為image/jpeg/bytes非空，接上quad與single兩條CCTV發布路徑。新失敗代號r2-readback-failed，fail-closed處理與既有完全相同。TDX_CALL_CHANGE=0。8項新/擴充測試，1729/1695/34，NEW FAILURES=0。完整記錄見06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V2.3.3條目。"
+      "summary": "CCTV R2 Read-Back Verify Before LINE：先前唯讀查核確認CCTV廣播await鏈本身安全但無法解釋一筆真實…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）"
     },
     {
       "task": "CCTV_PRODUCTION_IMAGE_DIAGNOSTIC_REPAIR_V2_3_2",
       "status": "SEALED",
       "sealedAt": "2026-08-31",
       "releaseVersion": "V2.3.2",
-      "sealCommit": "4e9cce2",
-      "summary": "CCTV Production Image Diagnostic Repair：真實事件EVENT_ID=11508310005-5（GET /admin/cctv-hsinchu-publish-test在PBS_ONLY環境下無法產生測試圖片——舊版唯一候選相機來源CANDIDATES_KEY僅由會發起真實TDX呼叫的/admin/cctv-hsinchu-probe寫入，在TRAFFIC_SOURCE_MODE=PBS_ONLY下不可用）。新增composeCollageFromFreewayMetadata()改由readFreewayCctvMetadataCache(env.TRAFFIC_KV)取得候選相機（快取缺失時BUNDLED_INVENTORY_RECORDS靜態備援自動生效），呼叫既有selectFourQuadrantCandidates()/composeCollageFromCandidates()/publishCollageImage()，全程0次TDX呼叫。新增分階段失敗代號METADATA_CACHE_MISSING/NO_CCTV_CANDIDATES/SNAPSHOT_FETCH_FAILED/COMPOSE_FAILED/R2_PUBLISH_FAILED。composeCollageFromCache()（CANDIDATES_KEY版）與/admin/cctv-hsinchu-collage端點刻意保留未動。22項測試（原15項），1722/1688/34，NEW FAILURES=0。完整記錄見06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V2.3.2條目。"
+      "summary": "CCTV Production Image Diagnostic Repair：真實事件EVENT_ID=11508310005-5（GET…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）"
     },
     {
       "task": "DIRECT_COORDINATE_MAP_FALLBACK_V2_3_1",
       "status": "SEALED",
       "sealedAt": "2026-08-30",
       "releaseVersion": "V2.3.1",
-      "sealCommit": "070a0f4",
-      "summary": "Direct Coordinate Map Fallback：真實事故EVENT_ID=11508260158-0（竹60線縣道坍方封路事件，PBS/Windows/Cloudflare全程保留有效座標、AI/LINE均正常，但完全沒有Google Maps連結，因縣道/鄉道從未被國道/省道公里標資料集涵蓋，座標路徑在比對座標前就被road判斷擋下）。kmLocationResolver.js新增最後手段buildDirectCoordinateMapUrl(latitude, longitude)，僅在既有兩層道路/座標解析都失敗後才觸發，重用既有buildMapUrl()直接以事件座標產生地圖連結；isValidRawCoordinate()把關非法座標。縣道/鄉道公里標資料工程仍未開始，屬刻意範圍外。13項新測試，1718/1684/34，NEW FAILURES=0。完整記錄見06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V2.3.1條目。"
+      "summary": "Direct Coordinate Map Fallback：真實事故EVENT_ID=11508260158-0（竹60線縣道坍方封路事件…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）"
     },
     {
       "task": "PBS_AI_QUEUE_RELIABILITY_V2_3_0",
       "status": "SEALED",
       "sealedAt": "2026-08-30",
       "releaseVersion": "V2.3.0",
-      "sealCommit": "850f5fa",
-      "summary": "PBS AI Queue Reliability：真實事故EVENT_ID=11508290166-0（ctx.waitUntil()自身背景執行時間預算到期，AI決策永久遺失，REAL_INCIDENT_ROOT_CAUSE=WAITUNTIL_BACKGROUND_WINDOW_EXCEEDED）。ctx.waitUntil()全面退休做為AI背景執行載體，改用唯一一個Cloudflare Queue（pbs-ai-processing-queue）：HTTP ingress只驗證/寫冪等/Queue.send()，獨立Queue Consumer承接全部AI/LINE/Observatory-final工作。AI_CALL_FAILED可Queue重試（MAX_QUEUE_RETRIES=3），既有AI_DECISION_INVALID fail-closed政策不變。新增PROCESSING_FAILED終態。QUEUE_DELIVERY_MODEL=AT_LEAST_ONCE、BUSINESS_OUTCOME_MODEL=EFFECTIVELY_ONCE。修正Observatory KV key重複bug（observatoryNow重建）。KV puts=4N+2（與V2.2.0相同）、gets=6N。7項新測試，1705/1671/34，NEW FAILURES=0。BROWSER_ACTION_REQUIRED=YES（真實Queue資源未驗證存在）。完整記錄見06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V2.3.0條目。"
+      "summary": "PBS AI Queue Reliability：真實事故EVENT_ID=11508290166-0（ctx.waitUntil()自身背…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）"
     },
     {
       "task": "AI_DECISION_OBSERVATORY_FOUR_LAYER_EVENT_LIFECYCLE_V2_2_0",
       "status": "SEALED",
       "sealedAt": "2026-08-29",
       "releaseVersion": "V2.2.0",
-      "sealCommit": "33ba1e6",
-      "summary": "AI Decision Observatory四層事件生命週期：/admin/pbs-ai-observatory-view升級為①PBS/Windows②Cloudflare③AI④LINE四層檢視，各層獨立顯示成功/未執行/失敗/未知，頂部flow strip一眼看出卡在哪層。commentSummary（原截斷120字）退休為rawComment/rawSourceDetail，完整未截斷儲存。processAcceptedEvent於處理一開始即寫入AI_OUTCOME.PROCESSING_STARTED記錄，既有最終寫入之後原地覆寫同一把KV key——停滯/crash事件不再完全消失。EXTRA_KV_WRITES_PER_ACCEPTED_EVENT=1，puts=4N+2。REUSE_EXISTING_DATA_FIRST全程遵守，零新增KV prefix。16項新測試，1697/1663/34，NEW FAILURES=0。完整記錄見06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V2.2.0條目。"
+      "summary": "AI Decision Observatory四層事件生命週期：/admin/pbs-ai-observatory-view升級為①PBS/…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）"
     },
     {
       "task": "TRANSPORT_ACK_DECOUPLED_FROM_BUSINESS_PROCESSING_V2_1_0",
       "status": "SEALED",
       "sealedAt": "2026-08-29",
       "releaseVersion": "V2.1.0",
-      "sealCommit": "87aa696",
-      "summary": "Transport Ack Decoupled From Business Processing：真實Production事故（Windows 5秒timeout在Cloudflare仍await Workers AI時觸發，ctx.waitUntil未使用導致handler被取消，冪等記錄過早寫入永久擋下retry）。修正：fetch handler接收轉傳ctx，business processing交給ctx.waitUntil()；KV冪等記錄新增status=PROCESSING/COMPLETED兩階段標記，PROCESSING_STALE_MS=60秒容許復原重跑。正式寫入四層架構角色邊界（WINDOWS_ROLE/CLOUDFLARE_ROLE/AI_ROLE/LINE_ROLE/RAW_PBS_TEXT_POLICY）。9項新測試，1681/1647/34，NEW FAILURES=0。完整記錄見06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V2.1.0條目。"
+      "summary": "Transport Ack Decoupled From Business Processing：真實Production事故（Window…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）"
     },
     {
       "task": "CONFIG_DRIFT_HOTFIX_V2_0_2",
       "status": "SEALED",
       "sealedAt": "2026-08-29",
       "releaseVersion": "V2.0.2",
-      "sealCommit": "2c784b5",
-      "summary": "Config Drift Hotfix：PBS_AI_DECISION_ENABLED從Dashboard-only移至wrangler.jsonc canonical宣告（字串\"true\"）。根因：Workers Builds每次部署都把wrangler.jsonc視為權威來源，悄悄移除Dashboard-only值。PBS_AI_DECISION_ENABLED_SOURCE=WRANGLER_CANONICAL_VAR，DASHBOARD_ONLY_AI_SWITCH=RETIRED，KEEP_VARS=NOT_USED。新增checkPbsAiDecisionEnabledVar() regression guard。10項新測試，1549/1516/33，NEW FAILURES=0。完整記錄見06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V2.0.2條目。"
+      "summary": "Config Drift Hotfix：PBS_AI_DECISION_ENABLED從Dashboard-only移至wrangler.j…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）"
     },
     {
       "task": "PBS_WINDOWS_LOCAL_EDGE_DEBUG_PUSH_INTEGRATION_V1_9_6",
       "status": "SEALED",
       "sealedAt": "2026-08-27",
       "releaseVersion": "V1.9.6",
-      "sealCommit": "a674b47",
-      "summary": "PBS Windows Local Edge Debug Push Integration（治理封版）：Windows常駐邊緣篩選+Debug Push整合正式寫入Engineering Memory。獨立驗證feature/pbs-local-edge-filter-prototype@95ecdc4未merge main，118/118測試通過。記錄服務區/CLEARED兩個真實bug修正、Secret治理事故（Active Deployment Version教訓）、六階段路線圖。冪等狀態當時為PENDING_BEFORE_PRODUCTION，已由V1.9.7更新為PARTIAL。完整記錄見06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V1.9.6條目。"
+      "summary": "PBS Windows Local Edge Debug Push Integration（治理封版）：Windows常駐邊緣篩選+Debu…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）"
     },
     {
       "task": "WINDOWS_CLOUDFLARE_DEBUG_PUSH_ENDPOINT_V1_9_5",
       "status": "SEALED",
       "sealedAt": "2026-08-27",
       "releaseVersion": "V1.9.5",
-      "fixCommit": "56b24d3",
-      "summary": "Windows->Cloudflare Debug-only Push Endpoint：新增POST /internal/pbs-debug-push，獨立Secret PBS_DEBUG_PUSH_SECRET、雜湊常數時間比對、結構性debug-only邊界（0 import到LINE/CCTV/SharedFeed/PipelineTrace，0 KV觸碰）、per-isolate冪等（NOT_PERSISTENT）。33項新測試，NEW FAILURES=0（1385項）。Production驗證NOT_OBSERVED（sandbox egress阻擋）。完整記錄見06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V1.9.5條目。"
+      "summary": "Windows->Cloudflare Debug-only Push Endpoint：新增POST /internal/pbs-debu…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）"
     },
     {
       "task": "PIPELINE_TRACE_READ_OPTIMIZATION_V1_9_4",
       "status": "SEALED",
       "sealedAt": "2026-08-27",
       "releaseVersion": "V1.9.4",
-      "fixCommit": "3075114",
-      "summary": "Pipeline Trace 讀取效能優化：真實Production TTFB 59.1秒，Root Cause為collectFlattenedTraceEntries循序解碼500把key才套用limit。修正為scanTraceEntriesProgressively（早停+漸進式掃描+有界並行讀取），實測500把key/limit60只需60次kv.get()（原500次）。KV寫入增量=0。NEW FAILURES=0（1352項）。Production真實TTFB因sandbox egress阻擋為NOT_OBSERVED。完整記錄見06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V1.9.4條目。"
+      "summary": "Pipeline Trace 讀取效能優化：真實Production TTFB 59.1秒，Root Cause為collectFlatte…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）"
     },
     {
       "task": "KV_WRITE_OPTIMIZATION_V1_9_3_PHASE_2",
       "status": "SEALED",
       "sealedAt": "2026-08-26",
       "releaseVersion": "V1.9.3",
-      "fixCommit": "93efec3",
-      "summary": "KV Write Optimization Phase 2：health:snapshot:v1 WRITE_ON_CHANGE、PBS 抓取每30分鐘僅07:00-22:00、Pipeline Trace NO_RELEVANT_CHANGE。決定性 fixture 實測 QUIET/NORMAL/HIGH writes/day=5/21/27。NEW FAILURES=0（1339 項）。完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md 的 V1.9.3 條目。"
+      "summary": "KV Write Optimization Phase 2：health:snapshot:v1 WRITE_ON_CHANGE、PBS 抓…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）"
     },
     {
       "task": "KV_WRITE_OPTIMIZATION_V1_9_2",
       "status": "SEALED",
       "sealedAt": "2026-08-26",
       "releaseVersion": "V1.9.2",
-      "summary": "真實Cloudflare用量警示(Writes 749/1,000，traffic-reporter-kv佔97.9%)觸發。WRITE_ON_CHANGE：Shared Feed/Incident Suppression內容不變時不寫入(發現並修正resolveIncidentNotifications別名aliasing bug)。Pipeline Trace改批次寫入(O(事件數)→O(1))，舊v1 key保留靠TTL自然過期，listPipelineTrace相容新舊schema。TDX Usage Summary正式退休(人類決策)，usageLedger.js程式碼保留未刪除、只是不再被正式路徑呼叫。新增[kv-write-budget]Cron log(純console.log)。1300 tests(新增38)，NEW FAILURES=0。單日KV writes從11~21/round降至1~8/round。APP_VERSION→V1.9.2。",
+      "summary": "真實Cloudflare用量警示(Writes 749/1,000，traffic-reporter-kv佔97.9%)觸發。WRITE_O…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）",
       "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
     },
     {
@@ -378,7 +373,7 @@
       "status": "SEALED",
       "sealedAt": "2026-08-26",
       "releaseVersion": "V1.9.1",
-      "summary": "以真實headless Chromium對真實部署回應重現：applyAdminSecurityHeaders的CSP帶form-action 'none'，任何強制CSP瀏覽器（含真人回報的iOS Safari）因此完全拒絕頁面上任何<form>送出。前一輪(V1.8.7.6)已查證伺服器端每一層(表單標記/query string/predicate/分頁)皆對，但其headless重現不在本repo自動化套件內，從未真正撞見這個指令擋下點擊的瞬間。修正：只改form-action 'none'→'self'(同源表單仍可送出，其餘CSP指令不動)；DEFAULT_LIST_LIMIT 30→60(MAX_LIST_LIMIT/MAX_ENTRIES_SCANNED不變)；filter predicate邏輯本身無需改動。1292 tests，NEW FAILURES=0。APP_VERSION→V1.9.1。",
+      "summary": "以真實headless Chromium對真實部署回應重現：applyAdminSecurityHeaders的CSP帶form-actio…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）",
       "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
     },
     {
@@ -386,14 +381,13 @@
       "status": "SEALED",
       "sealedAt": "2026-08-26",
       "releaseVersion": "V1.9.0",
-      "sealCommit": "3af5c8b",
-      "summary": "CCTV 事故（quad）prepare-timeout 可觀測性：09:20 國3南向96K+700事故進Shared Feed無圖且無completion log，09:30重跑成功。根因（7項決定性測試證實，非推測）：quad路徑完全沒有stage追蹤（動態路肩單鏡頭路徑早就有），任何真實外部延遲在timeoutStage上一律null。修復：quad路徑加stageTracker，成功/失敗/timeout皆留下metadataElapsedMs/frameFetchElapsedMs/collageElapsedMs/successfulFrameCount/failedFrameCount/r2PublishElapsedMs/timeoutStage。RETRY_REQUIRED=NO，未新增retry、未調整4000ms budget。FRAME_FETCH_MODE=PARALLEL，單一慢鏡頭會拖住整批compose，compose與R2 publish共用同一budget，timeout不中止背景工作。8項新測試（cctvQuadPrepareForensics.test.js），1286項/NEW FAILURES=0。09:20當下具體哪段I/O慢誠實列為無法回溯。完整記錄見06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md的V1.9.0條目。"
+      "summary": "CCTV 事故（quad）prepare-timeout 可觀測性：09:20 國3南向96K+700事故進Shared Feed無圖且無c…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）"
     },
     {
       "task": "THREE_PART_VERSIONING_TRANSITION",
       "status": "SEALED",
       "sealedAt": "2026-08-25",
-      "summary": "docs/governance only，未改任何Production runtime。決議：CURRENT_OFFICIAL_VERSION=V1.8.7.14為四段式版本線最後一版，三段式版本治理(bug fix=patch/新功能架構=minor/不相容變更=major)即日ACTIVE，NEXT_RELEASE_VERSION=V1.9.0。src/version.js本輪未提前bump，維持V1.8.7.14，等下一次真正release才同步改。取代PRODUCTION_VERSION_LINEAGE_RECONCILIATION記錄的NEXT_RELEASE_VERSION=V1.8.7.15；V1.8.7.8~14既有版本列不重寫。",
+      "summary": "docs/governance only，未改任何Production runtime。決議：CURRENT_OFFICIAL_VERSIO…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）",
       "readerNote": "This task is CLOSED. Do not re-open it, do not re-deploy for it, and do not report it as pending."
     },
     {
@@ -401,63 +395,59 @@
       "status": "SEALED",
       "sealedAt": "2026-08-25",
       "releaseVersion": "V1.8.7.14",
-      "sealCommit": "n/a (governance-only, no single sealCommit recorded)",
-      "summary": "Production Version Lineage Reconciliation：src/version.js 自 2026-08-21 起停在 V1.8.6.9，期間 V1.8.7.0～V1.8.7.14 全部上線但 GET /version 一直回報舊版本，因三個地方（src/version.js／commit-message 掃描／ENGINEERING_STATUS.md 人工標記）各自以為自己知道版本。修正：src/version.js 確立為唯一權威、export script 改讀它（commit-message 掃描降級為 drift 警告，讀不到權威來源直接拋錯而非猜測）、06_VERSION_HISTORY.md 補記 V1.8.7.8～V1.8.7.14 七列、新增 test/versionLineage.test.js 七項測試鎖住規則形狀。永久規則：任何改變 runtime 行為的變更必須同一個 commit 內 bump APP_VERSION，任務名稱不能取代版本號，只有一條連續版本線。"
+      "summary": "Production Version Lineage Reconciliation：src/version.js 自 2026-08-21 …（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）"
     },
     {
       "task": "CCTV_METADATA_RECOVERY_V1",
       "status": "SEALED",
       "sealedAt": "2026-08-25",
       "releaseVersion": "V1.8.7.14",
-      "sealCommit": "n/a (see git log for CCTV_METADATA_RECOVERY_V1 commits)",
-      "summary": "CCTV Metadata Recovery：唯讀查核先前誤記「Workers-only .wasm codec 沙盒無法載入」為根因，實為 @jsquash/jpeg 未安裝於沙盒 node_modules；npm install 後 12 個 CCTV/JPEG 測試檔全部可執行，揭露約 33-36 項因此長期被跳過的過期斷言（後續列為技術債 openFollowUp，非本輪回歸）。教訓：合理但未經驗證的 Root Cause 會靜音真實訊號。"
+      "summary": "CCTV Metadata Recovery：唯讀查核先前誤記「Workers-only .wasm codec 沙盒無法載入」為根因，實為…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）"
     },
     {
       "task": "DRIVE_SYNC_GOVERNANCE_V2",
       "status": "SEALED",
       "sealedAt": "2026-08-25",
-      "summary": "Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源；GitHub Actions 自動鏡像至 Drive，已實測 PASS。完整規則見 07_KNOWN_ISSUES.md「治理變更紀錄｜DRIVE_SYNC_GOVERNANCE_V2」。"
+      "summary": "Claude 對 Google Drive 唯讀，GitHub 是唯一正式寫入來源；GitHub Actions 自動鏡像至 Drive，已…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）"
     },
     {
       "task": "PBS_ACCIDENT_CCTV_ENRICHMENT_FIX",
       "status": "SEALED",
       "sealedAt": "2026-08-25",
-      "summary": "CCTV 資格改依「道路＋KM 可信度」，不再要求 source==='freeway'（國3 96K+700 事件）。完整記錄見 07_KNOWN_ISSUES.md。"
+      "summary": "CCTV 資格改依「道路＋KM 可信度」，不再要求 source==='freeway'（國3 96K+700 事件）。完整記錄見 07_K…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）"
     },
     {
       "task": "PBS_ACCIDENT_TRACE_LOCATION_QUALITY_FIX",
       "status": "SEALED",
       "sealedAt": "2026-08-24",
-      "summary": "播報追溯斷點修復＋位置精確度閘門（台68 事件）：已推播事件必定可在 Pipeline Trace 查到。完整記錄見 07_KNOWN_ISSUES.md。"
+      "summary": "播報追溯斷點修復＋位置精確度閘門（台68 事件）：已推播事件必定可在 Pipeline Trace 查到。完整記錄見 07_KNOWN_IS…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）"
     },
     {
       "task": "TDX_QUOTA_PROTECTION_PBS_ONLY",
       "status": "SEALED",
       "sealedAt": "2026-08-23",
-      "summary": "TDX 額度用盡，TRAFFIC_SOURCE_MODE=PBS_ONLY 關閉 Cron 路徑上所有 TDX 呼叫，未刪除任何 TDX 程式碼。還原程序見 07_KNOWN_ISSUES.md「TDX 還原程序」。"
+      "summary": "TDX 額度用盡，TRAFFIC_SOURCE_MODE=PBS_ONLY 關閉 Cron 路徑上所有 TDX 呼叫，未刪除任何 TDX 程…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）"
     },
     {
       "task": "PERSISTENT_PBS_DEBUG_PUSH_IDEMPOTENCY_V1_9_7",
       "status": "SEALED",
       "sealedAt": "2026-08-28",
       "releaseVersion": "V1.9.7",
-      "fixCommit": "9cfa8ef",
-      "summary": "debugPush.js 加入 TRAFFIC_KV 下獨立 debug-only 前綴(debug:pbs-push-idempotency:v1:*,48h TTL,key=SHA-256(source:eventId:lifecycle:fingerprint))作為L2持久層,L1記憶體Map保留為快取但非唯一真相。KV_ONLY_ATOMICITY=NOT_SUFFICIENT(無compare-and-swap),但endpoint零business side effect,依施工令指示不引入Durable Object,PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY誠實標記PARTIAL。52項測試(原33+19),KV成本量化：10/30/100筆事件/日=10/30/100次put。1404/1371/33基線,NEW FAILURES=0。"
+      "summary": "debugPush.js 加入 TRAFFIC_KV 下獨立 debug-only 前綴(debug:pbs-push-idempotenc…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）"
     },
     {
       "task": "WINDOWS_PBS_PRODUCTION_INGRESS_AND_POLLING_RETIREMENT_V1_9_8",
       "status": "SEALED",
       "sealedAt": "2026-08-28",
       "releaseVersion": "V1.9.8",
-      "fixCommit": "6e8575d",
-      "summary": "debugPush.js就地升級為正式Windows PBS Production Ingress，重用既有canonical runLineBroadcast()/runSharedFeedPersist()（與輪詢路徑同一函式，0份重複業務邏輯）。CLEARED只ACK/log不進broadcast。Cloudflare自身PBS 30分鐘輪詢正式退休（PBS_30_MIN_POLLING_ENABLED=false，程式碼完整保留可rollback）。LINE Push Policy完全未變動。1424/1391/33基線，NEW FAILURES=0。"
+      "summary": "debugPush.js就地升級為正式Windows PBS Production Ingress，重用既有canonical runLin…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）"
     },
     {
       "task": "AI_READY_PIPELINE_PREPARATION_V1_9_9_PHASE_2",
       "status": "SEALED",
       "sealedAt": "2026-08-28",
       "releaseVersion": "V1.9.9",
-      "summary": "新模組src/pbs/aiCandidate.js(純函式/零I/O)：從既有normalizedEvent建立最小AI candidate物件(source/eventId/lifecycle/road/direction/areaNm/comment/座標/generatedAt+displayKM/eventType/sourceDetail/locationQuality，不含notify/impact)，與完全未修改的runLineBroadcast()並行、純觀察用。只保留service area+既有冪等兩gate；MAJOR_ACCIDENT_ONLY/V1.5 whitelist/location quality hard-reject對candidate建構不套用，但這些函式本身未修改，真實LINE決策仍完整生效直到Phase 3。PBS_AI_DECISION_MODE=PREPARED_NOT_ACTIVE。預留computeAiDecisionCacheKeyHash/AI_DECISION_CACHE_KV_PREFIX，本輪無KV讀寫。28項新測試，1452/1419/33，NEW FAILURES=0。Phase1(fix commit 7acb82a，另一session完成)：Windows PBS Local Edge Filter服務區收斂為新竹市/縣，純pbs-relay/變更。",
+      "summary": "新模組src/pbs/aiCandidate.js(純函式/零I/O)：從既有normalizedEvent建立最小AI candidate…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）",
       "readerNote": "This task is CLOSED — superseded by V1.9.9 Phase 3B. Do not re-open it."
     },
     {
@@ -465,8 +455,7 @@
       "status": "CODE_READY",
       "sealedAt": "2026-08-28",
       "releaseVersion": "V1.9.9",
-      "fixCommit": "5d1f9fe",
-      "compressedSummary": "固定model @cf/zai-org/glm-4.7-flash透過env.AI.run()判斷駕駛通行影響（非事件類型）。新模組aiConfig.js(kill switch)/aiDecisionCache.js(48h TTL cache，重用Phase 2 cache key)/aiDecisionEngine.js(嚴格schema驗證，不合格即AI_DECISION_INVALID絕不到LINE)/aiApprovedPbsBroadcast.js(scoped LINE執行，不呼叫getBroadcastEligibility/getLinePushPolicyDecision/resolveLocationQuality)。debugPush.js新增與legacy runLineBroadcast()互斥的AI分支，同一事件絕不同時執行兩者。AI失敗0 LINE絕不fallback舊硬規則，未加retry。kill switch PBS_AI_DECISION_ENABLED預設false。新增57項測試全部首次PASS，1509/1476/33，NEW FAILURES=0。Production未嘗試（GPT Work工作範圍）。",
+      "summary": "（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）",
       "readerNote": "This task is CLOSED — superseded by V1.9.9 Phase 3D Hotfix (資料型別bug已修正，見下方). Do not re-open it."
     },
     {
@@ -474,8 +463,7 @@
       "status": "SEALED",
       "sealedAt": "2026-08-28",
       "releaseVersion": "V1.9.9",
-      "fixCommit": "61795b1",
-      "compressedSummary": "根因：Cloudflare Dashboard/CLI Variables一律以字串注入Worker，非真正boolean。GPT Work設定PBS_AI_DECISION_ENABLED=\"true\"後，resolvePbsAiDecisionEnabled()原本嚴格檢查typeof==='boolean'，字串永遠不符合，悄悄落回false。修正：同時接受boolean與Cloudflare字串形式'true'/'false'（不分大小寫、trim），其餘一律fail-safe回false，不做寬鬆truthy判斷。單點config parsing hotfix，AI prompt/model/schema/cache/LINE policy等全部未觸碰。新增8項測試，1517/1484/33，NEW FAILURES=0。APP_VERSION維持V1.9.9。AI_BINDING=ACTIVE（GPT Work確認），AI_DECISION當時為DISABLED_PENDING_GPT_WORK_RETRY——V2.0.0里程碑taskSeal記錄GPT Work已完成重試回報。",
+      "summary": "（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）",
       "readerNote": "This task is CLOSED — superseded by V2.0.0 MILESTONE. Do not re-open it."
     },
     {
@@ -483,7 +471,7 @@
       "status": "SEALED",
       "sealedAt": "2026-08-28",
       "releaseVersion": "V2.0.0",
-      "summary": "重大架構里程碑封版，非新功能開發。APP_VERSION V1.9.9→V2.0.0(架構世代更換：舊世代Cloudflare 30分鐘PBS輪詢→hard rules→LINE，對Windows PBS路徑已退休；新世代PBS官方來源→Windows Local Edge→Cloudflare ingress→持久冪等→AI candidate→AI decision cache→Workers AI→既有LINE執行基礎設施)。新增03_ARCHITECTURE.md「V2.0.0接手地圖」26題問答；02_PROJECT_HANDOFF.md新增Checklist/Dashboard手冊/Rollback/Troubleshooting/Commit Lineage；PRODUCT_DECISIONS.md新增AI driver-impact取代accident-only決策記錄。未改任何runtime決策邏輯。1517/1484/33，NEW FAILURES=0。Production狀態為GPT Work回報，本Session未獨立驗證。FIRST_REAL_AI_EVENT=WAITING誠實記錄，非blocker。",
+      "summary": "重大架構里程碑封版，非新功能開發。APP_VERSION V1.9.9→V2.0.0(架構世代更換：舊世代Cloudflare 30分鐘PB…（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）",
       "readerNote": "This task is CLOSED — superseded by V2.0.1. Do not re-open it."
     },
     {
@@ -491,14 +479,13 @@
       "status": "SEALED",
       "sealedAt": "2026-08-29",
       "releaseVersion": "V2.0.1",
-      "fixCommit": "7b7bd05",
-      "compressedSummary": "新Admin頁GET /admin/pbs-ai-observatory-view，READ ONLY OBSERVABILITY，0次額外Workers AI呼叫。新thin index src/pbs/aiObservatoryIndex.js（debug:pbs-ai-observatory-index:v1:*，48h TTL，+1 KV write/事件，+0額外讀取），刻意不重複儲存notify/impact/reason/confidence，頁面渲染時直接讀既有aiDecisionCache記錄。查修頁語義全面改為V2.x vocabulary，絕不使用舊版「不符合播報資格」。新增22項測試，1539/1506/33，NEW FAILURES=0。AI_DRIVER_SUMMARY=FUTURE_CANDIDATE。",
+      "summary": "（完整記錄見 06_VERSION_HISTORY.md／07_KNOWN_ISSUES.md）",
       "readerNote": "This task is CLOSED — superseded by V2.0.2. Do not re-open it."
     }
   ],
   "version": {
     "packageJsonVersion": "0.1.0",
-    "latestCompleted": "V2.4.5",
+    "latestCompleted": "V2.4.6",
     "canonicalSource": "src/version.js 的 APP_VERSION — 唯一權威。packageJsonVersion 是 npm 套件版本（0.1.0），與產品版本線無關，不要混用。"
   },
   "production": {
@@ -507,22 +494,22 @@
     "deployMethod": "push to main -> Cloudflare Workers Builds auto-deploy",
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
-  "currentPhase": "Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline。**PHASE_E_TDX_NOTIFY_LIVE（2026-09-02，人類授權）**：TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=true（FETCH/QUEUE/AI皆true），TDX真實LINE通知重新上線。本session無Production網路存取，實機觀察委由人類；異常第一動作固定改回false。雲端同步治理V2生效：Claude對Drive唯讀、GitHub為唯一寫入來源",
-  "currentTask": "none（無進行中工作）。Latest completed task = V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.4.5（不升版）。本輪純config-only：wrangler.jsonc的TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED改true，13項既有功能逐一確認存在（未新增程式碼）。前序：hsinchuGeoResolver.js(座標對照官方界線)+roadManagementPolicyGate.js(路肩/施工車道數)+官方shapefile補正(幾何比對無實質差異)+V2.4.4denylist/AI prompt錨點保留+PBS未觸碰。全量迴歸NEW_FAILURES=0。下一件事：等人類回報真實Production觀察結果；異常時rollback協定見07_KNOWN_ISSUES.md。",
-  "knownBlocker": "無blocker，觀察中。TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED剛改true（2026-09-02），第一筆真實TDX LINE通知現場結果待人類回報——REAL_WORLD_CONFIRMATION_PENDING（本輪）。本session無Production網路存取無法自行觀察。異常時第一動作固定改回false止血，非邊跑邊改。AI呼叫已有45秒fail-fast timeout（V2.4.3）。EVENT_ID 11509010029-5歷史事件確切失敗階段仍無法查證，未臆測。詳見07_KNOWN_ISSUES.md",
+  "currentPhase": "Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline。PHASE_E_TDX_NOTIFY_LIVE（TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=true，本輪未變動）。**V2.4.6（本輪，2026-09-03）**：查修頁 UI/observability-only 改版——GET /admin/pbs-ai-observatory-view 收合卡片新增最終決策原因摘要，TDX 高公局/公路局事件正式以獨立來源徽章顯示，Gate A 被地理/道路管理政策排除的 TDX 事件不再從查修頁消失。本session無Production網路存取，實機觀察委由人類；異常第一動作固定改回false。雲端同步治理V2生效：Claude對Drive唯讀、GitHub為唯一寫入來源",
+  "currentTask": "none（無進行中工作）。Latest completed task = V2_4_6_TRACE_PAGE_TDX_AND_DECISION_REASON_SUMMARY，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.4.6。本輪內容：§一唯讀調查確認查修頁應改的是 aiObservatoryView.js/aiObservatoryIndex.js；TDX Gate A 排除新增6個AI_OUTCOME值+best-effort觀測寫入；新增 deriveFinalDecisionReason() 唯一權威原因組成函式；renderRow() 修正硬編碼\"PBS\"字串bug；TDX新增六段式流程條展示。PBS runtime/TDX決策邏輯/AI prompt/LINE規則/wrangler.jsonc全部未觸碰。全量迴歸NEW_FAILURES=0。下一件事：等人類回報V2.4.5 seal-deploy的真實Production觀察結果（與本輪UI改版無關）；異常時rollback協定見07_KNOWN_ISSUES.md。",
+  "knownBlocker": "無blocker，沿用V2.4.5封版的觀察中狀態——TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED已改true，第一筆真實TDX LINE通知現場結果待人類回報——REAL_WORLD_CONFIRMATION_PENDING（與本輪V2.4.6 UI改版無關，本輪未新增任何runtime blocker）。本session無Production網路存取無法自行觀察。異常時第一動作固定改回false止血。AI呼叫已有45秒fail-fast timeout（V2.4.3）。詳見07_KNOWN_ISSUES.md",
   "realWorldConfirmation": {
     "status": "REAL_WORLD_CONFIRMATION_PENDING",
     "subject": "V1.8.7.7 CCTV gray broken image fix"
   },
-  "nextAction": "待辦：人類觀察真實Production TDX LINE推播（NOTIFY=true剛開啟）——新竹縣市正常通過、桃園/苗栗/頭份/竹南=0推播、路肩開關=0推播、施工0-1車道=0推播、LINE內容無誤。異常時第一動作固定改回false止血。一個月後依ineligibleByReason數據決定是否收緊主動播報政策",
+  "nextAction": "待辦（沿用）：人類觀察真實Production TDX LINE推播——新竹縣市正常通過、桃園/苗栗/頭份/竹南=0推播、路肩開關=0推播、施工0-1車道=0推播、LINE內容無誤。異常時第一動作固定改回false止血。新增待辦：往後debug「為什麼這筆TDX不見了」先查 /admin/pbs-ai-observatory-view（Gate A排除的TDX事件現在也會出現）。一個月後依ineligibleByReason數據決定是否收緊主動播報政策",
   "authorityLevels": {
     "levelA_selfServiceReadOnly": "own repo git log, own Worker/KV/test results only",
     "levelB_requiresHumanApproval": "interactive login/OAuth, private dashboards, real KV content, any other department's resources (read or write)",
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-09-02T16:25:40.000Z",
-    "sourceMainHead": "31ae4ef6d84bbfd19fcab483ff80c2f9c7fc1b03",
+    "generatedAt": "2026-09-03T00:00:00.000Z",
+    "sourceMainHead": "979e5b8",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
     "historyDir": "_history"

@@ -4,32 +4,25 @@
 
 ## 已知、無關、既有的測試失敗基準線
 
-**實測基準（2026-08-26，V1.9.3 施工後重新量測，非回憶）：`npm test` 共 1339 項，穩定 35 項失敗。**
+**最新實測基準（2026-09-03，V2.4.6 施工後 `git stash -u` 同 commit 重新量測，非回憶）：`npm test` 共 1758 項，穩定 32 項失敗（歷史演進：1339@V1.9.3→52@V2.4.5 geo-resolver 輪→32@V2.4.6，每輪失敗清單本身也隨技術債被個別修掉/測試檔改寫而變動，數字不可跨輪直接比較，只能同輪 stash 對照）。**
 
-> **V1.9.2 更新**：舊基準第 3 類（`test/healthQuotaDashboard.test.js`，3 項，測的正是
-> 隨 TDX Usage Summary 退休而移除的 UI）已整份刪除，非回歸；同輪新增
-> `test/kvWriteOptimization.test.js`（38 項），故 1272 → 1300。**V1.9.3**：新增 17 項
-> （`pbsSchedule.test.js`／`pipelineTraceNoRelevantChange.test.js`／
-> `kvWriteQuantificationV193.test.js`／既有檔案內個別新增），1300 → 1339，35 項失敗數不變。
+> **歷史演進摘要（V1.9.2/V1.9.3，深度壓縮）**：測試總數隨每輪新增測試持續成長
+> （1272→1300→1339→……→現行 1758，見下方各版本壓縮摘要），35 項失敗基準本身
+> 也隨技術債分類調整。**CCTV_METADATA_RECOVERY_V1（2026-08-25）教訓**：先前誤記
+> 為 Workers-only `.wasm` 沙盒問題，實為 `@jsquash/jpeg` 未 `npm install`；裝好後
+> 揭露約 36 項過期斷言（技術債，非回歸）。**教訓：合理但未經驗證的 Root Cause
+> 會靜音真實訊號**——當時該做而沒做的一步只是 `npm install`。
 
-> **CCTV_METADATA_RECOVERY_V1（2026-08-25）根因更正摘要**：先前誤記為「Workers-only
-> `.wasm` codec 沙盒無法載入」，**實為** `@jsquash/jpeg`（`package.json` 正式依賴）未
-> 安裝於此沙盒 `node_modules`；`npm install` 後 12 個 CCTV/JPEG 測試檔案全部可執行，
-> 揭露約 36 項因此長期被跳過、實為**過期斷言**（斷言後來已刻意改掉的行為，如
-> `DYNAMIC_SHOULDER_PUSH=OFF` 後仍期待推播）的既有技術債，非本輪回歸。教訓：合理但未
-> 經驗證的 Root Cause 會靜音真實訊號——當時該做而沒做的一步只是 `npm install`。
+目前 32 項的正確分類（每輪仍以同一輪 `git stash -u` 對照乾淨 checkout 驗證；`pbs-relay/tests/*` 已不在
+`test/*.test.js` glob 範圍內，獨立子系統，不計入此數字）：
 
-目前 35 項的正確分類（每輪仍以同一輪 `git stash -u` 對照乾淨 checkout 驗證）：
+**過期斷言／timing-dependent 技術債（32 項，全部同一類）**— 分布於 `singleCctvBudgetFairness`、`dynamicShoulder`、
+`dynamicShoulderMessageShort`、`dynamicCollage`、`broadcastCctvIntegration`、`cctvPrepareTimeoutStages`、
+`freeway3CctvAudit`、`pipelineTraceIntegration`、`productionIntegrationFixtures`、`hsinchuCctvCollageEndpoint`、
+`cctvImagePublish` 等檔——CCTV frame-latency／真實時間預算相依，非本輪任何一輪引入的回歸。
+**這是本專案目前最大的一筆技術債，已列為 openFollowUp。**
 
-1. `pbs-relay/tests/*`（2 項）— `pbs-relay/src/server.js` 匯入的 `pbs-relay/src/cache.js` 不存在於 repo。
-   獨立子系統，非本 Worker 主程式。
-2. **過期斷言（33 項）**— 見上方更正框。分布於 `singleCctvBudgetFairness`、`dynamicShoulder`、
-   `dynamicShoulderMessageShort`、`dynamicCollage`、`broadcastCctvIntegration`、
-   `cctvPrepareTimeoutStages`、`freeway3CctvAudit`、`pipelineTraceIntegration`、
-   `productionIntegrationFixtures`、`hsinchuCctvCollageEndpoint`、`cctvImagePublish` 等檔。
-   **這是本專案目前最大的一筆技術債，已列為 openFollowUp。**
-
-若出現這 35 項以外的新失敗，才視為真正回歸。
+若出現這 32 項以外的新失敗，才視為真正回歸。
 
 **還有一項會時有時無的全套執行雜訊**（不是本專案缺陷、也不要為它改程式）：
 `test/deploymentStatus.test.js` 的「missing/placeholder build metadata」在
@@ -90,72 +83,21 @@ MONTHLY_LINE_LIMIT   = 200
   - 接近或超過 200 → 由**真人**另開新任務，研究更嚴格的 `ROAD_IMPACT_ACCIDENT`／車道受阻・封閉限定策略。
 - **未來要收緊時的依據**：`broadcastPolicy.js` 已經在記錄每一則播出的事故究竟有沒有寫明通行受阻（`policy-major-accident-blocked-lanes` / `policy-major-accident-impact-keyword` / `policy-accident-no-stated-impact`），可從 `ineligibleByReason` 與 Pipeline Trace 讀出。**收緊要用這些真實比例去論證，不是再猜一次。**
 
-## 修正紀錄｜PBS_ONLY 下不得要求 TDX 對應（2026-08-24，壓縮摘要）
+## 修正紀錄｜PBS_ONLY 下不得要求 TDX 對應（2026-08-24，深度壓縮）
 
-**一句話**：TDX 是**停用**的資料來源，不能反過來拿「沒有 TDX 對應」去擋 PBS。真實案例：PBS 國道一號南向事故被判 `gated-freeway-no-tdx-match`。根因：`src/pbs/crossSourceDedup.js` 的 V57.2「TDX 唯一播報閘門」原設計「PBS 國道事件等 TDX 對應」，但這理由只在 TDX 有在跑時成立——`PBS_ONLY` 下 TDX 永遠不會出現，「等 TDX」變成「永久否決」。修正：新增 `requireTdxCorrelationForFreeway` 旗標（由 `isTdxRuntimeEnabled(env)` 導出，與關閉 TDX 同一開關），`PBS_ONLY` 下略過閘門，`ALL` 模式下 V57.2 原封不動；預設值 `true`（未來呼叫端忘記傳會退回保守既有行為）。**未放寬播報政策**——略過閘門只是讓國道 PBS 事件進候選清單，事故限定 push policy／時效視窗／去重／抑制全部照舊，機動路肩仍不播。CCTV 維持「附加資訊，非播報資格」，無圖仍 TEXT-ONLY 播報。給未來 Agent 的通則：任何「等待另一個來源佐證」的閘門，都必須先問那個來源是否還活著，否則來源一旦停用，閘門會從「延後」靜默變成「永久否決」——本專案已知只有此一處。
+TDX 停用時不能拿「沒有 TDX 對應」去擋 PBS（真實案例：PBS 國1南向事故被判 `gated-freeway-no-tdx-match`——V57.2 閘門原設計「PBS 國道等 TDX 對應」，只在 TDX 有在跑時成立）。修正：新增 `requireTdxCorrelationForFreeway`（由 `isTdxRuntimeEnabled(env)` 導出），`PBS_ONLY` 略過閘門、`ALL` 模式不變；未放寬播報政策，只是讓事件進候選清單。**通則**：任何「等待另一來源佐證」的閘門都要先問那個來源是否還活著，否則會從「延後」變「永久否決」。
 
-## 修正紀錄｜服務區域閘門（八堵事件）（2026-08-24，壓縮摘要）
+## 修正紀錄｜服務區域閘門（八堵事件）（2026-08-24，深度壓縮）
 
-**一句話**：`PBS_ONLY` 不等於「全台 PBS 都能播」。地域資格永遠要檢查。真實漏播
-案例：PBS 國道1號南向八堵交流道（基隆，25.10288/121.71801，type=accident）
-不在服務區域內卻成功推播。Root cause：地域過濾只存在於 PBS 進料端
-（`pbs/pipeline.js` 的 `isPbsEventHsinchuRelevant` filter），`broadcastPipeline.js`
-只在 JSDoc 寫著假設「every currently Hsinchu-relevant … event」，從未真正檢查
-——寫在註解裡的假設不是閘門。無法用手上資料重現進料端本身的漏洞（各種原始記錄
-形狀跑 `isPbsEventHsinchuRelevant` 皆正確擋下），本輪修正的是「Producer 播報
-邊界上本來就該有、卻不存在的強制檢查」，非修補已重現的洞。修正：新增
-`src/traffic/serviceArea.js`，在既有 eligibility 迴圈最前面檢查，所有 source
-mode 都適用，重用既有 canonical 判定（`hsinchuFilter.js`），無新地理引擎、
-服務範圍未變。PBS 對此 fail-closed（無法定位就擋，因為地理資訊已一路帶到播報
-層，能重跑進料端同一函式）；TDX 只在能明確判定「在區域外」時才擋（因
-`tdx/normalize.js` 不保留原始 `Positions`，fail-closed 會靜默丟掉正常 TDX
-事件——實測讓 35 項既有測試失敗，故不採此法）。`SERVICE_AREA_ELIGIBILITY_
-REQUIRED = true` 永遠適用於所有模式，與 `TDX_CORROBORATION_REQUIRED` 永久
-獨立。可觀測性：`eligibilityReason` 新增 `outside-service-area`，Pipeline
-Trace 新增 `serviceAreaEligible`。**永久教訓**：只在一個地方做過濾等於沒有
-保證——某一層的正確性若依賴「上游應該已經過濾過了」，就要嘛在本層真的檢查，
-要嘛讓上游在事件上留下可驗證的標記；寫在註解裡的假設遲早會被某條新路徑繞過，
-而且不會報錯。
+`PBS_ONLY` 不等於「全台 PBS 都能播」。真實漏播：PBS 國1南向八堵（基隆，type=accident）不在服務區域卻成功推播——地域過濾只存在於 PBS 進料端，`broadcastPipeline.js` 只在 JSDoc 假設已過濾，從未真正檢查。修正：新增 `src/traffic/serviceArea.js`，在 eligibility 迴圈最前面檢查（重用既有 `hsinchuFilter.js`）；PBS fail-closed，TDX 只在明確判定「區域外」時才擋（fail-closed 會丟掉正常 TDX 事件）。`SERVICE_AREA_ELIGIBILITY_REQUIRED=true` 與 `TDX_CORROBORATION_REQUIRED` 永久獨立。**永久教訓**：某一層的正確性若依賴「上游應該已過濾」，就要嘛本層真的檢查、要嘛上游留下可驗證標記——寫在註解裡的假設遲早被繞過且不會報錯。
 
-## 修正紀錄｜播報追溯斷點 ＋ 位置精確度閘門（台68 事件）（2026-08-24，壓縮摘要）
+## 修正紀錄｜播報追溯斷點 ＋ 位置精確度閘門（台68 事件）（2026-08-24，深度壓縮）
 
-真實症狀：PBS 主動 Push 印出「（南寮竹東）-台68線」（PBS 對整條路線的官方名稱，非地點，
-南寮0.4K～竹東22.9K）——位置不可行動；且事後在 Pipeline Trace 查不到該筆。Root Cause
-兩個：(A) `x1`/`y1` 座標在 `pbs/normalize.js` 有保留但**顯示側從未讀取**，`resolveKmLocation()`
-只從 KM 出發、PBS 沒有結構化 KM，故「有精確座標」與「完全沒有位置」訊息逐位元組相同；
-(B) trace 確實有寫入，斷點全在讀取側——`road` 篩選嚴格相等但畫面顯示的是「台68線」、
-trace 存的是正規化後的「台68」；同輪 entry 靠隨機 opaqueId 排序，可能被擠出第一頁；
-掃描上限與「不存在」回報成同一件事。修正：新增 `kmLocationResolver.js#resolveCoordinateLocation`
-（KM 查詢的反向版本，同一份官方資料集，容差0.5公里）在完全沒有 KM 時才呼叫；新增
-`traffic/locationQuality.js` 閘門（服務區域與事故政策之後、時間/dedupe/suppression之前），
-判定層級：結構化KM＞displayKM＞座標(可靠轉換)＞訊息會印出的地點文字，刻意不看
-`description`（畫面不會印的欄位不能拿來證明「夠精確」）；不足時 `eligible=false`，
-`reason=insufficient-location-precision`，仍保留在 Pipeline Trace。三道閘門永久獨立：
-`TDX_CORROBORATION_REQUIRED`／`SERVICE_AREA_REQUIRED`／`LOCATION_QUALITY_REQUIRED`——
-任何一個都不得被另一個取代或推論（八堵那筆即使位置精確仍須被服務區域擋下）。
-追溯側同時修正：`road` 篩選改用正規化函式比對、新增關鍵字搜尋、key 加批次序號穩定排序、
-掃描未涵蓋全部時明講。新增 `test/pbsAccidentTraceLocationQuality.test.js`（25項全通過）。
-NEW FAILURES=0（1060項，17項既有失敗不變）。通則：閘門判準必須與訊息真正顯示的內容一致；
-「查不到」與「沒發生」是兩件事，任何有上限的掃描都必須把上限講出來。
+真實症狀：PBS Push 印出「（南寮竹東）-台68線」（整條路線官方名稱，非地點）——位置不可行動，且 Pipeline Trace 查不到該筆。根因：(A) 座標保留但顯示側從未讀取，PBS 無結構化 KM；(B) trace 有寫入但讀取側 `road` 篩選嚴格相等 vs 畫面顯示不一致，隨機排序可能被擠出第一頁。修正：新增 `kmLocationResolver.js#resolveCoordinateLocation`（KM 反向查詢）；新增 `traffic/locationQuality.js` 閘門（結構化KM＞displayKM＞座標＞訊息會印出的地點文字），不足時 `eligible=false`／`insufficient-location-precision`，仍留在 trace。三道閘門（TDX對應／服務區域／位置精確度）永久獨立，互不取代。新增 25 項測試，NEW FAILURES=0。**通則**：閘門判準必須與訊息真正顯示的內容一致；「查不到」與「沒發生」是兩件事。
 
-## 修正紀錄｜PBS 國道事故取不到 CCTV（國3 96K+700 事件）（2026-08-25，壓縮摘要）
+## 修正紀錄｜PBS 國道事故取不到 CCTV（國3 96K+700 事件）（2026-08-25，深度壓縮）
 
-真實症狀：國3南向96K+700事故，Pipeline Trace每一關皆綠燈（服務區域/位置精確度/eligibility/
-LINE推播全部PASS）但`cctvEligible=否`、`cctvSkippedByReason`空白——駕駛收到正確文字卻無圖，
-後台說不出原因。Root Cause三個：(A) `dynamicCollage.js#resolveCctvEligibility` 殘留
-`event.source!=='freeway'`的TDX-only閘門，PBS_ONLY模式下等於「PBS事故永遠沒有圖」；
-(B) `eventTargetKm()` 只讀結構化KM（PBS從來沒有），即使解除A仍會停在`no-reliable-km`；
-(C) eligibility階段被擋下時reason從未寫進trace，只留`cctvEligible=false`——這正是「空白理由」
-能藏一整天的原因。修正（最小、fail-closed）：(1) 來源改為可信來源白名單
-`CCTV_TRUSTED_EVENT_SOURCES={freeway,highway,pbs}`，reason改`unsupported-source`，仍是白名單
-不是開門；(2) `eventTargetKm()`新增第三層`displayKM`（PBS comment內經`pbs/normalize.js`嚴格
-parser解析出的公里數，且已先通過`locationQuality.js`驗證精確度，不是新猜測）；(3) eligibility
-reason一律寫進trace，新增`cctvTargetKm`。永久原則：**CCTV資格取決於「道路可解析+公里數可靠」，
-不取決於通報來源**。CCTV-supported roads仍僅國1/國3（RoadID已由Production驗證），未新增任何
-未驗證省道。邊界（皆有測試鎖住）：TDX全程0呼叫（有結構性測試斷言不import tdx/auth.js）；
-CCTV是enrichment非eligibility，三道播報閘門完全未動（八堵事故仍被服務區域擋下）；任何步驟
-失敗一律退回TEXT-ONLY。通則：資料來源被關閉時，要搜尋所有「以來源為條件」的判斷式——它們
-不會報錯，只會安靜讓整條路徑永遠不成立；後台「空白理由」是bug不是畫面。
+真實症狀：國3南向96K+700事故，Pipeline Trace 每關皆綠燈但 `cctvEligible=否`、理由空白。根因三個：(A) `resolveCctvEligibility` 殘留 TDX-only 閘門；(B) `eventTargetKm()` 只讀結構化KM（PBS沒有）；(C) 被擋時 reason 從未寫進 trace。修正：來源改白名單 `{freeway,highway,pbs}`；`eventTargetKm()` 新增第三層 `displayKM`（已通過 locationQuality 驗證）；reason 一律寫進 trace。**永久原則**：CCTV 資格取決於「道路可解析+公里數可靠」，不取決於通報來源。三道播報閘門完全未動，任何步驟失敗一律退回 TEXT-ONLY。**通則**：資料來源被關閉時要搜尋所有「以來源為條件」的判斷式——它們不會報錯，只會安靜讓整條路徑永遠不成立。
 
 ## 治理變更紀錄｜DRIVE_SYNC_GOVERNANCE_V2（2026-08-25，深度壓縮）
 
@@ -348,6 +290,16 @@ PBS 閘門排除仍視為有意義。fixture 實測 QUIET/NORMAL/HIGH writes/day
 ## 補登紀錄｜WINDOWS_PBS_GEOGRAPHIC_FILTER_REPAIR（2026-08-30，人類回報，本 Cloud Session 未獨立驗證）
 
 **狀態：`HUMAN_REPORTED_NOT_INDEPENDENTLY_VERIFIED`。** 人類回報：Windows PBS 本機篩選舊邏輯先套用 `isAccident()` 事故關鍵字語意閘門，才進新竹縣市地理判斷，導致非事故型事件（落石／坍方／封路／施工／積水等）即使位於新竹縣市仍可能在 Windows 端被直接丟棄，從未進入 Cloudflare/AI。回報修正：移除 `isAccident()` 語意閘門，改用 point-in-polygon（data.gov.tw dataset 7442 縣市界線）取代原本的矩形邊界，新竹市/縣**所有**事件類型皆納入候選，語意判斷完全交給 AI；同批資料驗證回報 `BEFORE_KEEP_COUNT=11 → AFTER_KEEP_COUNT=29`（找回 18 筆），`TESTS=124 passed/0 failed`。**本 Cloud Session 的獨立查證**：目前 `main`／本分支的 `pbs-relay/src/localPrototype.js` 仍保留 `isAccident()` 並仍作為候選閘門使用（見該檔第 56/108 行），`pbs-relay/` 完整 git 歷史（含 `feature/pbs-local-edge-filter-prototype` 分支）中**未找到**對應此修正的 commit，故無法核對回報的 point-in-polygon 實作、dataset 7442 引用或 11→29/124 測試數字。與既有 `PBS Windows Local Edge Debug Push Integration`（V1.9.6）記錄採同一誠實原則：**本節只記錄「人類回報了什麼」，不代表本 Session 已驗證程式碼或測試結果為真**——待對應 commit 出現於本 repo（或人類提供可核對的 diff/測試輸出）後，下一輪應改記為已驗證版本，並同步更新 `pbs-relay/` 程式碼本身（本輪禁止修改）。
+
+## 修正紀錄｜V2.4.6 — 查修頁 TDX 顯示與最終決策原因摘要（2026-09-03，壓縮摘要）
+
+**任務** `V2_4_6_TRACE_PAGE_TDX_AND_DECISION_REASON_SUMMARY`，UI/observability-only，PBS_RUNTIME_MODIFIED=NO、TDX_DECISION_LOGIC_MODIFIED=NO。
+
+**§一唯讀調查發現**：查修頁分兩套——舊版 `pipelineTraceView.js`（`buildTraceEntry()` 僅3呼叫點皆PBS觸發，純TDX事件本就幾乎不出現，非本輪目標）、新版 `aiObservatoryView.js`＋`aiObservatoryIndex.js`（`GET /admin/pbs-ai-observatory-view`，`source` 欄位自V2.4.0起已支援 pbs/freeway/highway，才是本輪目標）。TDX 幾乎不出現＝(B)+(A) 組合：(B多數) `tdxQueueIngress.js` Gate A（地理/道路管理政策）排除時此前只有 `console.log`，KV零紀錄；(A少數) 通過Gate A的TDX事件雖正確寫入`source`，但`renderRow()`收合列硬編碼字串`"PBS"`從未讀`record.source`，畫面仍誤標PBS。
+
+**修法（全部 additive-only）**：(1) `tdxQueueIngress.js` 在兩個 Gate A 排除點後新增 `recordTdxGateDrop()`，重用既有 `buildAiObservatoryRecord`/`recordAiObservatoryEntry`（同KV prefix），把已算出的 geo/policy 結果轉成6個新 `AI_OUTCOME`（`GEO_EXCLUDED_OUTSIDE_HSINCHU`/`GEO_EXCLUDED_UNKNOWN`/`ROAD_POLICY_EXCLUDED_SHOULDER_OPEN`/`_SHOULDER_CLOSE`/`_INSUFFICIENT_LANES`/`_UNKNOWN_LANES`）——排除決策本身不變，寫入best-effort。(2) 新增純函式 `deriveFinalDecisionReason(record)`——唯一權威原因組成，只讀既有欄位，區分「施工僅封1車道」與泛用 `construction` 類型。(3) `buildAiObservatoryRecord()` 新增 `suppressedForPhase`（`debugPush.js` 早算出但先前被靜默丟棄）／`blockedLanes` 兩個既有欄位。(4) `renderRow()` 改讀 `record.source` 顯示 `PBS`/`TDX｜高公局`/`TDX｜公路局`；收合卡片新增原因摘要行；展開內容新增 TDX 專屬 SOURCE→GEO→ROAD_POLICY→QUEUE→AI→LINE 六段流程條（PBS 原①-④流程條不變）。
+
+**測試**：新增 `test/v246TracePageTdxAndDecisionReasonSummary.test.js`（20項，含施工令§十二全部8個CASE）。全量迴歸1758/1726/32，`git stash -u`同commit精確基準比對NEW_FAILURES=0。`APP_VERSION` V2.4.5→V2.4.6。**未觸碰**：PBS runtime、TDX決策邏輯、AI prompt、LINE規則、`wrangler.jsonc`（`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`維持`"true"`）。**通則**：一個系統若同時存在「資料已正確寫入但顯示層有bug」與「資料根本沒被寫入」兩種缺口，兩者外部症狀（畫面看不到）完全相同——必須讀程式碼分別驗證兩層，不能只驗證其中一層就下結論。詳見`03_ARCHITECTURE.md`／`00_CURRENT_STATE.md`／`SYSTEM_STATE.json`。
 
 ## 封版部署紀錄｜V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY（2026-09-02 同日再稍晚，不升版，**生效中／觀察中**）
 

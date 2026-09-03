@@ -1564,7 +1564,79 @@
 // acceptance suites (plus the permanent 39.6K/桃園觀音 regression lock)
 // and 07_KNOWN_ISSUES.md for the full investigation + boundary-data
 // provenance record.
-export const APP_VERSION = 'V2.4.5';
+//
+// V2.4.6 — V2_4_6_TRACE_PAGE_TDX_AND_DECISION_REASON_SUMMARY (2026-09-03,
+// MINOR). UI/observability-only — explicitly forbidden from changing any
+// routing/policy decision, the PBS Windows flow, TDX geographic filtering,
+// the AI prompt, or LINE notification rules (order section 十/十三: "本輪
+// 若發現任何會影響 runtime 決策的問題，必須 STOP 並回報，不得順便修改" —
+// none was found; PBS_RUNTIME_MODIFIED=NO, TDX_DECISION_LOGIC_MODIFIED=NO).
+//
+// §一 investigation finding: two independent "查修頁" systems exist.
+// src/traffic/pipelineTraceView.js (GET /admin/pipeline-trace-view) is the
+// OLDER, V1.5-era rule-based tracer — buildTraceEntry() has exactly 3 call
+// sites (scheduled.js x2, broadcastPipeline.js x1), all PBS-driven under
+// the V2.4.0 LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT architecture,
+// so a pure/unmerged TDX event essentially never reaches it. The correct
+// target is src/pbs/aiObservatoryView.js + aiObservatoryIndex.js (GET
+// /admin/pbs-ai-observatory-view) — its record schema already carried a
+// `source` field ('pbs'/'freeway'/'highway') since V2.4.0. WHY TDX BARELY
+// APPEARED was a confirmed combination of hypotheses (B) and (A), never
+// (C)/(D): (B) — the majority case — a TDX event dropped at tdx/
+// tdxQueueIngress.js's own Gate A (geography via hsinchuGeoResolver.js, or
+// road-management policy via roadManagementPolicyGate.js), BEFORE any
+// Queue message ever exists, previously produced only a console.log line —
+// ZERO persisted record, so it vanished from the Observatory entirely
+// (exactly order section 七's "為什麼這筆 TDX 不見了？卻完全沒有證據" gap).
+// (A) — the minority case — a TDX event that DID pass Gate A and reach the
+// Queue/AI DID already get a correctly-sourced Observatory record, but
+// aiObservatoryView.js#renderRow()'s collapsed <summary> hardcoded the
+// literal string "PBS" regardless of record.source, mislabeling it.
+//
+// FIX, both additive-only, zero re-judgment (order section 九: "UI 不是
+// 決策者"):
+//   1. tdx/tdxQueueIngress.js#enqueueTdxRoadEvents() now ALSO writes one
+//      best-effort Observatory record (reusing aiObservatoryIndex.js's
+//      existing buildAiObservatoryRecord/recordAiObservatoryEntry — no new
+//      KV prefix) at each Gate A drop point, directly from the ALREADY-
+//      COMPUTED resolveTdxHsinchuGeography()/resolveTdxRoadManagementEligibility()
+//      return values — six new AI_OUTCOME values (GEO_EXCLUDED_OUTSIDE_
+//      HSINCHU/GEO_EXCLUDED_UNKNOWN/ROAD_POLICY_EXCLUDED_SHOULDER_OPEN/
+//      _SHOULDER_CLOSE/_INSUFFICIENT_LANES/_UNKNOWN_LANES). The drop
+//      decision itself (which events get dropped, and why) is completely
+//      unchanged — this write happens strictly AFTER that decision, never
+//      gates or delays it, and is best-effort (a KV outage never affects
+//      the drop).
+//   2. aiObservatoryView.js#renderRow() now reads record.source through a
+//      real SOURCE_LABELS map (PBS / TDX｜高公局 / TDX｜公路局 — order
+//      section 四, never lumping the two TDX agencies together) instead of
+//      the hardcoded string.
+//   3. aiObservatoryIndex.js#deriveFinalDecisionReason() — the ONE
+//      canonical, pure composition of "why sent / not sent" (order section
+//      三), derived exclusively from fields the record already stores
+//      (outcome/eventType/blockedLanes/suppressedForPhase/lineSent) —
+//      surfaced as a new FINAL_DECISION_REASON_SUMMARY line on EVERY
+//      collapsed card (order section 二/十一), for PBS and TDX alike,
+//      distinguishing e.g. "施工僅封1車道" from a bare "construction" type
+//      label. `suppressedForPhase` (TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED
+//      gate) was already computed by debugPush.js#runAiDecisionPath and
+//      returned to its caller, but silently discarded before reaching
+//      storage — buildAiObservatoryRecord() now accepts and persists it
+//      (also purely additive: no new judgment, just no longer discarding
+//      an already-computed fact).
+//   4. aiObservatoryView.js gained a SECOND pipeline-stage flow strip
+//      (SOURCE→GEO→ROAD_POLICY→QUEUE→AI→LINE, order section 六) shown only
+//      for TDX-sourced records, plus GEO/ROAD_POLICY expanded detail
+//      sections — the existing PBS ①-④ strip (①PBS/Windows→②Cloudflare→
+//      ③AI→④LINE) is a completely separate code path, untouched.
+//
+// TRACE_API unchanged (still GET /admin/pbs-ai-observatory-view, still KV-
+// backed by debug:pbs-ai-observatory-index:v1, still zero Workers AI calls
+// on open/refresh/filter). See test/v246TracePageTdxAndDecisionReasonSummary.test.js
+// for the order's own 8 CASE acceptance scenarios (order section 十二) plus
+// dedicated deriveFinalDecisionReason unit coverage, and 07_KNOWN_ISSUES.md
+// for the full record.
+export const APP_VERSION = 'V2.4.6';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

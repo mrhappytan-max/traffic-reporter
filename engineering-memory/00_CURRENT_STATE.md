@@ -9,21 +9,34 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V2.4.5（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | 31ae4ef6d84bbfd19fcab483ff80c2f9c7fc1b03（V2.4.5 官方界線補正 commit；本封版部署 commit 尚未落地前的快照，本表隨本輪 commit 一併更新） |
+| Current Version | V2.4.6（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | 979e5b8（V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY commit；本輪 V2.4.6 commit 尚未落地前的快照，本表隨本輪 commit 一併更新） |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty（本輪 V2.4.5 changeset，與本份快照同一 commit 一起送出） |
+| Source working tree | dirty（本輪 V2.4.6 changeset，與本份快照同一 commit 一起送出） |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
-| Current Phase | Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，**TDX 正式 LINE 通知已重新開啟（PHASE_E_TDX_NOTIFY_LIVE，2026-09-02，V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY，人類明確授權）**：`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`="true"（FETCH/QUEUE/AI 皆 true）。這是 V2.4.4 洩漏事件後、V2.4.5 官方界線 positive-authority resolver + 道路管理政策閘門修復完成的正式重新啟用。**本 session 無 Production 網路存取權限，實機觀察須由人類執行**——回報異常時第一動作固定是把此開關改回 false，見 07_KNOWN_ISSUES.md 完整 rollback 協定。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一寫入來源，GitHub Actions 自動鏡像至 Drive |
-| Current Task | none。Latest completed task = V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY，status = SEALED（不升版，仍 V2.4.5；前序歷程見 SYSTEM_STATE.json／06_VERSION_HISTORY.md）。CURRENT_RUNTIME_PHASE=PHASE_E_TDX_NOTIFY_LIVE：`TDX_ROADEVENT_FETCH_ENABLED`/`QUEUE_INGRESS_ENABLED`/`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`/`PBS_AI_DECISION_ENABLED` 皆="true"。雲端治理：Claude 對 Drive 唯讀，GitHub 為唯一寫入來源。V2.4.5 原輪：新模組 `src/tdx/hsinchuGeoResolver.js`＋`src/tdx/roadManagementPolicyGate.js`；V2.4.4 denylist與AI prompt錨點皆保留為第二層safety net；`blockedLanes`新增進AI結構化輸入。V2.4.5 補正輪：地理正面權威改為人類直接下載的官方 shapefile，幾何比對確認無實質差異。**本輪**：13 項既有功能逐一以程式碼/測試確認存在（未新增程式）；`wrangler.jsonc` 的 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED` 改為 `"true"`（config-only commit）；本 sandbox 無 Production 網路存取，實機觀察委由人類執行，回報異常時第一動作固定關閉此開關 |
-| Latest Completed Version | V2.4.5 |
-| Known Blocker | 無 blocker，但**觀察中**——`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED` 剛改為 true（2026-09-02），第一筆真實 TDX LINE 通知的現場結果尚待人類回報——REAL_WORLD_CONFIRMATION_PENDING（本輪，非舊的 V1.8.7.7 CCTV 項目）。本 session 無 Production 網路存取，無法自行觀察，需人類看真實 LINE/Cloudflare Logs 回報異常。異常回報時第一動作固定是把此開關改回 false，非邊跑邊改。AI 呼叫已有 45 秒 fail-fast timeout（V2.4.3），CLEARED 會取消舊事件 stale retry。EVENT_ID 11509010029-5 該筆歷史事件確切失敗階段仍無法獨立查證，未臆測。詳見 07_KNOWN_ISSUES.md |
-| Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING |
+| Current Phase | Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，TDX 正式 LINE 通知維持開啟（PHASE_E_TDX_NOTIFY_LIVE，`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`="true"，本輪未變動）。**本輪（V2.4.6）是查修頁 UI/observability-only 改版**：`GET /admin/pbs-ai-observatory-view` 收合卡片新增 FINAL_DECISION_REASON_SUMMARY（未展開即知為什麼發／不發），TDX 高公局/公路局事件正式以獨立來源徽章顯示（此前被誤標為 PBS 或於 Gate A 被排除時完全無紀錄）。PBS runtime／TDX 決策邏輯/AI prompt/LINE 規則全部未變動。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一寫入來源，GitHub Actions 自動鏡像至 Drive |
+| Current Task | none。Latest completed task = V2_4_6_TRACE_PAGE_TDX_AND_DECISION_REASON_SUMMARY，status = SEALED（V2.4.5→V2.4.6；前序歷程見 SYSTEM_STATE.json／06_VERSION_HISTORY.md）。CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何 wrangler.jsonc 開關）。**本輪內容**：§一唯讀調查確認查修頁應改的是 `aiObservatoryView.js`/`aiObservatoryIndex.js`（非舊版 `pipelineTraceView.js`）；TDX 在 Gate A（`tdxQueueIngress.js`）被地理/道路管理政策排除時，此前完全零觀測紀錄（只有 console.log）——本輪新增 6 個 AI_OUTCOME 值（`GEO_EXCLUDED_OUTSIDE_HSINCHU`/`GEO_EXCLUDED_UNKNOWN`/`ROAD_POLICY_EXCLUDED_SHOULDER_OPEN`/`_SHOULDER_CLOSE`/`_INSUFFICIENT_LANES`/`_UNKNOWN_LANES`），於 Gate A 判定後（不影響判定本身）額外寫入一筆 best-effort Observatory KV 紀錄；新增 `deriveFinalDecisionReason()` 純函式（唯一權威、只讀既有欄位、絕不重新判斷）供收合卡片與展開頁共用；`renderRow()` 修正原本硬編碼 `PBS` 字串的 bug，改讀 `record.source` 顯示 `TDX｜高公局`/`TDX｜公路局`/`PBS`；`buildAiObservatoryRecord()` 新增 `suppressedForPhase`/`blockedLanes` 兩個此前被靜默丟棄的既有欄位。雲端治理：Claude 對 Drive 唯讀，GitHub 為唯一寫入來源 |
+| Latest Completed Version | V2.4.6 |
+| Known Blocker | 無 blocker，沿用 V2.4.5 封版的 REAL_WORLD_CONFIRMATION_PENDING（TDX 正式 LINE 通知現場觀察，本輪未變動）——本 session 無 Production 網路存取，需人類看真實 LINE/Cloudflare Logs 回報異常，異常回報時第一動作固定 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=false`。本輪（V2.4.6）本身是 UI-only，無新增 runtime blocker |
+| Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING（沿用 V2.4.5 封版項目，與本輪 UI 改版無關） |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 待辦：人類觀察真實 Production TDX LINE 推播（NOTIFY=true 剛開啟）——確認新竹縣市事件正常通過、桃園/苗栗/頭份/竹南=0推播、機動路肩開放關閉=0推播、一般施工0-1車道=0推播、LINE內容無誤。發現任一異常，第一動作固定 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=false` 止血後再查修。一個月後依 ineligibleByReason 數據決定是否收緊主動播報政策 |
-| Export Generated At | 2026-09-02T16:25:40.000Z |
+| Next Action | 待辦（沿用）：人類觀察真實 Production TDX LINE 推播現場結果，異常時第一動作固定關閉 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`。新增待辦：往後 debug 一筆「為什麼這筆 TDX 不見了」時，先查 `/admin/pbs-ai-observatory-view`（不再只有 `/admin/pipeline-trace-view`）——Gate A 排除的 TDX 事件現在也會出現在這裡 |
+| Export Generated At | 2026-09-03T00:00:00.000Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
+
+## V2.4.6 封版（2026-09-03）— 查修頁 TDX 顯示與最終決策原因摘要
+
+- `V2_4_6_TRACE_PAGE_TDX_AND_DECISION_REASON_SUMMARY`，UI/observability-only，PBS_RUNTIME_MODIFIED=NO、TDX_DECISION_LOGIC_MODIFIED=NO。
+- §一唯讀調查結論：本專案有兩套「查修頁」——舊版 `src/traffic/pipelineTraceView.js`（`GET /admin/pipeline-trace-view`，V1.5 規則式，`buildTraceEntry()` 只有 3 個呼叫點，全是 PBS 觸發，純 TDX 事件在 V2.4.0 `LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT` 架構下幾乎不會出現）與新版 `src/pbs/aiObservatoryView.js`＋`aiObservatoryIndex.js`（`GET /admin/pbs-ai-observatory-view`，`source` 欄位自 V2.4.0 起已支援 `pbs`/`freeway`/`highway`）。TDX 幾乎不出現的原因是 (B)+(A) 的組合，非單一選項：(B，多數) TDX 在 `tdx/tdxQueueIngress.js` Gate A（地理／道路管理政策）被排除時，此前只有 `console.log`，KV 完全零紀錄；(A，少數) 真的通過 Gate A、到達 Queue/AI 的 TDX 事件雖然有正確寫入 `source`，但 `aiObservatoryView.js#renderRow()` 的收合列硬編碼字串 `"PBS"`，從未讀 `record.source`，因此畫面上仍顯示成 PBS。
+- 修法（全部 additive-only，不重跑任何判斷）：
+  1. `tdx/tdxQueueIngress.js#enqueueTdxRoadEvents()` 在 Gate A 排除點（地理/道路管理政策）之後，額外呼叫新的 `recordTdxGateDrop()`，重用 `aiObservatoryIndex.js` 既有的 `buildAiObservatoryRecord`/`recordAiObservatoryEntry`（同一個 KV prefix `debug:pbs-ai-observatory-index:v1`，不新增第二個 index），直接把 `resolveTdxHsinchuGeography()`/`resolveTdxRoadManagementEligibility()` 已經算出的結果轉成新的 6 個 `AI_OUTCOME` 值——排除決策本身完全不變，寫入是 best-effort（KV 失敗也不影響排除判斷）。
+  2. `aiObservatoryIndex.js` 新增純函式 `deriveFinalDecisionReason(record)`——唯一權威的「為什麼發／不發」文字組成，只讀 record 既有欄位（outcome/eventType/blockedLanes/suppressedForPhase/lineSent），涵蓋施工令範例詞彙（壅塞／一般施工／機動路肩開放／機動路肩關閉／施工僅封N車道／非新竹縣市／地理位置無法確認／AI判定影響低／TDX通知開關關閉／AI處理失敗／背景重試失敗）。刻意區分「施工僅封1車道」與泛用的 `type=construction`，避免施工令點名的「只顯示 construction 不夠有用」問題。
+  3. `buildAiObservatoryRecord()` 新增 `suppressedForPhase`（`debugPush.js#runAiDecisionPath` 早就算出但先前從未存進 record 的既有欄位——單純不再丟棄）與 `blockedLanes`（`aiCandidate.js` 早就有的欄位）。
+  4. `aiObservatoryView.js#renderRow()` 改讀 `record.source` 顯示三種來源徽章：PBS／`TDX｜高公局`（freeway）／`TDX｜公路局`（highway），永不合併顯示。收合 `<summary>` 新增一行 `finalReasonLine()`（✅已發送／⏭未發送／⏱AI處理失敗／⏳處理中 + 原因），PBS 與 TDX 卡片皆有。展開內容新增 TDX 專屬第二種六段式流程條 SOURCE→GEO→ROAD_POLICY→QUEUE→AI→LINE（PBS 原本的 ①-④ 流程條完全不變，另一段程式碼路徑）。
+- TRACE_API 不變（仍是 `GET /admin/pbs-ai-observatory-view`，仍是唯讀、開啟/篩選/重新整理 0 次 AI 呼叫、0 KV 寫入）。
+- 測試：新增 `test/v246TracePageTdxAndDecisionReasonSummary.test.js`（20 項，含施工令 §十二 的 8 個 CASE 全部覆蓋＋`deriveFinalDecisionReason` 純函式單元測試）。完整 regression：1758 項（1738 既有＋20 新），失敗 32 項與變更前 baseline（同 commit `git stash -u` 取得）完全相同（CCTV/frame-latency 類既有失敗，與本輪無關），NEW_FAILURES=0。
+- 未做且刻意未做：未修改 PBS runtime、未修改 TDX 決策/AI prompt/LINE 規則、未動 `wrangler.jsonc` 任何開關（`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED` 維持 `"true"`）。若施工過程中發現任何會影響 runtime 決策的問題會 STOP 回報——本輪未遇到需要 STOP 的情況。
 
 ## V1.9.9 Phase 1 封版（2026-08-28，另一個 session 完成，本 Cloud Session 未參與，port 進本模板僅為維持 template↔engineering-memory 一致）
 

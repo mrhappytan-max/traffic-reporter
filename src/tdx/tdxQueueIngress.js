@@ -57,11 +57,82 @@
 import { buildPbsAiQueueMessage, computeIdempotencyKeyHash } from '../pbs/debugPush.js';
 import { computeFingerprint } from '../traffic/dedupe.js';
 import { resolveTdxHsinchuGeography, HSINCHU_GEO_STATUS } from './hsinchuGeoResolver.js';
-import { resolveTdxRoadManagementEligibility } from './roadManagementPolicyGate.js';
+import { resolveTdxRoadManagementEligibility, ROAD_MANAGEMENT_GATE_REASON } from './roadManagementPolicyGate.js';
+// V2.4.6 (order 路況工程部｜V2.4.6 查修頁資訊改版施工令, section 七/八) — a
+// Gate A drop below now ALSO writes one additive, best-effort Observatory
+// record via the SAME KV mechanism debugPush.js's own writeObservatoryRecord
+// already uses — reused directly, never a second/parallel index. See
+// aiObservatoryIndex.js's own V2.4.6 comment for the new outcome values
+// this writes. This is OBSERVATION-ONLY: nothing below changes which
+// events get dropped or why — the drop decision (geoPassed/toEnqueue
+// filtering) is computed first, completely unchanged from before this
+// round, and only the ALREADY-COMPUTED `geo`/`policy` result objects are
+// then also handed to buildAiObservatoryRecord().
+import { buildAiObservatoryRecord, recordAiObservatoryEntry, AI_OUTCOME } from '../pbs/aiObservatoryIndex.js';
+import { taipeiDateString } from './usageLedger.js';
 
 function safeErrorMessage(err) {
   if (err && typeof err.message === 'string') return err.message;
   return 'Unknown error';
+}
+
+// V2.4.6 — a minimal, local "candidate"-shaped object built directly from
+// the raw TDX normalized event, same role/shape as debugPush.js's own
+// buildPseudoCandidateFromRawEvent (duplicated locally per this project's
+// established "each module stays independently readable" convention — see
+// this file's own header comment for the precedent) — never truncates or
+// rewrites comment/sourceDetail.
+function buildTdxPseudoCandidate(event, generatedAt) {
+  return {
+    road: (event && event.road) || null,
+    direction: (event && event.direction) || null,
+    areaNm: (event && event.areaNm) || null,
+    eventType: (event && event.type) || null,
+    comment: (event && (event.description || event.title)) || '',
+    sourceDetail: (event && event.locationDescription) || '',
+    longitude: event && typeof event.longitude === 'number' ? event.longitude : null,
+    latitude: event && typeof event.latitude === 'number' ? event.latitude : null,
+    blockedLanes: event && typeof event.blockedLanes === 'number' ? event.blockedLanes : null,
+    generatedAt,
+  };
+}
+
+// V2.4.6 — best-effort, NEVER throws, and NEVER awaited by anything that
+// would let a KV hiccup delay or affect Gate A's own drop decision (the
+// caller already decided to drop before this is called) — same isolation
+// discipline as debugPush.js#writeObservatoryRecord.
+async function recordTdxGateDrop(env, { event, lifecycle, outcome, now }) {
+  try {
+    const source = event.source; // 'freeway' | 'highway'
+    const eventId = event.rawId;
+    const fingerprint = computeFingerprint(event);
+    const generatedAt = now.toISOString();
+    const idempotencyKeyHash = await computeIdempotencyKeyHash({ source, eventId, lifecycle, fingerprint });
+    const candidate = buildTdxPseudoCandidate(event, generatedAt);
+    const record = buildAiObservatoryRecord({ candidate, eventId, lifecycle, fingerprint, now, source, outcome });
+    await recordAiObservatoryEntry(env.TRAFFIC_KV, record, { taipeiDate: taipeiDateString(now), idempotencyKeyHash, now });
+  } catch (err) {
+    console.error(`[tdx-queue-ingress][observatory] source=${event && event.source} eventId=${event && event.rawId} failed: ${safeErrorMessage(err)}`);
+  }
+}
+
+// V2.4.6 — maps the road-management gate's OWN already-computed `reason`
+// enum (roadManagementPolicyGate.js#ROAD_MANAGEMENT_GATE_REASON) onto the
+// matching Observatory outcome value. Pure, no judgment — a lookup table
+// over a value that gate already produced.
+function roadManagementOutcomeFor(reason) {
+  switch (reason) {
+    case ROAD_MANAGEMENT_GATE_REASON.SHOULDER_OPEN:
+      return AI_OUTCOME.ROAD_POLICY_EXCLUDED_SHOULDER_OPEN;
+    case ROAD_MANAGEMENT_GATE_REASON.SHOULDER_CLOSE:
+      return AI_OUTCOME.ROAD_POLICY_EXCLUDED_SHOULDER_CLOSE;
+    case ROAD_MANAGEMENT_GATE_REASON.CONSTRUCTION_INSUFFICIENT_LANES:
+      return AI_OUTCOME.ROAD_POLICY_EXCLUDED_INSUFFICIENT_LANES;
+    case ROAD_MANAGEMENT_GATE_REASON.CONSTRUCTION_UNKNOWN_LANES:
+      return AI_OUTCOME.ROAD_POLICY_EXCLUDED_UNKNOWN_LANES;
+    default:
+      return AI_OUTCOME.ROAD_POLICY_EXCLUDED_UNKNOWN_LANES;
+  }
 }
 
 /**
@@ -102,6 +173,16 @@ export async function enqueueTdxRoadEvents(env, { newEvents = [], updatedEvents 
         `[tdx-queue-ingress][geo-gate] source=${candidate.event.source} eventId=${candidate.event.rawId} ` +
           `lifecycle=${candidate.lifecycle} status=${geo.status} reason=${geo.reason} — dropped, 0 Queue/0 AI`
       );
+      // V2.4.6 (order section 七) — the drop decision above is already
+      // final and unchanged; this ADDS a trace-page-visible record for it
+      // (order: "被地理排除的事件也必須留下觀測紀錄"), never gates or
+      // delays the drop itself.
+      await recordTdxGateDrop(env, {
+        event: candidate.event,
+        lifecycle: candidate.lifecycle,
+        outcome: geo.status === HSINCHU_GEO_STATUS.OUTSIDE_HSINCHU ? AI_OUTCOME.GEO_EXCLUDED_OUTSIDE_HSINCHU : AI_OUTCOME.GEO_EXCLUDED_UNKNOWN,
+        now,
+      });
     }
   }
 
@@ -119,6 +200,15 @@ export async function enqueueTdxRoadEvents(env, { newEvents = [], updatedEvents 
         `[tdx-queue-ingress][road-management-gate] source=${candidate.event.source} eventId=${candidate.event.rawId} ` +
           `lifecycle=${candidate.lifecycle} reason=${policy.reason} — dropped, 0 Queue/0 AI`
       );
+      // V2.4.6 (order section 八) — same additive-only observability write
+      // as the geo gate above; the eligibility decision itself (`policy`)
+      // was already fully computed before this line.
+      await recordTdxGateDrop(env, {
+        event: candidate.event,
+        lifecycle: candidate.lifecycle,
+        outcome: roadManagementOutcomeFor(policy.reason),
+        now,
+      });
     }
   }
 

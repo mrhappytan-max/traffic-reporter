@@ -4,6 +4,20 @@
 
 本檔案以 `src/` 實際模組結構整理，非憑記憶重寫。模組清單於 export 產生時由腳本重新掃描 `src/` 目錄核對（見本檔末尾「模組清單（自動掃描）」），若與下方敘述不符，以自動掃描結果與程式碼本身為準,並視為文件 Drift。
 
+## V2.4.6 — 查修頁 TDX 顯示與最終決策原因摘要（本輪，2026-09-03）
+
+UI/observability-only（PBS runtime／TDX 決策邏輯／AI prompt／LINE 規則全部未觸碰）。本輪改的是 `src/pbs/aiObservatoryView.js`（`GET /admin/pbs-ai-observatory-view`）＋`src/pbs/aiObservatoryIndex.js`，以及 `src/tdx/tdxQueueIngress.js` 新增一次額外的 best-effort 觀測寫入——**不是**舊版 `src/traffic/pipelineTraceView.js`（`GET /admin/pipeline-trace-view`），後者 `buildTraceEntry()` 只有 3 個呼叫點且皆 PBS 觸發，在 V2.4.0 `LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT` 架構下純 TDX 事件本就幾乎不會出現在那頁，非本輪範圍。
+
+**Gate A 觀測缺口（本輪修的核心問題）**：`tdx/tdxQueueIngress.js#enqueueTdxRoadEvents()` 的兩個 Gate A（V2.4.5 地理判定 `hsinchuGeoResolver.js`、道路管理政策 `roadManagementPolicyGate.js`）皆在 `PBS_AI_QUEUE.send()` 之前執行——排除的事件此前只留下一行 `console.log`，Observatory KV **完全零紀錄**（`aiObservatoryIndex.js` 的 `AI_OUTCOME` 枚舉先前沒有任何值代表「Gate A 排除」，因為這類事件從未走到 `debugPush.js#processQueuedPbsEvent()`，該函式才是既有 Observatory 寫入的唯一入口）。本輪新增：
+- `AI_OUTCOME` 六個新值：`GEO_EXCLUDED_OUTSIDE_HSINCHU`／`GEO_EXCLUDED_UNKNOWN`／`ROAD_POLICY_EXCLUDED_SHOULDER_OPEN`／`_SHOULDER_CLOSE`／`_INSUFFICIENT_LANES`／`_UNKNOWN_LANES`。
+- `tdxQueueIngress.js` 內的 `recordTdxGateDrop()`：在兩個 Gate A 排除點「判定之後」呼叫，重用 `aiObservatoryIndex.js` 既有的 `buildAiObservatoryRecord`/`recordAiObservatoryEntry`（同一個 KV prefix `debug:pbs-ai-observatory-index:v1`，未新增第二個 index），直接把 `resolveTdxHsinchuGeography()`／`resolveTdxRoadManagementEligibility()` 已算出的結果轉成上述新 outcome 值——排除決策本身完全不受影響（`toEnqueue`/`geoPassed` 的過濾邏輯無任何改動），寫入是 best-effort try/catch，KV 失敗不影響任何計數器或送出結果。
+
+**顯示層 bug（本輪也修的另一半問題）**：`aiObservatoryView.js#renderRow()` 的收合列此前硬編碼 `<span class="col-source">PBS</span>`，從未讀 `record.source`——即使一個 TDX 事件真的通過 Gate A、被正確寫入 `source:'freeway'/'highway'`，畫面上也一律顯示成 PBS。改為 `sourceLabel(record.source)`（`SOURCE_LABELS = {pbs:'PBS', freeway:'TDX｜高公局', highway:'TDX｜公路局'}`），三種來源徽章永不合併顯示。
+
+**最終決策原因摘要（施工令核心驗收項）**：`aiObservatoryIndex.js` 新增 `deriveFinalDecisionReason(record)`——UI 唯一可用的原因組成函式，只讀 record 既有欄位（`outcome`/`eventType`/`blockedLanes`/`suppressedForPhase`/`lineSent`），從不重新判斷／猜測。`buildAiObservatoryRecord()` 同時新增 `suppressedForPhase`（`debugPush.js#runAiDecisionPath` 早就算出、早就回傳，但因為這個 builder 的具名參數解構清單先前沒宣告這個名字，物件展開時被靜默丟棄——純粹補上）與 `blockedLanes`（`aiCandidate.js` 自 V2.4.5 起就有，此前也未存進 record）兩個既有欄位。`aiObservatoryView.js` 用這個函式在每張收合卡片新增一行 `✅已發送／⏭未發送／⏱AI處理失敗／⏳處理中 + 原因`（PBS/TDX 皆有），並新增 TDX 專屬的第二種展開流程條 SOURCE→GEO→ROAD_POLICY→QUEUE→AI→LINE（與 PBS 原本 ①-④ 流程條是完全獨立的程式碼路徑，PBS 卡片零改動）。
+
+**未觸碰**：PBS runtime（`pbs/pipeline.js`／`pbs/lifecycle.js`／`hsinchuFilter.js`）、TDX 地理/道路管理判定邏輯本身（只是「讀」它們已算好的結果）、AI prompt/model/schema/cache、LINE 通知規則/subscriptions/incidentSuppression、`wrangler.jsonc` 任何開關（`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED` 維持 `"true"`）。TRACE_API 端點不變（仍 `GET /admin/pbs-ai-observatory-view`，仍唯讀、0 AI 呼叫、0 額外 KV 寫入於開啟/篩選/重新整理路徑）。見 `test/v246TracePageTdxAndDecisionReasonSummary.test.js`（20 項，含施工令 8 個 CASE）與 `07_KNOWN_ISSUES.md` 完整記錄。
+
 ## 補登（2026-08-30）— Windows PBS Geographic Filter Repair（人類回報，本 Cloud Session 未獨立驗證，程式碼本輪未變更）
 
 人類回報 Windows PBS 本機篩選（`pbs-relay/`）已將 `isAccident()` 事故語意
