@@ -4,6 +4,22 @@
 
 本檔案以 `src/` 實際模組結構整理，非憑記憶重寫。模組清單於 export 產生時由腳本重新掃描 `src/` 目錄核對（見本檔末尾「模組清單（自動掃描）」），若與下方敘述不符，以自動掃描結果與程式碼本身為準,並視為文件 Drift。
 
+## V2.4.7 — TDX 地理資料缺失查修：description 文字 KM 後援（本輪，2026-09-03）
+
+PATCH，PBS_MODIFIED=NO、GEO_RESOLVER_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO、AI_POLICY_MODIFIED=NO。修的是 `tdx/normalize.js`＋`src/traffic/hsinchuFilter.js`，不是 `tdx/hsinchuGeoResolver.js`／`roadManagementPolicyGate.js` 本身的判定邏輯——那兩個模組完全未觸碰。
+
+**起因**：真實事件 `A15040100H-01-20260903103244766100023`（TDX｜高公局，國道三號 北向 79K+000 其他異常告警-散落物）在 V2.4.6 剛上線的查修頁上 GEO=UNKNOWN，`areaNm`/`displayKM`/`longitude`/`latitude` 全空，即使 description 明確含「79K+000」。
+
+**§一唯讀 code-path 稽核**：`normalizeRoadEvent()` 的結構化 KM 擷取（`Location.FreeExpressHighway.StartKM`/`EndKM`/`*LocationMile`）無條件執行，沒有分支會遺失已存在的資料——確認不是 normalize 的 bug，是這筆事件原始 payload 本身沒有任何結構化地理欄位（本 sandbox 無法連線 TDX API 取得該筆事件的真實 raw JSON 做 100% 驗證）。真正缺口：TDX normalize 路徑從未有過 description 文字 KM 後援（PBS 早就有）。
+
+**副發現（範圍外，已妥善繞過）**：`tdx/extract.js#firstDefined(raw, paths, undefined)` 因 JS default-parameter 語法（顯式傳 `undefined` 仍觸發該參數自己的預設值 `''`），一個真正缺席的 `startKM` 實際上永遠是 `''` 而非字面 `undefined`——對既有每個讀者都無害（都已把 `''` 當缺席），但代表新後援邏輯的觸發條件必須用 `!startKM`（falsy），不能用 `=== undefined`。未在源頭修正 `firstDefined`。
+
+**修法**：`src/traffic/hsinchuFilter.js#extractKmTokenFromText()`（新函式，重用 `parseKM()` 既有 TDX KM token 格式）。`normalizeRoadEvent()` 只在 `!startKM && !endKM` 時對 `description` 呼叫——結構化欄位永遠優先，不被覆蓋。解析出的 token 以與結構化欄位相同的原始字串格式（"79K+000"）存回 `startKM`/`endKM`，`composeLocation`/`parseKM`/`hsinchuGeoResolver.js` Tier-2 皆自動吃到，零新型別分支。新增 `displayKM`（數字，PBS 既有欄位同形狀）。
+
+**安全性（非常重要，CASE 7/7b 鎖住）**：解析出的 KM 唯一讀者是 `hsinchuGeoResolver.js` Tier-2 KM-heuristic 觀測層——本輪維持永遠 observability-only、永不單獨決定 CONFIRMED/OUTSIDE。上述真實事件即使 KM 成功解析，地理判定仍正確維持 UNKNOWN（0 Queue/0 AI/0 LINE）；只有可觀測性改善。
+
+**測試**：`test/v247TdxGeoInputMissingFix.test.js`（12 項，CASE 1-7＋CASE 7b＋`extractKmTokenFromText`單元測試）。全量迴歸 1770/1738/32，NEW_FAILURES=0。`APP_VERSION` V2.4.6→V2.4.7。
+
 ## V2.4.6 — 查修頁 TDX 顯示與最終決策原因摘要（本輪，2026-09-03）
 
 UI/observability-only（PBS runtime／TDX 決策邏輯／AI prompt／LINE 規則全部未觸碰）。本輪改的是 `src/pbs/aiObservatoryView.js`（`GET /admin/pbs-ai-observatory-view`）＋`src/pbs/aiObservatoryIndex.js`，以及 `src/tdx/tdxQueueIngress.js` 新增一次額外的 best-effort 觀測寫入——**不是**舊版 `src/traffic/pipelineTraceView.js`（`GET /admin/pipeline-trace-view`），後者 `buildTraceEntry()` 只有 3 個呼叫點且皆 PBS 觸發，在 V2.4.0 `LEGACY_TDX_LINE_PIPELINE=RETIRED_FOR_ROADEVENT` 架構下純 TDX 事件本就幾乎不會出現在那頁，非本輪範圍。

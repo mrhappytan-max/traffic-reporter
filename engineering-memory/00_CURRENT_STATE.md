@@ -9,21 +9,31 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V2.4.6（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | 979e5b8（V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY commit；本輪 V2.4.6 commit 尚未落地前的快照，本表隨本輪 commit 一併更新） |
+| Current Version | V2.4.7（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | bc8c7aa（V2_4_6_TRACE_PAGE_TDX_AND_DECISION_REASON_SUMMARY commit；本輪 V2.4.7 commit 尚未落地前的快照，本表隨本輪 commit 一併更新） |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty（本輪 V2.4.6 changeset，與本份快照同一 commit 一起送出） |
+| Source working tree | dirty（本輪 V2.4.7 changeset，與本份快照同一 commit 一起送出） |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
-| Current Phase | Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，TDX 正式 LINE 通知維持開啟（PHASE_E_TDX_NOTIFY_LIVE，`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`="true"，本輪未變動）。**本輪（V2.4.6）是查修頁 UI/observability-only 改版**：`GET /admin/pbs-ai-observatory-view` 收合卡片新增 FINAL_DECISION_REASON_SUMMARY（未展開即知為什麼發／不發），TDX 高公局/公路局事件正式以獨立來源徽章顯示（此前被誤標為 PBS 或於 Gate A 被排除時完全無紀錄）。PBS runtime／TDX 決策邏輯/AI prompt/LINE 規則全部未變動。雲端同步治理 V2 生效：Claude 對 Drive 唯讀、GitHub 為唯一寫入來源，GitHub Actions 自動鏡像至 Drive |
-| Current Task | none。Latest completed task = V2_4_6_TRACE_PAGE_TDX_AND_DECISION_REASON_SUMMARY，status = SEALED（V2.4.5→V2.4.6；前序歷程見 SYSTEM_STATE.json／06_VERSION_HISTORY.md）。CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何 wrangler.jsonc 開關）。**本輪內容**：§一唯讀調查確認查修頁應改的是 `aiObservatoryView.js`/`aiObservatoryIndex.js`（非舊版 `pipelineTraceView.js`）；TDX 在 Gate A（`tdxQueueIngress.js`）被地理/道路管理政策排除時，此前完全零觀測紀錄（只有 console.log）——本輪新增 6 個 AI_OUTCOME 值（`GEO_EXCLUDED_OUTSIDE_HSINCHU`/`GEO_EXCLUDED_UNKNOWN`/`ROAD_POLICY_EXCLUDED_SHOULDER_OPEN`/`_SHOULDER_CLOSE`/`_INSUFFICIENT_LANES`/`_UNKNOWN_LANES`），於 Gate A 判定後（不影響判定本身）額外寫入一筆 best-effort Observatory KV 紀錄；新增 `deriveFinalDecisionReason()` 純函式（唯一權威、只讀既有欄位、絕不重新判斷）供收合卡片與展開頁共用；`renderRow()` 修正原本硬編碼 `PBS` 字串的 bug，改讀 `record.source` 顯示 `TDX｜高公局`/`TDX｜公路局`/`PBS`；`buildAiObservatoryRecord()` 新增 `suppressedForPhase`/`blockedLanes` 兩個此前被靜默丟棄的既有欄位。雲端治理：Claude 對 Drive 唯讀，GitHub 為唯一寫入來源 |
-| Latest Completed Version | V2.4.6 |
-| Known Blocker | 無 blocker，沿用 V2.4.5 封版的 REAL_WORLD_CONFIRMATION_PENDING（TDX 正式 LINE 通知現場觀察，本輪未變動）——本 session 無 Production 網路存取，需人類看真實 LINE/Cloudflare Logs 回報異常，異常回報時第一動作固定 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=false`。本輪（V2.4.6）本身是 UI-only，無新增 runtime blocker |
-| Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING（沿用 V2.4.5 封版項目，與本輪 UI 改版無關） |
+| Current Phase | Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，TDX 正式 LINE 通知維持開啟（PHASE_E_TDX_NOTIFY_LIVE，本輪未變動）。**本輪（V2.4.7）是 TDX normalize 小型修正**：`tdx/normalize.js` 新增 description 文字 KM 後援解析（僅在結構化 `Location.FreeExpressHighway.StartKM`/`EndKM` 皆缺席時才啟用，絕不覆蓋結構化欄位），修復真實事件（國3北向79K+000其他異常告警-散落物）areaNm/displayKM 全空的問題。地理判定仍正確維持 UNKNOWN（安全原則：KM本身不構成CONFIRMED_HSINCHU證據）。PBS／TDX 地理判定規則本身／道路管理政策／AI prompt/LINE 規則全部未變動 |
+| Current Task | none。Latest completed task = V2_4_6_TDX_GEO_INPUT_MISSING_DIAGNOSIS_AND_FIX，status = SEALED（V2.4.6→V2.4.7；前序歷程見 SYSTEM_STATE.json／06_VERSION_HISTORY.md）。CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何 wrangler.jsonc 開關）。**本輪內容**：§一唯讀 code-path 稽核確認 `normalizeRoadEvent()` 結構化欄位擷取本身無 bug（無條件擷取，該筆事件原始 payload 確實缺少所有結構化 KM 欄位）——真正缺口是 TDX normalize 從未有過 description 文字 KM 後援（PBS 早就有）。同時發現一個既有、無害、與本輪無關的小 quirk：`firstDefined(raw, paths, undefined)` 因 JS default parameter 語法，實際上永遠回傳 `''` 而非 `undefined`（未在源頭修正，只在新後援邏輯的觸發條件正確處理）。新增 `hsinchuFilter.js#extractKmTokenFromText()`（重用 `parseKM()` 既有 TDX KM token 格式），`normalizeRoadEvent()` 只在結構化 KM 皆缺席時呼叫，新增 `displayKM`（數字，PBS既有欄位同形狀，僅供顯示，`hsinchuGeoResolver.js` Tier-2 KM-heuristic 觀測層照樣讀 startKM/endKM，永遠非決定性）。 |
+| Latest Completed Version | V2.4.7 |
+| Known Blocker | 無 blocker，沿用 V2.4.5 封版的 REAL_WORLD_CONFIRMATION_PENDING（TDX 正式 LINE 通知現場觀察，本輪未變動）——本 session 無 Production 網路存取，需人類看真實 LINE/Cloudflare Logs 回報異常，異常回報時第一動作固定 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=false`。本輪（V2.4.7）本身是 normalize 資料完整性小修，無新增 runtime blocker |
+| Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING（沿用 V2.4.5 封版項目，與本輪 normalize 修正無關） |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 待辦（沿用）：人類觀察真實 Production TDX LINE 推播現場結果，異常時第一動作固定關閉 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`。新增待辦：往後 debug 一筆「為什麼這筆 TDX 不見了」時，先查 `/admin/pbs-ai-observatory-view`（不再只有 `/admin/pipeline-trace-view`）——Gate A 排除的 TDX 事件現在也會出現在這裡 |
-| Export Generated At | 2026-09-03T00:00:00.000Z |
+| Next Action | 待辦（沿用）：人類觀察真實 Production TDX LINE 推播現場結果，異常時第一動作固定關閉 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`。往後查修頁看到「其他異常告警」類事件仍有 areaNm/displayKM 全空的情況，先查該事件原始 payload 是否真的連 description 文字都無 KM，而非假設 normalize 又壞了 |
+| Export Generated At | 2026-09-03T00:30:00.000Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
+
+## V2.4.7 封版（2026-09-03）— TDX 地理資料缺失查修（description 文字 KM 後援）
+
+- `V2_4_6_TDX_GEO_INPUT_MISSING_DIAGNOSIS_AND_FIX`，PATCH，PBS_MODIFIED=NO、GEO_RESOLVER_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO、AI_POLICY_MODIFIED=NO。
+- **起因**：真實 Production 事件 `EVENT_ID=A15040100H-01-20260903103244766100023`（TDX｜高公局，國道三號 北向 79K+000 其他異常告警-散落物）查修頁顯示 GEO=UNKNOWN，`areaNm`/`displayKM`/`longitude`/`latitude` 全空——即使原始描述明確寫著「79K+000」。
+- **§一唯讀稽核結論**：`tdx/normalize.js#normalizeRoadEvent()` 的結構化欄位擷取（`Location.FreeExpressHighway.StartKM`/`EndKM` 等）本身**無 bug**——無條件擷取，若原始 payload 有該欄位一定會被保留。真正缺口是**結構性的**：TDX normalize 路徑從未有過像 `pbs/normalize.js` 那樣的 description 文字 KM 後援解析。NORMALIZE_BUG=NO，TEXT_KM_FALLBACK_ADDED=YES。
+- **副發現（無害、已處理但未在源頭修正）**：`tdx/extract.js#firstDefined(raw, paths, undefined)` 因 JS default parameter 語法特性（明確傳入 `undefined` 仍會觸發該參數自己的預設值），實際上永遠回傳 `''` 而非字面 `undefined`——這對 `composeLocation()`/`parseKM()`/`roadManagementPolicyGate.js` 皆無害（三者皆已把 `''` 當缺席處理），但意味著新後援邏輯的觸發條件不能寫 `startKM === undefined`，必須用 `!startKM`（falsy）判斷。
+- **修法**：`src/traffic/hsinchuFilter.js` 新增 `extractKmTokenFromText()`，重用 `parseKM()` 既有的 TDX KM token 格式（"79K+000"/"80K"），非第二套格式。`normalizeRoadEvent()` 只在結構化 `startKM`/`endKM` 皆缺席時才呼叫，對 `description` 搜尋——**結構化欄位永遠優先，絕不被 description 覆蓋**。解析出的 token 以與結構化欄位相同的原始字串格式存回 `startKM`/`endKM`，下游（`composeLocation`/`parseKM`/`hsinchuGeoResolver.js` Tier-2）完全不需改動。新增 `displayKM`（數字，與 PBS 既有欄位同形狀，純顯示用）。
+- **安全驗證（施工令§四，CASE 7/7b 鎖住）**：解析出的 KM 僅被 `hsinchuGeoResolver.js` Tier-2 KM-heuristic 觀測層讀取，該層維持永遠非決定性（本輪未變動）——上述真實事件即使成功解析出 79K+000，地理判定仍正確維持 UNKNOWN（0 Queue/0 AI/0 LINE），只有可觀測性改善（查修頁現在能顯示「有KM在推測範圍內但無座標/地名證據」而非完全空白）。
+- **測試**：新增 `test/v247TdxGeoInputMissingFix.test.js`（12項，含施工令§六全部CASE 1-7＋CASE 7b 安全驗證＋`extractKmTokenFromText`純函式單元測試）。全量迴歸1770/1738/32，`git stash -u`同commit精確基準比對NEW_FAILURES=0。`APP_VERSION` V2.4.6→V2.4.7。
 
 ## V2.4.6 封版（2026-09-03）— 查修頁 TDX 顯示與最終決策原因摘要
 

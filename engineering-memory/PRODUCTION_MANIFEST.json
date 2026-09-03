@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "project": "traffic-reporter",
-  "verifiedFromRepoAt": "2026-09-03T00:00:00.000Z",
-  "verifiedFromCommit": "979e5b8 (V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY; this snapshot precedes the V2.4.6 commit it ships in)",
+  "verifiedFromRepoAt": "2026-09-03T00:30:00.000Z",
+  "verifiedFromCommit": "bc8c7aa (V2_4_6_TRACE_PAGE_TDX_AND_DECISION_REASON_SUMMARY; this snapshot precedes the V2.4.7 commit it ships in)",
   "note": "Everything in this file is derived from wrangler.jsonc/src/index.js in THIS repo checkout, verifiable by any future reader by re-running the export script. Fields the repo cannot itself verify (real Cloudflare Dashboard state) are explicitly marked unverified, never guessed.",
   "worker": {
     "name": "traffic-reporter",
@@ -231,5 +231,17 @@
     "traceApiUnchanged": "Still GET /admin/pbs-ai-observatory-view, still debug:pbs-ai-observatory-index:v1 KV prefix, still zero Workers AI calls and zero KV writes on open/refresh/filter.",
     "testEvidence": "New test/v246TracePageTdxAndDecisionReasonSummary.test.js (20 tests: the order's own 8 CASE acceptance scenarios plus deriveFinalDecisionReason unit coverage), all passing. Full regression 1758/1726/32, NEW_FAILURES=0 against a git-stash-u same-commit precise baseline (32 pre-existing failures, all CCTV/frame-latency timing-dependent, unrelated to this round).",
     "appVersion": "V2.4.5 -> V2.4.6 (MINOR)"
+  },
+  "v247TdxGeoInputMissingFix": {
+    "task": "V2_4_6_TDX_GEO_INPUT_MISSING_DIAGNOSIS_AND_FIX",
+    "completedAt": "2026-09-03",
+    "scope": "PATCH. PBS_MODIFIED=NO, GEO_RESOLVER_MODIFIED=NO, ROAD_POLICY_MODIFIED=NO, AI_POLICY_MODIFIED=NO.",
+    "triggerEvent": "Real Production event EVENT_ID=A15040100H-01-20260903103244766100023 (TDX｜高公局, 國道三號 北向 79K+000 其他異常告警-散落物) showed GEO=UNKNOWN with areaNm/displayKM/longitude/latitude all empty, even though the free-text description plainly contained '79K+000'.",
+    "sectionOneFinding": "Code-path audit of tdx/normalize.js#normalizeRoadEvent()'s structured-field extraction found NO bug -- it is unconditional, every structured KM candidate field was genuinely absent from this event's raw payload. The real gap is structural: tdx/normalize.js never had a description-text KM fallback at all (pbs/normalize.js has long had an analogous one for PBS's own displayKM). NORMALIZE_BUG=NO, TEXT_KM_FALLBACK_ADDED=YES.",
+    "secondaryFinding": "tdx/extract.js#firstDefined(raw, paths, undefined) does NOT actually return literal undefined when no candidate matches -- passing undefined explicitly as a JS default-parameter argument still triggers that parameter's own default (fallback=''), so a genuinely-absent startKM/endKM has always resolved to '', never undefined. Harmless everywhere else that already treats '' as absent (composeLocation's filter, parseKM()'s own '' early-return, roadManagementPolicyGate.js's blockedLanes parser) -- NOT re-fixed at its source (out of this round's scope); the new fallback's own trigger condition uses a falsy check (!startKM && !endKM) instead of a strict === undefined check to correctly account for it.",
+    "fix": "src/traffic/hsinchuFilter.js gained extractKmTokenFromText(), reusing parseKM()'s own TDX-KM-token shape (never a second/independent format). tdx/normalize.js's normalizeRoadEvent() calls it against `description` ONLY when both structured startKM/endKM candidates are absent -- a genuinely present structured field is NEVER overridden. The recovered token is stored in the exact same raw-string shape ('79K+000') a structured field already carries, so composeLocation()/parseKM()/hsinchuGeoResolver.js's own Tier-2 KM-heuristic tier all keep working unchanged. A new `displayKM` (plain number, same shape pbs/normalize.js's own field already has) is derived from whichever startKM the event ends up with, for trace-page display only.",
+    "safetyVerified": "CASE 7/7b in test/v247TdxGeoInputMissingFix.test.js: the recovered KM is read ONLY by hsinchuGeoResolver.js's Tier-2 KM-heuristic tier, which remains permanently OBSERVABILITY-ONLY and can never by itself produce CONFIRMED_HSINCHU. The real trigger event still correctly resolves UNKNOWN (0 Queue, 0 AI, 0 LINE) even after its KM is successfully recovered; only the trace page's own observability improves.",
+    "testEvidence": "New test/v247TdxGeoInputMissingFix.test.js (12 tests: CASE 1-7 plus CASE 7b safety verification, plus extractKmTokenFromText unit coverage), all passing. Full regression 1770/1738/32, NEW_FAILURES=0 against a git-stash-u same-commit precise baseline.",
+    "appVersion": "V2.4.6 -> V2.4.7 (PATCH)"
   }
 }

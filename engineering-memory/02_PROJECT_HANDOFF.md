@@ -575,6 +575,26 @@ CLOUDFLARE_QUEUE`。V2.2.0 把查修頁升級為四層事件生命週期檢視�
 V2.3.2／V2.3.3 是三個連續 PATCH（LINE 地圖座標直連 fallback、CCTV
 診斷工具修復、CCTV R2 讀回驗證），皆未改架構本身。
 
+## V2.4.7 — TDX 地理資料缺失查修：description 文字 KM 後援（2026-09-03，加在下方 V2.4.6 之上）
+
+**任務**：`V2_4_6_TDX_GEO_INPUT_MISSING_DIAGNOSIS_AND_FIX`，PATCH。PBS_MODIFIED=NO、GEO_RESOLVER_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO、AI_POLICY_MODIFIED=NO。
+
+**起因**：真實 Production 事件 `EVENT_ID=A15040100H-01-20260903103244766100023`（TDX｜高公局，國道三號 北向 79K+000 其他異常告警-散落物）在 V2.4.6 剛上線的查修頁上顯示 GEO=UNKNOWN，normalized event 的 `areaNm`/`displayKM`/`longitude`/`latitude` 全空——即使原始描述明確寫著「79K+000」。
+
+**§一唯讀 code-path 稽核**：讀完 `tdx/normalize.js#normalizeRoadEvent()` 的 `startKM`/`endKM` 結構化欄位擷取——`firstDefined(raw, ['Location.FreeExpressHighway.StartKM', 'Location.StartLocationMile', 'StartLocationMile'], undefined)`——確認擷取本身完全無條件，沒有任何分支會「有資料卻不保留」。結論：這不是一個丟資料的 bug，是這筆真實事件的原始 TDX payload 本身確實沒有帶任何結構化 KM/座標欄位（本 sandbox 無法連線 TDX API 取得該筆事件的原始 raw JSON 做 100% 驗證，這是本專案一貫誠實揭露的網路限制——但 code-path 本身已排除「normalize 把已存在的資料弄丟」這個假設）。真正的缺口是**結構性缺席**：`tdx/normalize.js` 從未實作過 description 文字 KM 後援解析——`pbs/normalize.js` 早就有類似機制（自己的 `displayKM` 文字解析），TDX 這邊從來沒有對應版本。
+
+**副發現（重要但範圍外，已妥善繞過而非重寫）**：`tdx/extract.js#firstDefined(raw, paths, undefined)` 有個真實、既有、無害的 JS 語法 quirk——明確傳入 `undefined` 作為第三個參數，仍會觸發該參數自己宣告的預設值 `fallback = ''`（JS default parameter 對「顯式傳 undefined」與「完全不傳」一視同仁）。所以一個真正缺席的 `startKM`，這整個專案有史以來實際上都是 `''`（空字串），從來不是字面上的 `undefined`。這對現有每一處讀取 `startKM`/`endKM` 的地方都無害（`composeLocation()` 自己的 `.filter(v => v !== undefined && v !== '')`、`parseKM()` 自己的 `value === ''` 提早 return、`roadManagementPolicyGate.js` 的 `blockedLanes` 解析器——三者都早已把空字串當缺席處理）。但這代表我自己新寫的後援觸發條件不能寫 `startKM === undefined`（永遠不會是 true），必須用 `!startKM`（falsy）判斷才會真的觸發。這個 quirk 本身**沒有在源頭修正**（`firstDefined()` 其他呼叫端目前都運作正常，重新設計會有更大的、超出本輪範圍的稽核成本），只在新程式碼自己的判斷式裡正確處理。
+
+**修法（全部 additive-only）**：`src/traffic/hsinchuFilter.js` 新增 `extractKmTokenFromText(text)`，重用 `parseKM()` 既有的 TDX KM token 正則形狀（"79K+000"／"80K"，同一種格式，不是第二套獨立解析）。`tdx/normalize.js#normalizeRoadEvent()` 只在 `!startKM && !endKM`（結構化欄位皆缺席）時才呼叫它，對已經算好的 `description` 文字搜尋——**結構化欄位永遠優先，一旦存在絕不被 description 文字覆蓋**（這是施工令§二的硬性規定，CASE 4 測試鎖住）。解析出的 token 以「79K+000」這種與結構化欄位完全相同的原始字串格式存回 `startKM`/`endKM`，因此 `composeLocation()`（把它拼進 `location`/`areaNm`）、`parseKM()`、`hsinchuGeoResolver.js` 自己的 Tier-2 KM-heuristic 觀測層，全部不需要任何改動就自動吃到這筆新資料——零新增型別分支。額外新增 `displayKM`（數字，與 `pbs/normalize.js` 早已存在的同名欄位同形狀），供 `aiCandidate.js`/`aiObservatoryIndex.js`/查修頁顯示用（那些程式碼本來就是泛用讀取 `normalizedEvent.displayKM`，不需要改動就能自動吃到）。
+
+**安全驗證（施工令§四，非常重要，CASE 7/7b 鎖住）**：新解析出的 KM token，唯一的讀者是 `hsinchuGeoResolver.js` 自己的 Tier-2 KM-heuristic 觀測層——那一層本輪維持完全不變，永遠是 observability-only，永遠不能單獨產生 `CONFIRMED_HSINCHU` 或 `OUTSIDE_HSINCHU`。上述真實事件即使成功解析出 79K+000（且剛好落在 KM 表的觀測範圍內），地理判定依然正確地維持 `UNKNOWN`（0 Queue/0 AI/0 LINE）——差別只在於查修頁現在能誠實顯示「有 KM 落在推測範圍內，但沒有座標或明確地名證據」，而不是完全空白、什麼線索都沒有。CASE 7b 額外驗證：把座標加回去（模擬真的落在新竹的情況），同一筆事件正確變成 `CONFIRMED_HSINCHU`——證明 CASE 7 的 UNKNOWN 從頭到尾都不是 KM 決定的。
+
+**測試**：新增 `test/v247TdxGeoInputMissingFix.test.js`（12 項）：`extractKmTokenFromText` 純函式單元測試（4 項）＋施工令§六 CASE 1-7 全部覆蓋＋CASE 7b 安全補充驗證。全量迴歸 1770/1738/32，與變更前基線（`git stash -u` 同 commit 精確基準 32 項）完全相同的失敗清單，NEW_FAILURES=0。`APP_VERSION` V2.4.6→V2.4.7。
+
+**未觸碰**：PBS/Windows PBS、TDX Geographic Resolver 自己的判定規則與官方 polygon、道路管理政策閘門、AI prompt、LINE policy、`wrangler.jsonc` 任何開關（`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED` 維持 `"true"`）。
+
+**接手一定要知道**：往後查修頁看到「其他異常告警」類事件仍顯示 areaNm/displayKM 全空，先假設「這筆事件原始 payload 真的連 description 文字都沒有 KM」（normalize 的 code-path 已用本輪測試鎖住不會再無條件丟資料），不要假設 normalize 又壞了。
+
 ## V2.4.6 — 查修頁 TDX 顯示與最終決策原因摘要（2026-09-03，加在下方 V2.4.5 之上）
 
 **任務**：`V2_4_6_TRACE_PAGE_TDX_AND_DECISION_REASON_SUMMARY`，UI/observability-only（明確禁止改動 routing/policy 決策、PBS Windows flow、TDX 地理過濾規則、AI prompt、LINE 通知規則）。

@@ -7,6 +7,12 @@
 import { get } from '../tdx/extract.js';
 import { FREEWAY_RULES, HIGHWAY_RULES, HSINCHU_BOUNDING_BOX, KM_BOUNDARY_BUFFER_KM } from './hsinchuConfig.js';
 
+// V2.4.7 (V2_4_6_TDX_GEO_INPUT_MISSING_DIAGNOSIS_AND_FIX) — shared TDX-style
+// KM token pattern, factored out so parseKM() and the new
+// extractKmTokenFromText() below match the exact same shape, never two
+// independently-drifting regexes for "what counts as a TDX KM token".
+const TDX_KM_TOKEN_PATTERN = /-?\d+(?:\.\d+)?\s*K(?:\s*\+\s*\d+)?/i;
+
 /** Parses TDX-style KM strings ("42K+000", "42K", "42.5") into a float. */
 export function parseKM(value) {
   if (value === undefined || value === null || value === '') return null;
@@ -22,6 +28,28 @@ export function parseKM(value) {
 
   const plain = parseFloat(str);
   return Number.isFinite(plain) ? plain : null;
+}
+
+/**
+ * V2.4.7 — extracts the FIRST TDX-style KM token ("79K+000", "80K", ...)
+ * found anywhere inside a larger piece of free text (e.g. a RoadEvent's
+ * own `Description`), as a raw string — never a parsed float. Used as a
+ * fallback ONLY when a TDX record's structured KM fields
+ * (`Location.FreeExpressHighway.StartKM`/`EndKM`/`*LocationMile`) are
+ * genuinely absent (see tdx/normalize.js's own V2.4.7 comment) — the raw
+ * token this returns is stored in the exact same string shape a
+ * structured field already carries (e.g. "93K+500"), so every existing
+ * downstream consumer of `event.startKM`/`endKM` (composeLocation() here,
+ * parseKM() above, hsinchuGeoResolver.js's own Tier-2 KM-heuristic
+ * observability tier) keeps working completely unchanged — no new type
+ * branching anywhere else in the codebase. Returns null when no KM-shaped
+ * token is present — never guesses a number from unrelated digits (a bare
+ * "K" with no leading digits, or a digit with no "K" unit, never matches).
+ */
+export function extractKmTokenFromText(text) {
+  if (!text || typeof text !== 'string') return null;
+  const match = text.match(TDX_KM_TOKEN_PATTERN);
+  return match ? match[0].trim() : null;
 }
 
 function findRule(rules, roadName) {

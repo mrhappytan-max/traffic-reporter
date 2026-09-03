@@ -43,7 +43,7 @@ import { classifyCongestionSeverity } from '../traffic/congestionSeverity.js';
 import { buildUpstreamSnapshot } from '../traffic/pipelineTrace.js';
 import { detectNonCollisionAnomaly } from '../traffic/anomalyClassification.js';
 import { detectDynamicShoulder } from '../traffic/dynamicShoulderClassification.js';
-import { extractPositions } from '../traffic/hsinchuFilter.js';
+import { extractPositions, extractKmTokenFromText, parseKM } from '../traffic/hsinchuFilter.js';
 
 const EVENT_TYPE_TEXT_MAP = {
   事故: 'accident',
@@ -187,12 +187,12 @@ export function normalizeRoadEvent(raw, source) {
     ['Location.FreeExpressHighway.Direction', 'Direction', 'RoadDirection'],
     ''
   );
-  const startKM = firstDefined(
+  let startKM = firstDefined(
     raw,
     ['Location.FreeExpressHighway.StartKM', 'Location.StartLocationMile', 'StartLocationMile'],
     undefined
   );
-  const endKM = firstDefined(
+  let endKM = firstDefined(
     raw,
     ['Location.FreeExpressHighway.EndKM', 'Location.EndLocationMile', 'EndLocationMile'],
     undefined
@@ -202,6 +202,86 @@ export function normalizeRoadEvent(raw, source) {
     ['Impact.BlockedLanes', 'ImpactLane.BlockedLanesNum', 'BlockedLanesNum'],
     undefined
   );
+
+  // V2.4.7 (V2_4_6_TDX_GEO_INPUT_MISSING_DIAGNOSIS_AND_FIX) — CONFIRMED
+  // STRUCTURAL GAP, real Production event EVENT_ID=A15040100H-01-
+  // 20260903103244766100023 (國道三號 北向 79K+000 其他異常告警-散落物):
+  // this record's raw payload carried none of the structured KM candidate
+  // fields above (Location.FreeExpressHighway.StartKM/EndKM/*LocationMile
+  // — read-only code-path audit found no conditional bug in the
+  // extraction above, it is unconditional and every candidate field is
+  // genuinely absent for this event), so `startKM`/`endKM` stayed
+  // `undefined` all the way to the return object — even though the KM was
+  // sitting right there, plainly, in the event's own free-text
+  // `Description`. pbs/normalize.js has long had an analogous text-KM
+  // fallback for PBS (`displayKM`); tdx/normalize.js never had one at
+  // all — this is the actual gap, not a regression.
+  //
+  // FALLBACK — fires ONLY when BOTH structured KM candidates are absent
+  // (never overrides a genuinely present structured field — order's own
+  // "structured KM 優先，不被 description 覆蓋"). Reuses
+  // hsinchuFilter.js#extractKmTokenFromText() (the SAME TDX KM-token
+  // shape parseKM() already trusts, never a second/different pattern),
+  // searched over `description` (already the same firstDefined-resolved
+  // text every other consumer of this event's free text already reads —
+  // Description/EventDescription/Remark/EventName, never a raw field this
+  // function doesn't already have in scope). The extracted token is
+  // stored in `startKM`/`endKM` in the EXACT SAME raw-string shape a
+  // structured field already carries (e.g. "79K+000") — so every existing
+  // downstream reader of these two fields (composeLocation right below,
+  // parseKM(), hsinchuGeoResolver.js's own Tier-2 KM-heuristic
+  // OBSERVABILITY-ONLY tier) keeps working completely unchanged, with
+  // zero new type branching anywhere else in the codebase. A single KM
+  // token (no distinct start/end pair) sets both `startKM` and `endKM` to
+  // the same value — the same convention a genuine fixed-point structured
+  // record already uses (see tdx/normalize.js's own real fixtures, e.g.
+  // "92K+800"/"92K+800").
+  //
+  // SAFETY (order section 四, non-negotiable): this KM token is still
+  // ONLY ever read by hsinchuGeoResolver.js as its Tier-2 KM-heuristic
+  // tier — that tier is, and remains, permanently OBSERVABILITY-ONLY and
+  // can NEVER by itself produce CONFIRMED_HSINCHU or OUTSIDE_HSINCHU (see
+  // that module's own header comment, unchanged this round). A
+  // successfully-parsed 79K+000 therefore does NOT make this event
+  // CONFIRMED_HSINCHU — it still correctly resolves UNKNOWN without a
+  // coordinate or an explicit place-name match, exactly as it did before
+  // this fix; only the OBSERVABILITY improves (the trace page can now
+  // show WHY it's UNKNOWN — 有KM無座標無地名 — instead of showing nothing
+  // at all). Zero change to Gate A's drop decision for this or any event.
+  // CONFIRMED (code-path audit, not assumed) — `firstDefined(raw, paths,
+  // undefined)` above does NOT actually fall back to `undefined` when no
+  // candidate field exists: passing `undefined` explicitly as a JS
+  // default-parameter argument still triggers that parameter's own
+  // default (`fallback = ''` — see tdx/extract.js#firstDefined), so a
+  // genuinely absent startKM/endKM resolves to `''`, never literal
+  // `undefined`. This is pre-existing, harmless everywhere else that
+  // already reads these two fields defensively (composeLocation's own
+  // `.filter(v => v !== undefined && v !== '')`, parseKM()'s `value ===
+  // ''` early-return, roadManagementPolicyGate.js's blockedLanes parser)
+  // — so it is NOT re-fixed at its source here (out of this round's own
+  // scope, and every other reader already treats '' as absent). The
+  // fallback trigger below is written to match that same falsy-means-
+  // absent convention, not a strict `=== undefined` check.
+  let kmSource = null;
+  if (!startKM && !endKM) {
+    const kmToken = extractKmTokenFromText(description);
+    if (kmToken) {
+      startKM = kmToken;
+      endKM = kmToken;
+      kmSource = { field: 'description-text-fallback', value: truncateForDebug(kmToken) };
+    }
+  }
+
+  // V2.4.7 — a single canonical, numeric display-only KM (order section
+  // 五's own "displayKM"), derived from whichever `startKM` this event
+  // ends up with (structured field OR the text fallback above — never a
+  // second, independent parse). Reuses parseKM() unchanged. Purely a
+  // display convenience, matching pbs/normalize.js's own long-standing
+  // `displayKM` field shape (a plain number) — NEVER read by
+  // eventTargetKm()/the geo resolver/the road-management gate (those all
+  // read `startKM`/`endKM` directly), so this can never affect any
+  // runtime decision, only what the trace page shows.
+  const displayKM = startKM ? parseKM(startKM) : null;
 
   // V2.4.5 — V2_4_5_TDX_HSINCHU_GEO_RESOLVER (order section 四/五). CONFIRMED
   // STRUCTURAL GAP (found by the V2.4.4 read-only audit, provable by
@@ -334,6 +414,11 @@ export function normalizeRoadEvent(raw, source) {
       : {}),
     ...(startKM !== undefined ? { startKM } : {}),
     ...(endKM !== undefined ? { endKM } : {}),
+    // V2.4.7 — see this function's own V2.4.7 comment above. Absent
+    // entirely (never null/0 placeholder) when no KM could be resolved at
+    // all — same "presence means something, absence means nothing was
+    // found" convention every other optional field on this object uses.
+    ...(typeof displayKM === 'number' && Number.isFinite(displayKM) ? { displayKM } : {}),
     ...(blockedLanes !== undefined ? { blockedLanes } : {}),
     ...(locationDescription ? { locationDescription } : {}),
     // V2.4.5 — see this function's own V2.4.5 comment above (`rawPositions`/
@@ -368,7 +453,7 @@ export function normalizeRoadEvent(raw, source) {
     // broadcastProvenance.js's debug record — see PROJECT_HANDOFF.md's
     // "V1.8.6.4 — provenance audit" section for the confidence-level
     // caveats on the location candidate field names themselves.
-    provenance: { classificationSource, ...(locationSource ? { locationSource } : {}) },
+    provenance: { classificationSource, ...(locationSource ? { locationSource } : {}), ...(kmSource ? { kmSource } : {}) },
     // V1.8.6.7 (Pipeline Trace) — same debug-only, never-read-by-the-real-
     // pipeline boundary as `provenance` above. Whitelisted raw-field
     // snapshot ONLY (see pipelineTrace.js's buildUpstreamSnapshot) — never

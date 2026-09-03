@@ -39,10 +39,10 @@
     "openStructuralQuestion": "TWO trees currently hold the same canonical content: engineering-memory/ (what the mirror syncs) and meeting-room-export/ (what scripts/export-meeting-room.mjs generates). They are kept in step by hand today, which is exactly the drift risk this governance exists to prevent. Needs a human decision: either point the generator at engineering-memory/, or retire one tree. NOT decided unilaterally."
   },
   "git": {
-    "sourceMainHead": "979e5b8 (V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY; this snapshot precedes the V2.4.6 commit it ships in)",
+    "sourceMainHead": "bc8c7aa (V2_4_6_TRACE_PAGE_TDX_AND_DECISION_REASON_SUMMARY; this snapshot precedes the V2.4.7 commit it ships in)",
     "sourceMainHeadResolvedFrom": "origin/main",
     "exportArtifactCommit": "uncommitted-at-generation-time (resolved by git history, never self-referenced)",
-    "sourceWorkingTree": "dirty (V2_4_6_TRACE_PAGE_TDX_AND_DECISION_REASON_SUMMARY changeset, committed together with this snapshot)",
+    "sourceWorkingTree": "dirty (V2_4_6_TDX_GEO_INPUT_MISSING_DIAGNOSIS_AND_FIX changeset, committed together with this snapshot)",
     "selfReferenceNote": "sourceMainHead is the official main commit this snapshot DESCRIBES; exportArtifactCommit is the commit that CONTAINS this artifact and is intentionally never equal to it. Requiring the two to match would create a Git self-reference loop (every export changes the file, which changes the commit, which invalidates the recorded head). sourceMainHead is read from origin/main and is therefore stable across re-runs and across whichever branch the export was generated on.",
     "checkoutNote": "The transient checkout (branch/HEAD/date) this export happened to run from is deliberately NOT recorded here. It changes on every commit and would make every release look like a content change, defeating delta sync; it also says nothing about the snapshot itself. The snapshot is identified by sourceMainHead alone. Local sync evidence in .engineering/ still records the checkout for auditing.",
     "workingTreeNote": "sourceWorkingTree excludes meeting-room-export/, which this generator dirties by definition; it answers 'is the source tree clean', not 'did the export just write files'."
@@ -247,21 +247,29 @@
     }
   },
   "taskSeal": {
-    "task": "V2_4_6_TRACE_PAGE_TDX_AND_DECISION_REASON_SUMMARY",
+    "task": "V2_4_6_TDX_GEO_INPUT_MISSING_DIAGNOSIS_AND_FIX",
     "status": "SEALED",
     "sealedAt": "2026-09-03",
-    "sealedBy": "human directive (路況工程部｜V2.4.6 查修頁資訊改版施工令)",
-    "releaseVersion": "V2.4.6",
-    "previousVersion": "V2.4.5",
-    "nature": "UI/observability-only — GET /admin/pbs-ai-observatory-view 收合卡片新增最終決策原因摘要、TDX 高公局/公路局來源正式顯示、Gate A 排除的 TDX 事件不再從查修頁消失。PBS_RUNTIME_MODIFIED=NO、TDX_DECISION_LOGIC_MODIFIED=NO。",
-    "sectionOneFinding": "查修頁正確目標＝GET /admin/pbs-ai-observatory-view（非舊版 pipeline-trace-view）。TDX 幾乎不出現＝(B)Gate A排除零紀錄 + (A)renderRow()硬編碼\"PBS\"字串 兩者組合。",
-    "fix": "tdxQueueIngress.js 新增 recordTdxGateDrop()（重用既有 buildAiObservatoryRecord/recordAiObservatoryEntry，6個新AI_OUTCOME值，Gate A決策本身不變）；新增 deriveFinalDecisionReason() 純函式（唯一權威，只讀既有欄位）；renderRow() 改讀 record.source 顯示三種來源徽章；buildAiObservatoryRecord() 補上此前被丟棄的 suppressedForPhase/blockedLanes 欄位；新增 TDX 專屬 SOURCE→GEO→ROAD_POLICY→QUEUE→AI→LINE 六段流程條。",
-    "testEvidence": "新增 test/v246TracePageTdxAndDecisionReasonSummary.test.js（20項，含施工令§十二全部8個CASE）。全量迴歸1758/1726/32，git stash -u同commit精確基準比對NEW_FAILURES=0。",
-    "unchanged": "PBS runtime、TDX決策邏輯（地理/道路管理政策判定本身）、AI prompt、LINE規則、wrangler.jsonc全部四個TDX/AI開關（TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED維持true）。",
-    "sealCommit": "見 git log 訊息 V2_4_6_TRACE_PAGE_TDX_AND_DECISION_REASON_SUMMARY（單一 commit，SHA 因自我參照而略去，同前例）",
-    "readerNote": "CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何開關）。往後 debug「為什麼這筆TDX不見了」先查 /admin/pbs-ai-observatory-view。完整記錄見 07_KNOWN_ISSUES.md「修正紀錄｜V2.4.6」章節。"
+    "sealedBy": "human directive (路況工程部｜V2.4.6 TDX 地理資料缺失查修施工令)",
+    "releaseVersion": "V2.4.7",
+    "previousVersion": "V2.4.6",
+    "nature": "PATCH — tdx/normalize.js 新增 description 文字 KM 後援解析，修復真實事件（國3北向79K+000其他異常告警-散落物）areaNm/displayKM/座標全空的問題。PBS_MODIFIED=NO、GEO_RESOLVER_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO、AI_POLICY_MODIFIED=NO。",
+    "sectionOneFinding": "normalizeRoadEvent()結構化KM擷取本身無bug（無條件擷取）——該事件原始payload確實缺少所有結構化地理欄位。真正缺口：TDX normalize從未有description文字KM後援（PBS早就有）。副發現（範圍外已繞過）：firstDefined(raw,paths,undefined)因JS default-parameter語法，缺席欄位永遠是''而非字面undefined。",
+    "fix": "hsinchuFilter.js新增extractKmTokenFromText()（重用parseKM()既有格式）；normalizeRoadEvent()只在結構化startKM/endKM皆缺席時對description呼叫，結構化欄位永遠優先；新增displayKM（數字，PBS既有欄位同形狀）。",
+    "safetyVerified": "新KM僅被hsinchuGeoResolver.js Tier-2 KM-heuristic觀測層讀取，永遠observability-only、不單獨決定CONFIRMED/OUTSIDE——真實事件即使KM解析成功仍正確維持UNKNOWN（0 Queue/0 AI/0 LINE），CASE 7/7b測試鎖住。",
+    "testEvidence": "新增test/v247TdxGeoInputMissingFix.test.js（12項）。全量迴歸1770/1738/32，git stash -u同commit精確基準比對NEW_FAILURES=0。",
+    "unchanged": "PBS/Windows PBS、TDX Geographic Resolver判定規則與官方polygon、道路管理政策閘門、AI prompt、LINE policy、wrangler.jsonc全部四個TDX/AI開關（TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED維持true）。",
+    "sealCommit": "見 git log 訊息 V2_4_6_TDX_GEO_INPUT_MISSING_DIAGNOSIS_AND_FIX（單一 commit，SHA 因自我參照而略去，同前例）",
+    "readerNote": "CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何開關）。往後查修頁看到「其他異常告警」類事件仍areaNm/displayKM全空，先假設該事件原始payload真的連description文字都沒有KM，不要假設normalize又壞了。完整記錄見 07_KNOWN_ISSUES.md「修正紀錄｜V2.4.7」章節。"
   },
   "taskSealHistory": [
+    {
+      "task": "V2_4_6_TRACE_PAGE_TDX_AND_DECISION_REASON_SUMMARY",
+      "status": "SEALED",
+      "sealedAt": "2026-09-03",
+      "releaseVersion": "V2.4.6",
+      "summary": "UI/observability-only：查修頁收合卡片新增最終決策原因摘要，TDX高公局/公路局來源正式顯示，Gate A排除的TDX事件不再從查修頁消失（修正renderRow()硬編碼\"PBS\"字串bug＋新增6個Gate A drop的AI_OUTCOME值）。PBS_RUNTIME_MODIFIED=NO、TDX_DECISION_LOGIC_MODIFIED=NO（完整記錄見07_KNOWN_ISSUES.md）。"
+    },
     {
       "task": "V2_4_5_SEAL_DEPLOY_AND_REAL_WORLD_VERIFY",
       "status": "SEALED",
@@ -485,7 +493,7 @@
   ],
   "version": {
     "packageJsonVersion": "0.1.0",
-    "latestCompleted": "V2.4.6",
+    "latestCompleted": "V2.4.7",
     "canonicalSource": "src/version.js 的 APP_VERSION — 唯一權威。packageJsonVersion 是 npm 套件版本（0.1.0），與產品版本線無關，不要混用。"
   },
   "production": {
@@ -494,22 +502,22 @@
     "deployMethod": "push to main -> Cloudflare Workers Builds auto-deploy",
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
-  "currentPhase": "Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline。PHASE_E_TDX_NOTIFY_LIVE（TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=true，本輪未變動）。**V2.4.6（本輪，2026-09-03）**：查修頁 UI/observability-only 改版——GET /admin/pbs-ai-observatory-view 收合卡片新增最終決策原因摘要，TDX 高公局/公路局事件正式以獨立來源徽章顯示，Gate A 被地理/道路管理政策排除的 TDX 事件不再從查修頁消失。本session無Production網路存取，實機觀察委由人類；異常第一動作固定改回false。雲端同步治理V2生效：Claude對Drive唯讀、GitHub為唯一寫入來源",
-  "currentTask": "none（無進行中工作）。Latest completed task = V2_4_6_TRACE_PAGE_TDX_AND_DECISION_REASON_SUMMARY，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.4.6。本輪內容：§一唯讀調查確認查修頁應改的是 aiObservatoryView.js/aiObservatoryIndex.js；TDX Gate A 排除新增6個AI_OUTCOME值+best-effort觀測寫入；新增 deriveFinalDecisionReason() 唯一權威原因組成函式；renderRow() 修正硬編碼\"PBS\"字串bug；TDX新增六段式流程條展示。PBS runtime/TDX決策邏輯/AI prompt/LINE規則/wrangler.jsonc全部未觸碰。全量迴歸NEW_FAILURES=0。下一件事：等人類回報V2.4.5 seal-deploy的真實Production觀察結果（與本輪UI改版無關）；異常時rollback協定見07_KNOWN_ISSUES.md。",
-  "knownBlocker": "無blocker，沿用V2.4.5封版的觀察中狀態——TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED已改true，第一筆真實TDX LINE通知現場結果待人類回報——REAL_WORLD_CONFIRMATION_PENDING（與本輪V2.4.6 UI改版無關，本輪未新增任何runtime blocker）。本session無Production網路存取無法自行觀察。異常時第一動作固定改回false止血。AI呼叫已有45秒fail-fast timeout（V2.4.3）。詳見07_KNOWN_ISSUES.md",
+  "currentPhase": "Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline。PHASE_E_TDX_NOTIFY_LIVE（本輪未變動）。**V2.4.7（本輪，2026-09-03）**：TDX normalize 小型修正——新增 description 文字 KM 後援解析（僅結構化KM欄位皆缺席時才啟用，絕不覆蓋結構化欄位），修復真實事件areaNm/displayKM全空的問題；地理判定安全性不變，KM本身仍不構成CONFIRMED_HSINCHU證據。本session無Production網路存取，實機觀察委由人類；異常第一動作固定改回false。雲端同步治理V2生效：Claude對Drive唯讀、GitHub為唯一寫入來源",
+  "currentTask": "none（無進行中工作）。Latest completed task = V2_4_6_TDX_GEO_INPUT_MISSING_DIAGNOSIS_AND_FIX，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.4.7。本輪內容：真實事件areaNm/displayKM/座標全空的§一稽核確認normalize結構化擷取無bug，缺口是TDX從未有description文字KM後援；新增extractKmTokenFromText()＋normalizeRoadEvent()後援邏輯（結構化優先不覆蓋）＋displayKM欄位；地理判定安全性以CASE7/7b鎖住（KM本身不構成CONFIRMED_HSINCHU證據）。PBS/TDX判定規則/道路政策/AI prompt/LINE規則/wrangler.jsonc全部未觸碰。全量迴歸NEW_FAILURES=0。下一件事：等人類回報V2.4.5 seal-deploy的真實Production觀察結果（與本輪normalize修正無關）；異常時rollback協定見07_KNOWN_ISSUES.md。",
+  "knownBlocker": "無blocker，沿用V2.4.5封版的觀察中狀態——TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED已改true，第一筆真實TDX LINE通知現場結果待人類回報——REAL_WORLD_CONFIRMATION_PENDING（與本輪V2.4.7 normalize修正無關，本輪未新增任何runtime blocker）。本session無Production網路存取無法自行觀察。異常時第一動作固定改回false止血。詳見07_KNOWN_ISSUES.md",
   "realWorldConfirmation": {
     "status": "REAL_WORLD_CONFIRMATION_PENDING",
     "subject": "V1.8.7.7 CCTV gray broken image fix"
   },
-  "nextAction": "待辦（沿用）：人類觀察真實Production TDX LINE推播——新竹縣市正常通過、桃園/苗栗/頭份/竹南=0推播、路肩開關=0推播、施工0-1車道=0推播、LINE內容無誤。異常時第一動作固定改回false止血。新增待辦：往後debug「為什麼這筆TDX不見了」先查 /admin/pbs-ai-observatory-view（Gate A排除的TDX事件現在也會出現）。一個月後依ineligibleByReason數據決定是否收緊主動播報政策",
+  "nextAction": "待辦（沿用）：人類觀察真實Production TDX LINE推播——新竹縣市正常通過、桃園/苗栗/頭份/竹南=0推播、路肩開關=0推播、施工0-1車道=0推播、LINE內容無誤。異常時第一動作固定改回false止血。新增待辦：往後查修頁看到「其他異常告警」類事件仍areaNm/displayKM全空，先確認該事件原始payload是否真的連description文字都沒有KM。一個月後依ineligibleByReason數據決定是否收緊主動播報政策",
   "authorityLevels": {
     "levelA_selfServiceReadOnly": "own repo git log, own Worker/KV/test results only",
     "levelB_requiresHumanApproval": "interactive login/OAuth, private dashboards, real KV content, any other department's resources (read or write)",
     "levelC_writeOperations": "deploy, rollback, secret, binding, cron, KV write, production branch, cross-repo changes"
   },
   "exportMeta": {
-    "generatedAt": "2026-09-03T00:00:00.000Z",
-    "sourceMainHead": "979e5b8",
+    "generatedAt": "2026-09-03T00:30:00.000Z",
+    "sourceMainHead": "bc8c7aa",
     "generatorScript": "scripts/export-meeting-room.mjs",
     "conciseHandoff": "02_PROJECT_HANDOFF.md is a generated CONCISE handoff, size-guarded so one cloud-connector create_file call can always sync it. The untouched full history stays in the repo as PROJECT_HANDOFF.md and is split by section into _history/ (non-canonical).",
     "historyDir": "_history"

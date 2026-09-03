@@ -36,11 +36,9 @@
 它必然失敗；push 完成後自動恢復通過。這是「還沒推送」的狀態產物，不是程式缺陷，
 **不要為它修改任何程式**。
 
-## V1.8.7.7 — Real-world Confirmation Pending（目前最重要的未結案項目）
+## V1.8.7.7 — Real-world Confirmation Pending（長期未結案，深度壓縮）
 
-**狀態：`AWAITING_REAL_WORLD_CONFIRMATION`。** CCTV 灰色破圖修復（`extractFirstJpegFrame` marker-aware 解析）已完成、已測試（12 項新測試 pass，含修復前失敗/修復後通過的雙向驗證）、已 merge main（`a3d6609`）、已 deploy（push 觸發 Cloudflare auto-deploy）、已封版（`8e10a7a`）。**尚未**取得下一筆真實動態路肩事件的 LINE 圖片正常顯示的現場證據——執行本輪修復的 session 本身無 Production 網路存取權限，無法自行驗證。
-
-**任何未來 session 若取得證據**（正面或負面），只需要更新 `ENGINEERING_STATUS.md` 與 `PROJECT_HANDOFF.md` §35 的狀態欄位為 `REAL_WORLD_CONFIRMED`（附上證據來源），**不需要**開新的修復版本，除非證據顯示修復本身有缺陷（此時視為新事故，重新走 root cause 流程，不要假設是「修得不夠完整」而直接補丁）。
+**狀態：`AWAITING_REAL_WORLD_CONFIRMATION`（自2026-08-25起長期懸置，未再更新）。** CCTV 灰色破圖修復（`extractFirstJpegFrame` marker-aware 解析，commit `a3d6609`/`8e10a7a`）已完成/測試/deploy/封版，但尚未取得下一筆真實動態路肩事件 LINE 圖片正常顯示的現場證據（執行修復的 session 無 Production 網路存取）。任何未來 session 取得證據只需更新狀態欄位為 `REAL_WORLD_CONFIRMED`，不需開新修復版本，除非證據顯示修復本身有缺陷。
 
 ## KI｜TDX 額度用盡 — 暫時 PBS-ONLY MODE（2026-08-23，歷史記錄，已由 V2.4.0+ 逐步部分還原）
 
@@ -72,16 +70,7 @@ POLICY               = MAJOR_ACCIDENT_ONLY
 MONTHLY_LINE_LIMIT   = 200
 ```
 
-**這是觀察，不是施工。** 真人已下令停止施工，先看真實數據。目前**不再新增**車道受阻關鍵字、封路 severity、重大程度分類器或任何額外 Push 過濾規則。
-
-- **要確認什麼**：目前「只播通過既有播報資格的 accident」是否能把主動 Push 控制在每月 200 則內。
-- **計費月陷阱（最容易誤判的一點）**：LINE 額度按**自然月**重設。觀察起點是 8/23，所以 **8/23～9/22 不是一個計費月**，那段期間的總數不能當成單月用量看。要判斷必須按自然月切（8/23–8/31 只是一個殘月）。
-- **證據規則**：只有真人從 LINE 官方後台實際讀到的數字才算 observation evidence。本 repo 看不到 LINE 用量，**不得**用事件數、log 或任何推估去補一個數字上來——沒拿到就是沒拿到。
-- **本輪沒有、也不需要建計費系統**：施工令明確排除。
-- **決策門檻（由真人判斷，Claude 不得自行提前施工）**：
-  - 明顯低於 200 → 維持現行策略。
-  - 接近或超過 200 → 由**真人**另開新任務，研究更嚴格的 `ROAD_IMPACT_ACCIDENT`／車道受阻・封閉限定策略。
-- **未來要收緊時的依據**：`broadcastPolicy.js` 已經在記錄每一則播出的事故究竟有沒有寫明通行受阻（`policy-major-accident-blocked-lanes` / `policy-major-accident-impact-keyword` / `policy-accident-no-stated-impact`），可從 `ineligibleByReason` 與 Pipeline Trace 讀出。**收緊要用這些真實比例去論證，不是再猜一次。**
+**這是觀察，不是施工。** 真人已下令停止施工，先看真實數據，不再新增過濾規則。要確認「只播通過既有資格的 accident」能否把主動 Push 控制在每月 200 則內。**計費月陷阱**：LINE 額度按自然月重設，觀察起點 8/23，8/23～9/22 不是一個計費月，判斷須按自然月切。**證據規則**：只有真人從 LINE 官方後台讀到的數字才算證據，本 repo 看不到 LINE 用量，不得用事件數/log 推估補數字。**決策門檻**（由真人判斷，Claude 不得自行提前施工）：明顯低於200維持現行策略；接近或超過200由真人另開新任務研究更嚴格的車道受阻限定策略。`broadcastPolicy.js` 已記錄每則事故是否寫明通行受阻，未來收緊要用這些真實比例論證，不是再猜一次。
 
 ## 修正紀錄｜PBS_ONLY 下不得要求 TDX 對應（2026-08-24，深度壓縮）
 
@@ -290,6 +279,20 @@ PBS 閘門排除仍視為有意義。fixture 實測 QUIET/NORMAL/HIGH writes/day
 ## 補登紀錄｜WINDOWS_PBS_GEOGRAPHIC_FILTER_REPAIR（2026-08-30，人類回報，本 Cloud Session 未獨立驗證）
 
 **狀態：`HUMAN_REPORTED_NOT_INDEPENDENTLY_VERIFIED`。** 人類回報：Windows PBS 本機篩選舊邏輯先套用 `isAccident()` 事故關鍵字語意閘門，才進新竹縣市地理判斷，導致非事故型事件（落石／坍方／封路／施工／積水等）即使位於新竹縣市仍可能在 Windows 端被直接丟棄，從未進入 Cloudflare/AI。回報修正：移除 `isAccident()` 語意閘門，改用 point-in-polygon（data.gov.tw dataset 7442 縣市界線）取代原本的矩形邊界，新竹市/縣**所有**事件類型皆納入候選，語意判斷完全交給 AI；同批資料驗證回報 `BEFORE_KEEP_COUNT=11 → AFTER_KEEP_COUNT=29`（找回 18 筆），`TESTS=124 passed/0 failed`。**本 Cloud Session 的獨立查證**：目前 `main`／本分支的 `pbs-relay/src/localPrototype.js` 仍保留 `isAccident()` 並仍作為候選閘門使用（見該檔第 56/108 行），`pbs-relay/` 完整 git 歷史（含 `feature/pbs-local-edge-filter-prototype` 分支）中**未找到**對應此修正的 commit，故無法核對回報的 point-in-polygon 實作、dataset 7442 引用或 11→29/124 測試數字。與既有 `PBS Windows Local Edge Debug Push Integration`（V1.9.6）記錄採同一誠實原則：**本節只記錄「人類回報了什麼」，不代表本 Session 已驗證程式碼或測試結果為真**——待對應 commit 出現於本 repo（或人類提供可核對的 diff/測試輸出）後，下一輪應改記為已驗證版本，並同步更新 `pbs-relay/` 程式碼本身（本輪禁止修改）。
+
+## 修正紀錄｜V2.4.7 — TDX 地理資料缺失查修：description 文字 KM 後援（2026-09-03，壓縮摘要）
+
+**任務** `V2_4_6_TDX_GEO_INPUT_MISSING_DIAGNOSIS_AND_FIX`，PATCH，PBS_MODIFIED=NO、GEO_RESOLVER_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO、AI_POLICY_MODIFIED=NO。
+
+**起因**：真實事件 `A15040100H-01-20260903103244766100023`（TDX｜高公局，國3北向79K+000其他異常告警-散落物）查修頁 `areaNm`/`displayKM`/座標全空，即使 description 明確含「79K+000」。
+
+**§一稽核**：`normalizeRoadEvent()` 結構化 KM 擷取本身無 bug（無條件執行）——該筆事件原始 payload 確實缺少所有結構化地理欄位（本 sandbox 無法連線 TDX API 取得原始 raw JSON 做 100% 驗證）。真正缺口：TDX normalize 從未有 description 文字 KM 後援（PBS 早就有）。**副發現**（範圍外、已妥善繞過非重寫）：`tdx/extract.js#firstDefined(raw, paths, undefined)` 因 JS default-parameter 語法，缺席欄位實際上永遠是 `''` 而非字面 `undefined`——對既有每個讀者（`composeLocation`/`parseKM`/`roadManagementPolicyGate.js`）皆無害，但新後援邏輯的觸發條件必須用 `!startKM`（falsy），不能用 `=== undefined`。
+
+**修法**：`hsinchuFilter.js` 新增 `extractKmTokenFromText()`（重用 `parseKM()` 既有 TDX KM token 格式，非第二套）。`normalizeRoadEvent()` 只在結構化 startKM/endKM 皆缺席時對 description 呼叫——結構化欄位永遠優先，絕不被覆蓋。token 以相同原始字串格式存回 startKM/endKM，`composeLocation`/`parseKM`/`hsinchuGeoResolver.js` Tier-2 皆自動吃到，零新型別分支。新增 `displayKM`（數字，PBS 既有欄位同形狀）。
+
+**安全性（非常重要，CASE 7/7b 鎖住）**：新 KM 唯一讀者是 `hsinchuGeoResolver.js` Tier-2 KM-heuristic 觀測層，永遠 observability-only、不單獨決定 CONFIRMED/OUTSIDE——上述真實事件即使 KM 成功解析仍正確維持 UNKNOWN（0 Queue/0 AI/0 LINE），只有可觀測性改善。
+
+**測試**：新增 `test/v247TdxGeoInputMissingFix.test.js`（12項）。全量迴歸1770/1738/32，NEW_FAILURES=0。`APP_VERSION` V2.4.6→V2.4.7。**通則**：一個「無條件擷取，沒有分支會丟資料」的 code path，其輸出仍可能因為上游 payload 本身就缺欄位而顯得「壞了」——查修前必須先用程式碼稽核排除「我方邏輯丟資料」，再判斷是否需要新增（而非誤以為要修復）一個原本就不存在的能力。詳見 `03_ARCHITECTURE.md`／`00_CURRENT_STATE.md`。
 
 ## 修正紀錄｜V2.4.6 — 查修頁 TDX 顯示與最終決策原因摘要（2026-09-03，壓縮摘要）
 

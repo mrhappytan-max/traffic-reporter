@@ -1636,7 +1636,67 @@
 // for the order's own 8 CASE acceptance scenarios (order section 十二) plus
 // dedicated deriveFinalDecisionReason unit coverage, and 07_KNOWN_ISSUES.md
 // for the full record.
-export const APP_VERSION = 'V2.4.6';
+//
+// V2.4.7 — V2_4_6_TDX_GEO_INPUT_MISSING_DIAGNOSIS_AND_FIX (2026-09-03,
+// PATCH). Real Production event EVENT_ID=A15040100H-01-
+// 20260903103244766100023 (TDX｜高公局, 國道三號 北向 79K+000 其他異常告警-
+// 散落物) showed GEO=UNKNOWN with areaNm/displayKM/longitude/latitude all
+// empty on the trace page, even though the free-text description plainly
+// contained "79K+000".
+//
+// §一 read-only code-path audit found NO bug in tdx/normalize.js's
+// structured-field extraction (unconditional, every candidate field
+// genuinely absent for this event) — the real gap is structural:
+// tdx/normalize.js never had a description-text KM fallback at all
+// (pbs/normalize.js has long had an analogous one for PBS's own
+// `displayKM`). NORMALIZE_BUG=NO, TEXT_KM_FALLBACK_ADDED=YES.
+//
+// A separate, genuine pre-existing quirk was found and worked around
+// (not re-fixed at its source, out of this round's own scope): tdx/
+// extract.js#firstDefined(raw, paths, undefined) does NOT actually
+// return `undefined` when no candidate matches — passing `undefined`
+// explicitly as a JS default-parameter argument still triggers that
+// parameter's own default (`fallback = ''`), so a genuinely-absent
+// startKM/endKM has always resolved to `''`, never literal `undefined`.
+// Harmless everywhere else that already reads these fields defensively
+// (composeLocation's own filter, parseKM()'s own `value === ''` check,
+// roadManagementPolicyGate.js's blockedLanes parser) — the fix's own
+// fallback-trigger condition is written to match that same falsy-means-
+// absent convention.
+//
+// FIX — src/traffic/hsinchuFilter.js gained extractKmTokenFromText(),
+// reusing parseKM()'s own TDX-KM-token shape ("79K+000"/"80K"), never a
+// second/independent KM-string format. tdx/normalize.js's
+// normalizeRoadEvent() now calls it against `description` ONLY when
+// BOTH structured startKM/endKM candidates are absent — a genuinely
+// present structured field is NEVER overridden (order's own "structured
+// KM 優先，不被 description 覆蓋"). The recovered token is stored in the
+// EXACT SAME raw-string shape ("79K+000") a structured field already
+// carries, so composeLocation()/parseKM()/hsinchuGeoResolver.js's own
+// Tier-2 KM-heuristic tier all keep working completely unchanged — zero
+// new type branching anywhere else. A new `displayKM` (plain number,
+// same shape pbs/normalize.js's own field already has) is derived from
+// whichever startKM the event ends up with, for trace-page display only.
+//
+// SAFETY (order section 四, non-negotiable, verified by CASE 7/7b in
+// test/v247TdxGeoInputMissingFix.test.js): the recovered KM token is
+// read ONLY by hsinchuGeoResolver.js's Tier-2 KM-heuristic tier, which
+// remains permanently OBSERVABILITY-ONLY (unchanged this round) and can
+// never by itself produce CONFIRMED_HSINCHU or OUTSIDE_HSINCHU — the
+// real Production event above still correctly resolves UNKNOWN (0 Queue,
+// 0 AI, 0 LINE) even after its KM is successfully recovered; only the
+// trace page's own observability improves (it can now show WHY the
+// event is UNKNOWN — a KM inside the heuristic table's range but no
+// coordinate/place-name evidence — instead of showing nothing at all).
+//
+// EXPLICITLY UNCHANGED THIS ROUND: PBS, Windows PBS, the TDX Geographic
+// Resolver's own tier logic/official polygon, the road-management gate,
+// the AI prompt, LINE policy, and every runtime drop/notify decision —
+// PBS_MODIFIED=NO, GEO_RESOLVER_MODIFIED=NO, ROAD_POLICY_MODIFIED=NO,
+// AI_POLICY_MODIFIED=NO. See test/v247TdxGeoInputMissingFix.test.js (12
+// tests, CASE 1-7 plus CASE 7b and extractKmTokenFromText unit coverage)
+// and 07_KNOWN_ISSUES.md for the full record.
+export const APP_VERSION = 'V2.4.7';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,
