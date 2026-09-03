@@ -1766,7 +1766,35 @@
 // GEO_MODIFIED=NO, ROAD_POLICY_MODIFIED=NO, CCTV_LOGIC_MODIFIED=NO. See
 // test/v248AiLineMessageEditorAndUnifiedPresentation.test.js (order's own
 // CASE 1-14 acceptance suite) and 07_KNOWN_ISSUES.md for the full record.
-export const APP_VERSION = 'V2.4.8';
+//
+// V2.4.9 — V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS (P0 實機異常
+// 查修令). Real Production trace-page symptom: two TDX events with a
+// clearly KM-bearing description ("國道一號 北向 101K+300 施工事件-施工
+// 維護", "國道一號 南向 100K+000 天候事件-天候不佳") showed displayKM as
+// "—" despite V2.4.7's own description-text KM fallback. Root-cause chain
+// confirmed by direct runtime trace (not assumed): extractKmTokenFromText()
+// / parseKM() and tdx/normalize.js#normalizeRoadEvent() both correctly
+// recover displayKM (101.3 / 100) onto the canonical normalized event, and
+// hsinchuGeoResolver.js correctly reads that same real event object and
+// correctly still resolves UNKNOWN (no coordinate/text-place evidence —
+// CORRECT safety behaviour per V2.4.7's own rule, not a bug). The one
+// genuine bug: src/tdx/tdxQueueIngress.js#buildTdxPseudoCandidate() — the
+// LOCAL candidate builder used ONLY for the Gate-A-drop observability
+// write — predates V2.4.7's displayKM field and was never updated to
+// carry it forward, so aiObservatoryIndex.js#buildAiObservatoryRecord()
+// (which reads candidate.displayKM) always wrote displayKM:null for any
+// TDX event dropped at Gate A, regardless of what normalize.js had
+// actually recovered. OBSERVABILITY_MAPPING_BUG. Events that PASS Gate A
+// and reach AI already showed displayKM correctly (they use the REAL
+// candidate from aiCandidate.js#buildAiCandidate(), which has carried
+// displayKM since V2.4.5) — confirmed unaffected. Fix: one added field,
+// propagating event.displayKM into the pseudo-candidate unchanged, same
+// convention as the pre-existing longitude/latitude fields beside it.
+// PATCH — GEO_RESOLVER_MODIFIED=NO, PBS_MODIFIED=NO, AI_MODIFIED=NO,
+// LINE_MODIFIED=NO, ROAD_POLICY_MODIFIED=NO, Queue send/enqueue decision
+// unchanged. See test/v248TdxKmFallbackProductionRuntimeDiagnosis.test.js
+// and 07_KNOWN_ISSUES.md for the full record.
+export const APP_VERSION = 'V2.4.9';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

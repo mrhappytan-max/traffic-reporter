@@ -280,6 +280,18 @@ PBS 閘門排除仍視為有意義。fixture 實測 QUIET/NORMAL/HIGH writes/day
 
 **狀態：`HUMAN_REPORTED_NOT_INDEPENDENTLY_VERIFIED`。** 人類回報：Windows PBS 本機篩選舊邏輯先套用 `isAccident()` 事故關鍵字語意閘門，才進新竹縣市地理判斷，導致非事故型事件（落石／坍方／封路／施工／積水等）即使位於新竹縣市仍可能在 Windows 端被直接丟棄，從未進入 Cloudflare/AI。回報修正：移除 `isAccident()` 語意閘門，改用 point-in-polygon（data.gov.tw dataset 7442 縣市界線）取代原本的矩形邊界，新竹市/縣**所有**事件類型皆納入候選，語意判斷完全交給 AI；同批資料驗證回報 `BEFORE_KEEP_COUNT=11 → AFTER_KEEP_COUNT=29`（找回 18 筆），`TESTS=124 passed/0 failed`。**本 Cloud Session 的獨立查證**：目前 `main`／本分支的 `pbs-relay/src/localPrototype.js` 仍保留 `isAccident()` 並仍作為候選閘門使用（見該檔第 56/108 行），`pbs-relay/` 完整 git 歷史（含 `feature/pbs-local-edge-filter-prototype` 分支）中**未找到**對應此修正的 commit，故無法核對回報的 point-in-polygon 實作、dataset 7442 引用或 11→29/124 測試數字。與既有 `PBS Windows Local Edge Debug Push Integration`（V1.9.6）記錄採同一誠實原則：**本節只記錄「人類回報了什麼」，不代表本 Session 已驗證程式碼或測試結果為真**——待對應 commit 出現於本 repo（或人類提供可核對的 diff/測試輸出）後，下一輪應改記為已驗證版本，並同步更新 `pbs-relay/` 程式碼本身（本輪禁止修改）。
 
+## 修正紀錄｜V2.4.9 — TDX KM Fallback Production Runtime Diagnosis（P0 實機異常查修，2026-09-04，壓縮摘要）
+
+**任務** `V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS`，PATCH，GEO_RESOLVER_MODIFIED=NO、PBS_MODIFIED=NO、AI_MODIFIED=NO、LINE_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO。
+
+**起因**：Production 查修頁兩筆TDX事件（國1北向101K+300施工、南向100K+000天候）displayKM/座標顯示—，GEO=UNKNOWN/Gate A排除，儘管V2.4.7已加description文字KM後援。
+
+**逐層 runtime trace**：parser/normalize 正確，displayKM 已正確落在 canonical 事件物件（101.3／100）；`resolveTdxHsinchuGeography()` 讀真正的 event 物件，正確收到 KM 進 Tier-2 觀測層且正確維持 UNKNOWN（無座標/地名證據——安全行為非 bug）。**真正 bug**：`tdxQueueIngress.js#buildTdxPseudoCandidate()`——V2.4.6 建立、Gate A 排除事件專用的查修頁記錄 candidate builder，早於 V2.4.7 才加的 `displayKM` 欄位從未同步更新，導致 Gate A 排除的 TDX 事件寫入查修頁時 displayKM 永遠 null。通過 Gate A 進 AI 的事件走真正的 `aiCandidate.js#buildAiCandidate()`（V2.4.5 起就有 displayKM），未受影響（CASE 4c 驗證）。
+
+**修法**：補一行 `displayKM: event.displayKM`，與旁邊 longitude/latitude 同慣例。不動 Gate A 決策/GEO resolver/Queue/AI/LINE/道路政策/PBS。無 Production 網路存取，判斷純基於程式碼 trace；push 後依既有部署路徑生效。
+
+**測試**：新增 `test/v248TdxKmFallbackProductionRuntimeDiagnosis.test.js`（8項，CASE1-5＋KV outage迴歸鎖）。全量迴歸1796/1764/32，NEW_FAILURES=0。`APP_VERSION` V2.4.8→V2.4.9。**通則**：欄位在本體物件正確不保證在每個獨立建構的影子物件（此處為 debug-only pseudo-candidate）裡也存在——新欄位上線需反查所有同形狀物件的獨立建構點。
+
 ## 修正紀錄｜V2.4.8 — LINE 路況文字編輯與統一排版（2026-09-04，壓縮摘要）
 
 **任務** `V2_4_8_AI_LINE_MESSAGE_EDITOR_AND_UNIFIED_PRESENTATION`，MINOR，PBS_DECISION_POLICY_MODIFIED=NO、TDX_DECISION_POLICY_MODIFIED=NO、GEO_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO、CCTV_LOGIC_MODIFIED=NO。
@@ -529,17 +541,13 @@ messageFormat/60字上限。`APP_VERSION`V2.4.4→V2.4.5（MINOR）。
 
 新增 `test/pbsCoordinateDirectMapFallback.test.js`（13 項：拒絕輸入型態單元測試、CASE 1-6、含真實 `EVENT_ID=11508260158-0` 端對端 fixture，road 全程維持「新竹縣-尖石鄉」，未硬編碼「竹60」）；既有 KM/座標解析測試檔全數重跑不變、全部通過，證實零回歸。全量迴歸 1718/1684/34，NEW FAILURES=0。`APP_VERSION` V2.3.0→V2.3.1（PATCH）。本輪**未觸碰**：AI Prompt/model、Windows PBS filter、Queue、LINE 廣播政策、Observatory 架構、TDX、CCTV，亦未開始縣道／鄉道公里標資料工程。詳見 `kmLocationResolver.js` 的 `buildDirectCoordinateMapUrl` 自身 header comment。
 
-## 修正紀錄｜V2.3.0 — PBS AI Queue Reliability，Cloudflare Queues 取代 ctx.waitUntil（2026-08-30）
+## 修正紀錄｜V2.3.0 — PBS AI Queue Reliability，Cloudflare Queues 取代 ctx.waitUntil（2026-08-30，深度壓縮）
 
-**真實Production事故**(與V2.1.0修的不同一種失敗模式)：`EVENT_ID=11508290166-0`成功抵達Cloudflare並啟動Workers AI呼叫(16:49:03.112)，但AI呼叫在`ctx.waitUntil()`背景執行時間預算到期前未能回傳——與Windows短HTTP timeout(V2.1.0已解決)無關的另一種限制。16:49:32.912平台強制取消整個task("waitUntil() tasks...cancelled")，AI決策永久遺失，冪等紀錄卡死`PROCESSING`。`REAL_INCIDENT_ROOT_CAUSE=WAITUNTIL_BACKGROUND_WINDOW_EXCEEDED`。
+真實Production事故：`EVENT_ID=11508290166-0`成功啟動Workers AI呼叫，但`ctx.waitUntil()`背景執行時間預算到期前未回傳，平台強制取消整個task，AI決策永久遺失、冪等紀錄卡死PROCESSING。`REAL_INCIDENT_ROOT_CAUSE=WAITUNTIL_BACKGROUND_WINDOW_EXCEEDED`。
 
-**修正**：`ctx.waitUntil()`全面退休做為AI背景執行載體(`WAITUNTIL_AI_PROCESSING='RETIRED'`)，改用唯一一個Cloudflare Queue(`pbs-ai-processing-queue`，binding`PBS_AI_QUEUE`，`wrangler.jsonc`為唯一正典設定來源)：HTTP ingress只驗證/寫冪等PROCESSING/寫Observatory`PROCESSING_STARTED`/`Queue.send()`，只有send成功才ACK`accepted:true`(失敗回傳真實503，絕不假報已接收)；獨立Queue Consumer(`src/index.js`新增`queue()`export→`handlePbsAiQueueBatch`→`processQueuedPbsEvent`)承接全部AI/LINE/Observatory-final工作，與原始HTTP request/`ctx`無關，重用(非重造)既有AI candidate/decision engine/cache/LINE廣播/Observatory writer。
+**修正**：`ctx.waitUntil()`全面退休，改用唯一一個Cloudflare Queue（`pbs-ai-processing-queue`，binding`PBS_AI_QUEUE`）：HTTP ingress只驗證/寫冪等PROCESSING/`Queue.send()`，send成功才ACK；獨立Queue Consumer（`queue()`→`handlePbsAiQueueBatch`→`processQueuedPbsEvent`）承接全部AI/LINE/Observatory工作，重用既有AI candidate/decision engine/cache/LINE廣播。`AI_CALL_FAILED`可Queue重試（`MAX_QUEUE_RETRIES=3`），`AI_DECISION_INVALID`仍fail-closed絕不重試，新增終態`PROCESSING_FAILED`。Queue`AT_LEAST_ONCE`遞送，業務`EFFECTIVELY_ONCE`（COMPLETED重複遞送直接ack略過）。開發期間測試驅動發現並修正一個Observatory KV key重複bug（Queue Consumer獨立invocation的`now`需從`acceptedFirstAcceptedAt`重建`observatoryNow`專供KV key用）。
 
-**重試邊界（關鍵設計）**：`AI_CALL_FAILED`(呼叫未可靠完成——網路/5xx/容量/timeout)現在可Queue重試，`MAX_QUEUE_RETRIES=3`；既有`AI_DECISION_INVALID`(答案格式無效)fail-closed政策不變——絕不重試。新增終態`AI_OUTCOME.PROCESSING_FAILED`(重試耗盡後Consumer寫入，標記冪等COMPLETED，不讓事件卡在PROCESSING)。Queue遞送`AT_LEAST_ONCE`，業務結果要求`EFFECTIVELY_ONCE`：已COMPLETED的重複遞送直接ack略過，0額外AI呼叫/LINE推播。
-
-**開發期間發現並修正的Observatory KV key重複bug**(測試驅動發現)：Queue Consumer是獨立invocation，自己的`now`與HTTP ingress原始接受時間不同，直接沿用會讓最終寫入建立第二筆KV紀錄而非覆寫早期`PROCESSING_STARTED`。修正：從queue message的`acceptedFirstAcceptedAt`重建`observatoryNow`專供兩次Observatory寫入key使用，真實`now`仍用於業務決策(AI呼叫/LINE時段閘門)與`markProcessingComplete`的`completedAt`。
-
-`RAW_PBS_TEXT_POLICY=IMMUTABLE_END_TO_END_UNTIL_AI`不變。**KV成本**(實測)：`puts=4N+2`(與V2.2.0同)，`gets=6N`(+1/事件)。**Queue成本**(估算)：成功2次operation，重試耗盡最差5次；50/100/200事件/日最差250/500/1000次，遠低於10,000/日免費額度。新增`test/pbsAiQueueReliability.test.js`(含真實事故迴歸fixture)，改寫`pbsDebugPushBackgroundProcessing.test.js`5項過時測試。1705項/1671 pass/34 fail，NEW_FAILURES=0。`APP_VERSION`V2.2.0→V2.3.0。未觸碰：Windows PBS filter/HTTP timeout、PBS原始文字、AI prompt/model、service area、LINE formatter、driverSummary、TDX、CCTV、Shared Feed。`BROWSER_ACTION_REQUIRED`：真實Cloudflare Queue資源需Dashboard/`wrangler queues create`建立，sandbox無法驗證。**2026-08-30補記**：人類回報稱已由Production驗收，本Session未取得可核對證據，維持原狀待補。
+新增`test/pbsAiQueueReliability.test.js`，1705/1671/34，NEW_FAILURES=0。`APP_VERSION`V2.2.0→V2.3.0。未觸碰：Windows PBS filter/AI prompt/service area/LINE formatter/TDX/CCTV。`BROWSER_ACTION_REQUIRED`：真實Queue資源需Dashboard建立，sandbox無法驗證；人類2026-08-30回報已由Production驗收，本Session未取得可核對證據。
 
 ## 修正紀錄｜V2.2.0 — AI Decision Observatory 四層事件生命週期（2026-08-29，深度壓縮）
 

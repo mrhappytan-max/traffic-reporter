@@ -82,6 +82,31 @@ function safeErrorMessage(err) {
 // established "each module stays independently readable" convention — see
 // this file's own header comment for the precedent) — never truncates or
 // rewrites comment/sourceDetail.
+//
+// V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS (2026-09-04) —
+// CONFIRMED OBSERVABILITY-MAPPING BUG (code-path audit + direct runtime
+// trace, not assumed): this builder predates V2.4.7's
+// tdx/normalize.js#normalizeRoadEvent() description-text KM fallback —
+// when V2.4.7 added `displayKM` to the normalized TDX event, this
+// Gate-A-drop-only pseudo-candidate builder was never updated to carry it
+// forward, so aiObservatoryIndex.js#buildAiObservatoryRecord() (which
+// reads `candidate.displayKM`, see that function's own field list) always
+// wrote `displayKM: null` for any TDX event dropped at Gate A — even when
+// normalizeRoadEvent() had genuinely recovered a KM from free text (e.g.
+// real Production events "國道一號 北向 101K+300 施工事件-施工維護" and
+// "國道一號 南向 100K+000 天候事件-天候不佳", both confirmed via direct
+// runtime trace to carry `event.displayKM=101.3`/`100` and to correctly
+// reach `resolveTdxHsinchuGeography()` — that function reads the real
+// `event` object directly, never this pseudo-candidate, so the actual
+// GEO decision was NEVER affected by this gap; only the trace page's own
+// display of it was). Events that pass Gate A and reach AI already show
+// displayKM correctly — they use the REAL candidate from
+// aiCandidate.js#buildAiCandidate() (has carried `displayKM` since
+// V2.4.5), never this function. Fix: propagate `event.displayKM`
+// unchanged, same presence-means-something/absence-means-nothing
+// convention as `longitude`/`latitude` below — zero change to any Gate A
+// drop decision, the geo resolver, the road-management gate, the AI
+// prompt, or LINE policy.
 function buildTdxPseudoCandidate(event, generatedAt) {
   return {
     road: (event && event.road) || null,
@@ -90,6 +115,7 @@ function buildTdxPseudoCandidate(event, generatedAt) {
     eventType: (event && event.type) || null,
     comment: (event && (event.description || event.title)) || '',
     sourceDetail: (event && event.locationDescription) || '',
+    displayKM: event && typeof event.displayKM === 'number' ? event.displayKM : null,
     longitude: event && typeof event.longitude === 'number' ? event.longitude : null,
     latitude: event && typeof event.latitude === 'number' ? event.latitude : null,
     blockedLanes: event && typeof event.blockedLanes === 'number' ? event.blockedLanes : null,

@@ -98,7 +98,7 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 | 欄位 | 值 |
 |---|---|
-| Latest completed | V2.4.5 |
+| Latest completed | V2.4.9 |
 | package.json version | 0.1.0 |
 | Production status | DEPLOYED |
 | Production verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
@@ -310,151 +310,19 @@ monitor——單點 config parsing hotfix。APP_VERSION 維持 `V1.9.9`。
 可讀狀態 → `SYSTEM_STATE.json` 的 `taskSeal`。（Phase 3D 當時的現行禁令已由下方
 V2.0.0 里程碑段落取代——見該段落結尾。）
 
-## V2.0.0 MILESTONE — Windows PBS + Cloudflare Workers AI Production Architecture（2026-08-28）
+## V2.0.0 MILESTONE — Windows PBS + Cloudflare Workers AI Production Architecture（2026-08-28，深度壓縮）
 
-**這不是新功能開發，是重大架構里程碑封版。** APP_VERSION 從 `V1.9.9` 升為
-`V2.0.0`：V1.9.5～V1.9.9 Phase 3D 逐輪建立的 Windows PBS 本機邊緣過濾 + Cloudflare
-Workers AI 判讀，是一次完整的 Production ingestion／semantic decision 架構世代
-更換（舊：Cloudflare PBS polling → content hard rules → LINE；新：PBS official
-source → Windows Local Edge → Hsinchu-only filter → lifecycle → Cloudflare
-production ingress → persistent duplicate protection → AI decision cache →
-Cloudflare Workers AI → AI driver-impact decision → 既有 LINE 執行基礎設施），
-依 `00_CURRENT_STATE.md` 版本規則屬於「明顯新功能／架構階段 → minor」以上等級的
-不相容變更，故以 major 版本號標記這個新的 canonical milestone。**不得改寫 V1.x
-歷史**——所有 V1.x 版本記錄原樣保留於 `06_VERSION_HISTORY.md`。
+架構世代更換封版（非新功能）：Windows 本機邊緣過濾 + Cloudflare Workers AI 判讀
+取代舊 Cloudflare PBS polling + hard rules。APP_VERSION V1.9.9→V2.0.0。完整 26
+題接手地圖見 `03_ARCHITECTURE.md`「V2.0.0 接手地圖」。
 
-完整 26 題接手地圖（PBS 從哪來、Windows 在哪、lifecycle 怎麼判斷、AI candidate/
-cache/model 在哪、如何 rollback、如何排查等）已整理於 `03_ARCHITECTURE.md`
-開頭的「V2.0.0 接手地圖」一節，本節只放**操作型**內容（Dashboard 設定手冊／
-Rollback／Troubleshooting／Commit lineage）。
+**永久接手 Canonical Facts**：Windows PBS 路徑 `C:\Users\mrhap\traffic-reporter\pbs-relay`（repo 內 `pbs-relay/`）；ingress `POST /internal/pbs-debug-push`（`debugPush.js`）；Workers AI Binding 名 `AI`；kill switch `PBS_AI_DECISION_ENABLED`（字串注入，V2.0.2 起 canonical 來源是 `wrangler.jsonc` 非 Dashboard）；model `@cf/zai-org/glm-4.7-flash`；KV `TRAFFIC_KV`；transport idempotency prefix `debug:pbs-push-idempotency:v1:*`（48h TTL）；AI cache prefix `debug:pbs-ai-decision-cache:v1:*`（48h TTL）；認證 Secret `PBS_DEBUG_PUSH_SECRET`（明文從不記入本檔）。
 
-### 永久接手復原資訊（Canonical Facts Checklist）
+**Rollback（canonical，V2.0.2 起）**：改 `wrangler.jsonc` 的 `PBS_AI_DECISION_ENABLED` 為 `"false"`，commit，push main（Dashboard 手動改只撐到下次 deploy 就被覆寫）。AI Binding 不用刪除，kill switch 才是權威。緊急恢復 Cloudflare 自身 PBS 輪詢：`pbsConfig.js#PBS_30_MIN_POLLING_ENABLED=true` 並重新部署（程式碼完整保留）。
 
-| 項目 | 值 |
-|---|---|
-| Repo | `mrhappytan-max/traffic-reporter` |
-| Cloudflare Worker name | `traffic-reporter` |
-| Windows PBS project path | `C:\Users\mrhap\traffic-reporter\pbs-relay`（repo 內 `pbs-relay/`，V1.9.9 Phase 1 起在 main） |
-| Production ingress route | `POST /internal/pbs-debug-push`（`src/pbs/debugPush.js`，V1.9.5 命名沿用，V1.9.8 起是正式 business path） |
-| Workers AI Binding name | `AI` |
-| AI kill switch Variable | `PBS_AI_DECISION_ENABLED`（Cloudflare 以字串注入，非 boolean；V2.0.2 起 canonical 來源是 `wrangler.jsonc`，非 Dashboard——見下方） |
-| AI model | `@cf/zai-org/glm-4.7-flash` |
-| KV namespace | `TRAFFIC_KV` |
-| Transport idempotency prefix | `debug:pbs-push-idempotency:v1:*`（48h TTL） |
-| AI decision cache prefix | `debug:pbs-ai-decision-cache:v1:*`（48h TTL） |
-| 認證 Secret 名稱 | `PBS_DEBUG_PUSH_SECRET`（Bearer；**明文從不記入 Engineering Memory**，只記名稱/用途/設定位置） |
-| 目前 TRAFFIC_SOURCE_MODE | `PBS_ONLY`（`wrangler.jsonc`，TDX API 呼叫已停止，見 `07_KNOWN_ISSUES.md`） |
-| 目前服務區 | 新竹市、新竹縣（Windows local edge filter；竹南/頭份/苗栗市排除） |
-| Cloudflare PBS 30 分鐘輪詢 | `RETIRED`（`src/pbs/pbsConfig.js#PBS_30_MIN_POLLING_ENABLED=false`，程式碼保留可 rollback，見下方「十九」） |
-| GitHub→Drive sync governance | GitHub `main` → GitHub Actions（`sync-engineering-memory.yml`）→ Google Drive；Claude 對 Drive 唯讀 |
-| 重要 commits | 見下方「Commit Lineage」表 |
-| 已知限制 | `FIRST_REAL_AI_EVENT=WAITING`；transport idempotency `KV_ONLY_ATOMICITY=NOT_SUFFICIENT`（無 CAS，`PARTIAL` 保證，見 `07_KNOWN_ISSUES.md`） |
-| Next action | 等待 GPT Work 回報 `FIRST_REAL_AI_EVENT` 觀察證據；見「Next action」一節 |
+**Troubleshooting 排查順序**（Windows 有事件但 LINE 沒收到）：Windows 本機收到→Hsinchu filter 放行→lifecycle 判定（NEW/UPDATED/MISSING_PENDING_CLEAR/CLEARED）→Cloudflare ingress 收到 request→transport duplicate 擋下與否→AI cache hit/miss→AI 是否被呼叫（`AI_CALL_STARTED`/`FAILED`）→AI verdict（`NOTIFY_TRUE`/`FALSE`）→`notify=true` 後 LINE 是否嘗試（broadcastHours/notified-state 去重）→LINE 實際發送結果。逐層看 trace log，找到 root cause 立即 STOP。
 
-### Cloudflare Dashboard 設定手冊
-
-- **Worker**：Cloudflare Dashboard → Workers & Pages → `traffic-reporter`。
-- **Workers AI Binding**：該 Worker → Settings → Bindings → 新增/確認 Workers AI
-  binding，Variable name 必須是 `AI`（`wrangler.jsonc` 的 `"ai":{"binding":"AI"}`
-  對應這個名稱，改名會讓 `env.AI` 變成 `undefined`，AI 呼叫直接 fail-closed）。
-- **AI kill switch**：`PBS_AI_DECISION_ENABLED`。**V2.0.2 起 canonical
-  來源是 `wrangler.jsonc` 的 `vars`（GitHub main），不是 Dashboard**——
-  在 Dashboard 上改這個 Variable 只是暫時的，下一次 repo push 觸發的
-  deploy 會用 `wrangler.jsonc` 的值覆寫掉（V2.0.2 Config Drift Hotfix
-  修正的正是這個問題：GPT Work 手動在 Dashboard 設定 `"true"` 後被後續
-  部署悄悄移除）。要長期改變這個開關，改 `wrangler.jsonc` 並 push，
-  而不是只在 Dashboard 上點。值必須是字串 `"true"`／`"false"`
-  （Cloudflare Variables 一律以字串注入 Worker，不是真正的 boolean——
-  `src/pbs/aiConfig.js#resolvePbsAiDecisionEnabled()` 自 V1.9.9 Phase 3D
-  Hotfix 起已同時接受 boolean 與字串形式，大小寫不拘、可有前後空白）。
-- 每次改動 `wrangler.jsonc` 後 push 到 main 才會觸發真正的 canonical
-  deploy；若在 Dashboard 上手動改 Variable 並點 Deploy，僅在下一次 repo
-  push 之前有效。
-- Production browser 端驗證（AI Binding 是否真的 Active、Neurons Dashboard、
-  Active Production Version 是否更新）**由 GPT Work 負責，Claude 不需要進
-  Dashboard**。
-
-### Rollback Runbook（AI 緊急停用）
-
-**V2.0.2 起，canonical 停用方式是修改 repo，不是 Dashboard**——
-`PBS_AI_DECISION_ENABLED` 的權威來源已從 Dashboard 移到 `wrangler.jsonc`
-（見 `03_ARCHITECTURE.md`「V2.0.2」段落的 Config Drift Hotfix 記錄），
-Dashboard-only 的改動只撐到下一次 deploy 就會被覆寫回 repo 的值。
-
-1. **正式停用（撐得過下一次 deploy）**：修改 `wrangler.jsonc` 的
-   `"PBS_AI_DECISION_ENABLED"` 為 `"false"`，commit，push 到 `main`
-   （觸發 Workers Builds 自動部署）。
-2. **緊急暫時停用（等 repo 修正部署期間的過渡手段，不是長期方案）**：
-   Cloudflare Dashboard → `traffic-reporter` → Settings → Variables →
-   把 `PBS_AI_DECISION_ENABLED` 改為 `false` → 點 Deploy——**這只在下一次
-   repo push 前有效**，之後仍需完成步驟 1 才是真正的 canonical 停用。
-3. 確認 Active Production = 100% 指向新 deployment；`AI_DECISION` 效果上
-   變回 `DISABLED`（resolver 遇到 `"false"` 字串一律 fail-safe 為停用）。
-4. **AI Binding 不用刪除**——Binding 本身不是判斷 AI 是否啟用的依據，
-   kill switch 才是。
-5. **不要**用以下方式作為第一級 rollback：刪除 AI Binding、刪除程式碼、改
-   Prompt、改 Model——kill switch 才是正式 rollback authority，其餘手段風險更高
-   且無必要。
-6. 若需要暫時完全恢復 Cloudflare 自身 30 分鐘 PBS 輪詢（極端情況，Windows Local
-   Edge 完全失聯時的備援）：把 `src/pbs/pbsConfig.js` 的
-   `PBS_30_MIN_POLLING_ENABLED` 改回 `true` 並重新部署——程式碼完整保留未刪除。
-
-### Troubleshooting Runbook：Windows 有事件但 LINE 沒收到
-
-原則：**免費／最快／高機率優先 → 平台限制 → 流程定位 → 程式深查**，不要一開始
-就 Full Audit；找到 root cause 立即 STOP，不要繼續往下一步排查。
-
-1. Windows PBS 本機有沒有收到這筆事件？（`localMonitor.js` 執行 log／Task
-   Scheduler 是否常駐）
-2. Hsinchu local edge filter 有沒有放行？（是否誤判為苗栗/其他縣市而排除）
-3. lifecycle 判定是什麼？（`NEW`/`UPDATED`/`MISSING_PENDING_CLEAR`/`CLEARED`——
-   `MISSING_PENDING_CLEAR` 與 baseline 一律不 push，這是設計行為不是 bug）
-4. Cloudflare ingress（`POST /internal/pbs-debug-push`）有沒有收到 request？
-   （Windows 端 debugPushClient.js log／Cloudflare Workers Logs）
-5. 是否被 transport duplicate 擋下？（`debug:pbs-push-idempotency:v1:*`，同一
-   eventId+lifecycle+fingerprint 在 48h 內只接受一次）
-6. AI decision cache 是 hit 還是 miss？（hit 代表沿用之前已驗證的 decision，不會
-   有新的 AI trace）
-7. AI 有沒有被呼叫？（trace log `AI_CALL_STARTED`／`AI_CALL_FAILED`——binding
-   missing、429、5xx、network error 都會讓這裡 0 LINE 但不 fallback）
-8. AI verdict 是什麼？（trace log `AI_DECISION_VALID`/`AI_DECISION_INVALID`，以及
-   `AI_NOTIFY_TRUE`/`AI_NOTIFY_FALSE`——`notify=false` 是設計行為，不是漏推播）
-9. `notify=true` 後 LINE 有沒有被嘗試？（trace log `AI_LINE_ATTEMPTED`，以及
-   `runAiApprovedPbsBroadcast()` 內部的 `broadcastHours`/notified-state 去重是否
-   擋下——例如非播報時段、或這個 target 已經收過相同 fingerprint）
-10. LINE 實際發送成功嗎？（trace log `AI_LINE_SENT`/`AI_LINE_FAILED`，
-    `LINE_CHANNEL_ACCESS_TOKEN` 是否有效）
-
-### Commit Lineage（今日重要 lineage，不 rewrite history）
-
-| 里程碑 | Commit |
-|---|---|
-| V1.9.9 Phase 2 final | `18fe0f8` |
-| V1.9.9 Phase 3B code | `5d1f9fe` |
-| V1.9.9 Phase 3B docs | `27223ab` |
-| V1.9.9 Phase 3D Hotfix (fix) | `61795b1` |
-| V1.9.9 Phase 3D Hotfix (docs) | `dfcc29d` |
-| V2.0.0 release (fix) | `f1a05d0` |
-| V2.0.0 release (docs) | 見本檔案所在的 docs commit（`git log` 為準——一個 commit 無法在自己的內容裡預先寫入自己的 SHA） |
-| V2.0.1 release (fix) | `7b7bd05` |
-| V2.0.1 release (docs) | 見本檔案所在的 docs commit（同上，`git log` 為準） |
-| V2.0.2 release (fix) | `{{V202_FIX_COMMIT}}` |
-| V2.0.2 release (docs) | 見本檔案所在的 docs commit（同上，`git log` 為準） |
-
-### 目前 Production 狀態（人類／GPT Work 回報，本 Session 未獨立驗證）
-
-`ACTIVE_PRODUCTION_VERSION = a8e9454c-ab3f-4555-ab7e-0d8c39ecf73c`、Active
-Traffic = 100%、AI Binding = ACTIVE、`PBS_AI_DECISION_ENABLED = "true"`、
-Production Health = PASS、Worker Errors = 0、AI 429 = 0、AI invalid response = 0、
-`FIRST_REAL_AI_EVENT = WAITING`。這些數字全部來自 GPT Work 的 Dashboard 端回報，
-本 Session 因 sandbox 網路 egress 政策封鎖 Production 網域與 Cloudflare
-Dashboard，**無法獨立驗證**，按人類回報記錄，不冒充為本 Session 自行證實。V2.0.0
-封版建立後，若 repo push 觸發新的 Workers Builds deployment，請更新這裡的
-deployed commit／Version ID（同樣屬於 GPT Work 的驗證範圍）。
-
-完整設計理由 → `07_KNOWN_ISSUES.md`／`03_ARCHITECTURE.md`；機器可讀狀態 →
-`SYSTEM_STATE.json` 的 `taskSeal`。（V2.0.0 當時的現行禁令已由下方 V2.0.1
-段落取代——見該段落結尾。）
+Commit lineage／當時 Production 狀態快照（GPT Work 回報，未獨立驗證）等操作型歷史細節已隨版本推進失去時效性，如需考古見 git 歷史本檔案舊版本。完整設計理由 → `07_KNOWN_ISSUES.md`／`03_ARCHITECTURE.md`；機器可讀狀態 → `SYSTEM_STATE.json` 的 `taskSeal`。
 
 ## V2.0.1 — AI Decision Observatory（本輪，2026-08-29）
 
@@ -574,6 +442,14 @@ V2.0.2 之後到 V2.4.0 之間的四個版本，這份精簡接班版未逐版�
 CLOUDFLARE_QUEUE`。V2.2.0 把查修頁升級為四層事件生命週期檢視。V2.3.1／
 V2.3.2／V2.3.3 是三個連續 PATCH（LINE 地圖座標直連 fallback、CCTV
 診斷工具修復、CCTV R2 讀回驗證），皆未改架構本身。
+
+## V2.4.9 — TDX KM Fallback Production Runtime Diagnosis（2026-09-04，P0 實機異常查修，加在下方 V2.4.8 之上）
+
+Production 查修頁兩筆真實 TDX 事件（國1北向101K+300施工、國1南向100K+000天候）displayKM/座標顯示為 —，GEO=UNKNOWN/Gate A 排除。直接 runtime trace（非猜測）逐層驗證：`extractKmTokenFromText()`/`parseKM()`/`normalizeRoadEvent()` 全部正確、KM 已正確落在 canonical 事件物件上；`resolveTdxHsinchuGeography()` 讀的是真正 event 物件，正確收到 KM 進觀測層且正確維持 UNKNOWN（無座標/地名證據，安全行為非 bug）。**真正 bug**：`src/tdx/tdxQueueIngress.js#buildTdxPseudoCandidate()`——Gate A 排除事件專用的查修頁記錄本地 candidate builder，V2.4.6 建立、早於 V2.4.7 才加的 `displayKM` 欄位，未同步更新，導致 Gate A 排除的 TDX 事件寫入查修頁時 `displayKM` 永遠 null。通過 Gate A 進 AI 的事件走真正的 `aiCandidate.js#buildAiCandidate()`（V2.4.5 起就有 displayKM），完全未受影響。
+
+**修法**：`buildTdxPseudoCandidate()` 補一行，把 `event.displayKM` 原樣帶入，與旁邊 longitude/latitude 同慣例。不動 Gate A 決策、GEO resolver、Queue、AI、LINE、道路政策、PBS。
+
+**測試**：新增 `test/v248TdxKmFallbackProductionRuntimeDiagnosis.test.js`（8項，CASE1-5＋KV outage 迴歸鎖）。全量迴歸1796/1764/32，NEW_FAILURES=0。`APP_VERSION` V2.4.8→V2.4.9（PATCH）。**通則**：欄位在主物件正確不保證在每個獨立建構的影子物件（這裡是 debug-only pseudo-candidate）裡也存在——新欄位上線時要反查所有同形狀物件的獨立建構點。
 
 ## V2.4.8 — LINE 路況文字編輯與統一排版（2026-09-04，加在下方 V2.4.7 之上）
 

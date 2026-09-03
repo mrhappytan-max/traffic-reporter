@@ -9,21 +9,31 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V2.4.8（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | 6e8c96d（V2_4_6_TDX_GEO_INPUT_MISSING_DIAGNOSIS_AND_FIX commit；本輪 V2.4.8 commit 尚未落地前的快照，本表隨本輪 commit 一併更新） |
+| Current Version | V2.4.9（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | f2d743d（V2_4_8_AI_LINE_MESSAGE_EDITOR_AND_UNIFIED_PRESENTATION commit；本輪 V2.4.9 commit 尚未落地前的快照，本表隨本輪 commit 一併更新） |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty（本輪 V2.4.8 changeset，與本份快照同一 commit 一起送出） |
+| Source working tree | dirty（本輪 V2.4.9 changeset，與本份快照同一 commit 一起送出） |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
-| Current Phase | Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，TDX 正式 LINE 通知維持開啟（PHASE_E_TDX_NOTIFY_LIVE，本輪未變動）。**本輪（V2.4.8）是 LINE 訊息文字編輯與統一排版**：既有單次 Workers AI 呼叫（notify/impact/reason/confidence）新增 `cleanSummary`（AI 文字編輯，禁止提及道路/方向/KM/車道數，禁止捏造事實），`cleanSummary` 缺失/超長/與 canonical facts 矛盾一律 fallback 至既有規則式排版、notify 決策完全不受影響。`messageFormat.js` 新增統一版型（cleanSummary 存在時區塊式排版）與「通報：【TDX】高公局/公路局」「通報：【警廣】單位簡稱」來源標示（全新、之前 TDX 從未有過通報行）。canonical facts（road/direction/KM/blockedLanes）永遠由 formatter 直接讀取，AI 絕不能重新生成。PBS/TDX 決策邏輯/地理判定/道路管理政策/AI prompt 語意錨點/CCTV 邏輯全部未變動 |
-| Current Task | none。Latest completed task = V2_4_8_AI_LINE_MESSAGE_EDITOR_AND_UNIFIED_PRESENTATION，status = SEALED（V2.4.7→V2.4.8；前序歷程見 SYSTEM_STATE.json／06_VERSION_HISTORY.md）。CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何 wrangler.jsonc 開關）。**本輪內容**：`aiDecisionEngine.js` SYSTEM_PROMPT 新增 cleanSummary 編輯指示＋schema 欄位；`validateAiDecisionResponse()` 把 cleanSummary 獨立驗證（無效只是 null，不使整筆決策失敗）；新增 `cleanSummaryContradictsFacts()`（車道數/方向文字矛盾偵測，於 `resolveAiDecision()` 呼叫，矛盾時 null 掉）；`messageFormat.js` 新增 `buildReporterLine()`（取代舊 `buildSourceDetailLine()`，TDX 恆定顯示、PBS sourceDetail deterministic 別名對照表）與 cleanSummary 存在時的區塊式排版（fallback 分支完全不變，零回歸風險）；`aiApprovedPbsBroadcast.js`/`debugPush.js` 把 cleanSummary 貫穿到 formatter 與 Observatory 記錄；`aiObservatoryIndex.js`/`View.js` 新增 cleanSummary/finalRenderedMessage 欄位與「AI 文字編輯」展開區塊。既有測試因通報行格式改變而更新（reporter line 現在恆定顯示，含 TDX 事件）。 |
-| Latest Completed Version | V2.4.8 |
-| Known Blocker | 無 blocker，沿用 V2.4.5 封版的 REAL_WORLD_CONFIRMATION_PENDING（TDX 正式 LINE 通知現場觀察，本輪未變動）——本 session 無 Production 網路存取，需人類看真實 LINE/Cloudflare Logs 回報異常，異常回報時第一動作固定 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=false`。本輪（V2.4.8）本身是文字排版/來源標示，無新增 runtime blocker |
-| Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING（沿用 V2.4.5 封版項目，與本輪文字編輯改版無關） |
+| Current Phase | Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，TDX 正式 LINE 通知維持開啟（PHASE_E_TDX_NOTIFY_LIVE，本輪未變動）。**本輪（V2.4.9）是 P0 實機異常查修**：Production 查修頁兩筆 TDX 事件（101K+300/100K+000）顯示 displayKM=—，查明是 `tdx/tdxQueueIngress.js#buildTdxPseudoCandidate()`（Gate A 排除專用的本地 candidate builder）早於 V2.4.7 就存在、V2.4.7 加入 displayKM 欄位時未同步更新，導致 Gate A 排除的 TDX 事件寫入查修頁記錄時 displayKM 永遠是 null——KM parser/normalize/geo resolver 本身完全正確（已用直接 runtime trace 證實），GEO 判定安全性未受影響（KM 本身仍不構成 CONFIRMED 證據）。修法只補一個欄位傳遞。PBS/TDX 決策邏輯/地理判定/道路管理政策/AI prompt/CCTV 邏輯全部未變動 |
+| Current Task | none。Latest completed task = V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS，status = SEALED（V2.4.8→V2.4.9；前序歷程見 SYSTEM_STATE.json／06_VERSION_HISTORY.md）。CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何 wrangler.jsonc 開關）。**本輪內容**：診斷確認 extractKmTokenFromText()/normalizeRoadEvent() 皆正確、resolveTdxHsinchuGeography() 正確收到 KM 但正確維持 UNKNOWN（安全，非 bug）；真正 bug 是 `buildTdxPseudoCandidate()` 缺少 `displayKM` 欄位（V2.4.7 加欄位時遺漏這個 V2.4.6 就存在的本地 candidate builder），已加回；事件若通過 Gate A 進 AI（走 `aiCandidate.js#buildAiCandidate()` 真正 candidate）本就未受影響。 |
+| Latest Completed Version | V2.4.9 |
+| Known Blocker | 無 blocker，沿用 V2.4.5 封版的 REAL_WORLD_CONFIRMATION_PENDING（TDX 正式 LINE 通知現場觀察，本輪未變動）——本 session 無 Production 網路存取，需人類看真實 LINE/Cloudflare Logs 回報異常，異常回報時第一動作固定 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=false`。本輪（V2.4.9）本身是查修頁欄位修復，無新增 runtime blocker |
+| Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING（沿用 V2.4.5 封版項目，與本輪查修頁修復無關） |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 待辦（沿用）：人類觀察真實 Production TDX LINE 推播現場結果，異常時第一動作固定關閉 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`。新增待辦：觀察真實 cleanSummary 品質（是否確實只描述事件本身、不重複生成事實），必要時調整 SYSTEM_PROMPT 文字（非本輪範圍，需另開任務）|
-| Export Generated At | 2026-09-04T09:30:00.000Z |
+| Next Action | 待辦（沿用）：人類觀察真實 Production TDX LINE 推播現場結果，異常時第一動作固定關閉 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`。新增待辦：待 Production 部署本輪修正後，人類回頭核對查修頁上先前顯示 — 的 TDX Gate A 排除事件是否已正確顯示 displayKM |
+| Export Generated At | 2026-09-04T10:15:00.000Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
+
+## V2.4.9 封版（2026-09-04）— TDX KM Fallback Production Runtime Diagnosis（P0 實機異常查修）
+
+- `V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS`，PATCH，GEO_RESOLVER_MODIFIED=NO、PBS_MODIFIED=NO、AI_MODIFIED=NO、LINE_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO。
+- **起因**：Production 查修頁兩筆 TDX｜高公局事件——國道一號 北向「101K+300 施工事件-施工維護」、南向「100K+000 天候事件-天候不佳」——displayKM/longitude/latitude 全顯示 —，GEO=UNKNOWN/Gate A 排除，儘管 V2.4.7 理論上已加入 description 文字 KM 後援。
+- **逐層 runtime trace 結論（直接執行程式碼驗證，非猜測）**：(A) `extractKmTokenFromText()`/`parseKM()` 正確回傳 "101K+300"/101.3、"100K+000"/100——PARSER_BUG=NO。(B) `normalizeRoadEvent()` 正確把 displayKM 寫進回傳的 canonical event 物件——NORMALIZE_BUG=NO。(C) `resolveTdxHsinchuGeography()` 讀的是真正的 event 物件（非任何 candidate 副本），正確收到 KM 進 Tier-2 觀測層，且正確維持 UNKNOWN（無座標/地名證據，KM 本身不構成 CONFIRMED 證據——這是安全行為，非 bug）——GEO_RESOLVER 本身未受影響、未修改。(D) **真正的 bug**：`src/tdx/tdxQueueIngress.js#buildTdxPseudoCandidate()`——這是 Gate A 排除事件專用的查修頁記錄 candidate builder（V2.4.6 建立），早於 V2.4.7 才新增的 `displayKM` 欄位，V2.4.7 上線時沒有同步更新這個本地 builder，導致 `aiObservatoryIndex.js#buildAiObservatoryRecord()`（讀 `candidate.displayKM`）對所有 Gate A 排除的 TDX 事件永遠寫入 `displayKM: null`——OBSERVABILITY_MAPPING_BUG=YES。(E) 通過 Gate A、進 AI 的 TDX 事件本就使用真正的 `aiCandidate.js#buildAiCandidate()`（V2.4.5 起就有 displayKM），完全未受此 bug 影響——已用測試（CASE 4c）驗證。
+- **修法**：`buildTdxPseudoCandidate()` 新增一行，把 `event.displayKM` 原樣帶入回傳物件，與旁邊既有的 `longitude`/`latitude` 欄位同一慣例（presence 才有意義、absence 就是沒有）。不觸碰 Gate A 排除決策本身、GEO resolver、Queue、AI、LINE、道路管理政策、PBS。
+- **測試**：新增 `test/v248TdxKmFallbackProductionRuntimeDiagnosis.test.js`（8項，覆蓋施工令§五全部CASE 1-5＋Gate A drop KV write best-effort 迴歸鎖）。全量迴歸1796/1764/32，`git stash -u`同commit精確基準比對NEW_FAILURES=0。`APP_VERSION` V2.4.8→V2.4.9（PATCH）。
+- **PRODUCTION_APP_VERSION 誠實揭露**：本 session 對 Production `*.workers.dev` 無直接網路存取（`curl` 對外一律 403，`npm run verify:production` 結構上必為 `PASS_NETWORK_VERIFICATION_BLOCKED`），無法自行讀取實際部署的 `GET /version`。本輪判斷完全基於程式碼本身的 runtime trace，不依賴 Production 是否已跑最新版——若人類回報 Production 目前跑的 commit 早於本輪修正（`f2d743d` 之前），該版本本就沒有這個修法，屬於部署時間差而非新的程式問題；push 後依既有唯一部署路徑（push main → Cloudflare Workers Builds 自動部署）生效。
+- **通則**：一個欄位在「本體物件」（`normalizeRoadEvent()` 的回傳值）裡正確存在，不保證它在每一個由不同呼叫點各自建構的「影子物件」（這裡是 debug/observability 專用的本地 pseudo-candidate）裡也存在——當某個欄位是後來的版本才加上去的，必須反查所有既有的、獨立建構同類形狀物件的地方，而不能只信任「這個欄位在主要路徑上有」。
 
 ## V2.4.8 封版（2026-09-04）— LINE 路況文字編輯與統一排版
 

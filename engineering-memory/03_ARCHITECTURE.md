@@ -4,6 +4,18 @@
 
 本檔案以 `src/` 實際模組結構整理，非憑記憶重寫。模組清單於 export 產生時由腳本重新掃描 `src/` 目錄核對（見本檔末尾「模組清單（自動掃描）」），若與下方敘述不符，以自動掃描結果與程式碼本身為準,並視為文件 Drift。
 
+## V2.4.9 — TDX KM Fallback Production Runtime Diagnosis（本輪，2026-09-04，P0 實機異常查修）
+
+PATCH。GEO_RESOLVER_MODIFIED=NO、PBS_MODIFIED=NO、AI_MODIFIED=NO、LINE_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO。修的是 `src/tdx/tdxQueueIngress.js#buildTdxPseudoCandidate()` 一個函式，新增一個欄位。
+
+**觸發**：Production 查修頁兩筆真實 TDX｜高公局事件（國1北向「101K+300 施工事件-施工維護」、國1南向「100K+000 天候事件-天候不佳」）displayKM/longitude/latitude 全顯示 —，GEO=UNKNOWN/Gate A 排除，儘管 V2.4.7 已加入 description 文字 KM 後援。
+
+**逐層 runtime trace（直接執行程式碼驗證，非假設）**：`hsinchuFilter.js#extractKmTokenFromText()`／`parseKM()` 正確回傳 token/數值；`tdx/normalize.js#normalizeRoadEvent()` 正確把 `displayKM` 寫進回傳的 canonical event（101.3／100）；`tdx/hsinchuGeoResolver.js#resolveTdxHsinchuGeography()` 讀的是這個真正的 event 物件（`tdxQueueIngress.js` 呼叫點直接傳 `candidate.event`，非任何 pseudo-candidate），正確收到 KM 進 Tier-2 觀測層、正確維持 UNKNOWN（無座標/地名證據——這是既有安全設計，非本輪發現的 bug）。**真正的 bug**：`tdxQueueIngress.js#buildTdxPseudoCandidate()`——V2.4.6 建立、專供 Gate A 排除事件寫入查修頁記錄用的本地 candidate builder，早於 V2.4.7 才加上的 `displayKM` 欄位，從未同步更新這個獨立建構的物件，導致 `aiObservatoryIndex.js#buildAiObservatoryRecord()`（讀 `candidate.displayKM`）對所有 Gate A 排除的 TDX 事件永遠寫入 `displayKM: null`。通過 Gate A、進 AI 的 TDX 事件走真正的 `aiCandidate.js#buildAiCandidate()`（V2.4.5 起就有 `displayKM`），完全未受影響——已用測試（CASE 4c）驗證。
+
+**修法**：`buildTdxPseudoCandidate()` 新增一行 `displayKM: event && typeof event.displayKM === 'number' ? event.displayKM : null`，與旁邊既有 `longitude`/`latitude` 欄位同一慣例。不動 Gate A 排除決策、`resolveTdxHsinchuGeography()`、`roadManagementPolicyGate.js`、Queue、AI、LINE、PBS。
+
+**測試**：`test/v248TdxKmFallbackProductionRuntimeDiagnosis.test.js`（8項，覆蓋施工令§五CASE 1-5＋Gate A drop KV write best-effort 迴歸鎖）。全量迴歸1796/1764/32，NEW_FAILURES=0。`APP_VERSION` V2.4.8→V2.4.9。**通則**：一個欄位在「本體物件」正確存在，不保證它在每一個由不同呼叫點各自獨立建構的「影子物件」（這裡是 debug/observability 專用的本地 pseudo-candidate）裡也存在——新欄位上線時必須反查所有獨立建構同類形狀物件的既有程式碼位置。
+
 ## V2.4.8 — LINE 路況文字編輯與統一排版（本輪，2026-09-04）
 
 MINOR。PBS_DECISION_POLICY_MODIFIED=NO、TDX_DECISION_POLICY_MODIFIED=NO、GEO_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO、CCTV_LOGIC_MODIFIED=NO。修的是 `pbs/aiDecisionEngine.js`（schema/驗證）＋`traffic/messageFormat.js`（呈現）＋`traffic/aiApprovedPbsBroadcast.js`／`pbs/debugPush.js`（貫穿）＋`pbs/aiObservatoryIndex.js`／`View.js`（查修頁），不是任何決策邏輯本身。
@@ -980,116 +992,24 @@ AI Decision Cache（debug:pbs-ai-decision-cache:v1:*，48h TTL）
   修正為同時接受兩種形式）。
 - **Dashboard 操作位置與 Rollback Runbook** → `02_PROJECT_HANDOFF.md`。
 
-## PBS Windows Local Edge Debug Push Integration（V1.9.6/V1.9.7 建立的基礎，Windows 端不變）
+## PBS Windows Local Edge Debug Push Integration（V1.9.6/V1.9.7 建立的基礎，Windows 端不變，深度壓縮）
 
-以下段落描述 Windows 本機那一半（服務區篩選／CLEARED 治理／持久冪等），**V1.9.8
-完全未修改這部分**，只是把 Cloudflare 端接收後「只 ACK/log」的行為升級為上方的
-正式 Business Pipeline。Windows 端程式碼在 `pbs-relay/`（`src/` 掃描結果——下方
-模組清單——不會出現它）**自 V1.9.9 Phase 1 起已直接 commit 進 main**（見上方，
-不再是未合併的 feature branch）；Cloudflare 端接收端在 `src/pbs/debugPush.js`／
-`src/pbs/debugPushAuth.js`（V1.9.5，已在 `src/` 下，會出現在下方模組清單）。
-以下段落記錄的「`feature/pbs-local-edge-filter-prototype` 分支、118/118 測試」
-是 V1.9.6 當時的歷史事實（該分支後續已併入 main，見上方 Phase 1）；Windows 端的
-**執行期狀態**（Task Scheduler 是否真的常駐、真實 PBS Push 觀察紀錄、Cloudflare
-Secret 是否確實生效等）無法從這個 sandbox 獨立驗證，以下按真人回報記錄，不冒充
-為本 Session 自行證實：
+Windows 本機那一半（服務區篩選／CLEARED 治理／持久冪等）——**V1.9.8 完全未修改
+這部分**，只把 Cloudflare 端接收後行為升級為正式 Business Pipeline。Windows 端
+程式碼在 `pbs-relay/`（自 V1.9.9 Phase 1 起在 main，非 feature branch）；Cloudflare
+端在 `src/pbs/debugPush.js`／`debugPushAuth.js`。
 
 ```
-PBS 警廣官方來源
-    ↓
-Windows 本機每 3 分鐘抓取（localMonitor.js，Task Scheduler 常駐，見下方治理段落）
-    ↓
-Local Edge Filter（localPrototype.js）
-    ↓
-Production Service Area Rule（見下方「服務區治理修正」——**現重用**
-    src/pbs/hsinchuFilter.js#isPbsEventHsinchuRelevant、
-    src/pbs/roadName.js#normalizePbsRoad，不再是舊版自己的寬鬆矩形）
-    ↓
-事件生命週期比較（localState.js，主鍵 PBS UID，見下方「CLEARED 治理修正」）
-    ↓
-NEW / UPDATED / CLEARED / UNCHANGED / MISSING_PENDING_CLEAR
-    ↓
-SHOULD_PUSH 判斷（localDebugPush.js；只有 NEW/UPDATED/CLEARED 三種 lifecycle
-    才可能送出，UNCHANGED／MISSING_PENDING_CLEAR／baseline 一律不送）
-    ↓
-若 SHOULD_PUSH=NO
-    → 完全停在 Windows，不呼叫 Cloudflare（0 次 request）
-若 SHOULD_PUSH=YES
-    ↓
-Windows Debug Push Client（debugPushClient.js）
-    ↓
-POST /internal/pbs-debug-push
-    ↓
-Cloudflare src/pbs/debugPush.js（V1.9.5 建立，V1.9.8 起是正式 Production Ingress——
-    見上方新版流程圖，Authentication/Validation/持久冪等之後接正式 Business Pipeline，
-    不再只是 Workers Logs → ACK）
+PBS 官方來源 → Windows 每3分鐘抓取(localMonitor.js) → Local Edge Filter
+  (localPrototype.js，重用 Production 自己的 hsinchuFilter.js/roadName.js)
+  → 生命週期比較(localState.js) → NEW/UPDATED/CLEARED/UNCHANGED/MISSING_PENDING_CLEAR
+  → SHOULD_PUSH判斷 → [NO:停在Windows / YES:Debug Push Client]
+  → POST /internal/pbs-debug-push → debugPush.js(V1.9.8起正式Ingress)
 ```
 
-### 服務區治理修正（真實踩過的誤收 bug）
+**三項已修正的真實 bug**（本 Session 皆已讀程式碼確認邏輯存在）：(1) 服務區——舊寬鬆矩形誤收國3 55.8K鶯歌／國1 68.1K楊梅，改直接 import Production 自己的服務區規則；(2) CLEARED——單輪缺席即判 CLEARED 會誤判，改為明確解除文字立即 CLEARED、單純消失需連續兩輪確認（`MISSING_PENDING_CLEAR`→`CONFIRMED_CLEARED`）；(3) 持久冪等（V1.9.7）——L1 記憶體 Map 非唯一真相，新增 L2 `TRAFFIC_KV`（`debug:pbs-push-idempotency:v1:*`，48h TTL，SHA-256 stable key），`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY=PARTIAL`（`KV_ONLY_ATOMICITY=NOT_SUFFICIENT`，理論極窄race window，KV outage fail OPEN）。
 
-舊版 Prototype 自己的服務區輔助判斷用一個寬鬆矩形（`lat 24.45~24.95 / lng
-120.80~121.35`）就可以單獨 INCLUDE 一筆事件，真實造成**國3 55.8K 鶯歌**、**國1
-68.1K 楊梅**被誤收（兩者都在矩形內但完全不是新竹服務區）。現已修正：本機
-`localPrototype.js` **直接 import 並重用 Production 自己的服務區/新竹篩選規則**
-（`src/pbs/hsinchuFilter.js#isPbsEventHsinchuRelevant`、
-`src/pbs/roadName.js#normalizePbsRoad`——本 Cloud Session 讀取該 commit 的
-`pbs-relay/src/localPrototype.js` 原始碼確認這兩個 import 確實存在，非僅依真人
-描述），舊矩形不再能單獨 INCLUDE 任何事件。真人回報的驗證結果：鶯歌 55.8K =
-EXCLUDE、楊梅 68.1K = EXCLUDE、竹北 91.9K = INCLUDE、台68 9K = INCLUDE。
-
-### CLEARED 防誤判治理（二輪確認，本 Session 已讀程式碼確認邏輯存在）
-
-舊版「這一輪 fetch 成功但看不到這個 UID 就立刻 CLEARED」的設計已證實會誤判。現行
-規則（`pbs-relay/src/localPrototype.js`，本 Cloud Session 直接讀取該 commit 原始碼
-確認）：**明確解除文字**（`已排除`／`排除`／`已解除`／`解除` 四種 pattern）→ 立即
-CLEARED；**單純從 feed 消失**（absence-only）→ 需要**連續兩輪成功的 PBS fetch**
-都看不到才確認：第一輪缺席記為 `MISSING_PENDING_CLEAR`（`missingCount=1`，
-`CLEARED=0`，`SHOULD_PUSH=NO`），第二輪仍缺席才變成 `CONFIRMED_CLEARED`
-（`missingCount>=2`，`CLEARED=1`，`SHOULD_PUSH=YES`）；若 fetch 本身失敗，
-`missingCount` 不累加；若中途事件重新出現，pending clear 取消、`missingCount`
-歸零。真人回報以真實案例（UID `11508260013-5`，國3 96.7K 寶山休息站）完成完整
-fixture regression 驗證。
-
-### Cloudflare 端持久冪等（V1.9.7，L1 記憶體 + L2 TRAFFIC_KV）
-
-V1.9.5 的冪等只有 per-isolate 記憶體 Map，isolate 回收／Worker 重啟／redeploy 都可能
-讓同一事件重新被 accept。V1.9.7（`src/pbs/debugPush.js`）新增持久 L2 層：
-
-```
-Windows Debug Push 抵達
-    ↓
-驗證 auth → 驗證 payload
-    ↓
-計算 stable idempotency key = SHA-256(source:eventId:lifecycle:fingerprint)
-    ↓
-L1 記憶體 Map 命中？
-    ── 是 → duplicate=true（memoryHit，不查 KV）
-    ── 否 ↓
-L2 TRAFFIC_KV get（debug:pbs-push-idempotency:v1:<hash>，獨立 debug-only 前綴）
-    ── 存在 → duplicate=true（persistentHit，不寫 KV）
-    ── 不存在 → KV put（48h TTL）→ accepted=true
-```
-
-L1 僅是快速路徑（同 isolate 內短時間重試可跳過 KV 讀取），**非唯一真相**——L1 miss
-一律再查 L2 才能決定是否 accept，故全新 isolate 的空 L1 仍能正確命中別的 isolate
-寫入的 L2 紀錄。`KV_ONLY_ATOMICITY = NOT_SUFFICIENT`（KV 無 compare-and-swap，理論
-極窄 race window仍存在），`PERSISTENT_CROSS_ISOLATE_IDEMPOTENCY = PARTIAL`（關閉了
-主要風險，非 atomic exactly-once 保證——見 `07_KNOWN_ISSUES.md` 的完整分析，含為何
-不引入 Durable Object）。KV outage 時 fail OPEN（事件仍 accepted）。duplicate 永遠
-0 次額外 KV 寫入；僅真正首次的 idempotency key 花 1 次寫入，10/30/100 筆/日實測分別
-+10/30/100 writes/day，`KV_WRITE_PRESSURE = LOW`。
-
-### 已知限制、路線圖、Secret 治理教訓、Emergency kill switch
-
-完整記錄於 `07_KNOWN_ISSUES.md`（機器可讀欄位 → `SYSTEM_STATE.json` 的
-`pbsLocalEdgeFilterPrototype`）：Windows 常駐模式（Task Scheduler／watchdog／log
-retention）、Cloudflare Secret binding 曾經歷的一次真實 503 事故與根因、六階段
-路線圖（Phase 1 現行觀察、Phase 2 持久冪等設計【V1.9.7】、Phase 3-5 Business
-Pipeline／LINE 正式啟用／Windows 成為主要來源、Phase 6 PBS 輪詢退休——**V1.9.8
-一次性由正式施工令授權合併完成，非本 Session 自行提前推進**）、緊急停用方法
-（Windows 端環境變數 `PBS_DEBUG_PUSH_ENABLED=false` + 重啟本機排程即可停止
-Windows 推播；V1.9.8 起 Cloudflare 自身 PBS 輪詢已非 fallback，若需暫時恢復
-PBS 資料流須改回 `PBS_30_MIN_POLLING_ENABLED=true` 並重新部署）。
+完整記錄（Secret 治理事故、六階段路線圖、Task Scheduler 細節、Emergency kill switch）→ `07_KNOWN_ISSUES.md`／`SYSTEM_STATE.json.pbsLocalEdgeFilterPrototype`。緊急停用：Windows 環境變數 `PBS_DEBUG_PUSH_ENABLED=false`+重啟本機排程；暫時恢復 Cloudflare 自身 PBS 輪詢：`PBS_30_MIN_POLLING_ENABLED=true` 並重新部署。
 
 ## 模組清單（自動掃描）
 

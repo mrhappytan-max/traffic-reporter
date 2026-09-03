@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "project": "traffic-reporter",
-  "verifiedFromRepoAt": "2026-09-04T09:30:00.000Z",
-  "verifiedFromCommit": "6e8c96d (V2_4_6_TDX_GEO_INPUT_MISSING_DIAGNOSIS_AND_FIX; this snapshot precedes the V2.4.8 commit it ships in)",
+  "verifiedFromRepoAt": "2026-09-04T10:15:00.000Z",
+  "verifiedFromCommit": "f2d743d (V2_4_8_AI_LINE_MESSAGE_EDITOR_AND_UNIFIED_PRESENTATION; this snapshot precedes the V2.4.9 commit it ships in)",
   "note": "Everything in this file is derived from wrangler.jsonc/src/index.js in THIS repo checkout, verifiable by any future reader by re-running the export script. Fields the repo cannot itself verify (real Cloudflare Dashboard state) are explicitly marked unverified, never guessed.",
   "worker": {
     "name": "traffic-reporter",
@@ -256,5 +256,16 @@
     "unchanged": "PBS/TDX decision policy (the four core AI schema fields' judgment criteria), hsinchuGeoResolver.js, roadManagementPolicyGate.js, CCTV pipeline, all four TDX/AI wrangler.jsonc switches (still all \"true\").",
     "testEvidence": "New test/v248AiLineMessageEditorAndUnifiedPresentation.test.js (18 tests: the order's own CASE 1-14 plus sub-cases 6b/7b/12b/14b), all passing. 6 existing test files updated for the intentional reporter-line/source-labeling behavior change (not regressions): aiDecisionEngine.test.js, messageFormat.test.js, pbsAccidentTraceLocationQuality.test.js, v242InformationFidelityAndPolicy.test.js, dynamicShoulderMessageShort.test.js, pbsLineBroadcast.test.js. Full regression 1788/1756/32, NEW_FAILURES=0 against a git-stash-u same-commit precise baseline (32 pre-existing CCTV/frame-latency timing-dependent failures, unrelated to this round).",
     "appVersion": "V2.4.7 -> V2.4.8 (MINOR)"
+  },
+  "v248TdxKmFallbackProductionRuntimeDiagnosis": {
+    "task": "V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS",
+    "completedAt": "2026-09-04",
+    "scope": "PATCH, P0 production-anomaly diagnosis order. GEO_RESOLVER_MODIFIED=NO, PBS_MODIFIED=NO, AI_MODIFIED=NO, LINE_MODIFIED=NO, ROAD_POLICY_MODIFIED=NO -- no wrangler.jsonc var changed this round.",
+    "triggerSymptom": "Two real Production trace-page TDX events (TDX｜高公局, 國道一號 北向 '101K+300 施工事件-施工維護' and 南向 '100K+000 天候事件-天候不佳') showed displayKM/longitude/latitude as '—' with GEO=UNKNOWN/Gate A excluded, despite V2.4.7's own description-text KM fallback.",
+    "rootCauseChain": "Confirmed by direct runtime trace of the real code (not assumed). extractKmTokenFromText()/parseKM() and tdx/normalize.js#normalizeRoadEvent() both correctly recover displayKM (101.3/100) onto the canonical normalized event. src/tdx/hsinchuGeoResolver.js#resolveTdxHsinchuGeography() reads that same real event object directly (never a pseudo-candidate) and correctly still resolves UNKNOWN (no coordinate/text-place evidence) -- CORRECT safety behaviour per V2.4.7's own rule, not a bug, and NOT modified this round. The actual bug: src/tdx/tdxQueueIngress.js#buildTdxPseudoCandidate() -- a LOCAL candidate builder used ONLY for the Gate-A-drop observability write, built in V2.4.6, predating V2.4.7's displayKM field and never updated to carry it forward, so aiObservatoryIndex.js#buildAiObservatoryRecord() (which reads candidate.displayKM) always wrote displayKM:null for any TDX event dropped at Gate A. Events that PASS Gate A and reach AI already showed displayKM correctly (they use the REAL candidate from aiCandidate.js#buildAiCandidate(), carrying displayKM since V2.4.5) -- confirmed unaffected by test CASE 4c.",
+    "fix": "buildTdxPseudoCandidate() gained one field, propagating event.displayKM unchanged into the returned pseudo-candidate object, same presence-means-something/absence-means-nothing convention as the pre-existing longitude/latitude fields beside it. Zero change to the Gate A drop decision, the geo resolver, the road-management gate, the Queue, AI, or LINE.",
+    "productionVersionDisclosure": "This sandbox has zero direct network access to the Production *.workers.dev domain (curl returns 403 via the egress proxy on every attempt), so GET /version on the live deployment could not be read. This round's diagnosis is based entirely on direct execution of the repo's own code (not assumed behaviour), independent of which commit Production currently runs; the fix reaches Production via this project's sole deploy path (push to main -> Cloudflare Workers Builds auto-deploy).",
+    "testEvidence": "New test/v248TdxKmFallbackProductionRuntimeDiagnosis.test.js (8 tests: the order's own §五 CASE 1-5 plus a Gate-A-drop-with-missing-KV regression guard), all passing. Full regression 1796/1764/32, NEW_FAILURES=0 against a git-stash-u same-commit precise baseline.",
+    "appVersion": "V2.4.8 -> V2.4.9 (PATCH)"
   }
 }
