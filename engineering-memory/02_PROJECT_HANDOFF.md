@@ -98,7 +98,7 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 | 欄位 | 值 |
 |---|---|
-| Latest completed | V2.4.11 |
+| Latest completed | V2.4.12（PARTIAL_SEALED — Drive sync 未完成，見下方） |
 | package.json version | 0.1.0 |
 | Production status | DEPLOYED |
 | Production verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
@@ -442,6 +442,12 @@ V2.0.2 之後到 V2.4.0 之間的四個版本，這份精簡接班版未逐版�
 CLOUDFLARE_QUEUE`。V2.2.0 把查修頁升級為四層事件生命週期檢視。V2.3.1／
 V2.3.2／V2.3.3 是三個連續 PATCH（LINE 地圖座標直連 fallback、CCTV
 診斷工具修復、CCTV R2 讀回驗證），皆未改架構本身。
+
+## V2.4.12 — 散落物 CLEARED 優先序修正＋工程記憶同步（2026-09-04，PATCH，加在下方 V2.4.11 之上）
+
+V2.4.11 的「HIGH_RISK 一律優先檢查」規則對已清除事件判斷錯誤：「中間車道有輪胎皮，已清除，恢復正常通行」誤判 HIGH_RISK。`debrisRiskPolicy.js` 新增 CLEARED_TERMINAL 判斷（HIGH_RISK 檢查前的唯一反轉例外）——已清除訊號（原文或`lifecycle==='CLEARED'`）且無持續性訊號（仍有/部分等）時一律 LOW_RISK，不論歷史證據；伴隨持續性訊號時不套用，依剩餘證據正常判定。`resolveDebrisSafetyRisk()`新增第二參數`lifecycle`，舊呼叫不受影響。全量迴歸1849/1817/32，NEW_FAILURES=0。`APP_VERSION` V2.4.11→V2.4.12。
+
+**Google Drive 同步（施工令第二部分，未完成）**：施工令要求人類先在 Drive 手動建立`07_KNOWN_ISSUES_02.md`再重跑 sync；本 session 唯讀確認該檔案仍不存在，Claude Drive WRITE 永久禁止，故未重跑 sync、FINAL 未標記 SEALED。詳見`07_KNOWN_ISSUES_02.md`。
 
 ## V2.4.11 — 散落物安全風險分級／LINE Push 額度保護（2026-09-04，加在下方 V2.4.10 之上）
 

@@ -30,6 +30,16 @@
 //
 // CLASSIFICATION (order section 二/三/五/六/七/八/十六/十七) — priority order,
 // evaluated top-to-bottom, the FIRST matching bucket wins:
+//   0. CLEARED_TERMINAL (V2.4.11.1 — order 一, checked BEFORE step 1) — a
+//      GENUINELY complete cleared signal (已清除／已排除／已恢復／已移除／
+//      已拖離／已無障礙 text OR lifecycle==='CLEARED', with NO accompanying
+//      ongoing-hazard-after-clear wording such as 仍有／仍在／尚有／未清除／
+//      部分) is LOW_RISK regardless of any historical HIGH_RISK evidence
+//      also present in the same text (order's own CASE A: "中間車道有輪胎
+//      皮，已清除，恢復正常通行" -> LOW_RISK, not HIGH_RISK). A cleared
+//      signal that is NOT genuinely complete (order's own CASE B: "已清除
+//      部分，仍有散落物") does NOT get this precedence and falls through to
+//      steps 1-3 on its own remaining evidence instead.
 //   1. HIGH_RISK — ANY of: debris in a normal travel lane (內側/中間/外側/
 //      快/慢車道／車道中央／路中央／行車道) OR a large/hard/high-danger
 //      object (整條輪胎／大片輪胎皮／大型金屬／鐵件／木板／棧板／梯子／
@@ -39,19 +49,20 @@
 //      占用or佔用車道／封閉車道／阻礙交通／危險／緊急排除中) OR a structured
 //      blockedLanes>=1 fact (a more reliable signal than free text for the
 //      same "traffic impact" criterion — order section 十二's own suggested
-//      enhancement). Checked FIRST, unconditionally — this is what correctly
-//      keeps a "路肩大型物體部分侵入外側車道" case HIGH_RISK even though the
-//      word 路肩 also appears (order section 七), and keeps a lane-position
-//      match authoritative over any bare "紙箱" object-type word alone
-//      (order section 十六 — no fixed word list is EVER the sole decider).
+//      enhancement). Checked FIRST among steps 1-3, unconditionally — this
+//      is what correctly keeps a "路肩大型物體部分侵入外側車道" case
+//      HIGH_RISK even though the word 路肩 also appears (order section 七),
+//      and keeps a lane-position match authoritative over any bare "紙箱"
+//      object-type word alone (order section 十六 — no fixed word list is
+//      EVER the sole decider).
 //   2. LOW_RISK — reached only once none of the HIGH_RISK triggers above
 //      matched: shoulder-only (路肩, order section 七's own
 //      roadShoulderOnly AND noLaneIntrusion AND noMajorHazard — the last two
 //      are already guaranteed true by construction at this point, since no
 //      HIGH trigger fired) / off-road or non-travel-area (路外／安全島／
-//      邊坡／非行車區域) / already cleared (已清除／已排除／已恢復／已移除／
-//      已拖離／已無障礙, order section 十七) / explicitly small debris
-//      outside the lane (小型碎屑).
+//      邊坡／非行車區域) / explicitly small debris outside the lane
+//      (小型碎屑). (A cleared signal is handled entirely by step 0 above —
+//      never re-checked here.)
 //   3. AI_REVIEW — a genuinely debris-related event that matched neither
 //      bucket above (order section 五's own real example: "95K+200路面發現
 //      散落物狀況" — only road/direction/KM/debris, no object type, size,
@@ -112,6 +123,18 @@ const TRAFFIC_IMPACT_PATTERNS = [/影響通行/, /車輛閃避/, /占用車道/,
 // §六/§十七 — already resolved, no continuing danger.
 const CLEARED_PATTERNS = [/已清除/, /已排除/, /已恢復/, /已移除/, /已拖離/, /已無障礙/];
 
+// V2.4.11.1 — V2_4_11_1_DEBRIS_CLEARED_PRECEDENCE_AND_MEMORY_SYNC_HOTFIX
+// (order 一). A cleared-text/lifecycle=CLEARED signal is NOT itself proof
+// the danger is actually gone — "已清除部分，仍有散落物" or a partial/
+// still-ongoing clearance is a DIFFERENT fact than "已清除，恢復正常通行".
+// Presence of ANY of these alongside a CLEARED_PATTERNS/lifecycle=CLEARED
+// signal means the clearance is NOT genuinely complete, so CLEARED_TERMINAL
+// precedence (below) must NOT apply — the event falls through to the
+// normal HIGH_RISK/LOW_RISK/AI_REVIEW evaluation on its own remaining
+// evidence instead (order's own CASE B: still HIGH_RISK/AI_REVIEW "依現有
+// 證據", never forced LOW_RISK).
+const ONGOING_HAZARD_AFTER_CLEAR_PATTERNS = [/仍有/, /仍在/, /尚有/, /尚未/, /未清除/, /未完全/, /部分/, /持續/];
+
 // §六/§七 — shoulder-only. NEVER sufficient alone for LOW_RISK if a HIGH
 // trigger above already matched (checked first, by construction).
 const SHOULDER_PATTERNS = [/路肩/];
@@ -153,9 +176,14 @@ function extractRawText(event) {
  * @param {object} event - a normalizedEvent-shaped or candidate-shaped
  *   object carrying `comment`/`description`, `sourceDetail`, and optionally
  *   a structured `blockedLanes` number.
+ * @param {string} [lifecycle] - the push/event lifecycle ('NEW'|'UPDATED'|
+ *   'CLEARED'), the SAME value debugPush.js/aiCandidate.js already carry
+ *   separately from the normalized event object — never re-derived here.
+ *   Only 'CLEARED' has any effect (V2.4.11.1 CASE C); every other value
+ *   (including undefined, for every pre-V2.4.11.1 caller) changes nothing.
  * @returns {{isDebrisEvent: boolean, classification: 'HIGH_RISK'|'AI_REVIEW'|'LOW_RISK'|null, reasons: string[], evidence: {lanePosition: string|null, objectType: string|null, quantity: string|null, cleared: boolean, trafficImpact: boolean}}}
  */
-export function resolveDebrisSafetyRisk(event) {
+export function resolveDebrisSafetyRisk(event, lifecycle) {
   const rawText = extractRawText(event);
   const isDebrisEvent = DEBRIS_KEYWORD_PATTERNS.some((pattern) => pattern.test(rawText));
   if (!isDebrisEvent) {
@@ -180,13 +208,38 @@ export function resolveDebrisSafetyRisk(event) {
   const offRoadMatches = findMatches(OFF_ROAD_PATTERNS, rawText);
   const smallDebrisMatches = findMatches(SMALL_DEBRIS_PATTERNS, rawText);
 
+  // V2.4.11.1 (order 一) — CLEARED_TERMINAL precedence: a cleared signal
+  // (CLEARED_PATTERNS text OR lifecycle==='CLEARED') that is genuinely
+  // complete — i.e. NOT accompanied by an ongoing-hazard-after-clear
+  // signal — outranks ANY historical HIGH_RISK evidence in the SAME raw
+  // text (lane position, hazard object, quantity, traffic-impact wording
+  // all included), because that evidence now describes a resolved past
+  // state, not the event's current safety-relevant state. This is checked
+  // BEFORE the HIGH_RISK bucket below, deliberately reversing this
+  // module's normal "HIGH checked first" rule for this one, narrow case —
+  // "the danger is confirmed over" is a stronger, more specific fact than
+  // "the danger was once described as being in a travel lane". A cleared
+  // signal that is NOT genuinely complete (order's own CASE B: "已清除
+  // 部分，仍有散落物") never reaches this branch — see
+  // ONGOING_HAZARD_AFTER_CLEAR_PATTERNS above — and falls through to the
+  // normal HIGH_RISK/LOW_RISK/AI_REVIEW evaluation on its own remaining
+  // evidence instead.
+  const clearedSignalPresent = clearedMatches.length > 0 || lifecycle === 'CLEARED';
+  const ongoingHazardAfterClear = findMatches(ONGOING_HAZARD_AFTER_CLEAR_PATTERNS, rawText);
+  const genuinelyResolved = clearedSignalPresent && ongoingHazardAfterClear.length === 0;
+
   const evidence = {
     lanePosition: laneMatches[0] || null,
     objectType: hazardMatches[0] || null,
     quantity: quantityMatches[0] || null,
-    cleared: clearedMatches.length > 0,
+    cleared: clearedSignalPresent,
     trafficImpact: trafficImpactMatches.length > 0,
   };
+
+  if (genuinelyResolved) {
+    const reasons = ['CLEARED_TERMINAL：危險已確認解除（' + (clearedMatches.length ? `原文：${clearedMatches.join('、')}` : 'lifecycle=CLEARED') + '），無仍在持續的危險證據，狀態解除優先於任何歷史車道／危險物／數量／交通影響證據'];
+    return { isDebrisEvent: true, classification: DEBRIS_RISK.LOW_RISK, reasons, evidence };
+  }
 
   // §三 HIGH_RISK — ANY one criterion is sufficient; checked first and
   // unconditionally, regardless of what shoulder/cleared/small-debris
@@ -202,13 +255,19 @@ export function resolveDebrisSafetyRisk(event) {
 
   // §六/§七 LOW_RISK — reached only once no HIGH_RISK trigger matched, so
   // "noLaneIntrusion AND noMajorHazard" already hold by construction here;
-  // the shoulder/off-road/cleared/small-debris signal supplies the third
-  // (roadShoulderOnly-equivalent) condition.
-  if (shoulderMatches.length || offRoadMatches.length || clearedMatches.length || smallDebrisMatches.length) {
+  // the shoulder/off-road/small-debris signal supplies the third
+  // (roadShoulderOnly-equivalent) condition. `clearedMatches` is
+  // deliberately NOT checked here (V2.4.11.1) — a genuinely-resolved
+  // cleared signal already returned LOW_RISK above (CLEARED_TERMINAL); a
+  // cleared signal reaching this line is therefore NOT genuinely resolved
+  // (an ongoing-hazard-after-clear signal is present alongside it, order's
+  // own CASE B) and must never independently justify LOW_RISK on its own —
+  // it falls through to AI_REVIEW below instead, same as any other
+  // ambiguous/insufficient-evidence debris event.
+  if (shoulderMatches.length || offRoadMatches.length || smallDebrisMatches.length) {
     const reasons = [];
     if (shoulderMatches.length) reasons.push('僅路肩，且無車道侵入、無大型／高危險物體證據');
     if (offRoadMatches.length) reasons.push(`路外／非行車區域：${offRoadMatches.join('、')}`);
-    if (clearedMatches.length) reasons.push(`已排除／已清除：${clearedMatches.join('、')}`);
     if (smallDebrisMatches.length) reasons.push('小型碎屑，且明確未影響車道');
     return { isDebrisEvent: true, classification: DEBRIS_RISK.LOW_RISK, reasons, evidence };
   }

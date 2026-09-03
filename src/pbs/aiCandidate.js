@@ -223,6 +223,10 @@ export function buildAiCandidate(normalizedEvent, { lifecycle, generatedAt }) {
     // above), never recomputed at any gate-check or AI-prompt site. Always
     // present; `isDebrisEvent:false` for every non-debris event — see
     // traffic/debrisRiskPolicy.js's own header comment for the full design.
-    debrisRisk: resolveDebrisSafetyRisk(normalizedEvent),
+    // V2.4.11.1 — `lifecycle` (this function's own existing parameter,
+    // never re-derived) is passed through so a structured `lifecycle ===
+    // 'CLEARED'` push can participate in CLEARED_TERMINAL precedence even
+    // when the free text itself never says 已清除/已排除/etc.
+    debrisRisk: resolveDebrisSafetyRisk(normalizedEvent, lifecycle),
   };
 }

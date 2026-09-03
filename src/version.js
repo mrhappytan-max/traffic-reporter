@@ -1937,7 +1937,71 @@
 //
 // See test/v2411DebrisSafetyRiskClassificationAndPushProtection.test.js (the
 // order's own CASE 1-19+) and 07_KNOWN_ISSUES_02.md for the full record.
-export const APP_VERSION = 'V2.4.11';
+// V2.4.12 — V2_4_11_1_DEBRIS_CLEARED_PRECEDENCE_AND_MEMORY_SYNC_HOTFIX
+// (路況工程部｜V2.4.11.1 散落物已清除優先序＋工程記憶同步修正令). PATCH —
+// task label uses the four-part-looking "V2_4_11_1" name as an engineering
+// task identifier only (per this file's own permanent rule: task names are
+// labels, never version numbers); the actual product version still follows
+// this project's three-part scheme (V2.4.11 -> V2.4.12).
+//
+// PART 一 — CLEARED precedence bug in V2.4.11's debris risk classifier.
+// V2.4.11 shipped a strict "HIGH_RISK checked first, unconditionally"
+// priority order — correct for shoulder/quantity mentions, but WRONG for a
+// cleared debris event: "中間車道有輪胎皮，已清除，恢復正常通行" (a real
+// lane-position match, now resolved) was incorrectly classified HIGH_RISK
+// instead of LOW_RISK, because the lane-position check ran before the
+// cleared check ever got a chance to matter.
+//
+// Fix: src/traffic/debrisRiskPolicy.js gained a new CLEARED_TERMINAL
+// precedence step, evaluated BEFORE the HIGH_RISK bucket (the one
+// deliberate exception to "HIGH_RISK checked first"): a cleared signal
+// (existing CLEARED_PATTERNS text, OR the event's own `lifecycle==='CLEARED'`
+// -- passed through from aiCandidate.js's own existing `lifecycle` parameter,
+// never re-derived) that is GENUINELY complete -- i.e. not accompanied by a
+// new ONGOING_HAZARD_AFTER_CLEAR_PATTERNS signal (仍有/仍在/尚有/未清除/
+// 未完全/部分/持續/尚未) -- resolves LOW_RISK regardless of any historical
+// HIGH_RISK evidence in the same text. A cleared signal that is NOT
+// genuinely complete (e.g. "已清除部分，仍有散落物") does NOT get this
+// precedence and falls through to the normal HIGH_RISK/LOW_RISK/AI_REVIEW
+// evaluation on its own remaining evidence instead -- never forced to
+// LOW_RISK just because the word "已清除" appears somewhere in the text.
+//
+// resolveDebrisSafetyRisk(event, lifecycle) gained its second parameter
+// (a plain string, not a KV/env binding -- still fully synchronous, zero
+// I/O); every pre-existing single-argument call site is unaffected
+// (lifecycle undefined -> never 'CLEARED' -> zero behavior change).
+//
+// New tests (test/v2411DebrisSafetyRiskClassificationAndPushProtection.test.js,
+// appended, 35 total now): CASE A (cleared text overrides historical lane
+// match -> LOW_RISK), CASE B (partial/ongoing clearance never forces
+// LOW_RISK -> resolves HIGH_RISK/AI_REVIEW per remaining evidence, plus a
+// variant with no other evidence -> AI_REVIEW), CASE C (structured
+// lifecycle==='CLEARED' alone triggers the same precedence, plus variants
+// for ongoing-hazard-with-CLEARED-lifecycle and non-CLEARED lifecycles),
+// CASE D (regression: 路肩大型物體部分侵入外側車道 still HIGH_RISK --
+// no cleared signal present, so CLEARED_TERMINAL never even applies),
+// plus explicit regressions confirming V2.4.11's own CASE 1 and CASE 4
+// are unaffected. Full regression 1849/1817/32, NEW_FAILURES=0 against the
+// same git-stash-u baseline. Explicitly UNCHANGED this round (order's own
+// prohibition): GEO Resolver, Queue, Incident Memory, CCTV, KV read/write
+// shape, LINE quota architecture, Production flags.
+//
+// PART 二 — Engineering Memory Volume 02 Google Drive sync. STILL BLOCKED,
+// NOT resolved this round -- the order's own prescribed minimal fix
+// (a human manually pre-creating 07_KNOWN_ISSUES_02.md once, directly in
+// the "路況播報員_工程記憶" Google Drive folder via a real user account) is
+// a HUMAN action this session cannot perform: Claude Drive WRITE remains
+// permanently FORBIDDEN (DRIVE_SYNC_GOVERNANCE_V2, unchanged), and this
+// session independently confirmed via a read-only Drive search that
+// 07_KNOWN_ISSUES_02.md still does not exist in that folder (only the
+// original 10 canonical files do, all owned by the human account). Per the
+// order's own two-step sequence (human creates the file -> THEN re-run the
+// sync), step one has not yet happened, so step two was correctly not
+// attempted this round -- re-running the sync now would only reproduce the
+// same known 403. FINAL is therefore NOT marked SEALED for Part 二; see
+// 07_KNOWN_ISSUES_02.md's own updated blocker entry for the exact
+// remaining human action.
+export const APP_VERSION = 'V2.4.12';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

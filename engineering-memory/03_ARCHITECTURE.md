@@ -943,6 +943,8 @@ PBS 官方來源 → Windows 每3分鐘抓取(localMonitor.js) → Local Edge Fi
 
 整合點：`aiCandidate.js#buildAiCandidate()`一次算出`candidate.debrisRisk`（沿用displayKM/blockedLanes/geoEvidenceType的"永遠存在、缺席為null"慣例）；`debugPush.js#runAiDecisionPath()`（PBS/TDX唯一共用入口）在`!candidate`判斷之後新增`LOW_RISK`短路，回傳新`AI_OUTCOME.DEBRIS_EXCLUDED_LOW_RISK`，0額外AI呼叫、0額外KV寫入（沿用同一筆既有Observatory write）；`aiDecisionEngine.js`把`debrisRisk`當作結構化事實傳給AI（從不越俎代庖決定notify），SYSTEM_PROMPT補充HIGH/LOW信心散落物判準，明確禁止AI替原文沒提到的散落物事實杜撰車道/占用/危險描述。`HIGH_RISK`／`AI_REVIEW`皆完整交由既有AI二次確認，從未直接發LINE。查修頁新增DEBRIS RISK唯讀展開區塊（🔴/🟡/🟢+evidence+reasons+最終決策原因），PBS/TDX共用同一顯示邏輯。未觸碰：GEO Resolver、道路管理政策、Queue、Incident Memory、CCTV、AI model、LINE token/quota系統。完整記錄見 `07_KNOWN_ISSUES_02.md`。
 
+**V2.4.12 修正（PATCH，2026-09-04）**：debrisRiskPolicy.js 新增 CLEARED_TERMINAL 判斷（HIGH_RISK 檢查前的唯一例外）——已清除訊號（原文或結構化 lifecycle===CLEARED）且無持續性訊號（仍有/部分等）時，優先於歷史 HIGH_RISK 證據判 LOW_RISK；伴隨持續性訊號時不套用。resolveDebrisSafetyRisk() 新增第二參數 lifecycle，舊呼叫不受影響。詳見 07_KNOWN_ISSUES_02.md。
+
 ## 模組清單（自動掃描）
 
 - **src/./**: index.js, version.js

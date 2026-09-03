@@ -58,6 +58,8 @@ Leverage shared drives, or use OAuth delegation instead.
 
 **通則**：一個 API 呼叫失敗訊息裡如果明確列出兩條建議修法（本例「shared drives」或「OAuth delegation」），代表根因落在**帳號/資源層級的權限設計**，不是「少了一個 query 參數」這種程式碼層級的小修；先按官方建議修一次、驗證是否解決，若仍然失敗，必須誠實升級判讀，而不是重複套用同一個假設。
 
+**V2.4.11.1 施工令追蹤（2026-09-04）**：`V2_4_11_1_DEBRIS_CLEARED_PRECEDENCE_AND_MEMORY_SYNC_HOTFIX` 施工令第二部分明確指示「由人類在既有 Google Drive 資料夾先建立 `07_KNOWN_ISSUES_02.md`（真人帳號），確保 Service Account 對該檔案有更新權限，然後重新執行 sync」——與本節上方選項 1 完全一致。本 session 於本輪執行前，以唯讀方式（`search_files`，`parentId` 限定在目標資料夾）核對該資料夾目前實際內容：**`07_KNOWN_ISSUES_02.md` 尚未存在**，資料夾內仍只有原本 10 份 canonical 檔案（`00`～`07_KNOWN_ISSUES.md`／`PRODUCTION_MANIFEST.json`／`SYSTEM_STATE.json`，皆為 `mr.happytan@gmail.com` 真人帳號所有），另有數個 `_archive_*` 資料夾與一個 `CONNECTOR_TEST.txt`。**人類尚未完成第一步**，因此本輪未重新觸發 sync（重跑只會重現同一個已知 403，無新資訊），也未將本卷／`PRODUCTION_MANIFEST.json`／`SYSTEM_STATE.json` 標記為 `SYNCED`——這三者對 Google Drive 的同步狀態誠實維持 `BLOCKED_PENDING_HUMAN_ACTION`，`FINAL` 不因此標記為 `SEALED`（施工令自己的要求：三者皆 `SYNCED` 才能 `SEALED`）。**下一步**：人類完成 Drive 端建檔後，任一未來 session 只需重新觸發（或等下一次 push 自然觸發）`Sync Engineering Memory to Google Drive` workflow 即可驗證是否解除，不需要新的程式修改。
+
 ## 修正紀錄｜V2.4.11 散落物安全風險分級／LINE Push 額度保護（2026-09-04）
 
 **任務**：`V2_4_11_DEBRIS_SAFETY_RISK_CLASSIFICATION_AND_PUSH_PROTECTION`（路況工程部｜V2.4.11 散落物安全風險分級／LINE Push 額度保護施工令）。MINOR。GEO_MODIFIED=NO、ROAD_POLICY_MODIFIED=NO、QUEUE_MODIFIED=NO、INCIDENT_MEMORY_MODIFIED=NO、CCTV_MODIFIED=NO、PRODUCTION_FLAGS_MODIFIED=NO、AI_SECOND_CALL_ADDED=NO。
@@ -95,3 +97,17 @@ Leverage shared drives, or use OAuth delegation instead.
 **測試**：新增 `test/v2411DebrisSafetyRiskClassificationAndPushProtection.test.js`（25 項，涵蓋施工令§十八 CASE 1-19 全部要求——每個分級分支、路肩/數量優先序測試(§七/§十六驗證)、結構化 blockedLanes 加分訊號、PBS/TDX 透過同一函式的一致性、GEO/道路政策/LINE formatter 零干擾、0 KV 操作驗證、非散落物事件完全不受影響——外加端對端整合測試證明 LOW_RISK 短路真正跳過 AI 呼叫與 LINE 推播）。2 個既有測試檔（`test/aiDecisionEngine.test.js`、`test/v242InformationFidelityAndPolicy.test.js`）因 `buildAiRequest` user payload 新增 `debrisRisk` 欄位而更新 key 列表斷言（非回歸，附加欄位）。全量迴歸 1839/1807/32，`git stash -u` 同 commit 精確基準比對 NEW_FAILURES=0。`APP_VERSION` V2.4.10→V2.4.11（MINOR）。
 
 **通則**：一個「是否該通知」的判斷，如果只靠事件類型標籤（`eventType === debris`）就決定，永遠會在「漏掉真正危險的」與「淹沒真正重要的」兩個方向之一犯錯；正確做法是先用可驗證的結構化事實（位置、物體種類、數量、明確影響描述）做決定性分類，把少數清楚有害與少數清楚無害的情況直接排除或直接交給 AI 二次確認，中間真正模糊、證據不足的情況才完整交給既有語意判斷模型，且明確要求模型在證據不足時保守（notify=false），而不是替換成另一種同樣武斷的「一律」規則。
+
+## 修正紀錄｜V2.4.11.1 散落物已清除優先序修正（2026-09-04）
+
+**任務**：`V2_4_11_1_DEBRIS_CLEARED_PRECEDENCE_AND_MEMORY_SYNC_HOTFIX` 第一部分。`APP_VERSION` V2.4.11→V2.4.12（PATCH）。
+
+**真實 bug**：V2.4.11 上線的散落物分級器把「HIGH_RISK 一律優先檢查」訂為絕對規則，這在「路肩+車道侵入」「數量+路肩」等情境是正確的，但對「已清除」情境是錯的——「中間車道有輪胎皮，已清除，恢復正常通行」被誤判 HIGH_RISK，因為車道位置檢查搶先命中，已清除的事實從未被真正看見。已解除的危險不應該繼續消耗 AI/LINE 資源。
+
+**修法**：`src/traffic/debrisRiskPolicy.js` 新增 CLEARED_TERMINAL 判斷，在 HIGH_RISK 檢查**之前**執行（本模組唯一一個「反過來」的例外）——已清除訊號（原文 已清除/已排除/已恢復/已移除/已拖離/已無障礙，或結構化 `lifecycle==='CLEARED'`，由 `aiCandidate.js` 既有的 `lifecycle` 參數傳入，不重新推導）且**沒有**伴隨「仍在持續」訊號（仍有/仍在/尚有/未清除/未完全/部分/持續/尚未）時，無論原文是否也提到車道位置/危險物/數量/交通影響，一律 LOW_RISK。若已清除訊號伴隨持續性訊號（例：「已清除部分，仍有散落物」），**不**套用此優先序，正常走 HIGH_RISK/LOW_RISK/AI_REVIEW 判斷（依剩餘證據）。`resolveDebrisSafetyRisk()` 新增第二參數 `lifecycle`（純字串，非 KV/env binding，函式仍完全同步零 I/O）；既有單參數呼叫方式不受影響（`lifecycle` 為 `undefined`，永不等於 `'CLEARED'`）。
+
+**測試**：`test/v2411DebrisSafetyRiskClassificationAndPushProtection.test.js` 新增 CASE A（已清除+車道位置→LOW_RISK）／CASE B（已清除部分+仍有散落物→不得LOW_RISK，依證據判HIGH_RISK；另一變體：無其他證據→AI_REVIEW）／CASE C（結構化 lifecycle=CLEARED 觸發同一優先序，含伴隨持續性訊號、非CLEARED lifecycle 兩個變體）／CASE D（路肩大型物體部分侵入外側車道，無已清除訊號，維持既有規則 HIGH_RISK）／既有 V2.4.11 CASE 1／CASE 4 迴歸確認未受影響。全量迴歸 1849/1817/32，`git stash -u` 同 commit 精確基準比對 NEW_FAILURES=0。
+
+**未觸碰**：GEO Resolver、Queue、Incident Memory、CCTV、KV 讀寫形狀、LINE quota 架構、Production flags——僅 `debrisRiskPolicy.js`／`aiCandidate.js` 兩個檔案改動，皆在散落物分級這一個模組範圍內。
+
+**通則**：一個「優先序規則」如果只用單一維度（本例「HIGH 一律先查」）就套用到所有情境，遲早會遇到一個更根本的事實能推翻它（「已經解除的危險」不是「歷史上曾經很危險」）——正確做法不是放棄整個優先序，而是找出那個更根本的例外條件本身的判準（本例：解除訊號是否真的完整、沒有被同一句話裡的「仍有/部分」矛盾），只在那個窄範圍內反轉優先序，其餘情境維持原規則不變。

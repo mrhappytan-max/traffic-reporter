@@ -11,21 +11,29 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V2.4.11（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | 96b5f44（V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS commit；本輪 V2.4.11 commit 尚未落地前的快照，本表隨本輪 commit 一併更新） |
+| Current Version | V2.4.12（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | 96b5f44（V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS commit；本輪 V2.4.12 commit 尚未落地前的快照，本表隨本輪 commit 一併更新） |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty（本輪 V2.4.11 changeset，與本份快照同一 commit 一起送出） |
+| Source working tree | dirty（本輪 V2.4.12 changeset，與本份快照同一 commit 一起送出） |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
-| Current Phase | Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，TDX 正式 LINE 通知維持開啟（PHASE_E_TDX_NOTIFY_LIVE，本輪未變動）。**本輪（V2.4.11）新增散落物安全風險分級**：新模組 `src/traffic/debrisRiskPolicy.js#resolveDebrisSafetyRisk()`（純函式，零KV/I/O）依優先序判定 HIGH_RISK（車道位置/大型危險物/數量/明確交通影響任一命中，仍交AI二次確認）／LOW_RISK（路肩/路外/已清除/小型碎屑，於PBS/TDX共用AI決策入口短路排除，0額外AI呼叫、0額外KV寫入）／AI_REVIEW（證據不足，交既有AI）。GEO/道路政策/Queue/CCTV/AI model/LINE token系統全數未動 |
-| Current Task | none。Latest completed task = V2_4_11_DEBRIS_SAFETY_RISK_CLASSIFICATION_AND_PUSH_PROTECTION，status = SEALED（V2.4.10→V2.4.11；前序歷程見 SYSTEM_STATE.json／06_VERSION_HISTORY.md）。CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何 wrangler.jsonc 開關）。**本輪內容**：`debrisRiskPolicy.js`＋`aiCandidate.js`的`candidate.debrisRisk`欄位＋`debugPush.js#runAiDecisionPath()`新LOW_RISK短路（新`AI_OUTCOME.DEBRIS_EXCLUDED_LOW_RISK`）＋`aiDecisionEngine.js`新debrisRisk結構化欄位與SYSTEM_PROMPT補充＋查修頁新DEBRIS RISK顯示區塊。 |
-| Latest Completed Version | V2.4.11 |
-| Known Blocker | 無 blocker，沿用 V2.4.5 封版的 REAL_WORLD_CONFIRMATION_PENDING（TDX 正式 LINE 通知現場觀察，本輪未變動）——本 session 無 Production 網路存取，需人類看真實 LINE/Cloudflare Logs 回報異常，異常回報時第一動作固定 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=false`。另：`GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES`（見07_KNOWN_ISSUES_02.md）。本輪（V2.4.11）本身無新增 runtime blocker |
+| Current Phase | Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，TDX 正式 LINE 通知維持開啟（PHASE_E_TDX_NOTIFY_LIVE，本輪未變動）。**本輪（V2.4.12）修正 V2.4.11 散落物分級的 CLEARED 優先序 bug**：`debrisRiskPolicy.js` 新增 CLEARED_TERMINAL 判斷——已清除（原文或結構化 `lifecycle==='CLEARED'`）且無「仍有/部分」等持續性訊號時，優先於同段文字裡的歷史 HIGH_RISK 證據，判 LOW_RISK；持續性訊號存在時不套用，依剩餘證據正常判定。僅 `debrisRiskPolicy.js`／`aiCandidate.js` 兩檔改動。GEO/道路政策/Queue/CCTV/AI model/LINE token系統全數未動 |
+| Current Task | none。Latest completed task = V2_4_11_1_DEBRIS_CLEARED_PRECEDENCE_AND_MEMORY_SYNC_HOTFIX，status = **PARTIAL_SEALED**（Part一程式碼已完成 V2.4.11→V2.4.12；Part二 Google Drive 同步待人類動作，未 SEALED）。CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何 wrangler.jsonc 開關）。 |
+| Latest Completed Version | V2.4.12 |
+| Known Blocker | **GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES**（見07_KNOWN_ISSUES_02.md）——`07_KNOWN_ISSUES_02.md`／`PRODUCTION_MANIFEST.json`／`SYSTEM_STATE.json` 對 Drive 同步待人類手動於 Drive 建立 `07_KNOWN_ISSUES_02.md` 才能解除，本 session 已唯讀確認尚未完成。另沿用 V2.4.5 封版的 REAL_WORLD_CONFIRMATION_PENDING（TDX 正式 LINE 通知現場觀察）——本 session 無 Production 網路存取，異常時第一動作固定 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=false` |
 | Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING（沿用 V2.4.5 封版項目，與本輪散落物分級無關） |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 待辦（沿用）：人類觀察真實 Production TDX LINE 推播現場結果，異常時第一動作固定關閉 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`。新增待辦：觀察 Production 散落物 HIGH_RISK/AI_REVIEW/LOW_RISK 實際分布是否符合預期（查修頁 DEBRIS RISK 區塊可觀察） |
+| Next Action | **最優先（新增）**：人類於既有 Google Drive「路況播報員_工程記憶」資料夾手動建立空白 `07_KNOWN_ISSUES_02.md`（真人帳號），確保 Service Account 對其有更新權限，之後任一 session 重跑「Sync Engineering Memory to Google Drive」workflow 驗證三檔 SYNCED，再正式標記 FINAL=SEALED。待辦（沿用）：人類觀察真實 Production TDX LINE 推播與散落物 HIGH_RISK/AI_REVIEW/LOW_RISK 實際分布（查修頁 DEBRIS RISK 區塊可觀察） |
 | Export Generated At | 2026-09-04T11:00:00.000Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
+
+## V2.4.12 封版（2026-09-04，PARTIAL_SEALED）— 散落物已清除優先序＋工程記憶同步修正令
+
+- `V2_4_11_1_DEBRIS_CLEARED_PRECEDENCE_AND_MEMORY_SYNC_HOTFIX`，PATCH。任務名稱沿用四段式標籤（工程令自訂識別碼），實際產品版本仍走本專案三段式規則：V2.4.11→V2.4.12。
+- **Part 一（程式碼，已完成）**：V2.4.11 上線的散落物分級器「HIGH_RISK 一律優先檢查」規則，對已清除事件判斷錯誤——「中間車道有輪胎皮，已清除，恢復正常通行」誤判 HIGH_RISK。`src/traffic/debrisRiskPolicy.js` 新增 CLEARED_TERMINAL 判斷（本模組唯一反轉優先序的例外，在 HIGH_RISK 檢查之前執行）：已清除訊號（原文 已清除/已排除/已恢復/已移除/已拖離/已無障礙，或結構化 `lifecycle==='CLEARED'`，沿用 `aiCandidate.js` 既有參數）且**沒有**伴隨持續性訊號（仍有/仍在/尚有/未清除/未完全/部分/持續/尚未）時，一律 LOW_RISK，無論原文是否也提到車道位置等歷史證據；伴隨持續性訊號時（例：「已清除部分，仍有散落物」）不套用，依剩餘證據正常判定。`resolveDebrisSafetyRisk()` 新增第二參數 `lifecycle`，舊呼叫方式不受影響。
+- **測試**：新增 CASE A（LOW_RISK）／CASE B（不得LOW_RISK，含無其他證據變體→AI_REVIEW）／CASE C（結構化lifecycle，含2個變體）／CASE D（既有規則保持HIGH_RISK）／2項既有CASE迴歸確認。全量迴歸1849/1817/32，`git stash -u`同commit精確基準比對NEW_FAILURES=0。`APP_VERSION` V2.4.11→V2.4.12。
+- **未觸碰**：GEO Resolver、Queue、Incident Memory、CCTV、KV讀寫形狀、LINE quota架構、Production flags。
+- **Part 二（Google Drive 同步，未完成）**：施工令要求人類先在 Drive 手動建立 `07_KNOWN_ISSUES_02.md`（真人帳號），確保 Service Account 有更新權限，再重跑 sync。本 session 以唯讀 `search_files` 核對目標資料夾，確認**該檔案尚未存在**（資料夾內仍只有原本 10 份 canonical 檔案，皆為真人帳號所有）。人類尚未完成第一步，因此本輪**未**重新觸發 sync（重跑只會重現已知 403），也**未**將三檔標記 SYNCED。**FINAL 未標記 SEALED**——施工令自身要求三檔皆 SYNCED 才能 SEALED。完整記錄見 `07_KNOWN_ISSUES_02.md`。
 
 ## V2.4.11 封版（2026-09-04）— 散落物安全風險分級／LINE Push 額度保護
 

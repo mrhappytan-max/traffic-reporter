@@ -174,7 +174,8 @@ test('CASE 17 (LINE formatter non-interference): the existing LINE message-forma
 
 test('CASE 18 (order section 十三, 0 KV ops): resolveDebrisSafetyRisk is synchronous, takes no kv/env parameter, and returns a plain object -- structurally incapable of an I/O call', () => {
   assert.equal(resolveDebrisSafetyRisk.constructor.name, 'Function'); // never AsyncFunction
-  assert.equal(resolveDebrisSafetyRisk.length, 1); // exactly one parameter: event
+  // V2.4.11.1 -- (event, lifecycle): a plain string, not a kv/env binding.
+  assert.equal(resolveDebrisSafetyRisk.length, 2);
   const result = resolveDebrisSafetyRisk({ comment: '路肩發現散落物' });
   assert.equal(typeof result.then, 'undefined'); // not a Promise
 });
@@ -386,4 +387,76 @@ test('integration: KV write cost for a LOW_RISK-excluded event is unchanged from
   // pipeline (idempotency COMPLETED + Observatory record) -- no third put,
   // no counter, no risk cache, no lookup table.
   assert.equal(kv.putCalls, 2);
+});
+
+// =======================================================================
+// V2.4.11.1 -- V2_4_11_1_DEBRIS_CLEARED_PRECEDENCE_AND_MEMORY_SYNC_HOTFIX
+// (order 一). CLEARED_TERMINAL precedence: a GENUINELY complete cleared
+// signal (text or lifecycle) outranks historical HIGH_RISK evidence in the
+// same event -- but only when the danger is actually resolved, never when
+// clearance is partial/ongoing.
+// =======================================================================
+
+test('CASE A (order 一): 中間車道有輪胎皮，已清除，恢復正常通行 -> LOW_RISK (CLEARED_TERMINAL overrides the historical lane-position match)', () => {
+  const result = resolveDebrisSafetyRisk({ comment: '中間車道有輪胎皮，已清除，恢復正常通行' });
+  assert.equal(result.isDebrisEvent, true);
+  assert.equal(result.classification, DEBRIS_RISK.LOW_RISK);
+  assert.ok(result.reasons.some((r) => r.includes('CLEARED_TERMINAL')));
+});
+
+test('CASE B (order 一): 中間車道輪胎皮，已清除部分，仍有散落物 -> must NOT be LOW_RISK; resolves per remaining evidence (HIGH_RISK here, via the still-present lane match)', () => {
+  const result = resolveDebrisSafetyRisk({ comment: '中間車道輪胎皮，已清除部分，仍有散落物' });
+  assert.equal(result.isDebrisEvent, true);
+  assert.notEqual(result.classification, DEBRIS_RISK.LOW_RISK);
+  assert.equal(result.classification, DEBRIS_RISK.HIGH_RISK);
+});
+
+test('CASE B variant: an ongoing-hazard-after-clear signal with NO other HIGH_RISK evidence falls to AI_REVIEW, never LOW_RISK', () => {
+  const result = resolveDebrisSafetyRisk({ comment: '散落物已清除部分，仍有殘留' });
+  assert.notEqual(result.classification, DEBRIS_RISK.LOW_RISK);
+  assert.equal(result.classification, DEBRIS_RISK.AI_REVIEW);
+});
+
+test('CASE C (order 一): structured lifecycle=CLEARED with no ongoing hazard text -> LOW_RISK, even though the free text alone (no 已清除 wording) mentions a travel lane', () => {
+  const result = resolveDebrisSafetyRisk({ comment: '中間車道發現散落物' }, 'CLEARED');
+  assert.equal(result.isDebrisEvent, true);
+  assert.equal(result.classification, DEBRIS_RISK.LOW_RISK);
+  assert.ok(result.reasons.some((r) => r.includes('lifecycle=CLEARED')));
+});
+
+test('CASE C variant: lifecycle=CLEARED does NOT force LOW_RISK when the text itself carries an ongoing-hazard-after-clear signal', () => {
+  const result = resolveDebrisSafetyRisk({ comment: '中間車道發現散落物，仍有部分未清除' }, 'CLEARED');
+  assert.notEqual(result.classification, DEBRIS_RISK.LOW_RISK);
+});
+
+test('CASE C variant: lifecycle other than CLEARED (NEW/UPDATED/undefined) never triggers CLEARED_TERMINAL', () => {
+  const forNew = resolveDebrisSafetyRisk({ comment: '中間車道發現散落物' }, 'NEW');
+  assert.equal(forNew.classification, DEBRIS_RISK.HIGH_RISK);
+  const forUpdated = resolveDebrisSafetyRisk({ comment: '中間車道發現散落物' }, 'UPDATED');
+  assert.equal(forUpdated.classification, DEBRIS_RISK.HIGH_RISK);
+  const forUndefined = resolveDebrisSafetyRisk({ comment: '中間車道發現散落物' });
+  assert.equal(forUndefined.classification, DEBRIS_RISK.HIGH_RISK);
+});
+
+test('CASE D (order 一): 路肩大型物體部分侵入外側車道 -> still HIGH_RISK, existing rule preserved (no cleared signal present, so CLEARED_TERMINAL never even applies)', () => {
+  const result = resolveDebrisSafetyRisk({ comment: '國1南向80K路肩有大型貨物掉落物，部分侵入外側車道' });
+  assert.equal(result.classification, DEBRIS_RISK.HIGH_RISK);
+  assert.equal(result.evidence.lanePosition, '外側車道');
+});
+
+test('CLEARED_TERMINAL integration: aiCandidate.js#buildAiCandidate() forwards lifecycle into resolveDebrisSafetyRisk, so a CLEARED push resolves LOW_RISK end-to-end', () => {
+  const normalized = normalizePbsEvent(pbsRaw({ comment: '中間車道有輪胎皮，已清除，恢復正常通行' }));
+  const candidate = buildAiCandidate(normalized, { lifecycle: 'CLEARED', generatedAt: '2026-09-04T10:00:00+08:00' });
+  assert.equal(candidate.debrisRisk.classification, DEBRIS_RISK.LOW_RISK);
+});
+
+test('regression: V2.4.11 CASE 1 (real case, order 四) is unaffected by the CLEARED_TERMINAL hotfix -- no cleared signal present', () => {
+  const result = resolveDebrisSafetyRisk({ comment: '國3南向77K關西附近中間車道有輪胎皮' });
+  assert.equal(result.classification, DEBRIS_RISK.HIGH_RISK);
+});
+
+test('regression: V2.4.11 CASE 4 (散落物已清除，恢復正常通行) still resolves LOW_RISK under the new CLEARED_TERMINAL path', () => {
+  const result = resolveDebrisSafetyRisk({ comment: '散落物已清除，恢復正常通行' });
+  assert.equal(result.classification, DEBRIS_RISK.LOW_RISK);
+  assert.ok(result.reasons.some((r) => r.includes('CLEARED_TERMINAL')));
 });
