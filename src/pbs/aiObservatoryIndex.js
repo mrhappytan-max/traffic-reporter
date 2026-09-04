@@ -362,6 +362,25 @@ export function deriveFinalDecisionReason(record) {
       return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: '既有規則判定不符合播報資格' };
     case AI_OUTCOME.PROCESSING_STARTED:
       return { status: FINAL_DECISION_STATUS.PENDING, reason: '處理中／未完成' };
+    // V2.4.12 (order 路況工程部｜V2.4.12 查修頁「不通報原因」高可視化改版
+    // 施工令, section 十一-F) — a genuine, existing gap this round closes:
+    // reaching here means the AI approved notify=true (record.lineSent
+    // already returned SENT above if it had actually gone out), yet no
+    // LINE push happened. The ONLY existing mechanism in this codebase
+    // that produces exactly that combination is Incident Memory
+    // suppression (traffic/incidentMemory.js, V2.4.0) — the SAME ongoing
+    // incident was already notified and the AI itself found no material
+    // change worth re-alerting a driver about. Read straight off the two
+    // fields aiApprovedPbsBroadcast.js/debugPush.js already computed and
+    // stored on this record (sameIncident/materialChange) — never a new
+    // judgment, never re-run. Every other AI_NOTIFY_TRUE-but-not-sent
+    // combination this record can't explain still falls through to the
+    // honest default below, never guessed.
+    case AI_OUTCOME.AI_NOTIFY_TRUE:
+      if (record.sameIncident === true && record.materialChange === false) {
+        return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: '重複事件：與近期已通知過的同一起事故相同，且無實質變化，未重複發送' };
+      }
+      return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: 'UNKNOWN / NOT RECORDED' };
     default:
       return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: 'UNKNOWN / NOT RECORDED' };
   }

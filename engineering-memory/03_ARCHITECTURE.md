@@ -945,6 +945,8 @@ PBS 官方來源 → Windows 每3分鐘抓取(localMonitor.js) → Local Edge Fi
 
 **V2.4.12 修正（PATCH，2026-09-04）**：debrisRiskPolicy.js 新增 CLEARED_TERMINAL 判斷（HIGH_RISK 檢查前的唯一例外）——已清除訊號（原文或結構化 lifecycle===CLEARED）且無持續性訊號（仍有/部分等）時，優先於歷史 HIGH_RISK 證據判 LOW_RISK；伴隨持續性訊號時不套用。resolveDebrisSafetyRisk() 新增第二參數 lifecycle，舊呼叫不受影響。詳見 07_KNOWN_ISSUES_02.md。
 
+**V2.4.13 修正（PATCH，2026-09-04，UI ONLY）**：aiObservatoryView.js 新增 export 函式 deriveCompactNoSendReason(record, decision)，收合卡片新增紅字不通報/處理失敗原因區塊，優先用既有AI decision cache reason（0額外KV讀取），否則套GEO/道路政策/散落物人話化樣板。deriveFinalDecisionReason() 補AI_NOTIFY_TRUE重複通知分支。AI/GEO/道路政策/Queue/CCTV/LINE token系統全數未動。詳見 07_KNOWN_ISSUES_02.md。
+
 ## 模組清單（自動掃描）
 
 - **src/./**: index.js, version.js

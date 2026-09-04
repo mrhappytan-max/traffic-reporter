@@ -11,21 +11,30 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V2.4.12（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | 96b5f44（V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS commit；本輪 V2.4.12 commit 尚未落地前的快照，本表隨本輪 commit 一併更新） |
+| Current Version | V2.4.13（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | 96b5f44（V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS commit；本輪 V2.4.13 commit 尚未落地前的快照，本表隨本輪 commit 一併更新） |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty（本輪 V2.4.12 changeset，與本份快照同一 commit 一起送出） |
+| Source working tree | dirty（本輪 V2.4.13 changeset，與本份快照同一 commit 一起送出） |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
-| Current Phase | Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，TDX 正式 LINE 通知維持開啟（PHASE_E_TDX_NOTIFY_LIVE，本輪未變動）。**本輪（V2.4.12）修正 V2.4.11 散落物分級的 CLEARED 優先序 bug**：`debrisRiskPolicy.js` 新增 CLEARED_TERMINAL 判斷——已清除（原文或結構化 `lifecycle==='CLEARED'`）且無「仍有/部分」等持續性訊號時，優先於同段文字裡的歷史 HIGH_RISK 證據，判 LOW_RISK；持續性訊號存在時不套用，依剩餘證據正常判定。僅 `debrisRiskPolicy.js`／`aiCandidate.js` 兩檔改動。GEO/道路政策/Queue/CCTV/AI model/LINE token系統全數未動 |
-| Current Task | none。Latest completed task = V2_4_11_1_DEBRIS_CLEARED_PRECEDENCE_AND_MEMORY_SYNC_HOTFIX，status = **PARTIAL_SEALED**（Part一程式碼已完成 V2.4.11→V2.4.12；Part二 Google Drive 同步待人類動作，未 SEALED）。CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何 wrangler.jsonc 開關）。 |
-| Latest Completed Version | V2.4.12 |
-| Known Blocker | **GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES**（見07_KNOWN_ISSUES_02.md）——`07_KNOWN_ISSUES_02.md`／`PRODUCTION_MANIFEST.json`／`SYSTEM_STATE.json` 對 Drive 同步待人類手動於 Drive 建立 `07_KNOWN_ISSUES_02.md` 才能解除，本 session 已唯讀確認尚未完成。另沿用 V2.4.5 封版的 REAL_WORLD_CONFIRMATION_PENDING（TDX 正式 LINE 通知現場觀察）——本 session 無 Production 網路存取，異常時第一動作固定 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=false` |
-| Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING（沿用 V2.4.5 封版項目，與本輪散落物分級無關） |
+| Current Phase | Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，TDX 正式 LINE 通知維持開啟（PHASE_E_TDX_NOTIFY_LIVE，本輪未變動）。**本輪（V2.4.13，OBSERVABILITY/UI ONLY）**：查修頁收合卡片新增高可視化「❌ 不通報原因／處理失敗原因」紅字區塊（不需展開即可見），只重組既有 AI decision cache reason／GEO／道路政策／散落物 reason，0 新 AI 呼叫、0 額外 KV 寫入。`deriveFinalDecisionReason()` 補一個既有資料缺口（sameIncident+無materialChange的重複通知不再顯示UNKNOWN）。AI/GEO/道路政策/Queue/CCTV/LINE token系統全數未動 |
+| Current Task | none。Latest completed task = V2_4_12_OBSERVATORY_NO_SEND_REASON_HIGH_VISIBILITY_UI，status = **SEALED**（V2.4.12→V2.4.13；施工令自身版本號因與前輪重複已修正，見下方說明）。CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何 wrangler.jsonc 開關）。 |
+| Latest Completed Version | V2.4.13 |
+| Known Blocker | **GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES**（前輪遺留，與本輪UI改版無關，見07_KNOWN_ISSUES_02.md）——`07_KNOWN_ISSUES_02.md`／`PRODUCTION_MANIFEST.json`／`SYSTEM_STATE.json` 對 Drive 同步待人類手動於 Drive 建立 `07_KNOWN_ISSUES_02.md` 才能解除。另沿用 V2.4.5 封版的 REAL_WORLD_CONFIRMATION_PENDING（TDX 正式 LINE 通知現場觀察）——本 session 無 Production 網路存取，異常時第一動作固定 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=false` |
+| Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING（沿用 V2.4.5 封版項目，與本輪查修頁改版無關） |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | **最優先（新增）**：人類於既有 Google Drive「路況播報員_工程記憶」資料夾手動建立空白 `07_KNOWN_ISSUES_02.md`（真人帳號），確保 Service Account 對其有更新權限，之後任一 session 重跑「Sync Engineering Memory to Google Drive」workflow 驗證三檔 SYNCED，再正式標記 FINAL=SEALED。待辦（沿用）：人類觀察真實 Production TDX LINE 推播與散落物 HIGH_RISK/AI_REVIEW/LOW_RISK 實際分布（查修頁 DEBRIS RISK 區塊可觀察） |
+| Next Action | 待辦（沿用，最優先）：人類於既有 Google Drive「路況播報員_工程記憶」資料夾手動建立空白 `07_KNOWN_ISSUES_02.md`（真人帳號），之後任一 session 重跑「Sync Engineering Memory to Google Drive」workflow 驗證三檔 SYNCED。新增待辦：人類實機檢視查修頁新版收合卡片「不通報原因」在手機上的實際可讀性（375-430px），確認紅字區塊不破版、不與徽章重疊 |
 | Export Generated At | 2026-09-04T11:00:00.000Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
+
+## V2.4.13 封版（2026-09-04）— 查修頁「不通報原因」高可視化改版
+
+- `V2_4_12_OBSERVATORY_NO_SEND_REASON_HIGH_VISIBILITY_UI`，PATCH，OBSERVABILITY/UI ONLY。施工令自寫 `APP_VERSION_BEFORE=V2.4.11→AFTER=V2.4.12`，但開工時 session 已因前輪封版而是 V2.4.12，依「版本號不重複用於兩個不同 diff」永久規則，本輪改為 V2.4.12→V2.4.13。
+- **問題**：查修頁收合卡片只顯示極簡狀態徽章（例如「🤫 AI：不需主動通報 / LOW」），使用者必須點開展開頁才知道真正的不通報原因，手機現場查修不便，也難以分辨「系統處理失敗」與「AI 正常判定不通報」。
+- **修法**：`src/pbs/aiObservatoryView.js` 新增（已 export 供直接測試）`deriveCompactNoSendReason(record, decision)`——優先序：AI_NOTIFY_FALSE 時優先用既有 AI decision cache 的真實 reason（該筆 cache 本來就已為每一列讀取，0 額外 KV 讀取）；否則依 outcome 套一組人話化樣板（重用既有 `blockedLanes`／`debrisRisk.reasons`／`suppressedForPhase`／`timedOut` 欄位）；系統失敗（AI 呼叫失敗/回應無效/背景重試耗盡）標籤為「❌ 處理失敗原因」，與正常判定不通報的「❌ 不通報原因」明確區分；原因超過 100 字決定性截斷加刪節號，完整原文仍留在展開頁；真的沒有任何原因時誠實顯示「系統未記錄詳細原因，請展開查看流程紀錄。」。新區塊直接嵌在 `<summary>` 內（收合即可見），鮮紅 `#f85149`（沿用既有 `.badge-line-fail` 危險色）、粗體、18-20px，可換行 2-3 行，永遠自成一行不與徽章重疊。
+- **同步小修**：`src/pbs/aiObservatoryIndex.js#deriveFinalDecisionReason()` 新增唯一分支——`AI_NOTIFY_TRUE` 但從未 `lineSent` 時，若既有 `sameIncident===true && materialChange===false`，回報「重複事件：與近期已通知過的同一起事故相同，且無實質變化，未重複發送」，取代先前的 `UNKNOWN / NOT RECORDED`；既有每個分支原始字串逐位元組不變（既有鎖定測試全數原樣通過）。
+- **測試**：新增 `test/v2412ObservatoryNoSendReasonHighVisibilityUI.test.js`（15項，施工令§十八CASE1-13全覆蓋）。全量迴歸1864/1832/32，`git stash -u`同commit精確基準比對NEW_FAILURES=0。`APP_VERSION` V2.4.12→V2.4.13。
+- **未觸碰**：AI SYSTEM_PROMPT/notify政策、散落物分級政策、GEO、道路管理政策、Queue、Incident Memory（僅讀既有欄位）、dedupe、LINE formatter、CCTV、Production flags。完整記錄見 `07_KNOWN_ISSUES_02.md`。
 
 ## V2.4.12 封版（2026-09-04，PARTIAL_SEALED）— 散落物已清除優先序＋工程記憶同步修正令
 

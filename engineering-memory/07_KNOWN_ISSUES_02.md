@@ -111,3 +111,21 @@ Leverage shared drives, or use OAuth delegation instead.
 **未觸碰**：GEO Resolver、Queue、Incident Memory、CCTV、KV 讀寫形狀、LINE quota 架構、Production flags——僅 `debrisRiskPolicy.js`／`aiCandidate.js` 兩個檔案改動，皆在散落物分級這一個模組範圍內。
 
 **通則**：一個「優先序規則」如果只用單一維度（本例「HIGH 一律先查」）就套用到所有情境，遲早會遇到一個更根本的事實能推翻它（「已經解除的危險」不是「歷史上曾經很危險」）——正確做法不是放棄整個優先序，而是找出那個更根本的例外條件本身的判準（本例：解除訊號是否真的完整、沒有被同一句話裡的「仍有/部分」矛盾），只在那個窄範圍內反轉優先序，其餘情境維持原規則不變。
+
+## 修正紀錄｜V2.4.13 查修頁「不通報原因」高可視化改版（2026-09-04）
+
+**任務**：`V2_4_12_OBSERVATORY_NO_SEND_REASON_HIGH_VISIBILITY_UI`（路況工程部｜V2.4.12 查修頁「不通報原因」高可視化改版施工令）。`APP_VERSION` V2.4.12→V2.4.13（PATCH）。**OBSERVABILITY／UI ONLY**——本輪未修改任何 AI 判斷政策／TDX／PBS／GEO／ROAD_POLICY／Queue／LINE／Incident Memory／KV 架構／CCTV／Production flags。
+
+**版本號說明**：施工令自己寫的是 `APP_VERSION_BEFORE=V2.4.11 / AFTER=V2.4.12`，但本 session 開工時實際已是 V2.4.12（同一 session 前一輪 `V2_4_11_1_DEBRIS_CLEARED_PRECEDENCE_AND_MEMORY_SYNC_HOTFIX` 已把 V2.4.11 升到 V2.4.12）。依本專案永久規則（版本號不得對兩個不同 diff 重複使用），本輪改為 V2.4.12→V2.4.13。
+
+**問題**：查修頁收合卡片先前只顯示「🤫 AI：不需主動通報 / LOW」等極簡狀態徽章，使用者必須點開展開頁、找到 AI 區塊、讀 reason 欄位，才知道「為什麼沒發」——手機現場查修非常不便，也讓「系統處理失敗」與「AI 正常判定不通報」難以第一眼分辨。
+
+**修法**：`src/pbs/aiObservatoryView.js` 新增 `deriveCompactNoSendReason(record, decision)`（純函式，已 export 供直接單元測試）——只從既有資料選一個最具體的原因字串，優先序：AI_NOTIFY_FALSE 時優先用**既有 AI decision cache 的真實 reason**（查修頁本來就已對每一列讀取這份 cache，本輪未增加任何 KV 讀取）；否則依 outcome 套用一組人話化樣板（道路政策/GEO/散落物 LOW_RISK 皆重用既有欄位如 `blockedLanes`／`debrisRisk.reasons`）；系統失敗（AI 呼叫失敗/回應無效/背景重試耗盡）標籤改為「❌ 處理失敗原因」，與正常判定不通報的「❌ 不通報原因」明確區分；找不到任何真實原因時誠實顯示「系統未記錄詳細原因，請展開查看流程紀錄。」，絕不捏造。原因文字超過 100 字時決定性截斷加刪節號，完整原文仍完整保留在展開頁。新區塊直接嵌在 `<summary>` 內（不需展開即可見），鮮紅 `#f85149`（沿用既有 `.badge-line-fail` 同一個危險色，非新色）、粗體、18-20px，可換行 2-3 行，`flex-basis:100%` 確保永遠自成一行、不與 LOW 徽章重疊。
+
+**同步小修**：`src/pbs/aiObservatoryIndex.js#deriveFinalDecisionReason()` 新增唯一一個新分支——`AI_NOTIFY_TRUE` 但 `lineSent` 從未為真時，若既有 `sameIncident===true && materialChange===false`（Incident Memory 既有欄位），回報「重複事件：與近期已通知過的同一起事故相同，且無實質變化，未重複發送」，取代先前掉進 default 分支顯示的無意義 `UNKNOWN / NOT RECORDED`（真實存在的資料缺口，非新判斷）。此函式既有每一個分支的原始字串**逐位元組不變**（`test/v246TracePageTdxAndDecisionReasonSummary.test.js` 既有鎖定斷言全數原樣通過）。
+
+**測試**：新增 `test/v2412ObservatoryNoSendReasonHighVisibilityUI.test.js`（15項，施工令§十八CASE1-13全覆蓋，含AI/GEO/道路政策/處理失敗/重複事件五大原因來源、截斷/未截斷、原因缺失、收合可見、展開頁資料完整保留、0額外KV寫入、AI/GEO/道路政策/LINE決策邏輯不變）。全量迴歸1864/1832/32，`git stash -u`同commit精確基準比對NEW_FAILURES=0。
+
+**未觸碰**：AI SYSTEM_PROMPT、AI notify 政策、散落物分級政策、GEO、TDX KM範圍、PBS篩選、道路管理政策、Queue、Incident Memory（僅讀既有欄位）、dedupe、LINE formatter、CCTV、Production flags。
+
+**通則**：一個「查修頁只顯示結果、不顯示原因」的可觀測性缺口，往往不需要新的判斷邏輯就能補齊——真正的原因資料通常早已被上游系統算出並持久化（本例：AI decision cache 的 reason 欄位、既有 outcome 分支各自代表的具體原因），缺的只是「把它搬到使用者第一眼能看到的地方」這一層 UI 呈現工作；把這種純呈現層修正跟「新增一次判斷」混為一談，容易導致不必要地擴大改動範圍到決策邏輯本身。

@@ -608,17 +608,136 @@ function lineSummaryBadge(record) {
 // re-derives the reason itself (order section 九: "UI 不是決策者"). Kept
 // deliberately short (order section 十一: "不要在收合狀態塞太多技術除錯
 // 文字") — full pipeline detail lives only in renderDetail() below.
-function finalReasonLine(record) {
+//
+// V2.4.12 (order 路況工程部｜V2.4.12 查修頁「不通報原因」高可視化改版
+// 施工令) — this line alone was found on real Production phones to be too
+// quiet: a driver-safety reader could see "🤫 AI：不需主動通報 / LOW" and
+// this small grey line, but had to expand every single card to actually
+// read WHY. The wrapper `<div class="final-reason ...">` element itself is
+// UNCHANGED (order section十九's own scope, and this repo's existing
+// test/v246TracePageTdxAndDecisionReasonSummary.test.js CASE 1 already
+// asserts this exact class name is present in the collapsed output) — only
+// its CONTENT is upgraded: for a SENT/PENDING record it stays the same
+// short status line it always was; for anything NOT_SENT/PROCESSING_FAILED
+// it now embeds the new high-visibility no-send-reason block (order
+// section 三/四) directly, so the reason is legible without a single tap.
+function finalReasonLine(record, decision) {
   const { status, reason } = deriveFinalDecisionReason(record);
-  const meta =
-    status === FINAL_DECISION_STATUS.SENT
-      ? { icon: '✅', label: '已發送' }
-      : status === FINAL_DECISION_STATUS.PROCESSING_FAILED
-        ? { icon: '⏱', label: 'AI處理失敗' }
-        : status === FINAL_DECISION_STATUS.PENDING
-          ? { icon: '⏳', label: '處理中' }
-          : { icon: '⏭', label: '未發送' };
-  return `<div class="final-reason final-reason-${status.toLowerCase()}">${meta.icon} ${escapeHtml(meta.label)} / 原因：${escapeHtml(reason)}</div>`;
+  if (status === FINAL_DECISION_STATUS.SENT) {
+    return `<div class="final-reason final-reason-${status.toLowerCase()}">✅ 已發送 / 原因：${escapeHtml(reason)}</div>`;
+  }
+  if (status === FINAL_DECISION_STATUS.PENDING) {
+    return `<div class="final-reason final-reason-${status.toLowerCase()}">⏳ 處理中 / 原因：${escapeHtml(reason)}</div>`;
+  }
+  return `<div class="final-reason final-reason-${status.toLowerCase()}">${renderNoSendReasonBlock(deriveCompactNoSendReason(record, decision))}</div>`;
+}
+
+// V2.4.12 (order section 五) — the order's own exact priority order for
+// where a driver-facing "why wasn't this sent" reason comes from, first
+// available wins. This function NEVER decides anything new — it only
+// SELECTS among reason strings this repo already computed/stored
+// (aiObservatoryIndex.js#deriveFinalDecisionReason's own composed reason,
+// the real AI decision cache's own `reason` field already loaded for
+// every row by handleAiObservatoryView, or this record's own
+// debrisRisk.reasons) and wraps the chosen one in a fuller, driver-facing
+// sentence keyed by outcome (order section 八/九/十/十一's own exact
+// example wording) — never inventing a fact absent from the record.
+// Returns null when there is nothing to show (SENT/PENDING — order section
+// eleven's own implicit scope: this block only ever appears on a
+// NOT_SENT/PROCESSING_FAILED card).
+const NO_SEND_REASON_TEMPLATES = {
+  [AI_OUTCOME.GEO_EXCLUDED_OUTSIDE_HSINCHU]: () => '事件確認位於新竹縣市服務範圍之外。',
+  [AI_OUTCOME.SERVICE_AREA_EXCLUDED]: () => '事件確認位於新竹縣市服務範圍之外。',
+  [AI_OUTCOME.GEO_EXCLUDED_UNKNOWN]: () => '無法確認事件位於新竹服務範圍，Gate A 已安全排除。',
+  [AI_OUTCOME.ROAD_POLICY_EXCLUDED_SHOULDER_OPEN]: () => '道路政策排除：機動路肩開放，此類資訊不主動發送 LINE。',
+  [AI_OUTCOME.ROAD_POLICY_EXCLUDED_SHOULDER_CLOSE]: () => '道路政策排除：機動路肩關閉，此類資訊不主動發送 LINE。',
+  [AI_OUTCOME.ROAD_POLICY_EXCLUDED_INSUFFICIENT_LANES]: (record) =>
+    `道路政策排除：${typeof record.blockedLanes === 'number' ? `施工僅封${record.blockedLanes}車道` : '施工封鎖車道資料不足'}，未達主動發送門檻。`,
+  [AI_OUTCOME.ROAD_POLICY_EXCLUDED_UNKNOWN_LANES]: () => '道路政策排除：施工封鎖車道資料不足，未達主動發送門檻。',
+  [AI_OUTCOME.STALE_AFTER_CLEARED]: () => '事件已解除，已取消後續 AI 重試。',
+  [AI_OUTCOME.AI_NOT_INVOKED_LEGACY_PATH]: (record) =>
+    record.suppressedForPhase ? 'TDX 通知開關關閉，此來源目前不主動發送 LINE。' : '既有規則判定不符合播報資格。',
+  [AI_OUTCOME.DEBRIS_EXCLUDED_LOW_RISK]: (record) => {
+    const reasons = record.debrisRisk && Array.isArray(record.debrisRisk.reasons) ? record.debrisRisk.reasons : [];
+    return reasons.length ? `散落物風險判定為低風險：${reasons.join('；')}` : '散落物風險判定為低風險，未進入 AI 判讀。';
+  },
+};
+// Distinct label vocabulary (order section十/十一-D): a SYSTEM failure
+// (AI call error, invalid response, exhausted background retries) reads
+// "❌ 處理失敗原因", never the same "❌ 不通報原因" label a normal AI/policy/
+// GEO NOT_SENT decision uses — order's own explicit "系統失敗與正常 AI 判定
+// NO 必須能清楚區分".
+const FAILURE_REASON_TEMPLATES = {
+  [AI_OUTCOME.AI_CALL_FAILED]: (record) => (record.timedOut ? 'AI 判讀逾時，系統將自動重試。' : 'AI 判讀呼叫失敗，系統將自動重試。'),
+  [AI_OUTCOME.AI_DECISION_INVALID]: () => 'AI 回應格式無效，判讀失敗。',
+  [AI_OUTCOME.PROCESSING_FAILED]: (record) => (record.timedOut ? 'AI 背景處理連續逾時，重試後仍未完成。' : 'AI 背景處理已重試，仍未能可靠完成。'),
+};
+const FAILURE_OUTCOMES = new Set([AI_OUTCOME.AI_CALL_FAILED, AI_OUTCOME.AI_DECISION_INVALID, AI_OUTCOME.PROCESSING_FAILED]);
+
+// order section 十四 — deterministic, non-decision truncation only: a
+// mobile card gets ~2-3 lines, never a whole paragraph; the COMPLETE
+// original reason is always still readable in the expanded detail section
+// below (renderAiTextEditSection/renderField already show it verbatim,
+// untouched by this round).
+const REASON_CARD_MAX_CHARS = 100;
+function truncateReasonForCard(text) {
+  const clean = String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (clean.length <= REASON_CARD_MAX_CHARS) return clean;
+  return `${clean.slice(0, REASON_CARD_MAX_CHARS - 1)}…`;
+}
+
+// Exported alongside handleAiObservatoryView purely so
+// test/v2412ObservatoryNoSendReasonHighVisibilityUI.test.js can unit-test
+// the truncation/priority logic directly, independent of the upstream
+// AI decision cache's own unrelated 80-char REASON_MAX_CHARS cap
+// (aiDecisionEngine.js) — same "export a pure helper for direct testing"
+// convention this repo already uses for deriveFinalDecisionReason/
+// resolveDebrisSafetyRisk. Never imported by any other runtime module.
+export function deriveCompactNoSendReason(record, decision) {
+  if (!record) return null;
+  const { status, reason: finalReason } = deriveFinalDecisionReason(record);
+  if (status === FINAL_DECISION_STATUS.SENT || status === FINAL_DECISION_STATUS.PENDING) return null;
+
+  const isFailure = FAILURE_OUTCOMES.has(record.outcome);
+  const label = isFailure ? '處理失敗原因' : '不通報原因';
+
+  let text = null;
+  // order section 六 — the REAL AI reason text (already loaded for this
+  // row, zero extra KV read) outranks the generic eventType-based
+  // categorization for a genuine AI_NOTIFY_FALSE verdict. `decision` is
+  // only ever non-null for AI_NOTIFY_TRUE/AI_NOTIFY_FALSE (see this
+  // module's own loadAiDecisionDetail), so this branch can never fire for
+  // an outcome that never reached a valid AI decision — it never
+  // overwrites a GEO/policy/failure reason with a stale AI text.
+  if (record.outcome === AI_OUTCOME.AI_NOTIFY_FALSE && decision && typeof decision.reason === 'string' && decision.reason.trim()) {
+    text = decision.reason.trim();
+  } else if (isFailure && FAILURE_REASON_TEMPLATES[record.outcome]) {
+    text = FAILURE_REASON_TEMPLATES[record.outcome](record);
+  } else if (NO_SEND_REASON_TEMPLATES[record.outcome]) {
+    text = NO_SEND_REASON_TEMPLATES[record.outcome](record);
+  } else if (finalReason && finalReason !== 'UNKNOWN / NOT RECORDED') {
+    text = finalReason;
+  }
+
+  // order section 十五 — never fabricate a reason that doesn't exist.
+  if (!text) {
+    return { label, text: '系統未記錄詳細原因，請展開查看流程紀錄。', missing: true };
+  }
+  return { label, text: truncateReasonForCard(text), missing: false };
+}
+
+// order section 三 — the actual high-visibility block: red, bold, one full
+// step larger than the surrounding status text, allowed to wrap 2-3 lines
+// (never truncated to a single line, never a small tag). `flex-basis:100%`
+// (same trick `.final-reason`/`.no-send-reason` already used before this
+// round) forces it onto its own row inside the flex `<summary>`, so it can
+// never overlap the LOW/impact badge next to it (order section十六).
+function renderNoSendReasonBlock(compact) {
+  if (!compact) return '';
+  const cls = compact.missing ? 'no-send-reason no-send-reason-missing' : 'no-send-reason';
+  return `<div class="${cls}"><span class="no-send-reason-label">❌ ${escapeHtml(compact.label)}：</span><span class="no-send-reason-text">${escapeHtml(compact.text)}</span></div>`;
 }
 
 function renderRow(record, decision, idem, now) {
@@ -635,7 +754,7 @@ function renderRow(record, decision, idem, now) {
     <span class="pill pill-${meta.cls}">${meta.emoji} ${escapeHtml(meta.label)}</span>
     ${impactBadge}
     ${lineSummaryBadge(record)}
-    ${finalReasonLine(record)}
+    ${finalReasonLine(record, decision)}
   </summary>
   ${renderDetail(record, decision, idem)}
 </details>`;
@@ -720,6 +839,30 @@ const PAGE_STYLE = `
   .final-reason-not_sent { color: #9aa1ac; }
   .final-reason-processing_failed { color: #e3b341; }
   .final-reason-pending { color: #58a6ff; }
+  /* V2.4.12 (order section 三/十六) — the high-visibility no-send-reason
+     block: bright red, bold, one step larger than surrounding status text,
+     free to wrap 2-3 lines on a 375-430px phone, never a single truncated
+     line and never overlapping the pill/badge above it (this div's parent
+     .final-reason already forces its own full-width row). #f85149 is the
+     SAME "fail" red this page already used for .badge-line-fail/.flow-fail
+     — reusing the existing danger color, not inventing a new one. */
+  .no-send-reason {
+    display: block; margin-top: 6px; padding: 8px 10px; border-radius: 8px;
+    background: #2b1414; border: 1px solid #4a1f1f; line-height: 1.5;
+  }
+  .no-send-reason-missing { background: #262b34; border-color: #3a4150; }
+  .no-send-reason-missing .no-send-reason-label,
+  .no-send-reason-missing .no-send-reason-text { color: #9aa1ac; }
+  .no-send-reason-label {
+    display: block; color: #f85149; font-weight: 700; font-size: 18px;
+  }
+  .no-send-reason-text {
+    display: block; color: #f85149; font-weight: 700; font-size: 18px;
+    white-space: normal; overflow-wrap: break-word; word-break: break-word;
+  }
+  @media (min-width: 431px) {
+    .no-send-reason-label, .no-send-reason-text { font-size: 20px; }
+  }
   .col-road { font-weight: 600; color: #f2f3f5; }
   .col-type { color: #9aa1ac; font-size: 13px; }
   .pill { display: inline-block; border-radius: 999px; padding: 2px 10px; font-size: 13px; font-weight: 600; }

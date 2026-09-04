@@ -2001,7 +2001,72 @@
 // same known 403. FINAL is therefore NOT marked SEALED for Part 二; see
 // 07_KNOWN_ISSUES_02.md's own updated blocker entry for the exact
 // remaining human action.
-export const APP_VERSION = 'V2.4.12';
+// V2.4.13 — V2_4_12_OBSERVATORY_NO_SEND_REASON_HIGH_VISIBILITY_UI (order
+// task label; the order itself stated APP_VERSION_BEFORE=V2.4.11 ->
+// APP_VERSION_AFTER=V2.4.12, but the actual repo state at the start of
+// this round was already V2.4.12 — the prior order
+// V2_4_11_1_DEBRIS_CLEARED_PRECEDENCE_AND_MEMORY_SYNC_HOTFIX had already
+// bumped V2.4.11 -> V2.4.12 in this same session. This project's own
+// permanent rule (see this file's own header comment) is that every
+// change reaching Production bumps APP_VERSION in its own commit and a
+// version number is never reused across two different changesets — so
+// this round bumps V2.4.12 -> V2.4.13 (PATCH) instead of re-issuing
+// "V2.4.12" a second time for a different diff.
+//
+// OBSERVABILITY/UI ONLY — no AI/GEO/Road Policy/Queue/LINE/Debris/CCTV/
+// Production-flag decision logic changed. Real Production complaint: a
+// collapsed "LINE 未發送" card only ever showed a terse status pill
+// (🤫 AI：不需主動通報 / LOW) — a driver-safety reader had to expand
+// every single card and hunt for the real AI/GEO/policy reason, which is
+// impractical on a phone during a live incident.
+//
+// New high-visibility "❌ 不通報原因：..." / "❌ 處理失敗原因：..." block,
+// bright red (#f85149, the SAME danger red this page already used for
+// .badge-line-fail/.flow-fail), bold, 18-20px, free to wrap 2-3 lines,
+// rendered INSIDE <summary> so it is visible without expanding — never a
+// small tag. src/pbs/aiObservatoryView.js gained
+// deriveCompactNoSendReason(record, decision), a pure presentation
+// function selecting among reason strings this repo ALREADY computed and
+// stored (never re-deciding anything, never a new AI/GEO/policy call):
+// the real AI decision-cache reason text for a genuine AI_NOTIFY_FALSE
+// verdict (already loaded per row, 0 extra KV read) takes priority over
+// the old generic eventType categorization; GEO/Road-Policy/failure/
+// legacy-path/debris-LOW_RISK outcomes get a fuller, driver-facing
+// sentence template built from fields the record already carries
+// (blockedLanes, debrisRisk.reasons, timedOut, suppressedForPhase); a
+// system failure (AI call error, invalid response, exhausted background
+// retries) is labeled "處理失敗原因", never the same "不通報原因" a normal
+// AI/policy/GEO decision uses. A reason over the ~100-char/2-3-line card
+// budget is deterministically truncated with an ellipsis — the complete
+// original reason remains verbatim in the expanded detail section,
+// unaffected. A record with genuinely no derivable reason shows an
+// honest "系統未記錄詳細原因，請展開查看流程紀錄。" fallback, never a
+// fabricated one.
+//
+// src/pbs/aiObservatoryIndex.js#deriveFinalDecisionReason gained exactly
+// one new branch this round: AI_NOTIFY_TRUE with no LINE ever sent, where
+// this repo's own already-stored sameIncident/materialChange fields show
+// it was suppressed as a same-incident duplicate — previously fell
+// through to the default 'UNKNOWN / NOT RECORDED' arm despite this repo
+// already having a real explanation on hand; a genuine, additive gap fix,
+// not a new judgment. Every existing deriveFinalDecisionReason branch's
+// own terse reason string is BYTE-FOR-BYTE unchanged (this repo's own
+// locked test/v246TracePageTdxAndDecisionReasonSummary.test.js assertions
+// against those exact strings all still pass unmodified) — the fuller
+// sentences live entirely in the new view-layer templates, never in the
+// shared reason-composition function other code paths also depend on.
+//
+// NEW_AI_CALLS=0, NEW_KV_WRITES=0 (GET /admin/pbs-ai-observatory-view
+// already loaded the real AI decision cache per row before this round —
+// see loadAiDecisionDetail's own existing call site — this round only
+// changes how that already-fetched data is FORMATTED). AI_POLICY_MODIFIED/
+// GEO_MODIFIED/ROAD_POLICY_MODIFIED/LINE_POLICY_MODIFIED/
+// DEBRIS_POLICY_MODIFIED = NO.
+//
+// See test/v2412ObservatoryNoSendReasonHighVisibilityUI.test.js (the
+// order's own §十八 CASE 1-13) and 07_KNOWN_ISSUES_02.md for the full
+// record.
+export const APP_VERSION = 'V2.4.13';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

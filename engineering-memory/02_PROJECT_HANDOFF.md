@@ -98,7 +98,7 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 | 欄位 | 值 |
 |---|---|
-| Latest completed | V2.4.12（PARTIAL_SEALED — Drive sync 未完成，見下方） |
+| Latest completed | V2.4.13（SEALED，UI only；前輪 V2.4.12 的 Drive sync 未完成仍待人類，見下方） |
 | package.json version | 0.1.0 |
 | Production status | DEPLOYED |
 | Production verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
@@ -442,6 +442,10 @@ V2.0.2 之後到 V2.4.0 之間的四個版本，這份精簡接班版未逐版�
 CLOUDFLARE_QUEUE`。V2.2.0 把查修頁升級為四層事件生命週期檢視。V2.3.1／
 V2.3.2／V2.3.3 是三個連續 PATCH（LINE 地圖座標直連 fallback、CCTV
 診斷工具修復、CCTV R2 讀回驗證），皆未改架構本身。
+
+## V2.4.13 — 查修頁「不通報原因」高可視化改版（2026-09-04，PATCH，OBSERVABILITY/UI ONLY，加在下方 V2.4.12 之上）
+
+收合卡片新增紅字「❌ 不通報原因／處理失敗原因」區塊，優先用既有 AI decision cache 真實 reason（0 額外 KV 讀取），否則套 GEO/道路政策/散落物人話化樣板；系統失敗與正常判定明確分標籤；超長截斷、缺失誠實回報。deriveFinalDecisionReason() 補一個既有 sameIncident 重複通知的顯示缺口。全量迴歸1864/1832/32，NEW_FAILURES=0。APP_VERSION V2.4.12→V2.4.13。AI/GEO/道路政策/Queue/LINE/CCTV/Production flags全數未動。詳見 07_KNOWN_ISSUES_02.md。
 
 ## V2.4.12 — 散落物 CLEARED 優先序修正＋工程記憶同步（2026-09-04，PATCH，加在下方 V2.4.11 之上）
 
