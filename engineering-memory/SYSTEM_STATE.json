@@ -255,20 +255,26 @@
     }
   },
   "taskSeal": {
-    "task": "TRAFFIC_REPORTER_V2_4_15_QWEN_AI_MODEL_REPLACEMENT",
-    "status": "SEALED_RUNTIME_TEST_ENGMEMORY_PRODUCTION_VERIFICATION_PENDING",
+    "task": "TRAFFIC_REPORTER_V2_4_15_PRODUCTION_SEAL",
+    "status": "SEALED_FOR_PRODUCTION_OBSERVATION",
     "sealedAt": "2026-09-04",
-    "sealedBy": "human directive (路況播報員｜V2.4.15 正式施工令 QWEN FAST AI MODEL REPLACEMENT)",
+    "sealedBy": "human directive (路況播報員｜V2.4.15 正式封版令)",
     "releaseVersion": "V2.4.15",
-    "previousVersion": "V2.4.14",
-    "nature": "PATCH。ROOT CAUSE FIX/MINIMAL MODEL REPLACEMENT。Production 48h 29/34次逾時(≈85%)，根因MODEL_LATENCY(PIPELINE_OVERHEAD≈0)。",
-    "fix": "aiDecisionEngine.js的PBS_AI_MODEL_ID: '@cf/zai-org/glm-4.7-flash'→'@cf/qwen/qwen3-30b-a3b-fp8'。確認整runtime僅此一常數讀取model名稱。",
-    "testEvidence": "新增test/v2415QwenAiModelReplacement.test.js（11項，施工令§十二checklist）。同步更新4個既有測試檔model字串。全量迴歸1880/1848/32，git stash -u同commit精確基準比對NEW_FAILURES=0。",
-    "unchanged": "AI_CALL_TIMEOUT_MS(45000ms)、SYSTEM_PROMPT、buildAiUserPrompt()、MEMORY_CONTEXT_PROMPT_SUFFIX、AI request參數、Queue(batch=1/retries=3)、KV、GEO/道路政策/散落物政策、Incident Memory、dedupe、CCTV、LINE formatter/quota、Production flags全數逐字不變，僅換model常數。",
-    "sealCommit": "見 git log 訊息 TRAFFIC_REPORTER_V2_4_15_QWEN_AI_MODEL_REPLACEMENT",
-    "readerNote": "本session無Production網路存取，依施工令§十三指示：/version現場確認、smoke test、24小時驗收皆為REQUIRES_CLAUDE_BROWSER，不猜測不捏造。main push已觸發既有Cloudflare Workers Builds自動部署。既有blocker未解除：GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES，07_KNOWN_ISSUES_02.md待人類手動於Drive建檔。"
+    "previousVersion": "V2.4.15",
+    "nature": "GOVERNANCE/VERSION RECORD ONLY，不改Runtime/APP_VERSION。",
+    "productionConfirmation": "依封版令回報(本session無法自行驗證)：/version=V2.4.15，model=Qwen，首批4筆SUCCESS=4/TIMEOUT=0，LATENCY_AVG=5410ms，Queue Ratio=1.00，ROOT_CAUSE_FIX_CONFIRMED=YES。24H_VALIDATION=PENDING。",
+    "commitVerification": "PRODUCTION_COMMIT_VERIFICATION=UNVERIFIABLE（buildMetadata.deployedCommit=unknown）。BUILD_METADATA_GENERATION_BUG=OPEN，獨立後續議題，不阻擋封版。",
+    "sealRules": "禁止再改V2.4.15 Runtime；24h PASS只追加24H_VALIDATION=PASS，不升版號；新問題另開V2.4.16。",
+    "sealCommit": "見 git log 訊息 TRAFFIC_REPORTER_V2_4_15_PRODUCTION_SEAL"
   },
   "taskSealHistory": [
+    {
+      "task": "TRAFFIC_REPORTER_V2_4_15_QWEN_AI_MODEL_REPLACEMENT",
+      "status": "SEALED",
+      "sealedAt": "2026-09-04",
+      "releaseVersion": "V2.4.15",
+      "summary": "PBS_AI_MODEL_ID glm-4.7-flash→qwen3-30b-a3b-fp8，根因Production 48h 29/34逾時(MODEL_LATENCY)。Prompt/Timeout/Queue/KV/GEO/LINE未動（完整記錄見 07_KNOWN_ISSUES_02.md）。"
+    },
     {
       "task": "V2_4_13_1_OBSERVATORY_NO_SEND_REASON_VISUAL_CONTRAST_HOTFIX",
       "status": "SEALED",
@@ -555,7 +561,7 @@
   ],
   "version": {
     "packageJsonVersion": "0.1.0",
-    "latestCompleted": "V2.4.15",
+    "latestCompleted": "V2.4.15（SEALED_FOR_PRODUCTION_OBSERVATION）",
     "canonicalSource": "src/version.js 的 APP_VERSION — 唯一權威。packageJsonVersion 是 npm 套件版本（0.1.0），與產品版本線無關，不要混用。"
   },
   "production": {
@@ -564,8 +570,8 @@
     "deployMethod": "push to main -> Cloudflare Workers Builds auto-deploy",
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
-  "currentPhase": "Production｜PBS-ONLY + 重大事故限定 LINE Push＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline。PHASE_E_TDX_NOTIFY_LIVE（本輪未變動）。**V2.4.15（本輪，ROOT CAUSE FIX/MINIMAL MODEL REPLACEMENT）**：PBS_AI_MODEL_ID從glm-4.7-flash換成qwen3-30b-a3b-fp8，根因Production 48h 29/34次逾時(MODEL_LATENCY)。Prompt/Timeout/Queue/KV/GEO/道路政策/LINE全數未動。Drive同步Volume02仍BLOCKED_PENDING_HUMAN_ACTION（前輪遺留，不阻擋本輪部署）。",
-  "currentTask": "none。Latest completed = TRAFFIC_REPORTER_V2_4_15_QWEN_AI_MODEL_REPLACEMENT，status = SEALED_RUNTIME_TEST_ENGMEMORY_PRODUCTION_VERIFICATION_PENDING。CURRENT_OFFICIAL_VERSION = V2.4.15。詳見 taskSeal／07_KNOWN_ISSUES_02.md。下一件事：Claude Browser或人類確認Production /version=V2.4.15＋Qwen model、首筆AI判定duration/結果、24小時後與V2.4.14基準比對逾時率/延遲/Queue比；人類於Drive手動建07_KNOWN_ISSUES_02.md後重跑sync。",
+  "currentPhase": "Production｜PBS-ONLY + 重大事故限定 LINE Push＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline。PHASE_E_TDX_NOTIFY_LIVE（本輪未變動）。**V2.4.15已封版SEALED_FOR_PRODUCTION_OBSERVATION**：Qwen model已上線，ROOT_CAUSE_FIX_CONFIRMED=YES，24H_VALIDATION=PENDING。本輪治理封版不改Runtime。Drive Volume02仍BLOCKED_KNOWN_403（不阻擋）。",
+  "currentTask": "none。Latest completed = TRAFFIC_REPORTER_V2_4_15_PRODUCTION_SEAL，status = SEALED_FOR_PRODUCTION_OBSERVATION。VERSION=V2.4.15（不變）。詳見 taskSeal／07_KNOWN_ISSUES_02.md。下一件事：①滿24h後觀測比對V2.4.14基準，PASS則追加24H_VALIDATION=PASS，不升版號；②BUILD_METADATA_GENERATION_BUG（deployedCommit=unknown）獨立追蹤；③新Runtime問題另開V2.4.16，禁止改已封版V2.4.15；④人類於Drive手動建07_KNOWN_ISSUES_02.md後重跑sync。",
   "knownBlocker": "GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES（見07_KNOWN_ISSUES_02.md）——07_KNOWN_ISSUES_02.md／PRODUCTION_MANIFEST.json／SYSTEM_STATE.json對Drive同步待人類手動建檔解除，本session已唯讀確認尚未完成。另沿用V2.4.5封版觀察中狀態：TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED已true，第一筆真實TDX LINE通知現場結果待人類回報。本session無Production網路存取，異常時第一動作固定改回false止血。",
   "realWorldConfirmation": {
     "status": "REAL_WORLD_CONFIRMATION_PENDING",

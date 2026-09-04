@@ -169,3 +169,19 @@ Leverage shared drives, or use OAuth delegation instead.
 **Google Drive 同步**：既知的 `GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES`（service account storage quota 403）blocker 與本輪無關，依施工令§十一明確指示不重新調查、不阻擋本輪 Runtime 部署——GitHub canonical write（本次 commit）成功後即視為 Engineering Memory 已完成，Drive 同步仍誠實記錄為待人類手動於 Drive 建立本檔（`07_KNOWN_ISSUES_02.md`）後才能解除。
 
 **通則**：一個「模型延遲太高」的根因問題，正確修法優先順序永遠是「先換掉造成延遲的那一個變數本身」，而不是「放寬容忍度掩蓋它」（延長 timeout）或「用更多 if/else 繞過需要語意判斷的情境」（把 AI 判斷改回 hard-coded 規則）——後兩者都只是把根因藏起來、換取短期指標好看，真正解決問題的動作永遠是找到並替換那個真正造成延遲的元件本身，並且一次只換一個變數，才能誠實歸因任何觀察到的改善。
+
+## 封版紀錄｜V2.4.15 正式封版 SEALED_FOR_PRODUCTION_OBSERVATION（2026-09-04）
+
+**任務**：`TRAFFIC_REPORTER_V2_4_15_PRODUCTION_SEAL`（路況播報員｜V2.4.15 正式封版令）。**GOVERNANCE／VERSION RECORD ONLY**——本輪不改任何 Runtime，`APP_VERSION` 維持 V2.4.15 不變。
+
+**Production 上線確認（依本輪封版令回報；本 session 全程無 Production 網路存取，無法自行驗證，如實轉載，不得聲稱本 session 已確認）**：部署時間 2026-09-04 17:01:54 +08。Live `/version`=V2.4.15，model=`@cf/qwen/qwen3-30b-a3b-fp8`，`AI_CALL_TIMEOUT_MS`=45000。第一筆 Production AI：duration=3,302ms，outcome=AI_DECISION_VALID，notify=false，impact=LOW，無 Queue 重試。V2.4.15 首批共 4 筆：SUCCESS=4、TIMEOUT=0、INVALID=0，LATENCY_MIN/AVG/MAX=3,302/5,410/7,006ms，QUEUE_WRITE/READ/DELETE=4/4/4（`QUEUE_READ_WRITE_RATIO=1.00`），`KV_429=0`、`KV_5XX=0`、`NEW_RUNTIME_ERRORS=0`。`ROOT_CAUSE_FIX_CONFIRMED=YES`。
+
+**24小時驗收現況**：`24H_STATISTICAL_VALIDATION=PENDING`——4 筆樣本不得描述為完整 24 小時統計，待累積滿 24 小時後與 V2.4.14 基準（Production timeout≈85%、Queue Read/Write Ratio≈1.94）正式比對，目標 `AI_TIMEOUT_RATE<5%`、`P50<6s`、`P95<10s`。
+
+**新開 Known Issue｜BUILD_METADATA_GENERATION_BUG（OPEN）**：live buildMetadata 回報 `deployedCommit="unknown"`／`commitSource="not-yet-generated"`，本輪因此無法直接證明 GitHub V2.4.15 Runtime commit `470c87a480a3ad5a2930a9896829d1a809b306a2` 就是目前 Production 實際執行的 commit。誠實記錄：`COMMIT_MISMATCH=NO`（沒有證據顯示不符，只是無法正向證明）、`COMMIT_VERIFIED=NO`、`PRODUCTION_COMMIT_VERIFICATION=UNVERIFIABLE`。列為獨立後續治理項，不阻擋本輪封版，也不得與 V2.4.15 Runtime 本身的修正混為一談——下一輪若要處理，應是「讓部署流程正確寫入 buildMetadata.deployedCommit」這個獨立議題，不涉及 AI model/Prompt/Queue/KV/GEO/LINE。
+
+**封版規則**：`APP_VERSION` 固定 V2.4.15，不因純治理封版或後續 24h 觀測結果而變動。封版後禁止再修改 V2.4.15 Runtime；24h 驗收 PASS 只追加 `24H_VALIDATION=PASS`／`FINAL_STATUS=SEALED_AND_VALIDATED` 兩個欄位，不升版號；若發現新 Runtime 問題，必須另開 V2.4.16，不得回頭修改已封版的 V2.4.15。
+
+**Drive Sync**：`07_KNOWN_ISSUES_02.md`（本檔）建檔本輪再次確認仍撞既知 `GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES` service-account 403，記錄 `DRIVE_SYNC_VOLUME02=BLOCKED_KNOWN_403`，不重新調查、不阻擋封版，GitHub copy 為 canonical。
+
+**通則**：一個「Runtime 已完成、正在被即時觀察」的版本，治理上最重要的動作不是急著再改東西，而是把「哪些是已確認事實、哪些是仍待觀察的統計」清楚分開記錄——把 4 筆樣本包裝成「24 小時驗證通過」，或把「GitHub 有這個 commit」直接等同「Production 正在跑這個 commit」，都是同一種錯誤：用手邊有的、比較容易取得的證據，去冒充原本要求的、更嚴格的證據。誠實的封版紀錄允許「已完成」與「仍待確認」同時存在，不需要為了看起來完整而硬湊。

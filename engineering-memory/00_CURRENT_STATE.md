@@ -11,23 +11,35 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V2.4.15（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | bd01169（V2_4_13_1_OBSERVATORY_NO_SEND_REASON_VISUAL_CONTRAST_HOTFIX commit；本輪 V2.4.15 commit 尚未落地前的快照，本表隨本輪 commit 一併更新） |
+| Current Version | V2.4.15（唯一權威來源：`src/version.js` 的 `APP_VERSION`；本輪封版令為治理/紀錄封版，不改版號、不改Runtime） |
+| Source main HEAD | 470c87a（TRAFFIC_REPORTER_V2_4_15_QWEN_AI_MODEL_REPLACEMENT Runtime commit） |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty（本輪 V2.4.15 changeset，與本份快照同一 commit 一起送出） |
-| Production | DEPLOYED（本輪 model 替換：main push 後由 Cloudflare Workers Builds 自動部署，本 session 無 Production 網路存取，PRODUCTION_LIVE_VERIFICATION=REQUIRES_CLAUDE_BROWSER） |
-| Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
-| Current Phase | Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，TDX 正式 LINE 通知維持開啟（PHASE_E_TDX_NOTIFY_LIVE，本輪未變動）。**本輪（V2.4.15，ROOT CAUSE FIX / MINIMAL MODEL REPLACEMENT）**：`PBS_AI_MODEL_ID`（`src/pbs/aiDecisionEngine.js`）從 `@cf/zai-org/glm-4.7-flash` 換成 `@cf/qwen/qwen3-30b-a3b-fp8`——Production 48h 34次呼叫29次逾時（≈85%），根因確認為 MODEL_LATENCY（PIPELINE_OVERHEAD≈0）。Prompt/Timeout(45000ms)/Queue/KV/GEO/道路政策/LINE全數未動，僅換此一常數。 |
-| Current Task | none。Latest completed task = TRAFFIC_REPORTER_V2_4_15_QWEN_AI_MODEL_REPLACEMENT，status = **SEALED（Runtime/Test/EngMemory 部分）／PRODUCTION_LIVE_VERIFICATION=REQUIRES_CLAUDE_BROWSER（本 session 無法直接確認）**。CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何 wrangler.jsonc 開關/binding，僅動 AI binding 說明性註解）。 |
+| Source working tree | dirty（本輪 TRAFFIC_REPORTER_V2_4_15_PRODUCTION_SEAL 治理封版 changeset，僅 Engineering Memory，與本份快照同一 commit 一起送出） |
+| Production | DEPLOYED（依本輪封版令回報：Production `/version`=V2.4.15、model顯示為Qwen，2026-09-04 17:01:54 +08部署，第一批4筆AI呼叫皆成功） |
+| Production Verification | 依本輪封版令回報：LIVE_RUNTIME_VERIFIED=YES、SMOKE_TEST=PASS。`PRODUCTION_COMMIT_VERIFICATION=UNVERIFIABLE`（live buildMetadata.deployedCommit="unknown"，無法直接證明470c87a即為live commit，見下方封版節） |
+| Current Phase | Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，TDX 正式 LINE 通知維持開啟（PHASE_E_TDX_NOTIFY_LIVE，本輪未變動）。**V2.4.15已封版為SEALED_FOR_PRODUCTION_OBSERVATION**：PBS_AI_MODEL_ID=Qwen已上線，ROOT_CAUSE_FIX_CONFIRMED=YES（首批4筆0逾時），24H_VALIDATION=PENDING。本輪治理封版令本身不改任何Runtime。 |
+| Current Task | none。Latest completed task = TRAFFIC_REPORTER_V2_4_15_PRODUCTION_SEAL，status = **SEALED_FOR_PRODUCTION_OBSERVATION**。CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何 Runtime/wrangler.jsonc）。封版後規則：禁止再改V2.4.15 Runtime，新問題另開V2.4.16。 |
 | Latest Completed Version | V2.4.15 |
-| Known Blocker | **GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES**（前輪遺留，與本輪模型替換無關，見07_KNOWN_ISSUES_02.md）——`07_KNOWN_ISSUES_02.md`／`PRODUCTION_MANIFEST.json`／`SYSTEM_STATE.json` 對 Drive 同步待人類手動於 Drive 建立 `07_KNOWN_ISSUES_02.md` 才能解除。另沿用 V2.4.5 封版的 REAL_WORLD_CONFIRMATION_PENDING（TDX 正式 LINE 通知現場觀察）——本 session 無 Production 網路存取，異常時第一動作固定 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=false` |
-| Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING（沿用 V2.4.5 封版項目）＋ 新增：V2.4.15 Qwen模型 24小時真實 Production 表現待觀察（AI_TIMEOUT_RATE/P50/P95/Queue Read-Write Ratio，見07_KNOWN_ISSUES_02.md） |
+| Known Blocker | **GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES**（既知，見07_KNOWN_ISSUES_02.md，不阻擋封版）＋ 新增 **BUILD_METADATA_GENERATION_BUG**（`OPEN`，live buildMetadata.deployedCommit="unknown"/commitSource="not-yet-generated"，導致PRODUCTION_COMMIT_VERIFICATION=UNVERIFIABLE，列獨立後續治理項，不阻擋本輪封版）。另沿用 V2.4.5 封版的 REAL_WORLD_CONFIRMATION_PENDING（TDX正式LINE通知現場觀察） |
+| Real-world Confirmation | V2.4.15 Qwen首批4筆Production AI樣本（依封版令回報）：SUCCESS=4/4、TIMEOUT=0、LATENCY_AVG=5,410ms、QUEUE_READ_WRITE_RATIO=1.00、KV_429/5XX=0、NEW_RUNTIME_ERRORS=0，ROOT_CAUSE_FIX_CONFIRMED=YES。**24H_VALIDATION=PENDING**——4筆樣本不等於完整24小時統計，待滿24h後與V2.4.14基準（timeout≈85%、Queue Ratio≈1.94）比對 |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 待辦（沿用，最優先）：人類於既有 Google Drive「路況播報員_工程記憶」資料夾手動建立空白 `07_KNOWN_ISSUES_02.md`（真人帳號），之後任一 session 重跑「Sync Engineering Memory to Google Drive」workflow 驗證三檔 SYNCED。新增待辦：具 Claude Browser 能力的 session（或人類）確認 Production `/version`=V2.4.15、AI model 顯示為 Qwen、上線後首筆 AI 判定 duration/結果、24小時後與 V2.4.14 基準比對逾時率/延遲/Queue Read-Write Ratio |
-| Export Generated At | 2026-09-04T12:00:00.000Z |
+| Next Action | （最優先，沿用）人類於Drive手動建立`07_KNOWN_ISSUES_02.md`後重跑sync驗證。新增：①滿24小時後做唯讀Production observation，比對V2.4.14基準，PASS則追加`24H_VALIDATION=PASS`／`FINAL_STATUS=SEALED_AND_VALIDATED`（不升版號）；②調查BUILD_METADATA_GENERATION_BUG（deployedCommit為何顯示unknown），視為獨立議題，不得與V2.4.15 Runtime混改；③禁止直接修改已封版V2.4.15，新問題一律開V2.4.16 |
+| Export Generated At | 2026-09-04T17:30:00.000Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
 
-## V2.4.15（2026-09-04）— QWEN FAST AI MODEL REPLACEMENT（Runtime/Test/EngMemory SEALED；Production現場驗證 REQUIRES_CLAUDE_BROWSER）
+## V2.4.15 正式封版（2026-09-04）— SEALED_FOR_PRODUCTION_OBSERVATION
+
+**任務**：`TRAFFIC_REPORTER_V2_4_15_PRODUCTION_SEAL`（路況播報員｜V2.4.15 正式封版令）。GOVERNANCE/VERSION RECORD ONLY——本輪僅更新 Engineering Memory，不改任何 Runtime／`APP_VERSION`／model／prompt／timeout／Queue／KV／GEO／LINE。
+
+**封版依據（依本輪封版令回報，本session無Production網路存取無法自行驗證，如實轉載）**：Production 2026-09-04 17:01:54 +08部署，`/version`=V2.4.15、model=`@cf/qwen/qwen3-30b-a3b-fp8`、`AI_CALL_TIMEOUT_MS`=45000。第一筆AI：duration=3,302ms、outcome=AI_DECISION_VALID、notify=false、impact=LOW、無Queue重試。首批共4筆：SUCCESS=4、TIMEOUT=0、INVALID=0，LATENCY_MIN/AVG/MAX=3,302/5,410/7,006ms，QUEUE_WRITE/READ/DELETE=4/4/4（Ratio=1.00），KV_429=0、KV_5XX=0、NEW_RUNTIME_ERRORS=0。`ROOT_CAUSE_FIX_CONFIRMED=YES`。**`24H_VALIDATION=PENDING`**——4筆樣本不構成完整24小時統計，禁止描述為已完成驗收。
+
+**Production commit可追溯性（誠實記錄，不得推定）**：GitHub V2.4.15 Runtime commit=`470c87a480a3ad5a2930a9896829d1a809b306a2`；但live buildMetadata回報`deployedCommit="unknown"`／`commitSource="not-yet-generated"`，本輪無法直接證明該commit即為live commit。`COMMIT_MISMATCH=NO`（無證據顯示不符）、`COMMIT_VERIFIED=NO`、`PRODUCTION_COMMIT_VERIFICATION=UNVERIFIABLE`。列為獨立後續治理項`BUILD_METADATA_GENERATION_BUG=OPEN`，不阻擋本輪封版，也不得與V2.4.15 Runtime本身混為一談。
+
+**封版後規則**：`APP_VERSION`維持V2.4.15不變，本輪治理封版commit本身`DOES_NOT_CHANGE_RUNTIME=YES`。封版後禁止再修改V2.4.15 Runtime；僅允許（A）滿24小時後唯讀Production observation，PASS則追加`24H_VALIDATION=PASS`／`FINAL_STATUS=SEALED_AND_VALIDATED`（不升版號），（B）若發現新Runtime問題另開V2.4.16，不得直接改已封版的V2.4.15。
+
+**Drive Sync**：`07_KNOWN_ISSUES_02.md`建檔仍撞既知service-account 403，記錄`DRIVE_SYNC_VOLUME02=BLOCKED_KNOWN_403`，不重新調查、不阻擋封版，GitHub copy為canonical。
+
+## V2.4.15（2026-09-04）— QWEN FAST AI MODEL REPLACEMENT（Runtime/Test/EngMemory SEALED；Production現場驗證由本封版令回報確認）
 
 - `TRAFFIC_REPORTER_V2_4_15_QWEN_AI_MODEL_REPLACEMENT`，HIGH priority，ROOT CAUSE FIX / MINIMAL MODEL REPLACEMENT。
 - **根因**：Production 48h 34次AI呼叫，29次（≈85%）撞45秒`AI_CALL_TIMEOUT_MS`。Direct 20次呼叫`@cf/zai-org/glm-4.7-flash`：AVG=43,833ms/P50=34,142ms/P95=81,800ms/MAX=104,677ms，>45s佔25%。確認`PIPELINE_OVERHEAD≈0ms`、`TRAFFIC_REPORTER_CALL_CHAIN_PROBLEM=NO`、`MODEL_LATENCY_PROBLEM=YES`——glm-4.7-flash是reasoning模型，對本專案簡短即時判斷產出過長completion（completion_tokens≈2,413，reasoning≈4,101字元）。Shadow benchmark `@cf/qwen/qwen3-30b-a3b-fp8`：AVG=3,897ms/P50=3,747ms/P95=5,701ms/MAX=6,222ms，0/20逾時，20/20 schema valid，同測資notify/impact判定與glm 100%一致。
