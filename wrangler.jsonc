@@ -214,7 +214,9 @@
     }
   ],
   // V1.9.9 Phase 3B — Workers AI binding for Windows PBS driver-impact
-  // decisions (src/pbs/aiDecisionEngine.js, model '@cf/zai-org/glm-4.7-flash').
+  // decisions (src/pbs/aiDecisionEngine.js, model constant
+  // PBS_AI_MODEL_ID — '@cf/qwen/qwen3-30b-a3b-fp8' as of V2.4.15, was
+  // '@cf/zai-org/glm-4.7-flash' V1.9.9–V2.4.14).
   // Declaring this binding here does NOT by itself turn AI decisions on —
   // that gate is the "vars" block's own PBS_AI_DECISION_ENABLED above
   // (see its own V2.0.2 comment for why it now lives here, canonically,

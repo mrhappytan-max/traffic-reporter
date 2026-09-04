@@ -8,9 +8,31 @@
 // for what happens AFTER a validated notify:true verdict — this module
 // itself has ZERO LINE/CCTV/Shared Feed side effects.
 //
-// MODEL — fixed, per order section 二: '@cf/zai-org/glm-4.7-flash', via
-// env.AI.run(...), binding name 'AI'. No other AI provider, no AI
-// Gateway, no external paid model.
+// MODEL — fixed, via env.AI.run(...), binding name 'AI'. No other AI
+// provider, no AI Gateway, no external paid model. Originally
+// '@cf/zai-org/glm-4.7-flash' (order section 二 of V1.9.9 Phase 3B).
+//
+// V2.4.15 — V2_4_15_QWEN_AI_MODEL_REPLACEMENT (order section 一/二).
+// Production + Direct A/B benchmarking confirmed glm-4.7-flash is a
+// reasoning model producing unnecessarily long completions
+// (completion_tokens≈2,413, reasoning≈4,101 chars) for this project's
+// simple short-text real-time traffic judgments — Direct 20-call bench:
+// AVG=43,833ms/P50=34,142ms/P95=81,800ms/MAX=104,677ms, >45s=25%;
+// Production 48h: 29/34 calls (≈85%) hit the 45s AI_CALL_TIMEOUT_MS.
+// PIPELINE_OVERHEAD≈0ms confirmed — this was purely a model-latency
+// problem, not a call-chain problem. Shadow benchmark of
+// '@cf/qwen/qwen3-30b-a3b-fp8': AVG=3,897ms/P50=3,747ms/P95=5,701ms/
+// MAX=6,222ms, 0/20 timeouts, 20/20 schema-valid, and on identical test
+// data matched glm-4.7-flash's notify/impact verdicts 100%. This round's
+// ONLY change is PBS_AI_MODEL_ID below, from glm-4.7-flash to
+// qwen3-30b-a3b-fp8 — the entire runtime reads the model name from this
+// one constant, nowhere else. AI_CALL_TIMEOUT_MS (still 45000ms, see its
+// own comment below), SYSTEM_PROMPT, buildAiUserPrompt(),
+// MEMORY_CONTEXT_PROMPT_SUFFIX, the request shape (no new max_tokens/
+// temperature/top_p/seed/response_format/json_schema/stream), Queue,
+// KV, GEO/Road Policy/Debris Policy, and LINE formatting are all
+// explicitly UNCHANGED this round — see engineering-memory/
+// 07_KNOWN_ISSUES_02.md for the full benchmark record.
 //
 // PROMPT — deliberately short and fixed (order section 三): judges ONLY
 // "would this materially affect a working taxi/for-hire driver's ability
@@ -64,7 +86,7 @@ import { computeAiDecisionCacheKeyHash, buildAiDecisionCacheKvKey } from './aiCa
 import { readAiDecisionCache, persistAiDecisionCache } from './aiDecisionCache.js';
 import { buildMemoryContextFingerprint } from '../traffic/incidentMemory.js';
 
-export const PBS_AI_MODEL_ID = '@cf/zai-org/glm-4.7-flash';
+export const PBS_AI_MODEL_ID = '@cf/qwen/qwen3-30b-a3b-fp8';
 
 const VALID_IMPACT_VALUES = new Set(['HIGH', 'LOW']);
 const REASON_MAX_CHARS = 80;

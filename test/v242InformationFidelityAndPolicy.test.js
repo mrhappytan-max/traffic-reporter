@@ -168,7 +168,7 @@ test('CASE 7/8/12: prompt states a credible accident/collision should notify=tru
 test('buildAiRequest schema/shape is untouched by the prompt rewrite', () => {
   const candidate = { road: '台68', direction: '西向', areaNm: '新竹市', displayKM: 5, eventType: 'accident', comment: '測試', sourceDetail: 'x' };
   const request = buildAiRequest(candidate);
-  assert.equal(request.model, '@cf/zai-org/glm-4.7-flash');
+  assert.equal(request.model, '@cf/qwen/qwen3-30b-a3b-fp8');
   assert.equal(request.input.messages.length, 2);
   const userPayload = JSON.parse(request.input.messages[1].content);
   // V2.4.5 — blockedLanes added (order section 七/八): see

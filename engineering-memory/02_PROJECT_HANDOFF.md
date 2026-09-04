@@ -98,7 +98,7 @@ CLAUDE_DRIVE_UPLOAD         永遠是 NO
 
 | 欄位 | 值 |
 |---|---|
-| Latest completed | V2.4.14（SEALED，純CSS Hotfix；前輪 Drive sync 未完成仍待人類，見下方） |
+| Latest completed | V2.4.15（Qwen模型替換 GLM→Qwen；Drive sync 未完成仍待人類，見下方） |
 | package.json version | 0.1.0 |
 | Production status | DEPLOYED |
 | Production verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |

@@ -67,7 +67,7 @@ function mockAi(responseText, { throwError, usage } = {}) {
 test('buildAiRequest: fixed model id, chat-shaped messages, minimal candidate fields only', () => {
   const candidate = candidateFor('國道一號北向94公里處發生追撞事故，雙向封閉');
   const request = buildAiRequest(candidate);
-  assert.equal(request.model, '@cf/zai-org/glm-4.7-flash');
+  assert.equal(request.model, '@cf/qwen/qwen3-30b-a3b-fp8');
   assert.equal(request.model, PBS_AI_MODEL_ID);
   assert.equal(request.input.messages.length, 2);
   assert.equal(request.input.messages[0].role, 'system');

@@ -11,21 +11,31 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V2.4.14（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | 96b5f44（V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS commit；本輪 V2.4.14 commit 尚未落地前的快照，本表隨本輪 commit 一併更新） |
+| Current Version | V2.4.15（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | bd01169（V2_4_13_1_OBSERVATORY_NO_SEND_REASON_VISUAL_CONTRAST_HOTFIX commit；本輪 V2.4.15 commit 尚未落地前的快照，本表隨本輪 commit 一併更新） |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty（本輪 V2.4.14 changeset，與本份快照同一 commit 一起送出） |
-| Production | DEPLOYED |
+| Source working tree | dirty（本輪 V2.4.15 changeset，與本份快照同一 commit 一起送出） |
+| Production | DEPLOYED（本輪 model 替換：main push 後由 Cloudflare Workers Builds 自動部署，本 session 無 Production 網路存取，PRODUCTION_LIVE_VERIFICATION=REQUIRES_CLAUDE_BROWSER） |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
-| Current Phase | Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，TDX 正式 LINE 通知維持開啟（PHASE_E_TDX_NOTIFY_LIVE，本輪未變動）。**本輪（V2.4.14，純 CSS/呈現層 Hotfix）**：查修頁「不通報原因」紅字區塊重新分色——外框深紅維持警示感、標題改亮黃 `#facc15`（快速定位）、本文改近白 `#f2f3f5`（最佳閱讀性），`deriveCompactNoSendReason()` 原因選擇/截斷邏輯逐字不變。AI/GEO/道路政策/Queue/CCTV/LINE token系統全數未動 |
-| Current Task | none。Latest completed task = V2_4_13_1_OBSERVATORY_NO_SEND_REASON_VISUAL_CONTRAST_HOTFIX，status = **SEALED**（V2.4.13→V2.4.14；施工令自身版本號「V2.4.13.1」因本專案四段式版號已退休，改走三段式，見下方說明）。CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何 wrangler.jsonc 開關）。 |
-| Latest Completed Version | V2.4.14 |
-| Known Blocker | **GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES**（前輪遺留，與本輪CSS Hotfix無關，見07_KNOWN_ISSUES_02.md）——`07_KNOWN_ISSUES_02.md`／`PRODUCTION_MANIFEST.json`／`SYSTEM_STATE.json` 對 Drive 同步待人類手動於 Drive 建立 `07_KNOWN_ISSUES_02.md` 才能解除。另沿用 V2.4.5 封版的 REAL_WORLD_CONFIRMATION_PENDING（TDX 正式 LINE 通知現場觀察）——本 session 無 Production 網路存取，異常時第一動作固定 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=false` |
-| Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING（沿用 V2.4.5 封版項目，與本輪配色 Hotfix無關） |
+| Current Phase | Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，TDX 正式 LINE 通知維持開啟（PHASE_E_TDX_NOTIFY_LIVE，本輪未變動）。**本輪（V2.4.15，ROOT CAUSE FIX / MINIMAL MODEL REPLACEMENT）**：`PBS_AI_MODEL_ID`（`src/pbs/aiDecisionEngine.js`）從 `@cf/zai-org/glm-4.7-flash` 換成 `@cf/qwen/qwen3-30b-a3b-fp8`——Production 48h 34次呼叫29次逾時（≈85%），根因確認為 MODEL_LATENCY（PIPELINE_OVERHEAD≈0）。Prompt/Timeout(45000ms)/Queue/KV/GEO/道路政策/LINE全數未動，僅換此一常數。 |
+| Current Task | none。Latest completed task = TRAFFIC_REPORTER_V2_4_15_QWEN_AI_MODEL_REPLACEMENT，status = **SEALED（Runtime/Test/EngMemory 部分）／PRODUCTION_LIVE_VERIFICATION=REQUIRES_CLAUDE_BROWSER（本 session 無法直接確認）**。CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何 wrangler.jsonc 開關/binding，僅動 AI binding 說明性註解）。 |
+| Latest Completed Version | V2.4.15 |
+| Known Blocker | **GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES**（前輪遺留，與本輪模型替換無關，見07_KNOWN_ISSUES_02.md）——`07_KNOWN_ISSUES_02.md`／`PRODUCTION_MANIFEST.json`／`SYSTEM_STATE.json` 對 Drive 同步待人類手動於 Drive 建立 `07_KNOWN_ISSUES_02.md` 才能解除。另沿用 V2.4.5 封版的 REAL_WORLD_CONFIRMATION_PENDING（TDX 正式 LINE 通知現場觀察）——本 session 無 Production 網路存取，異常時第一動作固定 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=false` |
+| Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING（沿用 V2.4.5 封版項目）＋ 新增：V2.4.15 Qwen模型 24小時真實 Production 表現待觀察（AI_TIMEOUT_RATE/P50/P95/Queue Read-Write Ratio，見07_KNOWN_ISSUES_02.md） |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 待辦（沿用，最優先）：人類於既有 Google Drive「路況播報員_工程記憶」資料夾手動建立空白 `07_KNOWN_ISSUES_02.md`（真人帳號），之後任一 session 重跑「Sync Engineering Memory to Google Drive」workflow 驗證三檔 SYNCED。新增待辦：人類實機檢視查修頁新配色（黃標題/白本文/紅外框）在手機（375-430px）上的實際可讀性 |
-| Export Generated At | 2026-09-04T11:00:00.000Z |
+| Next Action | 待辦（沿用，最優先）：人類於既有 Google Drive「路況播報員_工程記憶」資料夾手動建立空白 `07_KNOWN_ISSUES_02.md`（真人帳號），之後任一 session 重跑「Sync Engineering Memory to Google Drive」workflow 驗證三檔 SYNCED。新增待辦：具 Claude Browser 能力的 session（或人類）確認 Production `/version`=V2.4.15、AI model 顯示為 Qwen、上線後首筆 AI 判定 duration/結果、24小時後與 V2.4.14 基準比對逾時率/延遲/Queue Read-Write Ratio |
+| Export Generated At | 2026-09-04T12:00:00.000Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
+
+## V2.4.15（2026-09-04）— QWEN FAST AI MODEL REPLACEMENT（Runtime/Test/EngMemory SEALED；Production現場驗證 REQUIRES_CLAUDE_BROWSER）
+
+- `TRAFFIC_REPORTER_V2_4_15_QWEN_AI_MODEL_REPLACEMENT`，HIGH priority，ROOT CAUSE FIX / MINIMAL MODEL REPLACEMENT。
+- **根因**：Production 48h 34次AI呼叫，29次（≈85%）撞45秒`AI_CALL_TIMEOUT_MS`。Direct 20次呼叫`@cf/zai-org/glm-4.7-flash`：AVG=43,833ms/P50=34,142ms/P95=81,800ms/MAX=104,677ms，>45s佔25%。確認`PIPELINE_OVERHEAD≈0ms`、`TRAFFIC_REPORTER_CALL_CHAIN_PROBLEM=NO`、`MODEL_LATENCY_PROBLEM=YES`——glm-4.7-flash是reasoning模型，對本專案簡短即時判斷產出過長completion（completion_tokens≈2,413，reasoning≈4,101字元）。Shadow benchmark `@cf/qwen/qwen3-30b-a3b-fp8`：AVG=3,897ms/P50=3,747ms/P95=5,701ms/MAX=6,222ms，0/20逾時，20/20 schema valid，同測資notify/impact判定與glm 100%一致。
+- **修法（唯一Runtime修改）**：`src/pbs/aiDecisionEngine.js`的`PBS_AI_MODEL_ID`從`'@cf/zai-org/glm-4.7-flash'`改為`'@cf/qwen/qwen3-30b-a3b-fp8'`。確認整個runtime僅從此一常數讀取model名稱（`test/v2415QwenAiModelReplacement.test.js` CASE1驗證code區段僅一個model字面值）。`wrangler.jsonc`一處說明性註解同步更新（非實際config值）。
+- **明確未動**：`AI_CALL_TIMEOUT_MS`維持45000ms；`SYSTEM_PROMPT`／`buildAiUserPrompt()`／`MEMORY_CONTEXT_PROMPT_SUFFIX`逐字不變；AI request無新增`max_tokens`/`temperature`/`top_p`/`seed`/`response_format`/`json_schema`/`stream`；`PBS_AI_QUEUE`（`max_batch_size=1`／`max_retries=3`）不變；KV（decision-cache/observatory-index/pipeline-trace/push-idempotency/event-cleared/TTL/key schema）不變；GEO Resolver／Road Policy／Debris Risk Policy／Incident Memory／dedupe／CCTV／LINE formatter／LINE quota／notification hours／Production flags全數不變。
+- **測試**：新增`test/v2415QwenAiModelReplacement.test.js`（11項，施工令§十二 12項checklist覆蓋，10/11/12項由既有全量迴歸與既有測試檔驗證，不重複斷言）。同步更新`test/aiDecisionEngine.test.js`／`test/v242InformationFidelityAndPolicy.test.js`／`test/tdxUnifiedAiPipeline.test.js`（model字串斷言）與`test/pbsAiConfigDriftHotfixV202.test.js`（drift-protection測試5更名＋改期望值，測試6凍結歷史檢查逐字不變）。全量迴歸1880/1848/32，`git stash -u`同commit精確基準比對NEW_FAILURES=0。`APP_VERSION` V2.4.14→V2.4.15。
+- **Production驗證限制**：本session無Production網路存取（全程確認），依施工令§十三自身明確指示，Production `/version`現場確認、§十四上線後即時 smoke test、§十五 24小時驗收全部報告為`REQUIRES_CLAUDE_BROWSER`／待後續觀察，不猜測、不捏造。main push後由既有治理（main push→Cloudflare Workers Builds自動部署）處理，本輪未做任何手動deploy。
+- **Engineering Memory**：完整benchmark記錄與24小時驗收待辦寫入`07_KNOWN_ISSUES_02.md`（Volume 02，非已滿的Volume 01）。Google Drive Volume 02同步沿用既有已知403 blocker，不重新調查，不阻擋本輪Runtime部署。
 
 ## V2.4.14 封版（2026-09-04）— 查修頁不通報原因視覺強化 Hotfix
 

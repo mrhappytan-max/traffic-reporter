@@ -41,8 +41,17 @@ test('4: existing AI binding "AI" is still declared in wrangler.jsonc, untouched
   assert.match(wranglerRaw, /"ai"\s*:\s*\{\s*"binding"\s*:\s*"AI"\s*\}/);
 });
 
-test('5: model is unchanged — PBS_AI_MODEL_ID is still @cf/zai-org/glm-4.7-flash', () => {
-  assert.equal(PBS_AI_MODEL_ID, '@cf/zai-org/glm-4.7-flash');
+// V2.4.15 — V2_4_15_QWEN_AI_MODEL_REPLACEMENT (order section 九). This
+// drift-protection test's PURPOSE (catch an unintentional model change)
+// is preserved; only its expected value moves, because V2.4.15 is a
+// deliberate, documented product decision to replace glm-4.7-flash with
+// qwen3-30b-a3b-fp8 (see src/pbs/aiDecisionEngine.js's own header
+// comment and engineering-memory/07_KNOWN_ISSUES_02.md for the full
+// benchmark record). From this point forward, any future drift away
+// from qwen3-30b-a3b-fp8 without an equivalent deliberate order is what
+// this test now guards against.
+test('5: model is unchanged — PBS_AI_MODEL_ID is still @cf/qwen/qwen3-30b-a3b-fp8 (V2.4.15)', () => {
+  assert.equal(PBS_AI_MODEL_ID, '@cf/qwen/qwen3-30b-a3b-fp8');
 });
 
 // V2.1.0 note: this test used to assert the LIVE APP_VERSION export

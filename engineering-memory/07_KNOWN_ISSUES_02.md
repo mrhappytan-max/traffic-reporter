@@ -143,3 +143,29 @@ Leverage shared drives, or use OAuth delegation instead.
 **未觸碰**：AI SYSTEM_PROMPT、AI notify政策、散落物分級政策、GEO、道路管理政策、Queue、Incident Memory、dedupe、LINE formatter、CCTV、Production flags、`deriveCompactNoSendReason()`本身的原因選擇/截斷/缺失回報邏輯。
 
 **通則**：一個「視覺對比不足」的真實使用者回報，正確修法幾乎總是純粹的呈現層調整（顏色/字重/字級），不需要也不應該連動任何資料或判斷邏輯——把 CSS 微調範圍收得越窄，越能用最小的迴歸風險換到真正要的可讀性改善。
+
+## 修正紀錄｜V2.4.15 QWEN FAST AI MODEL REPLACEMENT（2026-09-04）
+
+**任務**：`TRAFFIC_REPORTER_V2_4_15_QWEN_AI_MODEL_REPLACEMENT`（路況播報員｜V2.4.15 正式施工令 QWEN FAST AI MODEL REPLACEMENT）。`APP_VERSION` V2.4.14→V2.4.15（PATCH，施工令自身明確要求三段式，不得使用 V2.4.14.1/V2.4.15.1）。HIGH priority，**ROOT CAUSE FIX／MINIMAL MODEL REPLACEMENT**——本輪僅換一個 model 常數，Prompt／Timeout／Queue／KV／GEO／道路政策／LINE 全數未動。
+
+**Production 48h 真實樣本**：34 次 AI 呼叫，29 次（≈85%）撞到 45 秒 `AI_CALL_TIMEOUT_MS`。
+
+**Direct 20-call GLM 基準測試**（`@cf/zai-org/glm-4.7-flash`）：AVG=43,833ms／P50=34,142ms／P95=81,800ms／MAX=104,677ms，>45s 佔 25%。
+
+**根因確認**：`PIPELINE_OVERHEAD≈0ms`——`TRAFFIC_REPORTER_CALL_CHAIN_PROBLEM=NO`，`MODEL_LATENCY_PROBLEM=YES`。glm-4.7-flash 是 reasoning 模型，對本專案簡短即時交通判斷任務產出過長 completion（`completion_tokens≈2,413`，`reasoning≈4,101` 字元），這是本專案 Queue 重試放大與 KV write amplification 的上游根因，不是呼叫鏈本身的問題。
+
+**Qwen shadow 基準測試**（`@cf/qwen/qwen3-30b-a3b-fp8`）：AVG=3,897ms／P50=3,747ms／P95=5,701ms／MAX=6,222ms，`TIMEOUT>45s=0/20`，`SCHEMA_VALID=20/20`，同一批測資 notify/impact 判定與 GLM 100% 一致。官方決策：`NEW_MODEL=@cf/qwen/qwen3-30b-a3b-fp8`。
+
+**修法（本輪唯一 Runtime 修改）**：`src/pbs/aiDecisionEngine.js` 的 `PBS_AI_MODEL_ID` 從 `'@cf/zai-org/glm-4.7-flash'` 改為 `'@cf/qwen/qwen3-30b-a3b-fp8'`。確認整個 runtime 僅從此一常數讀取 model 名稱，沒有第二個 model 常數（`test/v2415QwenAiModelReplacement.test.js` CASE 1 掃描該模組程式碼區段，排除註解，確認僅一個相異 model 字面值）。`wrangler.jsonc` 一處 V1.9.9 Phase 3B AI binding 說明性註解同步更新（非實際 config／binding 值本身，binding 名稱 `AI` 不變）。
+
+**明確未動（施工令§三-§八）**：`AI_CALL_TIMEOUT_MS` 維持 45000ms——45s 現在純粹是異常情況的安全上限，Qwen 真實 P95≈5.7s／MAX≈6.2s 正常情況下不應接近它；若未來 Qwen 真的撞到 45s，那本身就是需要調查的異常，不是延長等待的理由。`SYSTEM_PROMPT`／`buildAiUserPrompt()`／`MEMORY_CONTEXT_PROMPT_SUFFIX` 逐字不變——沒有新增壅塞 hard rule、沒有新增事件關鍵字閘門、沒有縮短 prompt、沒有改寫散落物/事故/施工/cleanSummary 規則；本輪目的不是重新設計 AI 政策，本專案「決定性安全/地理政策留在 code，一般路況語意判斷留給 AI」的分工不變。AI request 未新增 `max_tokens`／`temperature`／`top_p`／`seed`／`response_format`／`json_schema`／`stream`——純粹只換 model ID 一個變數，避免同時改兩個變數導致無法歸因任何改善。`PBS_AI_QUEUE` 架構不變：`max_batch_size=1`、`max_retries=3`、既有 retry/ack 邏輯，本輪未做任何額外 retry 優化（預期 Qwen 上線後 Queue 重試自然下降）。KV 不變：decision-cache／observatory-index／pipeline-trace／push-idempotency／event-cleared／TTL／KV key schema／timestamp key（KV write amplification 已確認是 AI-timeout→Queue-retry 的下游結果，先修上游 model，重試消失後 KV 寫入放大應會自然下降）。LINE／GEO／道路政策安全邊界不變：TDX GEO Resolver、Freeway KM Resolver、PBS 地理、道路管理政策、Debris Risk Policy、Incident Memory、dedupe、CCTV、LINE formatter、LINE quota、notification hours、Production flags。
+
+**測試同步**：新增 `test/v2415QwenAiModelReplacement.test.js`（11項，覆蓋施工令§十二 12項 checklist 中第1-9項；第10-12項〔既有 AI Decision 測試 PASS／既有 drift 測試 PASS／全量迴歸 NEW_FAILURES=0〕由既有測試檔與本輪全量迴歸本身驗證，不重複斷言以避免同一事實有兩個可能衝突的來源）。更新 `test/aiDecisionEngine.test.js`／`test/v242InformationFidelityAndPolicy.test.js`／`test/tdxUnifiedAiPipeline.test.js` 的 model 字串斷言。`test/pbsAiConfigDriftHotfixV202.test.js` 的 drift-protection 測試 5（原本鎖定「model 未變仍是 glm-4.7-flash」）依施工令§九指示更名並改期望值為新的 Qwen model，其**目的**（防止未來未經授權的 model drift）保留不變；測試 6（凍結歷史檢查 `version.js` 是否仍記錄 V2.0.2 changelog）**完全未動**。全量迴歸 1880/1848/32，`git stash -u` 同 commit 精確基準比對 NEW_FAILURES=0。
+
+**全repo歷史紀錄分類（施工令§九明確要求，禁止對歷史做全域取代）**：搜尋全 repo `glm-4.7-flash`，逐一分類——Category A（Runtime/現行斷言，本輪已更新）：`src/pbs/aiDecisionEngine.js` 的 `PBS_AI_MODEL_ID` 常數本身、上述 4 個測試檔、`wrangler.jsonc` 說明性註解。Category B（歷史 Engineering Memory／Version History／舊版本描述，本輪**未**改動，維持原文）：`00_CURRENT_STATE.md`／`02_PROJECT_HANDOFF.md`／`03_ARCHITECTURE.md`／`06_VERSION_HISTORY.md`／`07_KNOWN_ISSUES.md`（Volume 01，凍結）的既有歷史段落、`PRODUCTION_MANIFEST.json`／`SYSTEM_STATE.json` 的既有歷史欄位、`src/version.js` 的既有 changelog 段落（V1.9.9/V2.0.2/V2.4.2 等歷史記錄本身完全不動，僅新增一段 V2.4.15 changelog）。`00_CURRENT_STATE.md`／`03_ARCHITECTURE.md` 各有一處「現在的 model 是哪一個」的 FAQ／欄位性質文字（描述現況、非歷史敘事）本輪更新為 Qwen，其餘同檔案內歷史「封版」段落逐字保留。`meeting-room-export/`／`scripts/meeting-room-templates/` 為既知的獨立鏡像匯出樹（非本專案 canonical `engineering-memory/`），本輪不在範圍內，未觸碰。
+
+**Production 部署與驗證**：main push 後由既有治理（main push→Cloudflare Workers Builds 自動部署）處理，本輪未做任何手動 deploy。本 session 沙盒環境全程無 Production 網路存取（本專案歷史上反覆確認的既知限制），依施工令§十三自身明確指示：Production `/version` 現場確認與 model 顯示確認、§十四上線後即時 smoke test（`AI_CALL_STARTED→AI決策→durationMs`，目標<10,000ms）、§十五 24小時驗收（`AI_TIMEOUT_RATE<5%`、`P50<6s`、`P95<10s`、Queue Read/Write Ratio 收斂向 1.0、`PROCESSING_FAILED` 明顯下降、KV WRITE/day 相應下降）**全部報告為 `PRODUCTION_LIVE_VERIFICATION=REQUIRES_CLAUDE_BROWSER`，不猜測、不捏造**，待具備 Claude Browser 能力的 session 或人類實際觀察後補齊。
+
+**Google Drive 同步**：既知的 `GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES`（service account storage quota 403）blocker 與本輪無關，依施工令§十一明確指示不重新調查、不阻擋本輪 Runtime 部署——GitHub canonical write（本次 commit）成功後即視為 Engineering Memory 已完成，Drive 同步仍誠實記錄為待人類手動於 Drive 建立本檔（`07_KNOWN_ISSUES_02.md`）後才能解除。
+
+**通則**：一個「模型延遲太高」的根因問題，正確修法優先順序永遠是「先換掉造成延遲的那一個變數本身」，而不是「放寬容忍度掩蓋它」（延長 timeout）或「用更多 if/else 繞過需要語意判斷的情境」（把 AI 判斷改回 hard-coded 規則）——後兩者都只是把根因藏起來、換取短期指標好看，真正解決問題的動作永遠是找到並替換那個真正造成延遲的元件本身，並且一次只換一個變數，才能誠實歸因任何觀察到的改善。

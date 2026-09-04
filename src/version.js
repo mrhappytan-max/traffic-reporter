@@ -2103,7 +2103,78 @@
 //
 // See test/v24131ObservatoryNoSendReasonVisualContrastHotfix.test.js (the
 // order's own CASE 1-5) and 07_KNOWN_ISSUES_02.md for the full record.
-export const APP_VERSION = 'V2.4.14';
+// V2.4.15 — V2_4_15_QWEN_AI_MODEL_REPLACEMENT (order section 一-十七).
+// ROOT CAUSE FIX / MINIMAL MODEL REPLACEMENT. Production + Direct A/B
+// benchmarking confirmed the Production model @cf/zai-org/glm-4.7-flash
+// is a reasoning model producing unnecessarily long completions
+// (completion_tokens≈2,413, reasoning≈4,101 chars) for this project's
+// simple short-text real-time traffic judgments: Direct 20-call bench
+// AVG=43,833ms/P50=34,142ms/P95=81,800ms/MAX=104,677ms, >45s=25%;
+// Production 48h sample: 29/34 calls (≈85%) hit the 45s
+// AI_CALL_TIMEOUT_MS. PIPELINE_OVERHEAD≈0ms confirmed —
+// TRAFFIC_REPORTER_CALL_CHAIN_PROBLEM=NO, MODEL_LATENCY_PROBLEM=YES.
+// Shadow benchmark of @cf/qwen/qwen3-30b-a3b-fp8: AVG=3,897ms/
+// P50=3,747ms/P95=5,701ms/MAX=6,222ms, TIMEOUT>45s=0/20,
+// SCHEMA_VALID=20/20, and on identical test data matched glm-4.7-flash's
+// notify/impact verdicts 100%. Official decision: NEW_MODEL=
+// @cf/qwen/qwen3-30b-a3b-fp8.
+//
+// THIS ROUND'S ONLY RUNTIME CHANGE (order section 二): PBS_AI_MODEL_ID in
+// src/pbs/aiDecisionEngine.js, from '@cf/zai-org/glm-4.7-flash' to
+// '@cf/qwen/qwen3-30b-a3b-fp8'. The entire runtime reads the model name
+// from this ONE constant — confirmed no second model literal exists in
+// that module's code (see test/v2415QwenAiModelReplacement.test.js CASE
+// 1). Everything else is explicitly, deliberately UNCHANGED this round
+// — minimal replacement, one variable at a time, so any real-world
+// improvement can be attributed to exactly this change:
+//   - AI_CALL_TIMEOUT_MS stays 45000ms (order section 三) — now purely
+//     an abnormal-case safety ceiling; Qwen's real P95≈5.7s/MAX≈6.2s
+//     should never approach it under normal conditions.
+//   - SYSTEM_PROMPT, buildAiUserPrompt(), MEMORY_CONTEXT_PROMPT_SUFFIX
+//     unchanged (order section 四) — no congestion hard rule, no
+//     event-keyword gate, no rewritten debris/accident/construction/
+//     cleanSummary rules. Deterministic safety/geography policy stays in
+//     code; general road-condition semantic judgment stays with the AI.
+//   - No new AI request parameter — no max_tokens/temperature/top_p/
+//     seed/response_format/json_schema/stream added (order section 五).
+//   - PBS_AI_QUEUE architecture unchanged: max_batch_size=1,
+//     max_retries=3, existing retry/ack logic (order section 六).
+//   - KV unchanged: decision-cache, observatory-index, pipeline-trace,
+//     push-idempotency, event-cleared, TTL, key schema, timestamp key
+//     (order section 七) — KV write amplification was already confirmed
+//     a downstream RESULT of AI-timeout->Queue-retry; fixing the
+//     upstream model should let it fall on its own.
+//   - LINE/GEO/Road Policy safety boundaries unchanged: TDX GEO
+//     Resolver, Freeway KM Resolver, PBS geography, Road Management
+//     Policy, Debris Risk Policy, Incident Memory, dedupe, CCTV, LINE
+//     formatter, LINE quota, notification hours, Production flags
+//     (order section 八).
+//
+// wrangler.jsonc's own V1.9.9 Phase 3B AI-binding comment updated to
+// name the current model (documentation only — the binding itself, "AI",
+// is unchanged). test/aiDecisionEngine.test.js,
+// test/v242InformationFidelityAndPolicy.test.js,
+// test/tdxUnifiedAiPipeline.test.js updated to expect the new model
+// string. test/pbsAiConfigDriftHotfixV202.test.js's own drift-protection
+// test 5 renamed and its expected value moved to the new canonical model
+// — its PURPOSE (catch unintentional future drift) is preserved, its
+// frozen test 6 (V2.0.2 changelog check) untouched. Every historical
+// Engineering Memory / Version History mention of glm-4.7-flash is left
+// exactly as written — no bulk find-and-replace across history (order
+// section 九's own explicit prohibition).
+//
+// PRODUCTION_LIVE_VERIFICATION: this session's sandbox has no Production
+// network access (confirmed throughout this project's history) — per
+// order section 十三's own explicit instruction, Production `/version`
+// and live model confirmation, the section 十四 smoke test, and the
+// section 十五 24-hour acceptance comparison all require a channel this
+// session does not have (REQUIRES_CLAUDE_BROWSER / human observation),
+// and are NOT guessed or fabricated here.
+//
+// See test/v2415QwenAiModelReplacement.test.js (the order's own §十二
+// pre-deployment checklist) and 07_KNOWN_ISSUES_02.md for the full
+// benchmark record.
+export const APP_VERSION = 'V2.4.15';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

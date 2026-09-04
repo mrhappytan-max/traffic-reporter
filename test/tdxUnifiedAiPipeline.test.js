@@ -168,7 +168,7 @@ test('CASE 1: Freeway new event -> processQueuedPbsEvent runs the AI decision (0
 
   assert.equal(result.ok, true);
   assert.equal(ai.calls.length, 1);
-  assert.equal(ai.calls[0].model, '@cf/zai-org/glm-4.7-flash');
+  assert.equal(ai.calls[0].model, '@cf/qwen/qwen3-30b-a3b-fp8');
 });
 
 test('CASE 2: Highway new event -> processQueuedPbsEvent runs the AI decision the same way', async () => {

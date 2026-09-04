@@ -488,7 +488,7 @@ AI 呼叫。見下方「PBS Windows Local Edge Debug Push Integration」一節�
 `debug:pbs-ai-decision-cache:v1:*`，48h TTL，key = `SHA-256(eventId:fingerprint)`。見
 下方「V2.0.0 完整決策順序」流程圖與「V1.9.9 Phase 3B」段落。
 
-**11. AI model 是哪一個？** `@cf/zai-org/glm-4.7-flash`，固定，見下方「Cloudflare Workers AI 帳號設定」。
+**11. AI model 是哪一個？** `@cf/qwen/qwen3-30b-a3b-fp8`（V2.4.15起，原`@cf/zai-org/glm-4.7-flash`因reasoning延遲換模型），固定，見下方「Cloudflare Workers AI 帳號設定」。
 
 **12. AI Binding 名稱是什麼？** `AI`（`wrangler.jsonc` 的 `"ai":{"binding":"AI"}`）。
 
