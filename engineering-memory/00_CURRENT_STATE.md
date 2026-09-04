@@ -11,21 +11,29 @@
 | Project | traffic-reporter（路況播報員） |
 | Department | 路況工程部 |
 | Repo | mrhappytan-max/traffic-reporter |
-| Current Version | V2.4.13（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
-| Source main HEAD | 96b5f44（V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS commit；本輪 V2.4.13 commit 尚未落地前的快照，本表隨本輪 commit 一併更新） |
+| Current Version | V2.4.14（唯一權威來源：`src/version.js` 的 `APP_VERSION`） |
+| Source main HEAD | 96b5f44（V2_4_8_TDX_KM_FALLBACK_PRODUCTION_RUNTIME_DIAGNOSIS commit；本輪 V2.4.14 commit 尚未落地前的快照，本表隨本輪 commit 一併更新） |
 | Source main HEAD resolved from | origin/main |
-| Source working tree | dirty（本輪 V2.4.13 changeset，與本份快照同一 commit 一起送出） |
+| Source working tree | dirty（本輪 V2.4.14 changeset，與本份快照同一 commit 一起送出） |
 | Production | DEPLOYED |
 | Production Verification | Last known: PASS_NETWORK_VERIFICATION_BLOCKED (see 07_KNOWN_ISSUES.md for why) |
-| Current Phase | Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，TDX 正式 LINE 通知維持開啟（PHASE_E_TDX_NOTIFY_LIVE，本輪未變動）。**本輪（V2.4.13，OBSERVABILITY/UI ONLY）**：查修頁收合卡片新增高可視化「❌ 不通報原因／處理失敗原因」紅字區塊（不需展開即可見），只重組既有 AI decision cache reason／GEO／道路政策／散落物 reason，0 新 AI 呼叫、0 額外 KV 寫入。`deriveFinalDecisionReason()` 補一個既有資料缺口（sameIncident+無materialChange的重複通知不再顯示UNKNOWN）。AI/GEO/道路政策/Queue/CCTV/LINE token系統全數未動 |
-| Current Task | none。Latest completed task = V2_4_12_OBSERVATORY_NO_SEND_REASON_HIGH_VISIBILITY_UI，status = **SEALED**（V2.4.12→V2.4.13；施工令自身版本號因與前輪重複已修正，見下方說明）。CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何 wrangler.jsonc 開關）。 |
-| Latest Completed Version | V2.4.13 |
-| Known Blocker | **GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES**（前輪遺留，與本輪UI改版無關，見07_KNOWN_ISSUES_02.md）——`07_KNOWN_ISSUES_02.md`／`PRODUCTION_MANIFEST.json`／`SYSTEM_STATE.json` 對 Drive 同步待人類手動於 Drive 建立 `07_KNOWN_ISSUES_02.md` 才能解除。另沿用 V2.4.5 封版的 REAL_WORLD_CONFIRMATION_PENDING（TDX 正式 LINE 通知現場觀察）——本 session 無 Production 網路存取，異常時第一動作固定 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=false` |
-| Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING（沿用 V2.4.5 封版項目，與本輪查修頁改版無關） |
+| Current Phase | Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline，TDX 正式 LINE 通知維持開啟（PHASE_E_TDX_NOTIFY_LIVE，本輪未變動）。**本輪（V2.4.14，純 CSS/呈現層 Hotfix）**：查修頁「不通報原因」紅字區塊重新分色——外框深紅維持警示感、標題改亮黃 `#facc15`（快速定位）、本文改近白 `#f2f3f5`（最佳閱讀性），`deriveCompactNoSendReason()` 原因選擇/截斷邏輯逐字不變。AI/GEO/道路政策/Queue/CCTV/LINE token系統全數未動 |
+| Current Task | none。Latest completed task = V2_4_13_1_OBSERVATORY_NO_SEND_REASON_VISUAL_CONTRAST_HOTFIX，status = **SEALED**（V2.4.13→V2.4.14；施工令自身版本號「V2.4.13.1」因本專案四段式版號已退休，改走三段式，見下方說明）。CURRENT_RUNTIME_PHASE 仍 PHASE_E_TDX_NOTIFY_LIVE（本輪未動任何 wrangler.jsonc 開關）。 |
+| Latest Completed Version | V2.4.14 |
+| Known Blocker | **GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES**（前輪遺留，與本輪CSS Hotfix無關，見07_KNOWN_ISSUES_02.md）——`07_KNOWN_ISSUES_02.md`／`PRODUCTION_MANIFEST.json`／`SYSTEM_STATE.json` 對 Drive 同步待人類手動於 Drive 建立 `07_KNOWN_ISSUES_02.md` 才能解除。另沿用 V2.4.5 封版的 REAL_WORLD_CONFIRMATION_PENDING（TDX 正式 LINE 通知現場觀察）——本 session 無 Production 網路存取，異常時第一動作固定 `TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED=false` |
+| Real-world Confirmation | REAL_WORLD_CONFIRMATION_PENDING（沿用 V2.4.5 封版項目，與本輪配色 Hotfix無關） |
 | Authority Role | traffic-reporter = Sole Content Authority (Producer)；雙鐵/rail-traffic-consumer 為 Transparent Relay（Consumer），只傳輸不重判 |
-| Next Action | 待辦（沿用，最優先）：人類於既有 Google Drive「路況播報員_工程記憶」資料夾手動建立空白 `07_KNOWN_ISSUES_02.md`（真人帳號），之後任一 session 重跑「Sync Engineering Memory to Google Drive」workflow 驗證三檔 SYNCED。新增待辦：人類實機檢視查修頁新版收合卡片「不通報原因」在手機上的實際可讀性（375-430px），確認紅字區塊不破版、不與徽章重疊 |
+| Next Action | 待辦（沿用，最優先）：人類於既有 Google Drive「路況播報員_工程記憶」資料夾手動建立空白 `07_KNOWN_ISSUES_02.md`（真人帳號），之後任一 session 重跑「Sync Engineering Memory to Google Drive」workflow 驗證三檔 SYNCED。新增待辦：人類實機檢視查修頁新配色（黃標題/白本文/紅外框）在手機（375-430px）上的實際可讀性 |
 | Export Generated At | 2026-09-04T11:00:00.000Z |
 | Export artifact commit | uncommitted-at-generation-time (resolved by git history, never self-referenced) |
+
+## V2.4.14 封版（2026-09-04）— 查修頁不通報原因視覺強化 Hotfix
+
+- `V2_4_13_1_OBSERVATORY_NO_SEND_REASON_VISUAL_CONTRAST_HOTFIX`，PATCH，純 CSS／呈現層 Hotfix。施工令自寫「V2.4.13.1」，本專案四段式版號已於 V1.8.7.14 退休，依前例（`V2_4_11_1_...`）改走三段式 V2.4.13→V2.4.14。
+- **問題**：V2.4.12/V2.4.13 新增的「不通報原因」紅字區塊，標題與本文皆同一種紅（`#f85149`）疊在深紅背景上，Production 真實回報：手機深色模式對比不足、長句不易快速掃讀。
+- **修法**：`src/pbs/aiObservatoryView.js` 的 `PAGE_STYLE` 三層重新分色（`deriveCompactNoSendReason()` 與其樣板字串逐字不變，純 CSS）——外框（背景 `#2b1414`／邊框 `#4a1f1f`）維持深紅警示感不變；標題（「❌ 不通報原因：」／「❌ 處理失敗原因：」）改亮黃 `#facc15`（本頁新增色，既有 warn 色 `#e3b341` 對比不足）、字重 800、19-20px；本文（真正原因）改近白 `#f2f3f5`（沿用既有 h1／`.col-road` 同一色，非新色）、字重 700、18-20px。標題與本文為兩個不同顏色規則，滿足施工令「禁止整段全黃」。
+- **測試**：新增 `test/v24131ObservatoryNoSendReasonVisualContrastHotfix.test.js`（5項，施工令§七CASE1-5全覆蓋）。全量迴歸1869/1837/32，`git stash -u`同commit精確基準比對NEW_FAILURES=0。`APP_VERSION` V2.4.13→V2.4.14。
+- **未觸碰**：AI SYSTEM_PROMPT/notify政策、散落物分級政策、GEO、道路政策、Queue、Incident Memory、dedupe、LINE formatter、CCTV、Production flags、原因選擇/截斷/缺失回報邏輯本身。完整記錄見 `07_KNOWN_ISSUES_02.md`。
 
 ## V2.4.13 封版（2026-09-04）— 查修頁「不通報原因」高可視化改版
 

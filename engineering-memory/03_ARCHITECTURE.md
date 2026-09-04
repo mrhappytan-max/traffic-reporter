@@ -947,6 +947,8 @@ PBS 官方來源 → Windows 每3分鐘抓取(localMonitor.js) → Local Edge Fi
 
 **V2.4.13 修正（PATCH，2026-09-04，UI ONLY）**：aiObservatoryView.js 新增 export 函式 deriveCompactNoSendReason(record, decision)，收合卡片新增紅字不通報/處理失敗原因區塊，優先用既有AI decision cache reason（0額外KV讀取），否則套GEO/道路政策/散落物人話化樣板。deriveFinalDecisionReason() 補AI_NOTIFY_TRUE重複通知分支。AI/GEO/道路政策/Queue/CCTV/LINE token系統全數未動。詳見 07_KNOWN_ISSUES_02.md。
 
+**V2.4.14 修正（PATCH，2026-09-04，純CSS）**：不通報原因區塊重新分色——標題亮黃#facc15字重800，本文近白#f2f3f5字重700，外框深紅不變；deriveCompactNoSendReason()逐字不變。詳見 07_KNOWN_ISSUES_02.md。
+
 ## 模組清單（自動掃描）
 
 - **src/./**: index.js, version.js

@@ -255,20 +255,27 @@
     }
   },
   "taskSeal": {
-    "task": "V2_4_12_OBSERVATORY_NO_SEND_REASON_HIGH_VISIBILITY_UI",
+    "task": "V2_4_13_1_OBSERVATORY_NO_SEND_REASON_VISUAL_CONTRAST_HOTFIX",
     "status": "SEALED",
     "sealedAt": "2026-09-04",
-    "sealedBy": "human directive (路況工程部｜V2.4.12 查修頁「不通報原因」高可視化改版施工令)",
-    "releaseVersion": "V2.4.13",
-    "previousVersion": "V2.4.12",
-    "nature": "PATCH，OBSERVABILITY/UI ONLY。施工令自寫V2.4.11→V2.4.12，但開工時已是V2.4.12（同session前輪已升版），依版本號不重複使用規則改為V2.4.12→V2.4.13。",
-    "fix": "aiObservatoryView.js新增export函式deriveCompactNoSendReason(record,decision)：AI_NOTIFY_FALSE優先用既有AI decision cache真實reason(0額外KV讀取)；否則依outcome套人話化樣板(道路政策/GEO/散落物LOW_RISK重用既有blockedLanes/debrisRisk.reasons欄位)；系統失敗標籤「處理失敗原因」與正常「不通報原因」明確區分；缺原因時誠實顯示「系統未記錄詳細原因」；超過100字決定性截斷，完整原文留在展開頁。新區塊嵌在<summary>內鮮紅粗體18-20px，收合不需展開即可見。aiObservatoryIndex.js#deriveFinalDecisionReason()新增唯一AI_NOTIFY_TRUE分支(sameIncident+無materialChange→重複事件說明)，取代先前的UNKNOWN/NOT RECORDED；既有分支字串逐位元組不變。",
-    "testEvidence": "新增test/v2412ObservatoryNoSendReasonHighVisibilityUI.test.js（15項，施工令§十八CASE1-13全覆蓋）。全量迴歸1864/1832/32，git stash -u同commit精確基準比對NEW_FAILURES=0。",
-    "unchanged": "AI SYSTEM_PROMPT/notify政策、散落物分級政策、GEO、道路管理政策、Queue、Incident Memory(僅讀既有欄位)、dedupe、LINE formatter、CCTV、Production flags。",
-    "sealCommit": "見 git log 訊息 V2_4_12_OBSERVATORY_NO_SEND_REASON_HIGH_VISIBILITY_UI",
-    "readerNote": "本輪自身FINAL=SEALED（無Drive同步要求）。與本輪無關的既有blocker仍未解除：GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES，07_KNOWN_ISSUES_02.md仍待人類於Drive手動建檔，見該檔案自身記錄。"
+    "sealedBy": "human directive (路況工程部｜V2.4.13.1 查修頁不通報原因視覺強化 Hotfix)",
+    "releaseVersion": "V2.4.14",
+    "previousVersion": "V2.4.13",
+    "nature": "PATCH，純CSS/呈現層。施工令自寫「V2.4.13.1」，本專案四段式版號已退休，依前例改走三段式V2.4.13→V2.4.14。",
+    "fix": "aiObservatoryView.js的PAGE_STYLE三層重新分色（deriveCompactNoSendReason()與其樣板字串逐字不變）：外框(背景#2b1414/邊框#4a1f1f)維持深紅不變；標題(❌不通報原因/處理失敗原因)改亮黃#facc15、字重800、19-20px；本文(真正原因)改近白#f2f3f5(沿用既有h1同色)、字重700、18-20px。禁止整段全黃已滿足——標題與本文為兩個不同顏色規則。",
+    "testEvidence": "新增test/v24131ObservatoryNoSendReasonVisualContrastHotfix.test.js（5項，施工令§七CASE1-5全覆蓋）。全量迴歸1869/1837/32，git stash -u同commit精確基準比對NEW_FAILURES=0。",
+    "unchanged": "AI SYSTEM_PROMPT/notify政策、散落物分級政策、GEO、道路政策、Queue、Incident Memory、dedupe、LINE formatter、CCTV、Production flags、原因選擇/截斷/缺失回報邏輯本身。",
+    "sealCommit": "見 git log 訊息 V2_4_13_1_OBSERVATORY_NO_SEND_REASON_VISUAL_CONTRAST_HOTFIX",
+    "readerNote": "本輪自身FINAL=SEALED（無Drive同步要求）。與本輪無關的既有blocker仍未解除：GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES，07_KNOWN_ISSUES_02.md仍待人類於Drive手動建檔。"
   },
   "taskSealHistory": [
+    {
+      "task": "V2_4_12_OBSERVATORY_NO_SEND_REASON_HIGH_VISIBILITY_UI",
+      "status": "SEALED",
+      "sealedAt": "2026-09-04",
+      "releaseVersion": "V2.4.13",
+      "summary": "查修頁收合卡片新增不通報原因紅字區塊，優先用既有AI decision cache reason（0額外KV），系統失敗與正常判定分標籤，缺原因誠實回報，deriveFinalDecisionReason補一個重複通知顯示缺口（完整記錄見 07_KNOWN_ISSUES_02.md）。"
+    },
     {
       "task": "V2_4_11_1_DEBRIS_CLEARED_PRECEDENCE_AND_MEMORY_SYNC_HOTFIX",
       "status": "PARTIAL_SEALED",
@@ -541,7 +548,7 @@
   ],
   "version": {
     "packageJsonVersion": "0.1.0",
-    "latestCompleted": "V2.4.13",
+    "latestCompleted": "V2.4.14",
     "canonicalSource": "src/version.js 的 APP_VERSION — 唯一權威。packageJsonVersion 是 npm 套件版本（0.1.0），與產品版本線無關，不要混用。"
   },
   "production": {
@@ -550,8 +557,8 @@
     "deployMethod": "push to main -> Cloudflare Workers Builds auto-deploy",
     "publicBaseUrl": "https://traffic-reporter.mr-happytan.workers.dev"
   },
-  "currentPhase": "Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline。PHASE_E_TDX_NOTIFY_LIVE（本輪未變動）。**V2.4.13（本輪，2026-09-04，UI ONLY）**：查修頁收合卡片新增高可視化「❌ 不通報原因／處理失敗原因」紅字區塊，只重組既有AI/GEO/道路政策/失敗reason，0新AI呼叫0新KV寫入。AI/GEO/道路政策/Queue/CCTV/LINE token系統全數未動。Google Drive同步：Volume02/PRODUCTION_MANIFEST/SYSTEM_STATE仍BLOCKED_PENDING_HUMAN_ACTION（前輪遺留，待人類手動於Drive建檔）。",
-  "currentTask": "none（無進行中工作）。Latest completed task = V2_4_12_OBSERVATORY_NO_SEND_REASON_HIGH_VISIBILITY_UI，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.4.13。完整記錄見本檔 taskSeal 欄位／07_KNOWN_ISSUES_02.md。下一件事：人類於Drive手動建立07_KNOWN_ISSUES_02.md後重跑sync驗證三檔SYNCED；觀察Production查修頁新原因區塊實際可讀性與散落物HIGH_RISK/AI_REVIEW/LOW_RISK分布。",
+  "currentPhase": "Production｜PBS-ONLY + 重大事故限定 LINE Push（維持不變）＋ TDX Freeway/Highway RoadEvent 走統一 Queue/AI/Memory pipeline。PHASE_E_TDX_NOTIFY_LIVE（本輪未變動）。**V2.4.14（本輪，2026-09-04，純CSS ONLY）**：查修頁不通報原因區塊重新分色——外框深紅不變、標題改亮黃#facc15、本文改近白#f2f3f5，原因選擇/截斷邏輯逐字不變。AI/GEO/道路政策/Queue/CCTV/LINE token系統全數未動。Google Drive同步：Volume02/PRODUCTION_MANIFEST/SYSTEM_STATE仍BLOCKED_PENDING_HUMAN_ACTION（前輪遺留，待人類手動於Drive建檔）。",
+  "currentTask": "none（無進行中工作）。Latest completed task = V2_4_13_1_OBSERVATORY_NO_SEND_REASON_VISUAL_CONTRAST_HOTFIX，status = SEALED。CURRENT_OFFICIAL_VERSION = V2.4.14。完整記錄見本檔 taskSeal 欄位／07_KNOWN_ISSUES_02.md。下一件事：人類於Drive手動建立07_KNOWN_ISSUES_02.md後重跑sync驗證三檔SYNCED；觀察Production查修頁新配色實際可讀性與散落物HIGH_RISK/AI_REVIEW/LOW_RISK分布。",
   "knownBlocker": "GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES（見07_KNOWN_ISSUES_02.md）——07_KNOWN_ISSUES_02.md／PRODUCTION_MANIFEST.json／SYSTEM_STATE.json對Drive同步待人類手動建檔解除，本session已唯讀確認尚未完成。另沿用V2.4.5封版觀察中狀態：TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED已true，第一筆真實TDX LINE通知現場結果待人類回報。本session無Production網路存取，異常時第一動作固定改回false止血。",
   "realWorldConfirmation": {
     "status": "REAL_WORLD_CONFIRMATION_PENDING",

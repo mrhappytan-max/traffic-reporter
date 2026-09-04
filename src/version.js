@@ -2066,7 +2066,44 @@
 // See test/v2412ObservatoryNoSendReasonHighVisibilityUI.test.js (the
 // order's own §十八 CASE 1-13) and 07_KNOWN_ISSUES_02.md for the full
 // record.
-export const APP_VERSION = 'V2.4.13';
+// V2.4.14 — V2_4_13_1_OBSERVATORY_NO_SEND_REASON_VISUAL_CONTRAST_HOTFIX
+// (order task label "V2.4.13.1"; this project retired four-part
+// versioning at V1.8.7.14 — see this file's own SCHEME SWITCH comment
+// above — so, same handling as the prior V2_4_11_1_... order's own
+// "V2.4.11.1" label, this bumps the real three-part line instead:
+// V2.4.13 -> V2.4.14).
+//
+// CSS/PRESENTATION-ONLY HOTFIX on top of V2.4.12/V2.4.13's own
+// high-visibility no-send-reason block. Real Production feedback: the
+// original all-red styling (label AND body both #f85149 on a dark red
+// #2b1414 background) read as low-contrast and hard to scan on a phone in
+// dark mode, especially for a longer reason sentence.
+//
+// src/pbs/aiObservatoryView.js's PAGE_STYLE gains a re-tiered three-color
+// contract for the SAME .no-send-reason block (order section二/三): the
+// dark-red frame (background #2b1414, border #4a1f1f — both UNCHANGED,
+// already this page's own "fail" red family) stays the alert cue; the
+// LABEL ("❌ 不通報原因：" / "❌ 處理失敗原因：") is now bright yellow
+// (#facc15, new to this page — every existing "warn" token here, #e3b341,
+// is a duller amber that would not deliver the contrast jump this hotfix
+// exists for) at font-weight 800/19-20px, a fast visual anchor; the BODY
+// (the actual reason sentence) is now near-white (#f2f3f5 — reused
+// verbatim from this page's own existing brightest text color, already
+// used for h1/.col-road, not a new color) at font-weight 700/18-20px,
+// optimized purely for reading. Order section三's own explicit
+// prohibition ("禁止整段全黃") is satisfied structurally: label and body
+// are two DIFFERENT color rules, never the same flat color applied to the
+// whole block.
+//
+// NOTHING about the reason SELECTION/PRIORITY logic, truncation, missing-
+// reason fallback, or which outcome gets which label text changed --
+// deriveCompactNoSendReason() and every template string it uses are
+// byte-for-byte unchanged from V2.4.13. AI_CALL_COUNT/KV_READ_COUNT/
+// KV_WRITE_COUNT/decision outcomes are unaffected (verified directly).
+//
+// See test/v24131ObservatoryNoSendReasonVisualContrastHotfix.test.js (the
+// order's own CASE 1-5) and 07_KNOWN_ISSUES_02.md for the full record.
+export const APP_VERSION = 'V2.4.14';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

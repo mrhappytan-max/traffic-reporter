@@ -129,3 +129,17 @@ Leverage shared drives, or use OAuth delegation instead.
 **未觸碰**：AI SYSTEM_PROMPT、AI notify 政策、散落物分級政策、GEO、TDX KM範圍、PBS篩選、道路管理政策、Queue、Incident Memory（僅讀既有欄位）、dedupe、LINE formatter、CCTV、Production flags。
 
 **通則**：一個「查修頁只顯示結果、不顯示原因」的可觀測性缺口，往往不需要新的判斷邏輯就能補齊——真正的原因資料通常早已被上游系統算出並持久化（本例：AI decision cache 的 reason 欄位、既有 outcome 分支各自代表的具體原因），缺的只是「把它搬到使用者第一眼能看到的地方」這一層 UI 呈現工作；把這種純呈現層修正跟「新增一次判斷」混為一談，容易導致不必要地擴大改動範圍到決策邏輯本身。
+
+## 修正紀錄｜V2.4.14 查修頁不通報原因視覺強化 Hotfix（2026-09-04）
+
+**任務**：`V2_4_13_1_OBSERVATORY_NO_SEND_REASON_VISUAL_CONTRAST_HOTFIX`（路況工程部｜V2.4.13.1 查修頁不通報原因視覺強化 Hotfix）。`APP_VERSION` V2.4.13→V2.4.14（PATCH，施工令自寫「V2.4.13.1」，本專案已於 V1.8.7.14 起退休四段式版號，依前例 `V2_4_11_1_...` 同一套處理方式改走三段式）。**純 CSS／呈現層 Hotfix**——本輪未修改任何 AI 判斷／TDX／PBS／GEO／道路政策／Queue／KV／LINE／散落物政策／Incident Memory／CCTV／Production flags。
+
+**問題**：V2.4.12/V2.4.13 新增的「不通報原因」紅字區塊，標題與本文皆為同一種紅（`#f85149`／深紅背景 `#2b1414`），Production 真實回報：手機深色模式下對比不足、長句不易快速掃讀。
+
+**修法**：`src/pbs/aiObservatoryView.js` 的 `PAGE_STYLE` 三層重新分色（僅 CSS，`deriveCompactNoSendReason()` 與其樣板字串逐字不變）——外框（背景 `#2b1414`／邊框 `#4a1f1f`）維持深紅不變，作為警示訊號；標題（「❌ 不通報原因：」／「❌ 處理失敗原因：」）改為亮黃 `#facc15`（本頁新增色，既有 warn 色 `#e3b341` 對比不足以達到本輪要的跳躍感）、字重 800、19-20px，作為快速定位錨點；本文（真正原因）改為近白 `#f2f3f5`（沿用本頁既有最亮文字色，h1／`.col-road` 同一色，非新色）、字重 700、18-20px，專為閱讀優化。明確遵守施工令§三「禁止整段全黃」——標題與本文是兩個不同顏色規則，絕非同一色套用全區塊。
+
+**測試**：新增 `test/v24131ObservatoryNoSendReasonVisualContrastHotfix.test.js`（5項，施工令§七CASE1-5全覆蓋：一般不通報卡片配色、系統失敗卡片同一套視覺規則、手機寬度正常換行不破版、原因文字逐字不變、0額外AI/KV/決策變動）。全量迴歸1869/1837/32，`git stash -u`同commit精確基準比對NEW_FAILURES=0。
+
+**未觸碰**：AI SYSTEM_PROMPT、AI notify政策、散落物分級政策、GEO、道路管理政策、Queue、Incident Memory、dedupe、LINE formatter、CCTV、Production flags、`deriveCompactNoSendReason()`本身的原因選擇/截斷/缺失回報邏輯。
+
+**通則**：一個「視覺對比不足」的真實使用者回報，正確修法幾乎總是純粹的呈現層調整（顏色/字重/字級），不需要也不應該連動任何資料或判斷邏輯——把 CSS 微調範圍收得越窄，越能用最小的迴歸風險換到真正要的可讀性改善。

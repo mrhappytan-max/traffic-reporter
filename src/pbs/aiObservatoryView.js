@@ -840,12 +840,28 @@ const PAGE_STYLE = `
   .final-reason-processing_failed { color: #e3b341; }
   .final-reason-pending { color: #58a6ff; }
   /* V2.4.12 (order section 三/十六) — the high-visibility no-send-reason
-     block: bright red, bold, one step larger than surrounding status text,
-     free to wrap 2-3 lines on a 375-430px phone, never a single truncated
-     line and never overlapping the pill/badge above it (this div's parent
-     .final-reason already forces its own full-width row). #f85149 is the
-     SAME "fail" red this page already used for .badge-line-fail/.flow-fail
-     — reusing the existing danger color, not inventing a new one. */
+     block: free to wrap 2-3 lines on a 375-430px phone, never a single
+     truncated line and never overlapping the pill/badge above it (this
+     div's parent .final-reason already forces its own full-width row).
+     Background/border stay dark red (#2b1414/#4a1f1f, the SAME "fail" red
+     family this page already used for .badge-line-fail/.flow-fail) — the
+     red frame itself is the alert cue.
+     V2.4.13.1 (路況工程部｜V2.4.13.1 查修頁不通報原因視覺強化 Hotfix) —
+     real Production feedback: solid red-on-red (label and body both
+     #f85149 on a #2b1414 background) read as low-contrast and hard to
+     scan on a phone in dark mode, especially for a long body sentence.
+     Three-tier contrast, CSS/presentation only (no data/logic touched):
+     red frame = alert ("something was blocked/failed"), bright yellow
+     LABEL = fast visual anchor ("不通報原因：" / "處理失敗原因：" — order
+     section三), near-white BODY = the actual reason, optimized purely for
+     reading. Never the whole block in one flat color (order section三's
+     own explicit "禁止整段全黃"). #facc15 (a standard accessible bright
+     yellow, WCAG-AA on #2b1414) is new to this page — chosen because
+     every EXISTING "warn" token here (#e3b341) is a duller amber that
+     would not deliver the "亮黃色" contrast jump this hotfix exists for;
+     #f2f3f5 for the body reuses this page's own existing brightest
+     near-white text color (already used for h1/.col-road), not a new
+     color. */
   .no-send-reason {
     display: block; margin-top: 6px; padding: 8px 10px; border-radius: 8px;
     background: #2b1414; border: 1px solid #4a1f1f; line-height: 1.5;
@@ -854,14 +870,15 @@ const PAGE_STYLE = `
   .no-send-reason-missing .no-send-reason-label,
   .no-send-reason-missing .no-send-reason-text { color: #9aa1ac; }
   .no-send-reason-label {
-    display: block; color: #f85149; font-weight: 700; font-size: 18px;
+    display: block; color: #facc15; font-weight: 800; font-size: 19px;
   }
   .no-send-reason-text {
-    display: block; color: #f85149; font-weight: 700; font-size: 18px;
+    display: block; color: #f2f3f5; font-weight: 700; font-size: 18px;
     white-space: normal; overflow-wrap: break-word; word-break: break-word;
   }
   @media (min-width: 431px) {
-    .no-send-reason-label, .no-send-reason-text { font-size: 20px; }
+    .no-send-reason-label { font-size: 20px; }
+    .no-send-reason-text { font-size: 20px; }
   }
   .col-road { font-weight: 600; color: #f2f3f5; }
   .col-type { color: #9aa1ac; font-size: 13px; }
