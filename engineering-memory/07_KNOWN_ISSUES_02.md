@@ -185,3 +185,17 @@ Leverage shared drives, or use OAuth delegation instead.
 **Drive Sync**：`07_KNOWN_ISSUES_02.md`（本檔）建檔本輪再次確認仍撞既知 `GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES` service-account 403，記錄 `DRIVE_SYNC_VOLUME02=BLOCKED_KNOWN_403`，不重新調查、不阻擋封版，GitHub copy 為 canonical。
 
 **通則**：一個「Runtime 已完成、正在被即時觀察」的版本，治理上最重要的動作不是急著再改東西，而是把「哪些是已確認事實、哪些是仍待觀察的統計」清楚分開記錄——把 4 筆樣本包裝成「24 小時驗證通過」，或把「GitHub 有這個 commit」直接等同「Production 正在跑這個 commit」，都是同一種錯誤：用手邊有的、比較容易取得的證據，去冒充原本要求的、更嚴格的證據。誠實的封版紀錄允許「已完成」與「仍待確認」同時存在，不需要為了看起來完整而硬湊。
+
+## 治理發現｜repo 內同時存在兩份工程記憶，meeting-room-export/ 已停更並持續提供過期資訊（2026-09-06）
+
+**發現**：唯讀查證（路況-003／路況-004 兩輪）確立 repo 內同時存在兩份獨立維護的工程記憶文件樹：`engineering-memory/`（目前實際維護中，內容反映至 V2.4.15）與 `meeting-room-export/`（由 `scripts/export-meeting-room.mjs` 產生，自 commit f0b3ad1／V2.4.4／2026-09-02 之後未再重新產生，其後 17 個 commit、V2.4.5～V2.4.15 共 11 個版本完全未反映）。兩者對「TDX 額度用盡／PBS-ONLY 模式」的現況記載直接矛盾——`engineering-memory/07_KNOWN_ISSUES.md` 記為「已由 V2.4.0+ 逐步部分還原、額度限制已解除」，`meeting-room-export/07_KNOWN_ISSUES.md` 記為「生效中」。人類已確認：TDX 額度限制為 2026 年 8 月之事，9/1 重置後已不存在，`engineering-memory/` 記載為正確，`meeting-room-export/` 為過期錯誤資訊。
+
+**本輪處置**：已在 `meeting-room-export/00_CURRENT_STATE.md` 與 `meeting-room-export/07_KNOWN_ISSUES.md` 檔案開頭加註明顯警告區塊，說明兩檔已停更、內容過期、不得作為現況判斷依據。已修改 `AGENTS.md`：新 Agent 起點文件由 `meeting-room-export/00_CURRENT_STATE.md`／`meeting-room-export/02_PROJECT_HANDOFF.md` 改為 `engineering-memory/00_CURRENT_STATE.md`／`engineering-memory/02_PROJECT_HANDOFF.md`，並註明 `meeting-room-export/` 已停更、僅供歷史查閱。本輪未搬移、複製、刪除任何歷史內容，未合併兩份文件，未修改任何程式碼或 workflow，`meeting-room-export/` 其餘檔案未動。
+
+**已知殘留風險**：`scripts/export-meeting-room.mjs` 目前查無任何自動觸發點（無 GitHub Actions workflow、無 npm script 自動呼叫、無 git hook），但若未來有人手動執行 `npm run export:meeting-room` 或 `npm run finalize:release`，該腳本會刪除並重建整個 `meeting-room-export/` 目錄（`rmSync(EXPORT_DIR,{recursive:true})` 後重新產生），本輪加入的警告文字會被一併沖掉，需留意。
+
+**未結待辦（待辦，非已完成）**：`meeting-room-export/_history/` 下 9 個檔案（`00_INDEX.md` ＋ 8 個 `PROJECT_HANDOFF_XXof08.md`）含根目錄 `PROJECT_HANDOFF.md` 切分出的 V1.7～V1.8.7.7 完整歷史原文，`engineering-memory/` 目前無對應內容。這批歷史原文需另案搬遷保存後，才可討論 `meeting-room-export/` 的最終停用；本輪不處理搬遷，也不處理停用。
+
+**另兩則待辦（原文轉錄，不補根因／解法／猜測）**：
+1. 版本追溯問題與雙鐵相同，待雙鐵方案定案後比照辦理。
+2. 三個排程工作（LocalMonitor／Notify／Relay）中，Notify 與 Relay 對應哪支程式尚未確認。

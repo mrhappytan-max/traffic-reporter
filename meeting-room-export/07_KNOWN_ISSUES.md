@@ -2,6 +2,16 @@
 
 # 07. Known Issues
 
+> ⚠️ **本份文件已停止更新，內容過期，不得作為現況判斷依據**
+>
+> 本檔案最後產生於 V2.4.4（2026-09-02，commit f0b3ad1），其後 V2.4.5 至
+> V2.4.15 共 11 個版本的內容完全未反映於此。下方「KI｜TDX 額度用盡 — 暫時
+> PBS-ONLY MODE」段落記載的「（生效中）」「目前值 PBS_ONLY」等內容，已確認為
+> **過期錯誤資訊**——TDX 額度限制是 2026 年 8 月的事，9/1 重置後已不存在，
+> 已由 V2.4.0+ 逐步部分還原。現況請一律改讀 `engineering-memory/07_KNOWN_ISSUES.md`
+> 與 `engineering-memory/07_KNOWN_ISSUES_02.md`。詳見
+> `engineering-memory/00_CURRENT_STATE.md` 中對本次發現的記錄。
+
 ## 已知、無關、既有的測試失敗基準線
 
 **實測基準（2026-08-26，V1.9.3 施工後重新量測，非回憶）：`npm test` 共 1339 項，穩定 35 項失敗。**

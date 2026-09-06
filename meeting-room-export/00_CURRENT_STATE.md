@@ -2,6 +2,16 @@
 
 # 00. Current State（快速接班｜LEVEL 1）
 
+> ⚠️ **本份文件已停止更新，內容過期，不得作為現況判斷依據**
+>
+> 本檔案最後產生於 V2.4.4（2026-09-02，commit f0b3ad1），其後 V2.4.5 至
+> V2.4.15 共 11 個版本的內容完全未反映於此。特別是本檔案表格與
+> `07_KNOWN_ISSUES.md` 中「TDX 額度用盡／PBS-ONLY 生效中」的記載，已確認為
+> **過期錯誤資訊**——TDX 額度限制是 2026 年 8 月的事，9/1 重置後已不存在。
+> 現況請一律改讀 `engineering-memory/00_CURRENT_STATE.md`。詳見
+> `engineering-memory/00_CURRENT_STATE.md` 與
+> `engineering-memory/07_KNOWN_ISSUES_02.md` 中對本次發現的記錄。
+
 新 Agent 進場先讀這一份，不要先讀其他檔案。若時間有限，只讀這一份也應該足以回答：我在哪、能改什麼、不能改什麼、現在做什麼。
 
 | 欄位 | 值 |
