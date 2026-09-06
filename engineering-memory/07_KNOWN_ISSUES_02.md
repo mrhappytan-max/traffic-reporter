@@ -194,7 +194,7 @@ Leverage shared drives, or use OAuth delegation instead.
 
 **已知殘留風險**：`scripts/export-meeting-room.mjs` 目前查無任何自動觸發點（無 GitHub Actions workflow、無 npm script 自動呼叫、無 git hook），但若未來有人手動執行 `npm run export:meeting-room` 或 `npm run finalize:release`，該腳本會刪除並重建整個 `meeting-room-export/` 目錄（`rmSync(EXPORT_DIR,{recursive:true})` 後重新產生），本輪加入的警告文字會被一併沖掉，需留意。
 
-**未結待辦（待辦，非已完成）**：`meeting-room-export/_history/` 下 9 個檔案（`00_INDEX.md` ＋ 8 個 `PROJECT_HANDOFF_XXof08.md`）含根目錄 `PROJECT_HANDOFF.md` 切分出的 V1.7～V1.8.7.7 完整歷史原文，`engineering-memory/` 目前無對應內容。這批歷史原文需另案搬遷保存後，才可討論 `meeting-room-export/` 的最終停用；本輪不處理搬遷，也不處理停用。
+**歷史原文搬遷（已完成，2026-09-06，路況-006）**：`meeting-room-export/_history/` 下 9 個檔案（`00_INDEX.md` ＋ 8 個 `PROJECT_HANDOFF_XXof08.md`，V1.7～V1.8.7.7 完整歷史原文）已原樣複製保存至 `engineering-memory/_history_archive/`，逐檔以 diff／sha256 比對確認與來源完全一致，來源檔案本身未刪除、未搬移。`engineering-memory/_history_archive/README.md` 記錄複製來源與性質。**`meeting-room-export/` 的最終停用仍為未結待辦**，本次搬遷只是移除了停用前的一個技術障礙，不代表已停用，本輪未處理、也未提前執行停用。
 
 **另兩則待辦（原文轉錄，不補根因／解法／猜測）**：
 1. 版本追溯問題與雙鐵相同，待雙鐵方案定案後比照辦理。
