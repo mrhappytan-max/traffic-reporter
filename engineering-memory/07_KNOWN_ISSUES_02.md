@@ -314,3 +314,23 @@ Leverage shared drives, or use OAuth delegation instead.
 **10. 本次設定變更的自然驗證**：本輪（路況-015）記錄此變更的 commit 本身只觸碰 `engineering-memory/**`（已在 Exclude 清單內），是否觸發 Cloudflare 部署的觀察結果見本輪回報；若無法從 GitHub 端判斷，誠實記錄為未驗證，不得推測。
 
 **11. 已確認生效（2026-09-07，路況-016 補記）**：commit `296964b`（純 `engineering-memory/**` 變更）於 2026-09-07 11:32 push 後，Cloudflare Active deployment 仍為 `f6fbb4f1`（約 11:06 部署），Version History 無新增紀錄，由真人於 Dashboard 目視確認——來源為真人回報，非本 session 獨立驗證。Exclude 設定確認生效。
+
+## 修正紀錄｜BUILD_METADATA_GENERATION_BUG 已解決（2026-09-07）
+
+**來源聲明**：Dashboard 操作與 Production 驗證由具瀏覽器能力之 Claude session 於 2026-09-07 執行（路況-018），非本 session 獨立驗證，如實轉載；前置唯讀查證由本工程部同日完成（路況-017）。
+
+**1. 問題回顧**：Production `/version` 長期回報 `deployedCommit="unknown"`／`commitSource="not-yet-generated"`，無法正向證明線上執行的是哪個 commit（先前記錄 `PRODUCTION_COMMIT_VERIFICATION=UNVERIFIABLE`）。
+
+**2. 根因（路況-017 唯讀查證確立）**：`package.json` 的 `predeploy`=`node scripts/generateBuildMetadata.mjs`、`deploy`=`wrangler deploy`，npm 會在 `npm run deploy` 前自動執行 predeploy；但 Cloudflare Dashboard 的 Deploy command 原設為 `npx wrangler deploy`，直接呼叫 wrangler、不經過 npm，predeploy 因此從未執行，打包進去的一直是版控中的 placeholder（`src/generated/buildMetadata.js`）。`src/generated/buildMetadata.js` 是版控中的一般 tracked file，wrangler 打包時讀取磁碟上當下的內容、非動態產生，這是 predeploy 沒跑就會打包 placeholder 的機制性原因。
+
+**3. 修法（路況-018）**：Cloudflare Dashboard → Settings → Builds 的 **Deploy command 由 `npx wrangler deploy` 改為 `npm run deploy`**。Build command 維持空值未動，Build watch paths、Root directory、Production branch、Build variables 等其餘設定全部未變更。
+
+**4. 驗證結果（來源：瀏覽器 session 實測，非本 session 驗證）**：以 Dashboard「Retry build」觸發部署，Build `#f778410e`，關聯 commit `784c79d`，四階段全綠，24 秒無錯誤。Build log 確認 predeploy 實際執行：`[generateBuildMetadata] wrote /opt/buildhome/repo/src/generated/buildMetadata.js`；`deployedCommit=784c79d6c56d71ddefe51cdb552a2353b02e52a5 (env:WORKERS_CI_COMMIT_SHA)`；`deployedBranch=main (env:WORKERS_CI_BRANCH)`。部署後 `/version` 實測：`appVersion=V2.4.15`、`deployedCommit=784c79d6c56d71ddefe51cdb552a2353b02e52a5`、`deployedBranch=main`、`buildTime=2026-09-07T04:07:40.372Z`。`appVersion` 維持 V2.4.15，本次修正不涉及任何程式碼變更。部署後 route、cron schedule（`*/10 * * * *`）、Queue producer/consumer 綁定均正常還原。
+
+**5. 關鍵事實**：commit 資訊來自 Cloudflare build 環境原生提供的環境變數 `WORKERS_CI_COMMIT_SHA`／`WORKERS_CI_BRANCH`，非透過 git 指令取得，故即使 build 環境無 `.git` 目錄亦可正確取得——這是 `generateBuildMetadata.mjs` 的第一順位來源設計。
+
+**6. 誠實揭露**：本次 `/version` 回應僅含 `service`／`appVersion`／`deployedCommit`／`deployedBranch`／`buildTime` 五個鍵，未出現 `commitSource` 欄位，與先前記錄中提及的 commitSource 描述略有出入。執行方如實回報此觀察，未做推測，此點保留、不自行解釋。
+
+**7. 待觀察事項（僅記錄，非本輪處理）**：commit `784c79d`（路況-016，docs 前綴）於 11:45 仍觸發自動部署。該 commit 實際包含 `scripts/export-meeting-room.mjs` 與 `package.json` 變更，屬程式碼變更，理應觸發部署，初步判斷非 Build watch paths 設定失效，惟未查證該 commit 完整檔案清單，如實標為未經查證的觀察項。
+
+**通則**：Cloudflare Dashboard 的 Deploy command 若繞過專案自身的 npm 生命週期鉤子，任何依賴該鉤子（`predeploy`／`postdeploy`）的機制都會被靜默跳過，且不會有任何錯誤訊息——因為從 wrangler 的角度看，它本來就沒被要求執行 npm；修法的關鍵不是修改腳本本身（腳本從一開始就正確），而是讓部署入口重新對齊專案原本設計的呼叫鏈。
