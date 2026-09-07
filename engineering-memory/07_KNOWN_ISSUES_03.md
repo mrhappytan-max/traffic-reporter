@@ -73,6 +73,34 @@
 
 **5. 本輪未處理事項（維持既有待辦，非已解決）**：本機 main 分支落後 origin/main 223 個 commit；本機工作目錄仍檢出 preserve 分支而非 main，Volume 02「不得在此目錄切換分支」風險依然成立；`wrangler.jsonc` 本機未提交修改（缺 vars／ai／queues 區塊）；兩個編碼錯誤的 CSV 檔案；`.pbs-token-test` 的異地備份；`health-watchdog.ps1` 併入 main；HealthWatchdog 異常路徑未驗證；版本追溯等雙鐵方案。
 
+## 處置紀錄｜health-watchdog.ps1 併入 main，切換分支障礙解除（2026-09-07）
+
+**1. 處置**：`pbs-relay/scripts/health-watchdog.ps1`（399 bytes）已由 `preserve/windows-runtime-20260906`（`18cb8e2c5152b616df54ae02c51bcc0dd82d2422`）併入 main。PR #3，來源分支 `merge/health-watchdog-20260907`，commit `3e37e45b9489db923f9a61f4693442f6063c347b`，merge commit `b59a70d`，由真人於 GitHub 網頁確認後 merge。
+
+**2. 併入理由**：該檔原本只存在於 preserve 分支，Windows 排程工作 `TrafficReporter-PBS-HealthWatchdog` 的指令直接指向其磁碟路徑。若本機工作目錄切換至 main，該檔會從磁碟消失，排程下次觸發將找不到腳本。併入後此障礙解除。
+
+**3. preserve 分支 SHA 執行前後不變**（`18cb8e2c5152b616df54ae02c51bcc0dd82d2422`），未被改寫。
+
+**4. 巢狀重複檔排除**：`pbs-relay/scripts/scripts/compare-fetch.mjs` 明確排除未併入。**須註記**：該檔目前仍存在於 preserve 分支的歷史中（路況-030 的併入只作用於 main 端，未回頭修改 preserve 分支），真人本機磁碟上的複本已於 2026-09-07 刪除。此為已知狀態，非待辦。
+
+**5. 驗證狀態**：正常路徑已驗證（2026-09-07 09:47:47 手動觸發，`LastTaskResult=0`）；**異常路徑仍未驗證**（服務實際中斷時告警視窗是否確實跳出，尚未測試），不得寫成已驗證。
+
+## 查證修正｜路況-033 推翻的兩項先前認知（2026-09-07）
+
+**1. `wrangler.jsonc` 本機落差對 Production 無影響（更正）**：查證結論——Cloudflare Workers Builds 從 GitHub repo 拉取程式碼建置部署（Production branch = main），讀取的是 `origin/main` 上的 `wrangler.jsonc`，與真人本機工作目錄檢出哪個分支完全無關；本機那份從未 commit、從未被任何部署流程讀取。本機版本缺少 vars／ai／queues 區塊的原因已查明：這些區塊全部是 2026-08-25 之後才加入 `origin/main`（`5d1f9fe` V1.9.9 Phase 3B 加入 ai binding 與 `PBS_AI_DECISION_ENABLED`、`850f5fa` V2.3.0 加入 queues、`2d23329` V2.4.0 加入三個 TDX 開關等），preserve 分支的內容停在 2026-08-25 前後，從未包含這些後續變更。**明確判定：本機這份 `wrangler.jsonc` 不是被任何人手動改壞的，是檢出舊快照的自然結果，對 Production 零影響。** 先前記錄（Volume 02／03 相關段落）將其列為需處理的落差，依此查證應降級為非問題；**既有記錄原文不改寫**，此為新增的更正說明。
+
+**2. 兩個 CSV 的「編碼錯誤」認知有誤（更正）**：`data/road-location/archive/省道里程坐標(里程牌標誌).csv` 在 `origin/main` 上本身即為 Big5／cp950 編碼，**並非 UTF-8**——`data/road-location/archive/README_RAW_CONTRACT.md` 明確記載該檔係逐位元組原樣保留原始政府檔案的 cp950 編碼，屬正確的存檔慣例，非錯誤。先前記錄（路況-023／025／027）記載「origin/main 為正常 UTF-8 版本、本機為亂碼版本」，**此描述不正確**，於本則記錄更正，既有記錄原文不改寫。程式引用查證：`archive/` 底下那份 CSV 沒有任何程式碼引用；`raw/provincial/provincial.csv` 僅在真人手動執行 `npm run update:road-location-data` 時被讀取，用以重新產生 `generated/provincial.js`，Production 依據的是已 commit 的 `generated/provincial.js`（bundle 進 Worker），與 raw CSV 無關。**明確判定：這兩個檔案對 Production 與本機服務皆無影響，不構成待辦事項。**
+
+## 補充事實｜路況-033 其餘查證結果（2026-09-07）
+
+**1.** 本機 main 落後 `origin/main` 的 commit 數已由 223 增至 **230**（因期間 `origin/main` 持續新增 commit，數字隨時間自然增加，非查證方法有誤）。其中觸及 `pbs-relay/` 的僅 2 個（`7acb82a`、`1035667`）。
+
+**2. 關鍵事實**：本機 main 分支的指標前進（例如 `git fetch` 後更新 main 指標），**不會改變磁碟工作目錄內容**——工作區內容由目前檢出的分支決定，只有實際執行 `git switch`／`git checkout` 切換檢出才會改寫磁碟。
+
+**3.** 若本機工作目錄改為檢出 main：磁碟會新增 209 個檔案、199 個既有檔案被取代。**pbs-relay 核心執行檔案（`localMonitor.js`、`server.js`、`auth.js`、`pbsHandler.js`、`hsinchuBoundary.js`、邊界 geojson）在忽略換行後與 preserve 內容一致**（已於路況-030 併入），Production 服務核心邏輯不會被移除或改變。加上本輪 `health-watchdog.ps1` 已併入，**切換分支的已知障礙均已解除**。
+
+**4.** 若維持檢出 preserve：本機磁碟上非 pbs-relay 的檔案（`src/`、`test/`、`engineering-memory/`、`wrangler.jsonc` 等）將持續停留在 2026-08-25 前後的舊版本，未來 main 的新變更不會反映到本機。此不影響服務執行，但本機查閱這些檔案會看到舊內容。是否切換分支仍為未定案事項，見 `00_CURRENT_STATE.md` Next Action ⑥。
+
 ## 盤點紀錄｜本機工作目錄完整狀態與無備份檔案清單（2026-09-07）
 
 **來源聲明**：本節事實由路況-026（Cowork 本機工程部執行之唯讀盤點）取得，非本 session 獨立驗證，如實轉載。
