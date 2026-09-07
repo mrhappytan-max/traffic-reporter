@@ -1,14 +1,33 @@
 name: Sync Engineering Memory to Google Drive
 
+# DISABLED 2026-09-07 (路況-007) — push trigger removed, workflow_dispatch
+# (manual) kept only.
+#
+# Reason: every run since 2026-09-03 (through run #62) failed. Run #62's own
+# job log confirmed the root cause: Google Drive API 403 "Service Accounts
+# do not have storage quota" — the service account can update files that
+# already exist in the target folder, but cannot create a new file there.
+# This is unrelated to folder sharing permissions (the service account
+# already has Editor access on the folder) — it is a structural limit of a
+# personal Gmail-owned Google Drive folder, which has no Shared Drive to
+# grant the service account real storage quota against.
+#
+# The original reason this mirror existed — the Meeting Room environment
+# could not read GitHub directly — no longer holds: on 2026-09-06 a human
+# repointed that Chat project's file source to read engineering-memory/
+# directly and verified it works. GitHub's engineering-memory/ is now the
+# sole canonical copy; see engineering-memory/07_KNOWN_ISSUES_02.md for the
+# full retirement record.
+#
+# To restore: this needs either (a) a Google Cloud service account granted
+# real OAuth user-delegated authority instead of its own account quota, or
+# (b) migrating the destination to an actual Shared Drive under an account
+# that has one (a personal Gmail account cannot own a Shared Drive) — a
+# future decision, not undone by this comment alone. Until then, re-adding
+# a `push:` trigger without addressing the 403 would just reproduce the
+# same failing runs.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - engineering-memory/**
-      - scripts/drive-sync-manifest.json
-      - scripts/syncEngineeringMemory.mjs
-      - .github/workflows/sync-engineering-memory.yml
 
 permissions:
   contents: read

@@ -30,7 +30,7 @@
 
 **通則**：一份持續累積、刻意不刪除歷史的工程記憶文件，遲早會撞到任何單一儲存媒介的容量上限——正確的因應方式是「加開新卷、舊卷唯讀延伸」，而不是「壓縮到失真」或「刪減換空間」。這與版本管理系統本身「舊 commit 不因倉庫變大而被刪除」是同一個原則的不同層次體現。
 
-## 已知阻塞｜GITHUB_TO_DRIVE_SYNC 對「新增檔案」失敗——需要人類/Workspace 管理員動作（2026-09-04，**進行中，尚未解決**）
+## 已知阻塞｜GITHUB_TO_DRIVE_SYNC 對「新增檔案」失敗——已決議退休（2026-09-04 發現，2026-09-07 決議退休，路況-007）
 
 **狀態：`GOOGLE_DRIVE_SYNC_BLOCKED_FOR_NEW_FILES`。** 誠實回報，不得報成 PASS（見 Volume 01「治理變更紀錄｜DRIVE_SYNC_GOVERNANCE_V2」的永久誠實回報規則）。
 
@@ -59,6 +59,8 @@ Leverage shared drives, or use OAuth delegation instead.
 **通則**：一個 API 呼叫失敗訊息裡如果明確列出兩條建議修法（本例「shared drives」或「OAuth delegation」），代表根因落在**帳號/資源層級的權限設計**，不是「少了一個 query 參數」這種程式碼層級的小修；先按官方建議修一次、驗證是否解決，若仍然失敗，必須誠實升級判讀，而不是重複套用同一個假設。
 
 **V2.4.11.1 施工令追蹤（2026-09-04）**：`V2_4_11_1_DEBRIS_CLEARED_PRECEDENCE_AND_MEMORY_SYNC_HOTFIX` 施工令第二部分明確指示「由人類在既有 Google Drive 資料夾先建立 `07_KNOWN_ISSUES_02.md`（真人帳號），確保 Service Account 對該檔案有更新權限，然後重新執行 sync」——與本節上方選項 1 完全一致。本 session 於本輪執行前，以唯讀方式（`search_files`，`parentId` 限定在目標資料夾）核對該資料夾目前實際內容：**`07_KNOWN_ISSUES_02.md` 尚未存在**，資料夾內仍只有原本 10 份 canonical 檔案（`00`～`07_KNOWN_ISSUES.md`／`PRODUCTION_MANIFEST.json`／`SYSTEM_STATE.json`，皆為 `mr.happytan@gmail.com` 真人帳號所有），另有數個 `_archive_*` 資料夾與一個 `CONNECTOR_TEST.txt`。**人類尚未完成第一步**，因此本輪未重新觸發 sync（重跑只會重現同一個已知 403，無新資訊），也未將本卷／`PRODUCTION_MANIFEST.json`／`SYSTEM_STATE.json` 標記為 `SYNCED`——這三者對 Google Drive 的同步狀態誠實維持 `BLOCKED_PENDING_HUMAN_ACTION`，`FINAL` 不因此標記為 `SEALED`（施工令自己的要求：三者皆 `SYNCED` 才能 `SEALED`）。**下一步**：人類完成 Drive 端建檔後，任一未來 session 只需重新觸發（或等下一次 push 自然觸發）`Sync Engineering Memory to Google Drive` workflow 即可驗證是否解除，不需要新的程式修改。
+
+**退休決議（2026-09-07，路況-007）**：根因已確認為 Google Drive API 403「Service Accounts do not have storage quota」——Service Account 對目的資料夾內既有檔案可正常更新（find／update 全數成功），但無法建立新檔案，此限制與資料夾共用權限設定無關（Service Account 已具編輯者權限，仍無法建立新檔）。官方建議的兩條路（改用 Shared Drive／改用 OAuth 委派）中，「改用 Shared Drive」在本例不可行——目的資料夾所有權為真人個人 Gmail 帳號（`mr.happytan@gmail.com`），個人 Gmail 帳號無法擁有或使用 Shared Drive。本次同步鏡像原始存在的理由（「會議室環境無法直接讀取 GitHub」）已於 2026-09-06 由真人將該 Chat 專案的檔案來源改掛 `engineering-memory/` 並驗證通過而不再成立。**決議：Drive 鏡像退休**，`.github/workflows/sync-engineering-memory.yml` 已停用其 `push` 觸發（保留檔案與 `workflow_dispatch` 手動觸發，未刪除），GitHub 上的 `engineering-memory/` 為唯一正本。Google Drive 上既有檔案本輪未刪除、未變更、未執行任何操作，其後續處置（是否清理、是否保留供人工查閱）由真人自行決定，不在本輪範圍。若未來需恢復 Drive 同步，需改用 OAuth 使用者授權（代表某個真人身分呼叫 Drive API）而非目前的 Service Account 帳號配額模式，或改用具 Shared Drive 的帳號——此為未來議題，本輪不處理、不預先設計。
 
 ## 修正紀錄｜V2.4.11 散落物安全風險分級／LINE Push 額度保護（2026-09-04）
 
