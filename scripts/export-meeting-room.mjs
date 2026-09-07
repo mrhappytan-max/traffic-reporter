@@ -446,6 +446,32 @@ function readPbsAiDecisionEnabled() {
 }
 
 function main() {
+  // 路況-016 (2026-09-07) — DISABLED BY DEFAULT. meeting-room-export/ has
+  // been frozen since V2.4.4 (2026-09-02, 11+ versions stale; see
+  // 路況-003/004/005) and running this generator wipes+rebuilds the whole
+  // directory (Step 2 below: rmSync + recreate), which would destroy the
+  // stale-content warnings 路況-005 added to
+  // meeting-room-export/00_CURRENT_STATE.md and 07_KNOWN_ISSUES.md. The
+  // current canonical engineering memory is engineering-memory/ — see
+  // engineering-memory/00_CURRENT_STATE.md. This guard is the one place
+  // both invocation paths (direct CLI run below, and
+  // scripts/finalize-release.mjs's in-process `exportMeetingRoom()` call)
+  // funnel through, so gating here — rather than at true module-load time
+  // — blocks every real write without also killing finalize-release.mjs's
+  // OTHER still-useful steps (its deployment-policy check and Windows
+  // local-fs fallback do not depend on this function succeeding).
+  // Escape hatch for a deliberate one-off regeneration: ALLOW_STALE_EXPORT=1.
+  if (process.env.ALLOW_STALE_EXPORT !== '1') {
+    throw new Error(
+      'export-meeting-room is DISABLED (路況-016, 2026-09-07) -- meeting-room-export/ is frozen ' +
+        'since V2.4.4 (2026-09-02) and 11+ versions stale; running this would wipe and regenerate the ' +
+        'whole directory, destroying the stale-content warnings in meeting-room-export/00_CURRENT_STATE.md ' +
+        'and 07_KNOWN_ISSUES.md. The current canonical engineering memory is engineering-memory/ (see ' +
+        'engineering-memory/00_CURRENT_STATE.md). Set ALLOW_STALE_EXPORT=1 in the environment to force a ' +
+        'regeneration anyway.'
+    );
+  }
+
   console.log('=== export-meeting-room ===');
 
   // --- Step 1: gather volatile facts, mechanically, every run ---

@@ -196,7 +196,9 @@ Leverage shared drives, or use OAuth delegation instead.
 
 **已知殘留風險**：`scripts/export-meeting-room.mjs` 目前查無任何自動觸發點（無 GitHub Actions workflow、無 npm script 自動呼叫、無 git hook），但若未來有人手動執行 `npm run export:meeting-room` 或 `npm run finalize:release`，該腳本會刪除並重建整個 `meeting-room-export/` 目錄（`rmSync(EXPORT_DIR,{recursive:true})` 後重新產生），本輪加入的警告文字會被一併沖掉，需留意。
 
-**歷史原文搬遷（已完成，2026-09-06，路況-006）**：`meeting-room-export/_history/` 下 9 個檔案（`00_INDEX.md` ＋ 8 個 `PROJECT_HANDOFF_XXof08.md`，V1.7～V1.8.7.7 完整歷史原文）已原樣複製保存至 `engineering-memory/_history_archive/`，逐檔以 diff／sha256 比對確認與來源完全一致，來源檔案本身未刪除、未搬移。`engineering-memory/_history_archive/README.md` 記錄複製來源與性質。**`meeting-room-export/` 的最終停用仍為未結待辦**，本次搬遷只是移除了停用前的一個技術障礙，不代表已停用，本輪未處理、也未提前執行停用。
+**歷史原文搬遷（已完成，2026-09-06，路況-006）**：`meeting-room-export/_history/` 下 9 個檔案（`00_INDEX.md` ＋ 8 個 `PROJECT_HANDOFF_XXof08.md`，V1.7～V1.8.7.7 完整歷史原文）已原樣複製保存至 `engineering-memory/_history_archive/`，逐檔以 diff／sha256 比對確認與來源完全一致，來源檔案本身未刪除、未搬移。`engineering-memory/_history_archive/README.md` 記錄複製來源與性質。
+
+**`meeting-room-export/` 最終停用（已完成，2026-09-07，路況-016）**：處置方式為「停用產生腳本、保留目錄與檔案」，非刪除目錄。`scripts/export-meeting-room.mjs` 的 `main()`（CLI 直接執行與 `finalize-release.mjs` 的 `exportMeetingRoom()` in-process 呼叫共用的唯一進入點）最前方加入早退防護：預設（`ALLOW_STALE_EXPORT` 未設為 `1`）一律拋出錯誤，說明本腳本已停用、原因（產生物已停更會沖掉既有警告）、現行正本為 `engineering-memory/`、以及解除方式，不會執行到後續的 `rmSync` 或任何檔案寫入。`package.json` 的 `export:meeting-room`／`sync:meeting-room` 兩個 script 前方加上 `echo` 提示訊息，指令本身未刪除；`finalize:release` 未整個停用（其 `check:deployment-policy`／Windows local-fs fallback 兩步驟不受影響仍正常執行，僅呼叫 export 的那一步會因上述防護而回報失敗，`meeting-room-export: FAIL`，屬預期行為）。新增 `meeting-room-export/README.md` 說明停更與停用狀態。**殘留風險（刻意保留，非缺陷）**：`ALLOW_STALE_EXPORT=1` 是刻意保留的逃生門，若有人手動設定此環境變數強制執行，警告仍會被 `rmSync` 沖掉——這是設計上允許的「真的需要時仍可重新產生」出口，不是本次防護的漏洞。
 
 **另兩則待辦（原文轉錄，不補根因／解法／猜測）**：
 1. 版本追溯問題與雙鐵相同，待雙鐵方案定案後比照辦理。
@@ -310,3 +312,5 @@ Leverage shared drives, or use OAuth delegation instead.
 **9. 未觸碰項目**：Build command（維持空值，其修法未定案，見上方 BUILD_METADATA_GENERATION_BUG 記錄）、Deploy command、Root directory、Git repository、Production branch、Build variables and secrets、環境變數、Secret、KV、Queue、`wrangler.jsonc`、Worker 程式碼。
 
 **10. 本次設定變更的自然驗證**：本輪（路況-015）記錄此變更的 commit 本身只觸碰 `engineering-memory/**`（已在 Exclude 清單內），是否觸發 Cloudflare 部署的觀察結果見本輪回報；若無法從 GitHub 端判斷，誠實記錄為未驗證，不得推測。
+
+**11. 已確認生效（2026-09-07，路況-016 補記）**：commit `296964b`（純 `engineering-memory/**` 變更）於 2026-09-07 11:32 push 後，Cloudflare Active deployment 仍為 `f6fbb4f1`（約 11:06 部署），Version History 無新增紀錄，由真人於 Dashboard 目視確認——來源為真人回報，非本 session 獨立驗證。Exclude 設定確認生效。
