@@ -332,16 +332,34 @@ function isDynamicShoulderEvent(event) {
  * path for a pure eligibility count (see broadcastPipeline.js's
  * cctvEligibleAccidentCount) without triggering any network activity.
  *
- * V1.8.7.0 — now covers TWO event categories, distinguished by
+ * V1.8.7.0 — covers TWO event categories, distinguished by
  * `imageStrategy` on the returned eligibility object:
- *   - accident            -> imageStrategy:'quad'   (unchanged behavior —
- *     see prepareCctvImageWork / the original 4-quadrant collage)
- *   - dynamic-shoulder     -> imageStrategy:'single' (see
+ *   - dynamic-shoulder -> imageStrategy:'single' (see
  *     prepareSingleCctvImageWork below) — one representative camera for
- *     the event's own KM RANGE, never a 2x2 collage. `reason:
- *     'not-accident'` is deliberately UNCHANGED wording for "neither
- *     category" — existing callers/tests that check this exact string
- *     for a plain construction/closure/etc event keep working unchanged.
+ *     the event's own KM RANGE, never a 2x2 collage.
+ *   - everything else  -> imageStrategy:'quad'   (see prepareCctvImageWork
+ *     / the original 4-quadrant collage).
+ *
+ * V2.4.16 (root-cause fix, real Production event
+ * A15040100H-01-20260907075536353100022 — TDX freeway "其他異常告警-
+ * 故障車", classified `type:'other'`, notify=true, LINE sent, CCTV=NO) —
+ * this function no longer requires `event.type === 'accident'`. The
+ * four-layer architecture already designates AI as the SOLE notify/no-
+ * notify authority (Windows=Geography Only, Cloudflare=Ingress/
+ * Transport/Orchestration, AI=Semantic Decision Authority, LINE=Delivery
+ * Only); this function re-deciding "is this really an accident" with a
+ * hardcoded keyword classifier was a second, misplaced judgment. By the
+ * time this function is ever called, AI has already decided notify=true
+ * — CCTV eligibility is now purely a DATA-trustworthiness question (is
+ * the road one we have a real camera registry for, is there a resolvable
+ * KM), never a semantic one. Motorway-shoulder open/close events are not
+ * exposed to this relaxed gate: they are already dropped upstream, before
+ * ever reaching the Queue/AI, by tdx/tdxQueueIngress.js's own Gate A
+ * (tdx/roadManagementPolicyGate.js#resolveTdxRoadManagementEligibility) —
+ * see that module's own comment. `reason:'not-accident'` is retired along
+ * with the check that produced it; no other caller ever matched on that
+ * exact string (verified: grep for the literal across src/ before this
+ * change found only this function's own code and doc comment).
  *
  * @param {object} event
  * @returns {{eligible:true, imageStrategy:'quad', roadKey:string, roadId:string,
@@ -349,12 +367,10 @@ function isDynamicShoulderEvent(event) {
  *   |{eligible:true, imageStrategy:'single', roadKey:string, roadId:string,
  *     roadNamePattern:RegExp, roadShortName:string, direction:string,
  *     startKm:number|null, endKm:number|null, targetKm:number}
- *   |{eligible:false, reason:'not-accident'|'not-freeway-source'|'unresolvable-road'|'unsupported-road'|'no-reliable-km'}}
+ *   |{eligible:false, reason:'unsupported-source'|'unresolvable-road'|'unsupported-road'|'no-reliable-km'}}
  */
 export function resolveCctvEligibility(event) {
-  const isAccident = Boolean(event && event.type === 'accident');
   const isDynamicShoulder = isDynamicShoulderEvent(event);
-  if (!isAccident && !isDynamicShoulder) return { eligible: false, reason: 'not-accident' };
 
   // 2026-08-25 — WAS `event.source !== 'freeway'`, i.e. TDX-Freeway-only.
   //
@@ -369,17 +385,18 @@ export function resolveCctvEligibility(event) {
   //
   // CCTV eligibility is now decided by whether the DATA is trustworthy —
   // a resolvable road that is in the confirmed registry, plus a reliable
-  // target kilometre — not by which feed happened to report the incident.
-  // Both of those are checked immediately below, and both still fail
-  // closed.
+  // target kilometre — not by which feed happened to report the incident,
+  // and (V2.4.16) not by re-classifying the incident's own semantic type
+  // either. Both of those are checked immediately below, and both still
+  // fail closed.
   //
   // Still an allowlist, not an open door: only the three road-incident
   // feeds whose normalizers produce a canonical road name and a
   // parser-validated kilometre are admitted. A bus/CMS record has neither,
-  // and must never reach a camera lookup on the strength of the word
-  // "accident" alone. 'highway' (省道 TDX) is listed for symmetry — it can
-  // never actually pass, because no 省道 is in CCTV_SUPPORTED_ROADS, and
-  // it will correctly stop at 'unsupported-road' rather than here.
+  // and must never reach a camera lookup. 'highway' (省道 TDX) is listed
+  // for symmetry — it can never actually pass, because no 省道 is in
+  // CCTV_SUPPORTED_ROADS, and it will correctly stop at 'unsupported-road'
+  // rather than here.
   if (!CCTV_TRUSTED_EVENT_SOURCES.has(event.source)) return { eligible: false, reason: 'unsupported-source' };
 
   const roadKey = resolveRoadKey(event.road);

@@ -404,7 +404,14 @@ test('16. dynamic shoulder push stays OFF, and its own KM path is untouched', ()
   assert.equal(broadcastDecision(shoulder, PBS_ONLY_ENV).allowed, false);
 });
 
-test('17. a non-accident is still refused CCTV and still not pushed', () => {
+// V2.4.16 — resolveCctvEligibility no longer re-classifies event type
+// (see that function's own V2.4.16 comment); a construction event on a
+// supported road with a resolvable KM is now CCTV-eligible, same as any
+// other event AI approved for notification. The legacy PBS hard-rule
+// broadcastDecision() outcome below is a SEPARATE, untouched concern —
+// this event still isn't proactively pushed via that path, independent
+// of whether CCTV itself would now be willing to prepare an image.
+test('17. a non-accident is now CCTV-eligible (V2.4.16), but still not pushed via the legacy PBS hard-rule path', () => {
   const construction = {
     source: 'pbs',
     rawId: 'PBS-C',
@@ -414,7 +421,10 @@ test('17. a non-accident is still refused CCTV and still not pushed', () => {
     displayKM: 96.7,
     description: '封閉車道施工',
   };
-  assert.equal(resolveCctvEligibility(construction).reason, 'not-accident');
+  const elig = resolveCctvEligibility(construction);
+  assert.equal(elig.eligible, true);
+  assert.equal(elig.imageStrategy, 'quad');
+  assert.equal(elig.targetKm, 96.7);
   assert.equal(broadcastDecision(construction, PBS_ONLY_ENV).allowed, false);
 });
 
@@ -443,11 +453,20 @@ test('18. the trace now names the CCTV decision instead of leaving it blank', ()
   assert.equal(attempted.enrichment.imageStrategy, 'quad');
 });
 
+// V2.4.16 — 'not-accident' is retired along with the event-type check
+// that produced it (see resolveCctvEligibility's own V2.4.16 comment):
+// `{ ...event, type: 'other' }` is now CCTV-eligible, not a skip case,
+// so that case is removed rather than updated to a different expected
+// reason. The remaining three skip reasons are unaffected by this round
+// and still each produce a real, distinct string. 'unsupported-road' is
+// a real fourth reason value but — as dynamicCollage.test.js's own
+// comment on that branch explains — has no live example today (every
+// road resolveRoadKey currently recognizes is already CCTV_SUPPORTED_
+// ROADS-covered), so it is not added here as a substitute case.
 test('19. every CCTV skip reason a human might see is a real, distinct string', () => {
   const event = event96K7();
   const seen = new Set();
   const cases = [
-    [{ ...event, type: 'other' }, 'not-accident'],
     [{ ...event, source: 'cms' }, 'unsupported-source'],
     [{ ...event, road: '台68' }, 'unresolvable-road'],
     [(() => { const e = { ...event }; delete e.displayKM; return e; })(), 'no-reliable-km'],

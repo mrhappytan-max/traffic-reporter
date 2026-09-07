@@ -217,11 +217,38 @@ test('5. unresolvable road -> ineligible, text only (unsupported-road has no liv
   assert.equal(unresolvable.reason, 'unresolvable-road');
 });
 
-test('non-accident and non-freeway events are never eligible', async () => {
-  assert.equal(resolveCctvEligibility(accidentEvent({ type: 'congestion' })).eligible, false);
-  assert.equal(resolveCctvEligibility(accidentEvent({ type: 'closure' })).eligible, false);
+// V2.4.16 — resolveCctvEligibility no longer re-classifies an event's
+// semantic type (see that function's own V2.4.16 comment): AI is the
+// sole notify authority, CCTV eligibility is now purely a data-
+// trustworthiness question. A congestion/closure event on a supported
+// road with a resolvable KM is therefore now CCTV-eligible, same as an
+// accident — this is the intended behavior change, not a regression.
+// The two source-trust assertions below (pbs/highway) are UNCHANGED by
+// this edit — they pre-date V2.4.16 and test a separate, already-known-
+// stale concern (both sources have been CCTV_TRUSTED_EVENT_SOURCES
+// members since the 2026-08-25 rewrite), left exactly as found.
+test('non-accident events on a supported road are now CCTV-eligible (V2.4.16 — type no longer checked)', async () => {
+  assert.equal(resolveCctvEligibility(accidentEvent({ type: 'congestion' })).eligible, true);
+  assert.equal(resolveCctvEligibility(accidentEvent({ type: 'closure' })).eligible, true);
   assert.equal(resolveCctvEligibility(accidentEvent({ source: 'pbs' })).eligible, false);
   assert.equal(resolveCctvEligibility(accidentEvent({ source: 'highway' })).eligible, false);
+});
+
+// V2.4.16 — new coverage: every non-accident event type this project's
+// own classifiers can produce (construction/closure/control/congestion/
+// other — see tdx/classify.js's KEYWORD_RULES and its 'other' fallback)
+// is now CCTV-eligible via the quad path, on a supported road with a
+// resolvable KM, exactly like an accident. This is the direct test of
+// the real Production event that motivated this round
+// (A15040100H-01-20260907075536353100022 — TDX freeway "其他異常告警-
+// 故障車", type:'other', AI-approved, LINE sent, CCTV wrongly withheld).
+test('V2.4.16 — every non-accident event type is now CCTV-eligible (quad) on a supported road with a resolvable KM', async () => {
+  for (const type of ['construction', 'closure', 'control', 'congestion', 'other']) {
+    const elig = resolveCctvEligibility(accidentEvent({ type }));
+    assert.equal(elig.eligible, true, `type=${type} should be eligible`);
+    assert.equal(elig.imageStrategy, 'quad', `type=${type} should use the quad strategy`);
+    assert.equal(elig.targetKm, 82.1, `type=${type} should resolve the same targetKm as any other event`);
+  }
 });
 
 // V1.8.5.1 — required regression test 9: a PBS accident whose comment

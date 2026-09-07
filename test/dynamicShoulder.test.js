@@ -413,6 +413,22 @@ test('13-14. dynamic-shoulder event is CCTV-eligible with imageStrategy="single"
   assert.equal(elig.endKm, 93.32);
 });
 
+// V2.4.16 — regression lock: removing resolveCctvEligibility's event.type
+// check (see that function's own V2.4.16 comment) left the isDynamicShoulder
+// branch's own routing untouched, byte-for-byte. shoulderEvent()'s own
+// `type` field is 'control' (see this file's own fixture, deliberately —
+// real TDX shoulder events classify as 'control', not 'accident'), which
+// would ALSO now be a bare CCTV-eligible type under the relaxed quad gate
+// — proving isDynamicShoulder is still checked, and still wins, BEFORE
+// that relaxed gate ever gets a chance to route this event to 'quad'.
+test('V2.4.16 regression lock — a dynamic-shoulder event still routes to imageStrategy="single", never "quad", even though its own type ("control") would now independently qualify for the relaxed quad path', () => {
+  const shoulder = shoulderEvent('OPEN');
+  assert.equal(shoulder.type, 'control');
+  const elig = resolveCctvEligibility(shoulder);
+  assert.equal(elig.eligible, true);
+  assert.equal(elig.imageStrategy, 'single');
+});
+
 test('15. single frame selection: an in-range, same-direction camera wins over one outside the range', () => {
   const records = [
     cctvRecord({ CCTVID: 'CCTV-INSIDE', RoadDirection: 'S', LocationMile: '92K+000' }), // inside 91.59-93.32
@@ -617,7 +633,14 @@ test('24. accident regression — an eligible accident still produces a real 4-f
   assert.ok(stored.value.length > frameBytes.length * 1.5, `expected a real composed collage, got ${stored.value.length} bytes vs one frame's ${frameBytes.length}`);
 });
 
-test('25. construction regression — a construction event with impact keyword is unaffected: normal eligibility, normal wording, never CCTV-eligible', () => {
+// V2.4.16 — the broadcast-eligibility and message-wording assertions
+// below are unaffected by this round (resolveCctvEligibility no longer
+// re-classifies event type — see that function's own V2.4.16 comment —
+// but getBroadcastEligibility/formatEventMessage are separate modules
+// this round did not touch). The final two assertions ARE updated: a
+// construction event on a supported road with a resolvable KM is now
+// CCTV-eligible, same as any other event AI approved for notification.
+test('25. construction regression — a construction event with impact keyword is unaffected by V2.4.16: normal eligibility, normal wording, and (new) now CCTV-eligible on the same data-trustworthiness terms as any other event', () => {
   const event = {
     type: 'construction',
     title: '施工',
@@ -633,8 +656,10 @@ test('25. construction regression — a construction event with impact keyword i
   const text = formatEventMessage(event);
   assert.match(text, /🚧 道路施工/);
   assert.doesNotMatch(text, /機動開放路肩|路肩停止開放/);
-  assert.equal(resolveCctvEligibility(event).eligible, false);
-  assert.equal(resolveCctvEligibility(event).reason, 'not-accident');
+  const elig = resolveCctvEligibility(event);
+  assert.equal(elig.eligible, true);
+  assert.equal(elig.imageStrategy, 'quad');
+  assert.equal(elig.targetKm, 50.25); // midpoint of 50K+000 and 50K+500
 });
 
 test('26. V57.2 gating regression — crossSourceDedup unaffected: an unmatched 國道 PBS event is still gated out, entirely untouched by this round', () => {

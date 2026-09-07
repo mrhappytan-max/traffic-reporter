@@ -104,11 +104,22 @@ test('7. this event IS broadcast-eligible (still worth notifying a driver) despi
   assert.equal(eligibility.reason, 'other-anomaly-keyword');
 });
 
-test('8. CCTV is NOT eligible for this event — "not-accident", per existing authority rules, never granted just because it has an anomaly label', () => {
+// V2.4.16 — resolveCctvEligibility no longer re-classifies event type
+// (see that function's own V2.4.16 comment; root-cause fix for real
+// Production event A15040100H-01-20260907075536353100022, a "其他異常
+// 告警-故障車" TDX event that was AI-approved for notification but got
+// no CCTV image purely because of this now-removed check). A pedestrian-
+// intrusion anomaly on a supported road with a resolvable KM is now
+// CCTV-eligible on the same data-trustworthiness terms as any other
+// event — this was never an "accident" and still isn't one (see test 7
+// above for the separate, unaffected broadcast-eligibility reason), but
+// CCTV no longer cares.
+test('8. CCTV is now eligible for this event (V2.4.16) — the anomaly label no longer matters, only road/source/KM trustworthiness does', () => {
   const event = normalizeRoadEvent(pedestrianFreewayRaw(), 'freeway');
   const cctv = resolveCctvEligibility(event);
-  assert.equal(cctv.eligible, false);
-  assert.equal(cctv.reason, 'not-accident');
+  assert.equal(cctv.eligible, true);
+  assert.equal(cctv.imageStrategy, 'quad');
+  assert.equal(cctv.targetKm, 92.8);
 });
 
 test('9. field-placement independence: the anomaly text can live in EventSubType, Category, or Description alone — all three still classify as "other"', () => {

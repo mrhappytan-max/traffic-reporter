@@ -148,3 +148,25 @@
 **12. 另一項誠實揭露**：路況-026 回報中將 `traffic-reporter-v1865` 資料夾變為空、`.git/worktrees/` 消失列為「緊急發現、來源不明」。實際原因為真人於同日稍早（約 14:5x）依路況-024 查證結果執行 `git worktree remove --force`，屬計畫內處置（詳見上方 v1865 清理記錄）。該輪執行者不知情故列為異常，記錄於此以澄清，非真實異常事件。
 
 **通則**：一個系統的「備份完整性」不能只看程式碼有沒有進版控。憑證、環境設定、執行期狀態這類刻意排除在版控外的檔案，往往才是重建時真正缺的東西——它們不在 git 裡是正確的，但這代表必須有另一套記得它們存在的機制。
+
+## 修正紀錄｜V2.4.16 CCTV 職責錯置修正——AI 判定通報即給圖（2026-09-07）
+
+**觸發事件與根因**：真實 Production 事件 `A15040100H-01-20260907075536353100022`（TDX 高公局，國道一號北向 98K+300，「其他異常告警-故障車」）：AI 判定通報、LINE 已發送，但 CCTV=NO。路況-038 唯讀查證確認根因：`src/cctv/dynamicCollage.js#resolveCctvEligibility()` 以硬寫死關鍵字（`event.type === 'accident'`）再判斷一次「是不是事故」，屬職責錯置——依既有四層架構（Windows=Geography Only／Cloudflare=Ingress-Transport-Orchestration／AI=Semantic Decision Authority／LINE=Delivery Only），AI 是唯一的通報決策權威，CCTV 不應自行做語意判斷。
+
+**修法內容與範圍**：移除 `resolveCctvEligibility()` 的 `event.type === 'accident'` 條件本身，`isDynamicShoulder` 分支（路由至 `single` 策略）逐字不動。移除後資格條件僅剩：`CCTV_TRUSTED_EVENT_SOURCES` 檢查、`resolveRoadKey()` 可辨識、道路在 `CCTV_SUPPORTED_ROADS`（國道一號、三號，未新增）內、`eventTargetKm()` 可解析公里數。`reason:'not-accident'` 隨同該檢查一併退休（全 repo 搜尋確認移除前無其他呼叫方比對此字面值）。機動路肩維持現狀：`tdx/tdxQueueIngress.js` 的 Gate A（`resolveTdxRoadManagementEligibility()`）在事件進 Queue 前即攔下，本輪未觸碰；此外 `dynamicShoulder` 標記只由 TDX 正規化路徑設定（PBS 正規化從未設定），雙重確保機動路肩事件不會意外走到新放寬的 quad 路徑。`APP_VERSION` 由 `V2.4.15` bump 為 `V2.4.16`（PATCH），未修改任何已封版 V2.4.15 的既有記錄。
+
+**測試**：完整跑過全量測試找出受影響斷言，逐一核對後更新 4 個既有測試檔（`test/dynamicCollage.test.js`、`test/dynamicShoulder.test.js`、`test/pbsAccidentCctvEnrichment.test.js`、`test/nonCollisionAnomalyClassification.test.js`，共 5 處斷言，其中 1 處為路況-039 規劃時未預見的新發現）＋新增 2 則測試（涵蓋 construction／closure／control／congestion／other 五種非事故類型皆變為 CCTV eligible=true/quad；機動路肩事件仍正確路由 single 的 V2.4.16 regression lock，特別驗證即使其自身 type 為 'control' 亦不受新放寬邏輯影響）＋更新 `test/aiObservatoryView.test.js` 的 `APP_VERSION` 硬編碼斷言（版本 bump 的正常連帶更新）。全量迴歸 2009 項，1976 通過／33 失敗；以 `git stash -u` 取得變更前同一 commit 的基準（2007 項，1974 通過／33 失敗），逐一以測試名稱比對，`NEW_FAILURES=0`——兩次基準之間唯一的差異是本輪主動重新命名的同一個既存失敗測試（`non-accident and non-freeway events are never eligible` → 新名稱），非新增失敗。
+
+**LINE 額度前提（真人明確指示須記入）**：LINE Push 每月 200 則額度為「文字一則、圖片一則」分開計算。本次放寬出圖範圍**確實會增加額度消耗**，真人將於 LINE 官方後台觀察實際用量後另行決議是否需要調整政策。本輪不因此設限或另加任何新的節流機制。
+
+**未納入本輪的三項（明確記錄，非已解決）**：
+1. 單張圖（single）路徑清理——真人確認該路徑已因 LINE Push 額度考量停用、目前無使用者，但本輪不清理、不移除，待本次修法上線觀察數日後另案處理。
+2. 查修頁缺 `cctvSkippedByReason`——路況-038 查證確認新版 AI Observatory 頁面（`/admin/pbs-ai-observatory-view`）僅記錄二元 `imageUrlPresent`（YES/NO/UNKNOWN），不記錄細分原因；此為既有可觀測性缺口，會影響本次修法後若仍有事件沒圖時的後續追查效率（無法直接分辨 `no-camera`／`no-frames`／`prepare-timeout`／`run-budget-exhausted`／`r2-publish-failed` 等）。另案處理。
+3. AI 決策欄位顯示 `UNKNOWN / NOT RECORDED` 但 LINE 已發送——路況-038 新發現，機制已查明（`loadAiDecisionDetail()` 依賴 `record.outcome` 恰為 `AI_NOTIFY_TRUE`/`AI_NOTIFY_FALSE` 且 AI 決策快取需命中，48h TTL），但本案例實際觸發哪個分支未能確認（需真實 Production KV 存取）。與本次 CCTV 修法程式路徑無關，另案處理。
+
+**待驗證事項（明確記錄，不得寫成已確認）**：
+- 出圖量實際增加幅度未知——路況-039 粗估每日 5-15 筆，非精確數字，需上線後以查修頁實際數據校正。
+- `run-budget-exhausted`（`CCTV_PREPARE_BUDGET_MS=4000` 為整個 Cron tick 共享）發生率需上線後觀察。
+- LINE 實際額度消耗需真人透過 LINE 官方後台核實。
+
+**通則**：一個模組如果重新判斷另一個模組（此處為 AI）已經做過的決策，即使判斷方式再簡單（一組關鍵字），也是職責邊界的破口——正確的修法不是把關鍵字表加得更完整，而是承認這個判斷本來就不該由這個模組做。四層架構把「這件事該不該通報」的權威明確劃給 AI 一家，CCTV 的角色應該只回答「這張圖技術上做不做得出來」，不該再回答「這件事值不值得配圖」。

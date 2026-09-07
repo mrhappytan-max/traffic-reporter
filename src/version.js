@@ -2174,7 +2174,53 @@
 // See test/v2415QwenAiModelReplacement.test.js (the order's own §十二
 // pre-deployment checklist) and 07_KNOWN_ISSUES_02.md for the full
 // benchmark record.
-export const APP_VERSION = 'V2.4.15';
+//
+// V2.4.16 — CCTV role-boundary fix (root cause: real Production event
+// A15040100H-01-20260907075536353100022, TDX freeway 國道一號北向98K+300
+// "其他異常告警-故障車", classified type:'other', AI-approved for
+// notification, LINE sent — CCTV wrongly withheld). resolveCctvEligibility
+// (src/cctv/dynamicCollage.js) previously re-classified an event's
+// semantic type with a hardcoded keyword check (event.type==='accident')
+// before allowing a camera lookup — a second, misplaced judgment on top
+// of the four-layer architecture's own AI=Semantic Decision Authority.
+// THIS ROUND'S ONLY BEHAVIOR CHANGE: that check is removed. CCTV
+// eligibility (the quad/4-camera path) is now purely a data-
+// trustworthiness question — event.source in CCTV_TRUSTED_EVENT_SOURCES,
+// a road in CCTV_SUPPORTED_ROADS, a resolvable target KM — never a
+// semantic one. By the time this function is ever called in the real
+// broadcast path, AI has already decided notify=true; CCTV no longer
+// re-litigates that decision.
+//
+// Explicitly UNCHANGED this round (one variable at a time):
+//   - isDynamicShoulderEvent()'s branch (imageStrategy:'single') is
+//     byte-for-byte untouched — motorway-shoulder open/close events are
+//     kept off this relaxed gate by an upstream, independent mechanism
+//     (tdx/tdxQueueIngress.js's own Gate A/resolveTdxRoadManagementEligibility,
+//     which drops them before they ever reach the Queue/AI at all), not
+//     by anything resolveCctvEligibility itself checks.
+//   - CCTV_SUPPORTED_ROADS unchanged (國道一號/國道三號 only — no
+//     provincial/county road gained CCTV support).
+//   - The single-camera (dynamic-shoulder) prepare path, AI prompt/model/
+//     timeout, Queue, KV, LINE push policy, CCTV_PREPARE_BUDGET_MS and
+//     every other existing budget/cap are untouched.
+//
+// `reason:'not-accident'` is retired along with the check that produced
+// it (no other caller ever matched on that exact string — verified by a
+// repo-wide search before this change).
+//
+// LINE PUSH QUOTA NOTE (recorded per explicit human instruction): the
+// LINE Official Account's 200/month proactive-push quota counts text and
+// image as SEPARATE messages, so widening CCTV's eligibility genuinely
+// increases quota consumption. This round does not add any new quota
+// limiting for that reason — the human will observe real usage via the
+// LINE back office and decide separately whether policy needs to change.
+//
+// See engineering-memory/07_KNOWN_ISSUES_03.md for the full record
+// (路況-038 investigation, 路況-039 plan, this round's execution), and
+// test/dynamicCollage.test.js / test/dynamicShoulder.test.js /
+// test/pbsAccidentCctvEnrichment.test.js / test/nonCollisionAnomalyClassification.test.js
+// for the updated/added test coverage.
+export const APP_VERSION = 'V2.4.16';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,
