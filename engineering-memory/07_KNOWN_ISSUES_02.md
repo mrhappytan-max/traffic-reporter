@@ -364,3 +364,17 @@ Leverage shared drives, or use OAuth delegation instead.
 **5. 仍然有效、與本次記錄無關的外部限制（避免誤讀為「所有額度都沒問題了」）**：LINE 官方帳號的每月主動 Push 額度（`LINE_PUSH_OBSERVATION`，目前政策 `MAJOR_ACCIDENT_ONLY`，月上限 200）與 Cloudflare 方案無關，仍然有效，不因本次記錄而改變。R2 Paid 與 Images Stream Basic 為各自獨立的訂閱，不含在此 5 美元方案內，有各自的計價表。Workers AI 的用量計價未包含在真人提供的資訊中，本則記錄不對 AI 額度做任何陳述。
 
 **通則**：外部服務的額度與限制會改變，而以其為前提的設計分析不會自動失效或自動更新。當一份分析的結論依賴某個外部數字時，該數字本身應被視為需要定期複查的假設，而非永久事實。本專案已兩次遇到同一模式（TDX 額度、KV 寫入上限），兩次都是「限制早已解除，文件仍記為生效中」。
+
+## 驗證紀錄｜重開機後排程自動啟動確認有效，8/31 中斷問題結案（2026-09-07）
+
+**來源聲明**：本節全部內容為真人於 2026-09-07 中午實際重新開機並執行唯讀查詢取得的結果，非本 session 獨立驗證，如實轉載。此為路況-009 記錄之待驗證項的驗證結果。
+
+**1. 驗證背景**：2026-08-31 16:54:39Z 至 2026-09-01 08:14:46Z 曾發生 920.1 分鐘（15 小時 20 分）中斷，起因為停電關機後服務未自動啟動，最終由真人手動以 PowerShell 啟動恢復。2026-09-07 已將 LocalMonitor 與 Relay 兩個排程的設定改為 `AllowStartIfOnBatteries`、`DontStopIfGoingOnBatteries`、`StartWhenAvailable`，並加上 `RestartCount=3`、`RestartInterval=1分鐘`（詳見上方路況-009 查證紀錄）。該修正是否有效，當時標記為待下次重開機驗證。
+
+**2. 驗證方式與結果**：`Invoke-RestMethod http://127.0.0.1:3000/health` 回應 `ok=True`，Relay 服務於重開機後自動啟動成功。三個排程工作執行狀態：`TrafficReporter-PBS-Notify` LastRunTime 2026-09-07 12:42:42、LastTaskResult 0（成功）；`TrafficReporter-PBS-HealthWatchdog` LastRunTime 2026-09-07 12:16:16、LastTaskResult 0（成功，確認存活過重開機）；`TrafficReporter-PBS-LocalMonitor` LastRunTime 2026-09-07 12:44:44、LastTaskResult 2147946720——此為「前一執行個體仍在執行、本次觸發跳過」之正常狀態碼，非錯誤，該工作以 `--watch` 常駐模式執行且設有重複觸發，屬預期行為。Notify 未跳出「啟動失敗」警告視窗，代表其開機後 60 秒輪詢視窗內已成功等到 Relay 的 health 回應。
+
+**3. 附帶觀察（真人畫面確認，僅記錄）**：LocalMonitor 的 node 視窗顯示正常抓取與判斷 PBS 資料，可見一筆台61線（西濱快速）雙向 85K+829 至 130K+956 管線巡查移動性施工事件，`matchReason="official-boundary:新竹市"`、`cleared=false`、`shouldPush=false`、`SHOULD_PUSH=NO`、`debugPushAttemptedCount=0`——屬既有政策的預期行為（例行道路管理狀態不主動通報），流程從抓取、地理判斷到推播決策皆正常運作。
+
+**4. 結論**：電源設定修正**已驗證有效**。`WATCHDOG_ALERT_PATH_UNVERIFIED` 不受本次驗證影響，仍為未驗證狀態（本次服務正常，未觸發異常路徑）。
+
+**5. 誠實揭露**：本次驗證證明的是「在本次這一種重開機情境下，排程確實自動啟動」。8/31 該次中斷的**確切根因始終未查明**（當時的 JSONL log 已因 7 天保留政策輪替刪除，工作排程器歷程記錄亦為停用狀態），電源設定僅為當時最可疑的攔阻因素。本次驗證**不等於已證明電源設定就是 8/31 的根因**，僅能表述為：修正後的設定在正常重開機情境下運作正常。若未來再次發生停電或異常關機後未自動啟動，應視為此結論尚有缺口，須重新調查。
