@@ -101,6 +101,24 @@
 
 **4.** 若維持檢出 preserve：本機磁碟上非 pbs-relay 的檔案（`src/`、`test/`、`engineering-memory/`、`wrangler.jsonc` 等）將持續停留在 2026-08-25 前後的舊版本，未來 main 的新變更不會反映到本機。此不影響服務執行，但本機查閱這些檔案會看到舊內容。是否切換分支仍為未定案事項，見 `00_CURRENT_STATE.md` Next Action ⑥。
 
+## 治理紀錄｜00_CURRENT_STATE.md 精簡（2026-09-07）
+
+**1. 精簡原因**：`00_CURRENT_STATE.md` 精簡前為 79,217/81,920 bytes，餘裕僅 2,703 bytes，接近本專案單檔容量守則上限。真人定案不採分卷方式（分卷會破壞該檔「快速接班｜LEVEL 1｜一頁看完」的設計定位），改為移除其中重複的歷史敘述段落，只保留狀態欄位與常駐指引。
+
+**2. 精簡依據**：路況-036 唯讀查證確認，該檔 25 段歷史敘述（24 個封版／修正紀錄段落＋1 個補登段落，合計 66,435 bytes，佔全檔 84%）之實質內容（決策、根因、數字、範疇界定）在 `07_KNOWN_ISSUES.md`／`02_PROJECT_HANDOFF.md`／`03_ARCHITECTURE.md` 三者之一或多者皆有相同或更詳盡記載，**僅存於此者 0 段**。全 repo 無任何檔案以行號或錨點引用此檔特定段落，`AGENTS.md` 僅以檔名整體引用，移除不影響任何現存引用。
+
+**3. 移除的段落清單**（皆可於下列檔案查得對應內容——`07_KNOWN_ISSUES.md`／`02_PROJECT_HANDOFF.md`／`03_ARCHITECTURE.md`／`06_VERSION_HISTORY.md`，逐段已於路況-036 查證確認）：V2.4.15 正式封版、V2.4.15 QWEN FAST AI MODEL REPLACEMENT、V2.4.14 封版、V2.4.13 封版、V2.4.12 封版、V2.4.11 封版、V2.4.10 封版、V2.4.9 封版、V2.4.8 封版、V2.4.7 封版、V2.4.6 封版、V1.9.9 Phase 1 封版、V1.9.9 Phase 2 封版、V1.9.9 Phase 3B 封版、V1.9.9 Phase 3D Hotfix 封版、V2.0.0 MILESTONE 封版、V2.0.1 封版、V2.0.2 封版、V2.1.0 封版、V2.2.0 封版、V2.4.0 封版、V2.3.3 封版、V2.3.2 封版、V2.3.1 封版、V2.3.0 封版、補登（Windows PBS Geographic Filter Repair＋V2.3.0 驗收）。
+
+**4. 明確聲明**：移除的是**重複的敘述**，非刪除任何獨有資訊。原始內容完整保留於上述其他工程記憶文件與 git 歷史中（`00_CURRENT_STATE.md` 本身的舊版本亦可由 git log 完整回溯）。
+
+**5. bytes 數**：精簡前 79,217 bytes；精簡後實際數值見本輪 commit 對應之路況-037 回報。
+
+**6. 保留段落的說明**：
+   - 「Windows PBS Production Ingress ＋ Cloudflare PBS 輪詢退休（V1.9.8）」段落**完整保留**（標題調整為表達現行架構）——雖標題含歷史版本號，但內文描述目前仍生效的 Production 架構現狀旗標（`WINDOWS_LOCAL_EDGE_FILTER = ACTIVE`、`WINDOWS_PBS_PRODUCTION_INGRESS = ACTIVE` 等），移除將造成資訊缺口，路況-036 已將其歸類為 (d) 而非純歷史 (b)。
+   - V2.4.0 段落中關於 TDX 通知閘門機制的說明（`LEGACY_TDX_LINE_PIPELINE = RETIRED_FOR_ROADEVENT`；Phase 閘門硬寫死於 `debugPush.js` 單一呼叫點 `suppressLineNotify = source === 'freeway' || source === 'highway'`，非 `wrangler.jsonc` 變數控制，變更階段須明確程式碼變更）**原文照錄搬移**至「現行架構」段落，因其為現行程式碼架構事實，具現行參考價值，非單純歷史記述；V2.4.0 封版段落其餘內容照常移除。
+
+**7. `BROWSER_ACTION_REQUIRED = YES` 旗標已確認失效並移除**：該旗標原記於 V2.3.0 封版段落（2026-08-30），內容為「真實 Cloudflare Queue 資源需在 Dashboard／`wrangler queues create` 建立，本 sandbox 無法驗證或建立，不得假設已存在」。路況-013 的 2026-09-07 24 小時驗收數據已證實 Queue 資源確實存在且正常運作（168 次真實訊息、`Queue Read/Write Ratio=1.00`），此旗標**已於 2026-09-07 確認過期失效**，隨該段落一併從 `00_CURRENT_STATE.md` 移除，不再保留、不加註誤導性的「待處理」語意。其原始記載仍完整保留於 `07_KNOWN_ISSUES.md`（V2.3.0 對應段落）與 `06_VERSION_HISTORY.md`，**未回頭改寫**這些檔案中的既有記載。
+
 ## 盤點紀錄｜本機工作目錄完整狀態與無備份檔案清單（2026-09-07）
 
 **來源聲明**：本節事實由路況-026（Cowork 本機工程部執行之唯讀盤點）取得，非本 session 獨立驗證，如實轉載。
