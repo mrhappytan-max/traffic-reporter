@@ -231,3 +231,19 @@ Leverage shared drives, or use OAuth delegation instead.
 - `pbs-relay\logs\` 採 7 天保留政策，2026-08-31 的 JSONL 紀錄已於 2026-09-07 前輪替刪除，該次中斷的原始現場證據已不可查。logs 目錄依 `.gitignore` 排除，`preserve/windows-runtime-20260906` 分支（`b76aaee`）亦未包含，GitHub 上無備份。
 - 排程工作的「歷程記錄」顯示為已停用，故 Windows 事件檢視器中亦可能無該次紀錄。
 - 目前**沒有任何機制**會在服務中斷時主動通知真人，8/31 中斷長達 15 小時未被察覺即因此。此為未處理的可觀測性缺口。
+
+## 處置紀錄｜PBS Relay 健康監控排程建立（HealthWatchdog，2026-09-07）
+
+**來源聲明**：本節全部內容為真人於 2026-09-07 在本機 PowerShell（系統管理員身分，透過 TeamViewer 遠端操作）實際執行取得的結果，非本 session 獨立驗證，如實轉載。此為對上方「PBS_RELAY_NO_OUTAGE_ALERTING」可觀測性缺口的處置動作。
+
+**1. 新增腳本**：`C:\Users\mrhap\traffic-reporter\pbs-relay\scripts\health-watchdog.ps1`（UTF8）。邏輯：以 `Invoke-WebRequest` 檢查 `http://127.0.0.1:3000/health`（`-UseBasicParsing -TimeoutSec 5`），`StatusCode` 為 200 則 `exit 0` 安靜結束；否則以 `WScript.Shell.Popup` 跳出警告視窗（標題「路況播報員 - 服務中斷警告」，訊息提示以 TeamViewer 連回電腦啟動，停留 60 秒，圖示代碼 16）。**此腳本目前僅存在於本機，尚未進入版控**（`pbs-relay/` 下部分檔案未版控之既有問題）——是否納入版控為未決事項，本輪不處理，本 commit 不包含此檔案。
+
+**2. 新增排程工作**：`TrafficReporter-PBS-HealthWatchdog`。執行 `powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "C:\Users\mrhap\traffic-reporter\pbs-relay\scripts\health-watchdog.ps1"`。觸發：`Once`（註冊當下）＋ `RepetitionInterval` 30 分鐘。設定：`AllowStartIfOnBatteries`、`DontStopIfGoingOnBatteries`、`StartWhenAvailable`、`RestartCount=3`、`RestartInterval=1分鐘`。以真人（非 SYSTEM）身分執行，確保警告視窗能顯示在使用者桌面。
+
+**3. 驗證狀態（正常路徑與異常路徑須誠實區分）**：
+- **正常路徑已驗證**：2026-09-07 09:47:47 手動 `Start-ScheduledTask` 觸發，`LastTaskResult=0`，`NextRunTime` 2026-09-07 10:16:16。服務當時正常運行，腳本安靜結束未跳視窗，符合預期。
+- **異常路徑未驗證**：尚未在服務實際中斷的情況下測試警告視窗是否確實跳出。該驗證需停止 Relay 服務，具擾動性，真人本輪選擇不執行。標記為 `WATCHDOG_ALERT_PATH_UNVERIFIED`。
+
+**4. 設計取捨（真人決定）**：採用本機跳視窗而非 LINE 推播等遠端通知，理由為實作最簡單；真人具備手機 TeamViewer 遠端連線能力，看到警告後可自行連回電腦啟動服務。此為刻意選擇，非能力限制。
+
+**5. 已知限制**：此監控僅在真人於電腦前或透過遠端桌面連線時才看得到警告視窗。若真人長時間未使用該電腦，中斷仍可能延遲被發現。監控可縮短中斷時間但不保證即時察覺。
