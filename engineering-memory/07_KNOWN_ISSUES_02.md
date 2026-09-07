@@ -15,6 +15,7 @@
   ```
 - **容量規則延續**：本卷同樣受 81920-byte 單檔上限規範，從小檔案開始。未來若本卷也接近上限，依同一原則建立 `07_KNOWN_ISSUES_03.md` 依序延續，禁止提前刪除任一舊卷。
 - **同步治理**：本卷已加入 `scripts/drive-sync-manifest.json`，是正式的 GitHub → Engineering Memory sync → Google Drive 鏡射對象，與其餘 canonical 檔案同一條唯一路徑，Claude 對 Drive 依然唯讀（見 Volume 01「治理變更紀錄｜DRIVE_SYNC_GOVERNANCE_V2」章節，規則不變、範圍擴大）。
+- **本卷已封存（2026-09-07 起，路況-025）**：新記錄請寫入 `07_KNOWN_ISSUES_03.md`（VOLUME 03，CURRENT）。
 
 ## 治理變更紀錄｜ENGINEERING_MEMORY_KNOWN_ISSUES_VOLUME_02_CREATE（2026-09-04）
 
