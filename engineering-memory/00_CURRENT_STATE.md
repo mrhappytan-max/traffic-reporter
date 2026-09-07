@@ -587,7 +587,10 @@ task，AI 決策永久遺失，冪等記錄卡死 `PROCESSING`。
   `pbs-relay/src/localPrototype.js` 仍保留 `isAccident()` 且仍在候選路徑上，
   `pbs-relay/` 全部 git 歷史（含 prototype 分支）未見對應 commit，故上述具體
   數字**未經本 Session 驗證**——記錄為 `HUMAN_REPORTED_NOT_INDEPENDENTLY_
-  VERIFIED`，詳見 `07_KNOWN_ISSUES.md` 對應段落。
+  VERIFIED`，詳見 `07_KNOWN_ISSUES.md` 對應段落。**狀態更新（2026-09-07）**：程式碼已隨
+  pbs-relay 併入 main（PR #2）確認存在、設計方向吻合，惟 dataset 來源與
+  11→29/124 測試數字仍未核對，詳見 `07_KNOWN_ISSUES_03.md`「處置紀錄｜pbs-relay
+  Windows 執行版本併入 main」第 8 點。
 - `V2.3.0_PRODUCTION_VALIDATION`：人類回報「V2.3.0 已由 Production 真實事件
   驗收完成」，與本 Session 上一輪誠實回報的 `BROWSER_ACTION_REQUIRED = YES`
   （Cloudflare Queue 資源狀態 UNKNOWN）並存但未附可核對證據，本欄位維持

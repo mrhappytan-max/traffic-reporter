@@ -41,6 +41,24 @@
 
 **未解決事項**：路況-023 記錄的其餘三項（本機工作目錄與 origin/main 落差如何處置、`health-watchdog.ps1` 尚未進版控、兩個編碼錯誤的 CSV 如何處理）皆與本次 v1865 清理無關，仍為未定案待辦，本輪未處理，詳見 `07_KNOWN_ISSUES_02.md`「重大風險｜本機工作目錄同時為版控倉庫與 Production 執行位置」章節。
 
+## 處置紀錄｜pbs-relay Windows 執行版本併入 main（2026-09-07）
+
+**1. 背景**：真人本機 `C:\Users\mrhap\traffic-reporter` 工作目錄檢出 `preserve/windows-runtime-20260906`，其內容即 Production 實際執行的 pbs-relay 程式。路況-028 唯讀比對確認：`origin/main` 的 pbs-relay 檔案集合完全被 preserve 涵蓋，main 無 preserve 缺少的內容；preserve 版本較新，包含 2026-08-30 人類回報但當時查無對應 commit 的地理篩選修正。
+
+**2. 決策**：以 preserve 版本為準，完整併入 main。方案由路況-029 規劃（選項 A：本 session clone 內逐檔套用後開 PR，真人審閱後 merge），執行由路況-030 完成，真人於 2026-09-07 在 GitHub 網頁確認並 merge PR #2（merge commit `f2a5c63`）。
+
+**3. 併入範圍（6 個檔案）**：修改——`pbs-relay/src/localMonitor.js`、`pbs-relay/src/localPrototype.js`、`pbs-relay/tests/localPrototype.test.js`、`pbs-relay/README.md`；新增——`pbs-relay/src/hsinchuBoundary.js`（1,994 bytes）、`pbs-relay/data/hsinchu-city-county-boundary.geojson`（755,908 bytes）。統計：6 files changed, 154 insertions(+), 35 deletions(-)。**明確排除**：`pbs-relay/scripts/scripts/compare-fetch.mjs`（巢狀重複檔，與 `pbs-relay/scripts/compare-fetch.mjs` 雜湊完全相同，真人已於 2026-09-07 在本機刪除該複本，故不併入）。
+
+**4. 實質變更內容**：`localPrototype.js` 的 Windows 本機邊緣篩選不再以 `isAccident()` 文字比對作為候選事件的前置閘門——落石、坍方、封路、施工、積水等事件現與事故同等對待；有 PBS 座標時，服務區判斷改用真正的 point-in-polygon 比對官方新竹市／縣行政區邊界（`hsinchuBoundary.js` ＋新增的邊界 geojson），取代原本的矩形邊界框；無座標時仍沿用既有的道路／KM／地名規則。`localMonitor.js` 的變更為對應的 import 與變數改名（`filterRelevantAccidents`→`filterRelevantPbsEvents`），無行為變更。
+
+**5. 執行方式與安全性**：全程未碰觸真人本機工作目錄，未在其上執行任何 git 操作。真人本機保持檢出 preserve 分支不變，未切換分支——避免重演 2026-09-07 上午 `git switch main` 導致執行中檔案自磁碟移除的事故（見 Volume 02 重大風險記錄）。`origin/preserve/windows-runtime-20260906` 完整保留未動，執行前後 SHA 皆為 `b76aaee565ed98b67e3870551b92b8469f9c5bb0`，仍為完整備份。PR #2，來源分支 `merge/pbs-relay-from-preserve-20260907`，commit `10356671f7907c49dc188f264493452704959289`，由真人於 GitHub 網頁確認後 merge。
+
+**6. 對 Production 的影響**：pbs-relay 為 Windows 端 Node.js 程式，`src/` 從未 import 或打包其任何內容（`wrangler.jsonc` 進入點為 `src/index.js`），故本次合併雖會觸發一次 Cloudflare 重新部署，但 Worker 打包內容與行為完全不變。真人本機執行中的服務（LocalMonitor、Relay）全程未受影響。
+
+**7. 仍未解決事項**：真人本機 main 分支落後 origin/main 223 個 commit 的問題**未因本次合併解決**，獨立存在。本機工作目錄仍檢出 preserve 分支而非 main，Volume 02 記錄的核心風險「不得在此目錄切換分支」**依然完全成立，未被本次合併解除**。`pbs-relay/scripts/health-watchdog.ps1` 仍未進版控。兩個編碼錯誤的 CSV、`pbs-relay-old/` 目錄、`.pbs-token-test` 備份方式，皆維持既有待辦狀態不變。
+
+**8. WINDOWS_PBS_GEOGRAPHIC_FILTER_REPAIR 狀態更新**：對應 `07_KNOWN_ISSUES.md`（Volume 01）「補登紀錄｜WINDOWS_PBS_GEOGRAPHIC_FILTER_REPAIR（2026-08-30，人類回報，本 Cloud Session 未獨立驗證）」一則（該卷原文不改寫，本節為獨立的狀態更新記錄）。**狀態可升級至**：程式碼與設計方向已確認存在於 main（commit `1035667`，經 PR #2 併入），與人類回報的修正描述吻合——已移除 `isAccident()` 閘門、已改用 point-in-polygon 取代矩形邊界，現有明確可追溯的 commit 承載此變更。**不得標記為完全驗證**，以下兩項仍未核對：(a) 人類回報的「data.gov.tw dataset 7442」與 `hsinchuBoundary.js` 中繼資料所載「NCDR WMS627/AdministrativeRegion/MapServer/1（縣市界2024）」是否為同一份資料集，未查證；(b) 人類回報的驗收數字 `BEFORE_KEEP_COUNT=11 → AFTER_KEEP_COUNT=29`、`TESTS=124 passed/0 failed`，無任何 commit 或 repo 內容承載這些數字，合併本身無法使其升級為已驗證；除非未來取得原始執行記錄或在 main 上重新執行測試，否則應永久維持「人類回報、未逐字核對」狀態。
+
 ## 盤點紀錄｜本機工作目錄完整狀態與無備份檔案清單（2026-09-07）
 
 **來源聲明**：本節事實由路況-026（Cowork 本機工程部執行之唯讀盤點）取得，非本 session 獨立驗證，如實轉載。
