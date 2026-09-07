@@ -200,4 +200,34 @@ Leverage shared drives, or use OAuth delegation instead.
 
 **另兩則待辦（原文轉錄，不補根因／解法／猜測）**：
 1. 版本追溯問題與雙鐵相同，待雙鐵方案定案後比照辦理。
-2. 三個排程工作（LocalMonitor／Notify／Relay）中，Notify 與 Relay 對應哪支程式尚未確認。
+2. ~~三個排程工作（LocalMonitor／Notify／Relay）中，Notify 與 Relay 對應哪支程式尚未確認。~~ **已解決（2026-09-07，路況-009）**，詳見下方「查證紀錄｜Windows 三個排程工作實際內容與開機自動啟動修正」。
+
+## 查證紀錄｜Windows 三個排程工作實際內容與開機自動啟動修正（2026-09-07）
+
+**來源聲明**：本節全部內容為真人於 2026-09-07 在本機 PowerShell（部分需系統管理員身分）實際執行唯讀查詢取得的結果，Base64 內容由會議室解碼，非本 session 獨立驗證，如實轉載。
+
+**1. 三個排程工作的實際內容**（皆位於工作排程器根目錄 TaskPath=`\`，主機 DESKTOP-Q8I4V2V）：
+- `TrafficReporter-PBS-LocalMonitor`：執行 `C:\Program Files\nodejs\node.exe`，參數 `"C:\Users\mrhap\traffic-reporter\pbs-relay\src\localMonitor.js" --watch`，工作目錄 `C:\Users\mrhap\traffic-reporter\pbs-relay`。觸發：登入時＋時間觸發（StartBoundary 2026-08-27T11:47:02+08:00，含重複）。執行身分 `mrhap`（Interactive／Limited）。
+- `TrafficReporter-PBS-Notify`：執行 `powershell.exe`，內容為 Base64 編碼。觸發：登入時。執行身分 `mrhap`（Interactive／Limited）。
+- `TrafficReporter-PBS-Relay`：執行 `powershell.exe`，內容為 Base64 編碼。觸發：系統啟動時。**執行身分為 SYSTEM**。
+
+**2. 查證陷阱（重要，供未來盤點參考）**：`TrafficReporter-PBS-Relay` 以 SYSTEM 身分執行，一般使用者身分執行 `Get-ScheduledTask` 完全查不到該工作（回報 `ObjectNotFound`），但工作排程器 GUI 畫面上看得到、狀態顯示執行中。需以系統管理員身分執行 PowerShell 或 `schtasks /query` 才能查到。未來任何盤點若只用一般權限查詢，會誤判此工作不存在。
+
+**3. Notify 的 Base64 指令解碼後實際內容**：開機提醒用途，不影響路況功能。開機後每 5 秒輪詢 `http://127.0.0.1:3000/health`，最多嘗試 12 次（約 60 秒）；成功則以 `WScript.Shell` 跳出「警廣 PBS 已啟動並正常連線」訊息視窗，失敗則跳出「警廣 PBS 啟動失敗」警告視窗。純提醒性質，不啟動任何服務。
+
+**4. Relay 的 Base64 指令解碼後實際內容**：先以 `Invoke-WebRequest` 檢查 `http://127.0.0.1:3000/health`（`TimeoutSec 2`），若回 200 即 `exit 0`（避免重複啟動）；否則 `Set-Location` 至 `C:\Users\mrhap\traffic-reporter`，從 `.pbs-token-test` 讀取內容並設為環境變數 `RELAY_TOKEN`，接著以 `node.exe` 執行 `pbs-relay\src\server.js`。
+
+**5. Relay 對應的實際程式已確認**：`C:\Users\mrhap\traffic-reporter\pbs-relay\src\server.js`（非 `pbs-relay-old\src\server.js`）。查證方式：以管理員權限對 PID 6296 執行 `Get-CimInstance Win32_Process`，`CommandLine` 為 `"C:\Program Files\nodejs\node.exe" C:\Users\mrhap\traffic-reporter\pbs-relay\src\server.js`。
+
+**6. 金鑰檔**：`C:\Users\mrhap\traffic-reporter\.pbs-token-test` 存在，64 bytes，`LastWriteTime` 2026-08-16 14:54:39，自建立後未變更。
+
+**7. 執行期現況（2026-09-07 查得）**：Relay 服務程序 PID 6296，`CreationDate` 2026-09-01 10:13:10，health 端點回應 `ok=True`。LocalMonitor 鎖檔 `data\local-monitor.lock` 顯示 `startedAt` 2026-09-01T08:14:46。兩者皆自 9/1 起持續運行未重啟。
+
+**8. 本輪修正（電源設定）**：真人已將 LocalMonitor 與 Relay 兩個工作的設定改為 `AllowStartIfOnBatteries`、`DontStopIfGoingOnBatteries`、`StartWhenAvailable`，並加上 `RestartCount=3`、`RestartInterval=1分鐘`。修改前兩者皆為「在電池模式時停止、使用電池時不要啟動」。修改後驗證：兩者 `DisallowStartIfOnBatteries=False`、`StopIfGoingOnBatteries=False`、`StartWhenAvailable=True`。Notify 未修改，維持原設定（`Battery=True`／`StopOnBattery=True`），因其僅為提醒用途。
+
+**未解決／未驗證事項（明確標示，不得視為已解決）**：
+- 2026-08-31 16:54:39Z 至 2026-09-01 08:14:46Z 中斷 920.1 分鐘（15 小時 20 分）的**根因未查明**。真人已確認該次為停電關機後，開機時服務未自動啟動，最終由真人手動以 PowerShell 啟動恢復。
+- 上述電源設定（電池模式停止／不自動啟動）為當時最可疑的攔阻因素，但**未經驗證**確認即為根因，亦**未驗證**本次修正是否能防止再次發生。驗證方式為下次重開機後確認服務是否自動啟動，**目前為待驗證狀態**。
+- `pbs-relay\logs\` 採 7 天保留政策，2026-08-31 的 JSONL 紀錄已於 2026-09-07 前輪替刪除，該次中斷的原始現場證據已不可查。logs 目錄依 `.gitignore` 排除，`preserve/windows-runtime-20260906` 分支（`b76aaee`）亦未包含，GitHub 上無備份。
+- 排程工作的「歷程記錄」顯示為已停用，故 Windows 事件檢視器中亦可能無該次紀錄。
+- 目前**沒有任何機制**會在服務中斷時主動通知真人，8/31 中斷長達 15 小時未被察覺即因此。此為未處理的可觀測性缺口。
