@@ -113,3 +113,15 @@ Likewise, `sourceWorkingTree` deliberately excludes `meeting-room-export/`, beca
 - Dashboard-only facts (real Cron schedule, production branch setting, whether a Secret holds the *correct* value, build history) are **not** verifiable from code. Mark them unverified; never fabricate.
 - This sandbox has no production network egress (the proxy returns 403). A task needing live production evidence is "unable to prove", not "probably fine".
 - Report failures as failures, including your own. A false PASS is worse than an honest blocker.
+
+---
+
+## 6. Release sealing: single-pass (effective 2026-09-07, 路況-041)
+
+A release used to seal in two passes: `SEALED_FOR_PRODUCTION_OBSERVATION` at ship time, then `SEALED_AND_VALIDATED` once someone came back with production evidence. In practice the second pass kept getting forgotten the next day, leaving versions hanging in an unsealed state for days. **That two-pass flow is retired.** Sealing is now single-pass:
+
+- **When to seal**: the moment a release's work is actually done in one round — code changed, tests passing, `APP_VERSION` bumped, engineering memory updated, pushed to `main` — mark it **SEALED** in that same round. Do not defer sealing to "after we see it in production" or to a future round.
+- **Production observation is not a precondition for sealing.** Real-world/production evidence is recorded separately as an **observation log** (what to watch for, and — once available — what was actually observed), decoupled from seal status. A round with no production access simply records "待現場觀察" (pending field observation) honestly; that is not a blocker to sealing.
+- **A problem found after sealing always opens a new version.** This was already the rule and is unchanged: never edit a sealed version's code or its seal record to fix something found later — bump to the next version and fix it there.
+- **Sealing is not proof of verification.** Every sealed release must still say, in engineering memory, what should be observed in production going forward. Whether that observation ever gets filled in does not change the seal status — but an unfilled observation item must stay visibly marked as pending, never be written up as confirmed.
+- **Existing two-pass records are historical and are not rewritten.** Releases sealed under the old `SEALED_FOR_PRODUCTION_OBSERVATION` → `SEALED_AND_VALIDATED` flow (e.g. V2.4.15) keep that record exactly as written; this rule governs releases from 路況-041 onward, not retroactively.
