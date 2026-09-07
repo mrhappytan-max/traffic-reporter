@@ -59,7 +59,7 @@ is the simplest path.
 
 This prototype is separate from the HTTP relay and from every Cloudflare,
 KV, Cron, LINE, CCTV, TDX, and production path. It fetches the official PBS
-payload locally, keeps only accident records physically attributable to
+payload locally, keeps every event physically attributable to
 Hsinchu City or Hsinchu County (explicitly excluding Zhunan, Toufen, and
 all other Miaoli areas), compares them with the prior
 local baseline, and prints `NEW`, `UPDATED`, `CLEARED`, `UNCHANGED`, plus
@@ -68,6 +68,16 @@ are sent one event at a time to the Cloudflare debug-only endpoint after
 the local state write succeeds. The switch defaults to false; this path
 never calls LINE, CCTV, Shared Feed, Business KV, or the production business
 pipeline.
+
+Windows does not classify importance or require accident words. Rockfall,
+landslide, closure, construction, flooding, signal, obstacle, and other PBS
+event types follow the same geographic rule. When PBS coordinates exist,
+point-in-polygon uses the official Hsinchu City and Hsinchu County boundary
+features from NCDR's `縣市界2024` service (MOI county/city boundary source,
+EPSG:4326); the old broad rectangle is not used. Without coordinates, the
+existing canonical road/KM and Hsinchu place-name rules remain fail-closed.
+The untouched source record is stored under each normalized event's `raw`
+field; parsing adds fields without replacing that copy.
 
 ```powershell
 npm.cmd run prototype        # one fetch/compare/state-write cycle

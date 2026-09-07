@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { isPbsEventHsinchuRelevant } from '../../src/pbs/hsinchuFilter.js';
 import { normalizePbsRoad } from '../../src/pbs/roadName.js';
+import { findHsinchuAdministrativeArea } from './hsinchuBoundary.js';
 
-const ACCIDENT_PATTERNS = [/事故/, /擦撞/, /追撞/, /自撞/, /對撞/, /相撞/, /撞及/];
 const CLEARED_PATTERNS = [/已排除/, /排除/, /已解除/, /解除/];
 const HSINCHU_PLACE_PATTERNS = [
   /新竹市/,
@@ -53,16 +53,18 @@ export function parsePbsPayload(rawText) {
   return items;
 }
 
-export function isAccident(raw) {
-  const searchable = `${text(raw?.roadtype)} ${text(raw?.comment)}`;
-  return ACCIDENT_PATTERNS.some((pattern) => pattern.test(searchable));
-}
-
 export function getServiceAreaMatch(raw) {
   const searchable = [raw?.areaNm, raw?.comment, raw?.road, raw?.region]
     .map(text)
     .join(' ');
   if (MIAOLI_PLACE_PATTERNS.some((pattern) => pattern.test(searchable))) return null;
+
+  const longitude = numberOrNull(raw?.x1);
+  const latitude = numberOrNull(raw?.y1);
+  if (longitude !== null && latitude !== null) {
+    const administrativeArea = findHsinchuAdministrativeArea(longitude, latitude);
+    return administrativeArea ? `official-boundary:${administrativeArea}` : null;
+  }
 
   const normalizedRoad = normalizePbsRoad(text(raw?.road), text(raw?.areaNm));
   const kmMatch = searchable.match(/(\d+(?:\.\d+)?)\s*(?:K(?:\s*\+\s*(\d+))?|公里)/i);
@@ -103,13 +105,14 @@ export function getServiceAreaMatch(raw) {
   return null;
 }
 
-export function normalizeRelevantAccident(raw) {
+export function normalizeRelevantEvent(raw) {
   const id = text(raw?.UID);
-  if (!id || !isAccident(raw)) return null;
+  if (!id) return null;
   const matchReason = getServiceAreaMatch(raw);
   if (!matchReason) return null;
 
   const event = {
+    raw: structuredClone(raw),
     id,
     roadtype: text(raw.roadtype),
     road: text(raw.road),
@@ -146,7 +149,11 @@ export function fingerprintEvent(event) {
 }
 
 export function filterRelevantAccidents(items) {
-  return items.map(normalizeRelevantAccident).filter(Boolean);
+  return filterRelevantPbsEvents(items);
+}
+
+export function filterRelevantPbsEvents(items) {
+  return items.map(normalizeRelevantEvent).filter(Boolean);
 }
 
 export function compareWithPreviousState(events, previousState, now = new Date()) {
