@@ -59,6 +59,20 @@
 
 **8. WINDOWS_PBS_GEOGRAPHIC_FILTER_REPAIR 狀態更新**：對應 `07_KNOWN_ISSUES.md`（Volume 01）「補登紀錄｜WINDOWS_PBS_GEOGRAPHIC_FILTER_REPAIR（2026-08-30，人類回報，本 Cloud Session 未獨立驗證）」一則（該卷原文不改寫，本節為獨立的狀態更新記錄）。**狀態可升級至**：程式碼與設計方向已確認存在於 main（commit `1035667`，經 PR #2 併入），與人類回報的修正描述吻合——已移除 `isAccident()` 閘門、已改用 point-in-polygon 取代矩形邊界，現有明確可追溯的 commit 承載此變更。**不得標記為完全驗證**，以下兩項仍未核對：(a) 人類回報的「data.gov.tw dataset 7442」與 `hsinchuBoundary.js` 中繼資料所載「NCDR WMS627/AdministrativeRegion/MapServer/1（縣市界2024）」是否為同一份資料集，未查證；(b) 人類回報的驗收數字 `BEFORE_KEEP_COUNT=11 → AFTER_KEEP_COUNT=29`、`TESTS=124 passed/0 failed`，無任何 commit 或 repo 內容承載這些數字，合併本身無法使其升級為已驗證；除非未來取得原始執行記錄或在 main 上重新執行測試，否則應永久維持「人類回報、未逐字核對」狀態。
 
+## 處置紀錄｜本機三項清理與備份完成（2026-09-07）
+
+**來源聲明**：本節全部內容為真人於 2026-09-07 下午在本機 PowerShell 依序執行取得的結果，非本 session 獨立驗證，如實轉載。各步驟後皆以 `Invoke-RestMethod http://127.0.0.1:3000/health` 確認回應 `ok=True`，服務全程未中斷。
+
+**1. `.pbs-token-test` 已備份**：建立目錄 `C:\Users\mrhap\_pbs_credentials_backup\`，複製一份 `.pbs-token-test`（64 bytes，LastWriteTime 2026-08-16 14:54:39）至該處，原檔未動。此舉解決路況-027 記錄的 `PBS_TOKEN_NO_GIT_BACKUP` 風險的一部分——該檔依設計不進版控（憑證性質，此設計正確），現於本機另有一份副本。**仍存在的限制**：備份與原檔位於同一台機器、同一顆硬碟，僅能防範工作目錄重建或誤刪，**無法防範硬碟故障或機器毀損**，若需完整防護需另行複製至外部媒體或其他機器，此為未完成事項。（本節未記錄該檔的內容、雜湊值或任何可還原的資訊。）
+
+**2. `pbs-relay-old/` 已搬離工作目錄**：真人本機實測，該目錄 17 個檔案，全部 LastWriteTime 為 2026-08-16 13:41～14:25，之後未再變動；內容範圍小於現行 `pbs-relay/`，缺少 `localMonitor.js`、`localPrototype.js`、`hsinchuBoundary.js` 等後續才有的模組。以 `server.js` 比對，舊版 3,344 bytes（hash 0CD762BC…）與現行 3,520 bytes（hash 31BA2D2B…）不同，確認為較早期的版本快照，無任何現行版本所缺的內容。處置：建立 `C:\Users\mrhap\_old_backups\`，以 `Move-Item` 將整個 `pbs-relay-old/` 搬移至該處。採搬移而非刪除，理由：該目錄從未進入任何 git commit，刪除即永久遺失，雖研判無保留價值但該判斷屬推論而非事實，故保留實體。工作目錄現況：`traffic-reporter/` 底下不再有 `pbs-relay-old/`。此項解決路況-027 記錄的 `PBS_RELAY_OLD_UNTRACKED` 待辦。
+
+**3. `health-watchdog.ps1` 已進版控**：該檔（399 bytes，2026-09-07 新建）已 commit 並 push 至 `preserve/windows-runtime-20260906` 分支（commit `18cb8e2c5152b616df54ae02c51bcc0dd82d2422`，1 file changed, 6 insertions(+)）。**推至 preserve 而非 main 的理由**：本機工作目錄目前檢出 preserve 分支，推至 main 需切換分支，而切換分支會改寫工作區、移除執行中的程式檔案（2026-09-07 上午已發生過一次，見 Volume 02 重大風險記錄）；preserve 分支的定位本即為「Windows 執行環境快照」，此腳本正是該環境的一部分，推至此分支符合其定位。**未完成事項**：該檔目前僅存在於 preserve 分支，尚未併入 main，是否比照路況-030 的方式另行併入，待定案。
+
+**4. `preserve/windows-runtime-20260906` 分支 SHA 已變更**：舊 SHA `b76aaee565ed98b67e3870551b92b8469f9c5bb0` → 新 SHA `18cb8e2c5152b616df54ae02c51bcc0dd82d2422`（本輪新增 health-watchdog.ps1 一個檔案）。**警示**：先前多則工程記憶記錄（路況-001、路況-023、路況-026、路況-027、路況-029、路況-030、路況-031 等）皆記載該分支 SHA 為 `b76aaee`——該記載在其撰寫當下正確，不回頭改寫；未來核對此分支時應知悉 SHA 已於 2026-09-07 因本次 commit 而前進，**SHA 不符不代表分支遭到異常改動**。該分支既有內容（b76aaee 當時的全部檔案）完整保留，本次為純新增，未刪除或改寫任何既有檔案。
+
+**5. 本輪未處理事項（維持既有待辦，非已解決）**：本機 main 分支落後 origin/main 223 個 commit；本機工作目錄仍檢出 preserve 分支而非 main，Volume 02「不得在此目錄切換分支」風險依然成立；`wrangler.jsonc` 本機未提交修改（缺 vars／ai／queues 區塊）；兩個編碼錯誤的 CSV 檔案；`.pbs-token-test` 的異地備份；`health-watchdog.ps1` 併入 main；HealthWatchdog 異常路徑未驗證；版本追溯等雙鐵方案。
+
 ## 盤點紀錄｜本機工作目錄完整狀態與無備份檔案清單（2026-09-07）
 
 **來源聲明**：本節事實由路況-026（Cowork 本機工程部執行之唯讀盤點）取得，非本 session 獨立驗證，如實轉載。
