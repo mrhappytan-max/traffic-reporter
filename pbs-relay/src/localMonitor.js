@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { fetchPbsUpstream } from './upstreamClient.js';
-import { compareWithPreviousState, filterRelevantAccidents, parsePbsPayload } from './localPrototype.js';
+import { compareWithPreviousState, filterRelevantPbsEvents, parsePbsPayload } from './localPrototype.js';
 import { readLocalState, writeLocalState } from './localState.js';
 import { acquireMonitorLock, writeFailureLog, writeSuccessLog } from './localRuntime.js';
 import { dispatchDebugChanges, isDebugPushEnabled } from './localDebugPush.js';
@@ -18,9 +18,9 @@ export async function runLocalMonitor({
 } = {}) {
   const { rawText, attempts, durationMs } = await fetchPbsUpstream({ fetchImpl, requestId: `local-${now.getTime()}` });
   const rawItems = parsePbsPayload(rawText);
-  const relevantAccidents = filterRelevantAccidents(rawItems);
+  const relevantEvents = filterRelevantPbsEvents(rawItems);
   const previousState = await readLocalState(statePath);
-  const comparison = compareWithPreviousState(relevantAccidents, previousState, now);
+  const comparison = compareWithPreviousState(relevantEvents, previousState, now);
   await writeLocalState(statePath, comparison.state);
 
   return {
@@ -30,8 +30,8 @@ export async function runLocalMonitor({
     attempts,
     durationMs,
     rawCount: rawItems.length,
-    relevantAccidentCount: relevantAccidents.length,
-    activeEventCount: relevantAccidents.filter((event) => !event.cleared).length,
+    relevantAccidentCount: relevantEvents.length,
+    activeEventCount: relevantEvents.filter((event) => !event.cleared).length,
     baseline: comparison.baseline,
     counts: Object.fromEntries(Object.entries(comparison.changes).map(([key, value]) => [key, value.length])),
     pendingMissingEvents: comparison.changes.MISSING_PENDING_CLEAR.length,
