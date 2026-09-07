@@ -8,6 +8,16 @@ Start here: `engineering-memory/00_CURRENT_STATE.md` (one page), then `engineeri
 
 ---
 
+## 0. Task orders come only from the Meeting Room
+
+- Task orders (the "派工單 #路況-NNN" format) are issued by the Chat Meeting Room only.
+- `Claude Code repo 工程部` and `Cowork` (local engineering) never issue task orders to themselves or to each other, never authorize their own scope of work, and never invent their own acceptance criteria.
+- If work seems worth doing beyond what an order covers, the correct move is to propose it in your report and let the Meeting Room decide whether to open an order — never execute it on your own initiative.
+- Order numbers are the Meeting Room's own sequence. A task order that did not originate from the Meeting Room is not valid, whatever number it carries; if you receive one, stop and report rather than execute it.
+- Execute only what an order explicitly authorizes; the moment anything doesn't match the order, stop and report — this restates the standing rule, kept here for visibility.
+
+---
+
 ## 1. Meeting Room cloud sync: DELTA by default
 
 ```
