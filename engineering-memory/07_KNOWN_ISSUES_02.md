@@ -286,3 +286,27 @@ Leverage shared drives, or use OAuth delegation instead.
 **7. 未查得項目**：Admin 頁面 `/admin/pbs-ai-observatory-view` 與 `/admin/deployment-status` 皆回 401，執行 session 無 `ADMIN_PASSWORD`，未嘗試猜測或繞過。
 
 **8. 附帶觀察（僅記錄，非本輪處理項）**：165 次 AI 呼叫中僅 3 次快取命中（1.8%），其餘走真實模型。若未來要壓低 KV 寫入量與 AI 成本，快取命中率是尚未動過的槓桿。
+
+## 處置紀錄｜Build watch paths 排除文件目錄，避免純文件 commit 觸發部署（2026-09-07）
+
+**來源聲明**：本節全部內容為具瀏覽器能力之 Claude session 於 2026-09-07 在 Cloudflare Dashboard 實際執行設定變更取得，非本 session 獨立驗證，如實轉載。該變更原以「路況-014」編號執行，該編號由 Chat 會議室正式發出，有效。
+
+**1. 問題**：Cloudflare Build watch paths 的 Include 為 `*`，任何 push 到 main 皆觸發 build 與 deploy，包含純文件／工程記憶 commit。2026-09-07 上午已實際發生三次（`dd8a5be`≈07:50、`5367118`≈08:40、`ac4666c`≈08:50），程式碼未變更但部署流程完整執行，並干擾 V2.4.15 24 小時驗收窗口純淨度（見上方驗收紀錄第 5 項）。
+
+**2. 背景更正（重要）**：先前記錄與此前派工單背景所述「Exclude 原為 `node_modules/**, .git/`」**不正確**。實測經 DOM 檢查確認，Exclude 欄位變更前為**空值**，畫面顯示的 `node_modules/**, .git/` 是輸入框的 placeholder 提示文字，並非已設定值。此為先前 Dashboard 唯讀查證時的判讀錯誤，於本輪更正，不回頭改寫先前記錄本身（保留原文，此處另行更正）。
+
+**3. 變更前實際設定**：Include paths = `*`（1 個 chip）；Exclude paths = 空（0 個 chip）。
+
+**4. 變更後設定**（已重新整理頁面驗證持久化成功）：Include paths = `*`（未變動）；Exclude paths 共 6 項：`node_modules/**`、`.git/`、`engineering-memory/**`、`meeting-room-export/**`、`*.md`、`AGENTS.md`。
+
+**5. 處置說明**：因 `node_modules/**` 與 `.git/` 實際不存在（僅為 placeholder），執行方選擇一併補上，使終態與原派工單描述之期望終態一致；會議室已認可此處置。判斷依據：該兩項不可能涵蓋 `src/`、`wrangler.jsonc`、`package.json` 等必須觸發部署的路徑。
+
+**6. 欄位格式**：Exclude 為 chip／tag 型多值輸入框，每項為獨立值（非換行或逗號分隔），逐項鍵入後按 Enter 加入。
+
+**7. 已知限制（非缺陷，列為待評估項）**：Cloudflare build watch paths 的 glob 語意中，`*` 通常不跨路徑分隔符，`**` 才跨多層。因此 `*.md` 可能僅涵蓋 repo 根目錄的 `.md` 檔，不涵蓋子目錄內的 `.md`。若需涵蓋所有層級需改用 `**/*.md`，本輪未採用、未實測。實務影響有限，因 `engineering-memory/` 與 `meeting-room-export/` 已整目錄排除。
+
+**8. 執行當下未觸發任何重新部署**：儲存後 Active deployment 仍為 `f6fbb4f1`（約 11:04 部署，早於設定變更時間 11:19），Version History 無新增紀錄。
+
+**9. 未觸碰項目**：Build command（維持空值，其修法未定案，見上方 BUILD_METADATA_GENERATION_BUG 記錄）、Deploy command、Root directory、Git repository、Production branch、Build variables and secrets、環境變數、Secret、KV、Queue、`wrangler.jsonc`、Worker 程式碼。
+
+**10. 本次設定變更的自然驗證**：本輪（路況-015）記錄此變更的 commit 本身只觸碰 `engineering-memory/**`（已在 Exclude 清單內），是否觸發 Cloudflare 部署的觀察結果見本輪回報；若無法從 GitHub 端判斷，誠實記錄為未驗證，不得推測。
