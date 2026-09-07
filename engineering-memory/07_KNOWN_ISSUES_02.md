@@ -378,3 +378,19 @@ Leverage shared drives, or use OAuth delegation instead.
 **4. 結論**：電源設定修正**已驗證有效**。`WATCHDOG_ALERT_PATH_UNVERIFIED` 不受本次驗證影響，仍為未驗證狀態（本次服務正常，未觸發異常路徑）。
 
 **5. 誠實揭露**：本次驗證證明的是「在本次這一種重開機情境下，排程確實自動啟動」。8/31 該次中斷的**確切根因始終未查明**（當時的 JSONL log 已因 7 天保留政策輪替刪除，工作排程器歷程記錄亦為停用狀態），電源設定僅為當時最可疑的攔阻因素。本次驗證**不等於已證明電源設定就是 8/31 的根因**，僅能表述為：修正後的設定在正常重開機情境下運作正常。若未來再次發生停電或異常關機後未自動啟動，應視為此結論尚有缺口，須重新調查。
+
+## 重大風險｜本機工作目錄同時為版控倉庫與 Production 執行位置，切換分支會移除執行中程式檔案（2026-09-07）
+
+**來源聲明**：本節事實由路況-022 唯讀查證與真人本機 PowerShell 實測取得，非本 session 獨立驗證，如實轉載。
+
+**一、核心風險**：`C:\Users\mrhap\traffic-reporter` 同時是 git 工作目錄與 Production PBS 服務（LocalMonitor、Relay）的實際執行位置。在此目錄執行任何改寫工作區的 git 操作（switch／checkout／pull／merge／reset／clean 等）會直接增刪磁碟上的程式檔案，進而影響服務。**明確規則：不得在此目錄切換分支或執行任何改寫工作區的 git 操作，除非已確認不會移除執行中的程式檔案，且已有復原方案。**
+
+**二、2026-09-07 實際發生的意外與復原**：本機原停留於 `preserve/windows-runtime-20260906`。為推送新建的 `health-watchdog.ps1`，執行 `git switch main` 後 `pbs-relay/src/` 由 13 個檔案減為 3 個（僅存 `auth.js`／`pbsHandler.js`／`server.js`），`localMonitor.js`／`hsinchuBoundary.js`／`cache.js`／`localPrototype.js`／`localRuntime.js`／`localState.js`／`log.js`／`upstreamClient.js`／`debugPushClient.js`／`localDebugPush.js` 共 10 個檔案自磁碟移除——原因為本機 main 分支的 git 記錄本就不含這些檔案，切換分支時 git 依該分支內容改寫工作區。服務未中斷：Node 程序（PID 3968）啟動時已將程式載入記憶體，檔案移除不影響執行中的程序，但若當時重啟或重開機，服務將無法啟動。復原：`git switch preserve/windows-runtime-20260906` 後 13 個檔案全數還原，`/health` 回應 `ok=True`。**`preserve/windows-runtime-20260906`（路況-001，commit `b76aaee`）在此次事件中實際發揮了保全作用**，是唯一能還原這些檔案的來源。
+
+**三、本機工作目錄與 origin/main 的落差（路況-022 查證）**：origin/main 的 `pbs-relay/` 有 32 個檔案，本機 git HEAD 僅含少數，26 個檔案（含 `localMonitor.js`／`cache.js`／`localPrototype.js` 等）在本機 git 記錄中不存在，實際存在於磁碟與 preserve 分支。本機 `wrangler.jsonc` 未提交修改：縮排由 2 空白改為 Tab、結尾缺換行，**完全沒有 vars 區塊**（origin/main 有 `TRAFFIC_SOURCE_MODE`／`LINE_PUSH_POLICY`／`PBS_AI_DECISION_ENABLED`／`TDX_ROADEVENT_FETCH_ENABLED`／`TDX_ROADEVENT_QUEUE_INGRESS_ENABLED`／`TDX_ROADEVENT_PRODUCTION_NOTIFY_ENABLED`／`TDX_CCTV_METADATA_REFRESH_ENABLED`／`PUBLIC_BASE_URL`），亦無 `ai`／`queues` binding；`r2_buckets` binding 名稱本機為 `traffic_reporter_cctv_images`、origin/main 為 `CCTV_IMAGES`。本機 HEAD 版本同樣缺這些區塊，代表此落差存在已久，非本次造成。本機 main 領先 origin/main 的 3 個 commit（`06accea9`／`0f452b9d`／`048a1ef5`）經 `git cherry` 比對，內容均已以不同 SHA 存在於 origin/main（`34e948c`／`6fcf0e5`／`3b40591`），非本機獨有變更。6 個未追蹤但遠端已存在的檔案，4 個內容相同（純 git 狀態問題）；2 個內容不同——`data/road-location/archive/省道里程坐標(里程牌標誌).csv` 與 `data/road-location/raw/provincial/provincial.csv`，本機版本為編碼錯誤的亂碼版本，origin/main 為正常 UTF-8，行數相同。本機 `src/server.js` 與 origin/main 僅 CRLF/LF 換行差異，內容相同。
+
+**四、其他已確認事實**：正在執行的服務確定使用 `C:\Users\mrhap\traffic-reporter`，非 `C:\Users\mrhap\traffic-reporter-v1865`（後者 LastWriteTime 2026-08-20 16:28，自該日起未變動，用途未查證）。`pbs-relay/scripts/health-watchdog.ps1`（2026-09-07 新建）目前仍未進版控，preserve 分支亦無此檔，其上傳一事本輪暫緩，列為未結待辦。
+
+**五、未解決事項（待辦，未處理）**：①本機工作目錄與 origin/main 的落差如何處置（是否重建工作目錄、pbs-relay 檔案是否併入 main、wrangler.jsonc 落差如何處理）——尚未定案，本輪未做任何處置。②`health-watchdog.ps1` 尚未進版控。③`traffic-reporter-v1865` 用途未查證，是否可移除或封存未定案。④兩個編碼錯誤的 CSV 本機版本如何處理未定案。
+
+**通則**：當一個目錄同時承擔「版本控制工作區」與「正式服務執行位置」兩種角色時，版控操作的副作用會直接落在正在運行的系統上。此類目錄的 git 狀態若又與遠端長期不同步，任何看似例行的分支操作都可能在無預警下移除執行中的程式。本次未造成中斷純屬僥倖——Node 已載入記憶體、且當下未重啟。
