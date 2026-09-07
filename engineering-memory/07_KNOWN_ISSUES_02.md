@@ -257,3 +257,32 @@ Leverage shared drives, or use OAuth delegation instead.
 2. 真人已同步更新 Chat 專案的 Instructions，於會議室端加強同一規則。
 
 **規則用意**：會議室是工作範圍與驗收標準的把關者，執行者（工程部）不得自行授權自己或他人的工作範圍——即使內容本身無害、且是應真人當下要求所做，仍應由會議室走正式流程發單，而非由執行端直接產出派工單格式的文件並賦予流水號。此規則同時避免不同來源各自維護一套編號序列時互相衝突。
+
+## 驗收紀錄｜V2.4.15 Production 24 小時驗收達標 ＋ BUILD_METADATA 根因確認（2026-09-07）
+
+**來源聲明**：本節全部內容為具瀏覽器能力之 Claude session 於 2026-09-07 唯讀查詢 Cloudflare Dashboard 取得，非本 session 獨立驗證，如實轉載。該查證原以「路況-011」編號執行，該編號未經 Chat 會議室發出，依 AGENTS.md 第 0 節規定編號本身無效，但查證內容為唯讀且有效，故由本則（路況-013）正式收錄。
+
+**1. 查證範圍**：2026-09-04 17:01（V2.4.15 部署）至 2026-09-07 10:00，全程唯讀，未修改任何 Cloudflare 設定、未重新部署、未對 KV／Queue 寫入或刪除。
+
+**2. 版本與模型確認**：`/version` 回傳 `appVersion=V2.4.15`、`deployedCommit="unknown"`、`deployedBranch="unknown"`、`buildTime=null`。Workers AI Neurons 檢視顯示該期間唯一被呼叫的模型為 `@cf/qwen/qwen3-30b-a3b-fp8`（4.29k neurons，無其他模型混用），Worker 日誌亦直接印出同一 model 字串。
+
+**3. 驗收數據**（對照 V2.4.14 基準：AI 逾時率≈85%、Queue Read/Write Ratio≈1.94）：
+- AI 呼叫總數 165（`AI_CACHE_MISS` 實際模型呼叫 161、`AI_CACHE_HIT` 3）。
+- `AI_TIMEOUT_COUNT=0`，`AI_TIMEOUT_RATE=0.0%`（目標 <5%，**達標**）。
+- `AI_LATENCY_P50=4,670ms`（目標 <6s，**達標**）、`P95=8,556ms`（目標 <10s，**達標**）。其他：min 2,252／avg 5,016／P90 7,326／P99 9,613／max 12,915ms；超過 6 秒 38 筆（23.6%）、超過 10 秒 2 筆（1.2%）。
+- Queue：Messages Ingested 168／Acknowledged 167，Retry 0，`Read/Write Ratio=1.00`（Writes 168／Reads 168／Deletes 167），Average Consumer Lag 6.88 秒（↓91.95%），即時 backlog 0。
+- `PROCESSING_FAILED=0` 筆，Worker Errors 0。
+- KV 每日寫入：9/5 Write 483、9/6 Write 250；V2.4.14 基準區間 9/2 451、9/3 560、9/4 521。**誠實記錄**：9/5 仍落在基準區間內，下降只在第二天（9/6）才明顯成立，第一天未見差異。
+
+**4. 統計方法的誠實揭露**：
+- P50／P95 非 Cloudflare 直接提供。Workers AI 儀表板僅有 neurons 與 token 數，Worker Metrics 的 P50/P95 是 CPU/wall time 而非 AI 呼叫本身。百分位數係自 Worker Observability 日誌逐筆抓取 `AI_CACHE_MISS` 的 `durationMs` 後自行計算，樣本 n=161，因清單虛擬捲動漏抓 2 筆。
+- 逾時率 0% 為「找不到任何逾時事件」而非儀表板直接給的逾時率，但有四個獨立指標互相印證（無 `AI_TIMEOUT` 事件、`PROCESSING_FAILED=0`、Queue Retry 0、Worker Errors 0）。
+- Observability 頁面顯示取樣警告，但事件數 166 與 Queue Acknowledged 167 對得上，判斷該期間未實際被取樣掉。
+
+**5. 驗收窗口不純淨**：2026-09-07 早上該 Worker 因純文件 commit 觸發至少三次重新部署（`ac4666c`≈08:50、`5367118`≈08:40、`dd8a5be`≈07:50），目前 Active deployment 為 `a61555f7`。程式碼未變（`/version` 仍為 V2.4.15），但「部署後連續 24 小時未受干擾」此前提嚴格說不成立。
+
+**6. BUILD_METADATA_GENERATION_BUG 根因已確認**：Cloudflare Dashboard → Settings → Builds 的 Build command 為空值（顯示 placeholder「None」），Deploy command 為 `npx wrangler deploy`。部署不經過 npm scripts，因此 `package.json` 的 `predeploy` hook 從未執行，commit 資訊未被寫入，這正是 `deployedCommit="unknown"` 的原因。同頁其他設定（僅記錄，未修改）：Root directory=`/`；Git repository=`mrhappytan-max/traffic-reporter`；Production branch=`main`；Builds for non-production branches 未勾選；Build watch paths Include=`*`，Exclude=`node_modules/**, .git/`；Build variables and secrets 無。**根因已確認，修法尚未定案，本輪不執行任何修正。**
+
+**7. 未查得項目**：Admin 頁面 `/admin/pbs-ai-observatory-view` 與 `/admin/deployment-status` 皆回 401，執行 session 無 `ADMIN_PASSWORD`，未嘗試猜測或繞過。
+
+**8. 附帶觀察（僅記錄，非本輪處理項）**：165 次 AI 呼叫中僅 3 次快取命中（1.8%），其餘走真實模型。若未來要壓低 KV 寫入量與 AI 成本，快取命中率是尚未動過的槓桿。
