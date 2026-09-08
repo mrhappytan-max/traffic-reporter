@@ -195,7 +195,28 @@ async function loadAiDecisionDetail(kv, record) {
   if (!record.eventId || !record.fingerprint) return null;
   if (record.outcome !== AI_OUTCOME.AI_NOTIFY_TRUE && record.outcome !== AI_OUTCOME.AI_NOTIFY_FALSE) return null;
   try {
-    const keyHash = await computeAiDecisionCacheKeyHash({ eventId: record.eventId, fingerprint: record.fingerprint });
+    // V2.7.0 (路況-061, following 路況-060's own plan) — FIXED: this used
+    // to omit memoryContextFingerprint entirely, so the hash computed here
+    // never matched the 3-part hash aiDecisionEngine.js actually wrote
+    // under whenever the event had any memory candidates at all
+    // (memoryCandidateCount>0) — every such record was a guaranteed cache
+    // miss, silently rendering UNKNOWN/NOT RECORDED for reason/impact/
+    // confidence even though the real decision was sitting right there
+    // under a different key. Now reads the SAME fingerprint value
+    // debugPush.js already persisted on this record (see that module's
+    // own V2.7.0 comment) — never re-derived from live incidentMemory.js
+    // state, which would not reproduce the value actually used at
+    // decision time. `record.memoryContextFingerprint` is `null`/
+    // `undefined` for a record with no memory candidates OR a pre-V2.7.0
+    // record (read back within its still-live 48h TTL) — either way
+    // `computeAiDecisionCacheKeyHash` already treats a falsy
+    // memoryContextFingerprint as "use the 2-part hash", which is exactly
+    // correct for both of those cases (no behavior change for them).
+    const keyHash = await computeAiDecisionCacheKeyHash({
+      eventId: record.eventId,
+      fingerprint: record.fingerprint,
+      memoryContextFingerprint: record.memoryContextFingerprint || undefined,
+    });
     const kvKey = buildAiDecisionCacheKvKey(keyHash);
     const cached = await readAiDecisionCache(kv, kvKey);
     if (!cached.hit) return null;

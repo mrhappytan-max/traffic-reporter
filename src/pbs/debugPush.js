@@ -331,6 +331,7 @@ import {
   persistIncidentMemory,
   deriveEventLocationForMemory,
   incidentMemoryGroupKey,
+  buildMemoryContextFingerprint,
 } from '../traffic/incidentMemory.js';
 
 export const PBS_DEBUG_PUSH_PATH = '/internal/pbs-debug-push';
@@ -1186,6 +1187,22 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
   // were a separate nearby incident).
   const memoryEventId = `${source}:${eventId}`;
   const memoryCandidates = selectMemoryCandidates(memoryState.groups, eventLocation, now, { excludeEventId: memoryEventId });
+  // V2.7.0 (路況-061, following 路況-060's own plan) — the EXACT same
+  // fingerprint aiDecisionEngine.js#resolveAiDecision computes internally
+  // from this SAME `memoryCandidates` array (its own `expectMemoryFields ?
+  // buildMemoryContextFingerprint(recentIncidentContext) : undefined`) —
+  // computed here, independently, from data this function already has in
+  // scope, specifically so it can be persisted on the Observatory record
+  // and read back verbatim by aiObservatoryView.js later (see that
+  // module's own V2.7.0 comment) — never re-derived from live
+  // incidentMemory.js state at VIEW time, which would not reproduce the
+  // value actually used at DECISION time (memory state keeps moving).
+  // buildMemoryContextFingerprint([]) already returns '' (falsy, same as
+  // aiDecisionEngine.js's own `undefined` for the no-context case) — `||
+  // null` just converts that to this project's own null-default
+  // convention for an inapplicable field, never a second condition to
+  // keep in sync with `expectMemoryFields` itself.
+  const memoryContextFingerprint = buildMemoryContextFingerprint(memoryCandidates) || null;
 
   // event=AI_CALL_STARTED is logged UNCONDITIONALLY here, before the cache
   // lookup that resolveAiDecision performs internally — "started" marks
@@ -1309,6 +1326,7 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
       cacheStatus,
       source,
       memoryCandidateCount: memoryCandidates.length,
+      memoryContextFingerprint,
       sameIncident: decision.sameIncident,
       materialChange: decision.materialChange,
       primarySource: memoryResult.primarySource,
@@ -1321,6 +1339,86 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
       // runAiApprovedPbsBroadcast(), which this branch never reaches).
       cleanSummary: decision.cleanSummary,
     }; // trace only — no LINE, no CCTV, no proactive broadcast (order section 九)
+  }
+
+  // V2.7.0 (路況-061, following 路況-060's own plan) — THE FIX: the AI's
+  // own sameIncident/materialChange verdict (already computed above,
+  // already logged) now actually gets LISTENED to, not just recorded.
+  // Real Production incident (2026-09-08, 19:10/19:31, 國3北向86.3K):
+  // memoryCandidateCount=1, AI correctly judged sameIncident:true/
+  // materialChange:false — "same incident, nothing new" — yet
+  // decision.notify was ALSO true, and the gate above only ever checked
+  // decision.notify, so the system pushed a second LINE for content the
+  // AI itself had just said wasn't worth a second push. This is NOT a new
+  // rule this round invents — test/tdxUnifiedAiPipeline.test.js's own
+  // CASE 4/5/6 mocks (pre-existing, unmodified by this round) already
+  // ASSUMED a real AI would return notify:false for exactly this
+  // combination; this round closes the gap between that assumption and
+  // what the gate actually enforced.
+  //
+  // STRICT `=== true` / `=== false` (not bare truthy/falsy) — a first-ever
+  // sighting (memoryCandidateCount===0) never has expectMemoryFields set
+  // at AI-call time (see aiDecisionEngine.js's own `expectMemoryFields`),
+  // so decision.sameIncident/decision.materialChange are `undefined`, not
+  // `false`, in that case — `undefined === true` is false, so this can
+  // NEVER fire for a first-ever notification, by construction, without
+  // needing a separate `memoryCandidateCount > 0` guard.
+  //
+  // Deliberately checked HERE — before suppressLineNotify is even
+  // computed, before runAiApprovedPbsBroadcast() (and therefore before
+  // incidentSuppression.js's own 10-minute collision-window check) ever
+  // runs — exactly mirroring the `if (!decision.notify)` block immediately
+  // above it: if the AI itself says this content isn't worth sending, the
+  // event never enters the broadcast pipeline at all, same as a
+  // notify:false verdict. Neither incidentSuppression.js (10-minute
+  // collision window, unrelated near-simultaneous-race defense) nor
+  // suppressLineNotify (Phase B/C TDX production-readiness switch) is
+  // modified by this round — both stay fully intact for every event this
+  // gate does NOT catch; this simply means the collision window will, in
+  // practice, rarely be the thing that catches a same-incident/no-change
+  // duplicate anymore, since this gate now front-runs it for that exact
+  // condition (a genuinely later duplicate, e.g. 21+ minutes apart like
+  // the real incident above, was already outside the 10-minute window's
+  // own reach to begin with — see 路況-058's own investigation).
+  //
+  // Return shape deliberately BYTE-FOR-BYTE the same as the existing
+  // "AI_NOTIFY_TRUE but 0 real targets reached" shape (the one
+  // incidentSuppression.js's own collision-window suppression already
+  // produces) — lineAttempted/lineSent/telegramAttempted/telegramSent all
+  // explicit `false` (never left `undefined`), so
+  // aiObservatoryIndex.js#deriveFinalDecisionReason()'s existing
+  // `sameIncident===true && materialChange===false` branch (already
+  // shipped, already tested — test/v2412ObservatoryNoSendReasonHighVisibilityUI.test.js
+  // CASE 7) renders the correct "重複事件：...未重複發送" text with ZERO
+  // changes to aiObservatoryIndex.js/aiObservatoryView.js's own display
+  // logic. runAiApprovedPbsBroadcast() is never called — zero CCTV
+  // preparation, zero LINE/Telegram API calls, for an event already known
+  // (from the AI's own verdict) not to need either.
+  const suppressForNoChange = decision.notify && decision.sameIncident === true && decision.materialChange === false;
+  if (suppressForNoChange) {
+    const memoryResult = await persistSighting(false);
+    console.log(
+      `[pbs-debug-push][ai-decision] event=AI_NOTIFY_TRUE_SUPPRESSED_NO_CHANGE eventId=${eventId} lifecycle=${lifecycle} ` +
+        `sameIncident=${decision.sameIncident} materialChange=${decision.materialChange}`
+    );
+    return {
+      outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+      cacheStatus,
+      source,
+      memoryCandidateCount: memoryCandidates.length,
+      memoryContextFingerprint,
+      lineAttempted: false,
+      lineSent: false,
+      telegramAttempted: false,
+      telegramSent: false,
+      sameIncident: decision.sameIncident,
+      materialChange: decision.materialChange,
+      primarySource: memoryResult.primarySource,
+      lastNotifiedAt: memoryResult.lastNotifiedAt,
+      memoryWrite: memoryResult.written,
+      cleanSummary: decision.cleanSummary,
+      finalRenderedMessage: null,
+    };
   }
 
   // Phase B/C gate, see this function's own header comment. A TDX-origin
@@ -1401,6 +1499,7 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
       cacheStatus,
       source,
       memoryCandidateCount: memoryCandidates.length,
+      memoryContextFingerprint,
       // V2.6.0 (路況-055) — LINE-only now, see this file's own V2.6.0
       // comment above on the lineSent fix this pairs with.
       lineAttempted: broadcastResult.line.attempted > 0,
@@ -1452,6 +1551,7 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
       cacheStatus,
       source,
       memoryCandidateCount: memoryCandidates.length,
+      memoryContextFingerprint,
       lineAttempted: true,
       lineSent: false,
       sameIncident: decision.sameIncident,

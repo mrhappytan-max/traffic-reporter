@@ -410,3 +410,41 @@ test('CASE 13: a HIGH-impact accident still reaches AI and pushes LINE exactly a
   assert.equal(result.lineSent, true);
   assert.equal(ai.calls.length, 1, 'exactly one AI call, no new second call added by this round');
 });
+
+// =======================================================================
+// V2.7.0 (路況-061, following 路況-060's own plan) — the SAME "重複事件"
+// text CASE 7 above already proved correct for the 10-minute collision-
+// window scenario, now proved correct for the genuinely-new suppression
+// path this round adds (21 minutes — OUTSIDE that window, see
+// test/tdxPhaseCProductionNotify.test.js's own V2.7.0 (a) for the
+// push-level regression lock; this is the Observatory-display counterpart).
+// =======================================================================
+
+test('V2.7.0: AI says sameIncident:true/materialChange:false 21 minutes later (outside the 10-minute collision window) -> the NEW suppression path shows the SAME existing "重複事件" text, zero display-code changes needed', async () => {
+  const ai = {
+    calls: [],
+    async run(model, input) {
+      this.calls.push(input);
+      const parsed = JSON.parse(input.messages[1].content);
+      const hasContext = Array.isArray(parsed.recentIncidents) && parsed.recentIncidents.length > 0;
+      return { response: JSON.stringify(hasContext ? { notify: true, impact: 'HIGH', reason: '同一事故無變化', confidence: 0.9, sameIncident: true, materialChange: false } : { notify: true, impact: 'HIGH', reason: '第一次發現', confidence: 0.9 }) };
+    },
+  };
+  const env = await baseEnv({ AI: ai });
+  const first = await processQueuedPbsEvent(env, await buildQueueMessage({ source: 'freeway', event: freewayAccidentEvent(), eventId: 'V270-1', fingerprint: 'fp-v270-1' }), NOW);
+  assert.equal(first.lineSent, true);
+
+  const later = new Date(NOW.getTime() + 21 * 60_000); // OUTSIDE the 10min collision window — the real incident's own timing
+  const second = await processQueuedPbsEvent(
+    env,
+    await buildQueueMessage({ source: 'freeway', event: freewayAccidentEvent({ EventID: 'V270-2' }), eventId: 'V270-2', fingerprint: 'fp-v270-2', now: later }),
+    later
+  );
+  assert.equal(second.outcome, 'AI_NOTIFY_TRUE');
+  assert.equal(second.lineAttempted, false, 'suppressed by the NEW V2.7.0 gate, not by incidentSuppression.js (21min is past its 10min window)');
+
+  const html = await (await handleAiObservatoryView(env, viewRequest(), later)).text();
+  assert.ok(html.includes('重複事件'));
+  assert.ok(html.includes('與近期已通知過的同一起事故相同，且無實質變化，未重複發送'));
+  assert.ok(!html.includes('❌ 不通報原因：UNKNOWN / NOT RECORDED'));
+});

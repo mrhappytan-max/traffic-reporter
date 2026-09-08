@@ -286,7 +286,7 @@ test('11: missing/expired AI decision cache data renders UNKNOWN / NOT RECORDED,
 // only bump the literal), same discipline test/versionLineage.test.js's
 // own series-prefix check already follows.
 test('12: APP_VERSION reflects the current release', () => {
-  assert.equal(APP_VERSION, 'V2.6.1');
+  assert.equal(APP_VERSION, 'V2.7.0');
 });
 
 test('SERVICE_AREA_EXCLUDED events show "服務區域外", never routed through AI at all', async () => {
@@ -502,4 +502,79 @@ test('V2.6.0 backward-compat regression lock: a record built WITHOUT telegramAtt
   assert.equal(res.status, 200, 'must render successfully, never throw, for a record missing the new Telegram fields');
   const html = await res.text();
   assert.ok(html.includes('⏭️ Telegram 未發送'), 'undefined telegramAttempted/telegramSent must degrade to the same not-attempted display as false/false');
+});
+
+// ============================================================================
+// V2.7.0 (路況-061, following 路況-060's own plan) — memoryContextFingerprint
+// join fix (路況-059's own discovery): loadAiDecisionDetail() used to omit
+// memoryContextFingerprint entirely, so ANY event with memoryCandidateCount>0
+// was a guaranteed AI-decision-cache miss, silently rendering UNKNOWN / NOT
+// RECORDED even though the real decision was persisted under a (different)
+// key. Real end-to-end proof below: two sequential PBS pushes for the SAME
+// location build up a real memory candidate for the second call, and the
+// second call's own real AI reason must now actually appear on the page.
+// ============================================================================
+
+test('V2.7.0: a second event with a real memory candidate (memoryCandidateCount>0) correctly joins its OWN AI decision cache entry — no longer UNKNOWN / NOT RECORDED', async () => {
+  let callCount = 0;
+  const ai = {
+    calls: [],
+    async run(model, input) {
+      callCount += 1;
+      this.calls.push({ model, input });
+      const parsed = JSON.parse(input.messages[1].content);
+      const hasContext = Array.isArray(parsed.recentIncidents) && parsed.recentIncidents.length > 0;
+      return {
+        response: JSON.stringify(
+          hasContext
+            ? { notify: true, impact: 'HIGH', reason: '第二次真實理由（join修正後應正確顯示）', confidence: 0.87, sameIncident: true, materialChange: true }
+            : { notify: true, impact: 'HIGH', reason: '第一次發現', confidence: 0.9 }
+        ),
+      };
+    },
+  };
+  const env = await baseEnv({ AI: ai });
+  await handlePbsDebugPush(pushRequest({ body: validPayload({ eventId: 'PBS-MCF-1', fingerprint: 'fp-mcf-1', event: fullEventFields() }) }), env, NOW);
+  assert.equal(callCount, 1);
+
+  const later = new Date(NOW.getTime() + 5 * 60_000);
+  await handlePbsDebugPush(
+    pushRequest({ body: validPayload({ eventId: 'PBS-MCF-2', fingerprint: 'fp-mcf-2', event: fullEventFields(), generatedAt: later.toISOString() }) }),
+    env,
+    later
+  );
+  assert.equal(callCount, 2, 'sanity: the second call genuinely reached the AI with a different request (real memory context)');
+  const secondUserMsg = JSON.parse(ai.calls[1].input.messages[1].content);
+  assert.equal(secondUserMsg.recentIncidents.length, 1, 'sanity: the second call really did carry a memory candidate — this is the exact condition that broke the join before this round');
+
+  const html = await (await handleAiObservatoryView(env, viewRequest(), later)).text();
+  assert.ok(html.includes('第二次真實理由（join修正後應正確顯示）'), 'THE FIX: the second event\'s own real AI reason must now be joinable and shown, not UNKNOWN');
+  assert.ok(html.includes('0.87'));
+});
+
+test('V2.7.0 backward-compat regression lock: a record built WITHOUT memoryContextFingerprint (simulating a pre-V2.7.0, within-48h-TTL record, or one with memoryCandidateCount===0) renders without throwing, degrading to the existing UNKNOWN / NOT RECORDED join-miss display', async () => {
+  const env = await baseEnv();
+  // Deliberately the OLD call shape — no memoryContextFingerprint passed
+  // at all, exactly what a record written before this round would look
+  // like when read back within its still-live 48h TTL. Also seed the
+  // matching AI decision cache record under the OLD (2-part) hash so a
+  // reader can confirm this is a genuine "field absent" case, not merely
+  // "nothing was ever cached".
+  const record = buildAiObservatoryRecord({
+    candidate: { road: '國道一號' },
+    eventId: 'PBS-MCF-OLD',
+    lifecycle: 'NEW',
+    fingerprint: 'fp-mcf-old',
+    outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+    lineAttempted: true,
+    lineSent: true,
+    memoryCandidateCount: 0,
+    now: NOW,
+  });
+  await recordAiObservatoryEntry(env.TRAFFIC_KV, record, { taipeiDate: taipeiDateString(NOW), idempotencyKeyHash: 'hash-mcf-old', now: NOW });
+
+  const res = await handleAiObservatoryView(env, viewRequest(), NOW);
+  assert.equal(res.status, 200, 'must render successfully, never throw, for a record missing memoryContextFingerprint');
+  const html = await res.text();
+  assert.ok(html.includes('UNKNOWN / NOT RECORDED'), 'no cache entry exists for this key — must degrade honestly, never fabricate a reason');
 });

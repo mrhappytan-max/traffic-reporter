@@ -695,3 +695,101 @@ test('V2.6.0 (f) symmetric: LINE configured and FAILING does not flip telegramSe
   assert.equal(result.lineAttempted, true);
   assert.equal(result.lineSent, false, 'LINE genuinely did fail — lineSent must say so, unaffected by Telegram succeeding');
 });
+
+// =======================================================================
+// V2.7.0 (路況-061, following 路況-060's own plan) — THE FIX: the AI's own
+// sameIncident/materialChange verdict now actually gates the push, not
+// just decision.notify. Real Production incident this models directly:
+// 2026-09-08, 國3北向86.3K, 21 minutes apart — OUTSIDE
+// INCIDENT_SUPPRESSION_COLLISION_WINDOW_MS (10 min), so
+// incidentSuppression.js's own collision-window safety net was already,
+// by design, unable to catch it (see 路況-058's own investigation) — this
+// gate is the ONLY thing that now does.
+// =======================================================================
+
+test('V2.7.0 (a): sameIncident:true/materialChange:false 21 minutes later (OUTSIDE the 10-minute collision window) -> still suppressed — this is the real capability this round adds, not merely redundant with incidentSuppression.js', async () => {
+  const ai = {
+    calls: [],
+    async run(model, input) {
+      this.calls.push(input);
+      const parsed = JSON.parse(input.messages[1].content);
+      const hasContext = Array.isArray(parsed.recentIncidents) && parsed.recentIncidents.length > 0;
+      return {
+        response: JSON.stringify(
+          hasContext
+            ? { notify: true, impact: 'HIGH', reason: '同一事故，無實質變化', confidence: 0.9, sameIncident: true, materialChange: false }
+            : { notify: true, impact: 'HIGH', reason: '第一次發現', confidence: 0.9 }
+        ),
+      };
+    },
+  };
+  const env = await notifyEnabledEnv({ AI: ai });
+  const first = await processQueuedPbsEvent(env, await buildQueueMessage({ source: 'freeway', event: freewayAccidentEvent(), eventId: 'FRW-V270A-1', fingerprint: 'fp-v270a-1' }), NOW);
+  assert.equal(first.lineSent, true);
+
+  // 21 minutes later — deliberately PAST INCIDENT_SUPPRESSION_COLLISION_WINDOW_MS
+  // (10 min), matching the real incident's own timing exactly.
+  const later = new Date(NOW.getTime() + 21 * 60_000);
+  assert.ok(later.getTime() - NOW.getTime() > INCIDENT_SUPPRESSION_COLLISION_WINDOW_MS, 'sanity: this gap is genuinely outside the collision window this round\'s gate is NOT relying on');
+  const second = await processQueuedPbsEvent(
+    env,
+    await buildQueueMessage({ source: 'pbs', event: pbsRawEvent(), eventId: 'PBS-V270A-2', fingerprint: 'fp-v270a-2', now: later }),
+    later
+  );
+  assert.equal(second.outcome, 'AI_NOTIFY_TRUE', 'AI itself still said notify:true — the outcome must stay AI_NOTIFY_TRUE, never AI_NOTIFY_FALSE (the AI never actually said false)');
+  assert.equal(second.sameIncident, true);
+  assert.equal(second.materialChange, false);
+  assert.equal(second.lineAttempted, false, 'THE FIX: suppressed even though 21 minutes had passed — incidentSuppression.js\'s 10-minute window alone could never have caught this');
+  assert.equal(second.lineSent, false);
+  assert.equal(second.telegramAttempted, false);
+  assert.equal(second.telegramSent, false);
+});
+
+test('V2.7.0 (b): sameIncident:true/materialChange:true 21 minutes later -> still notifies normally (regression lock — the gate must never suppress a genuine AI-judged material change)', async () => {
+  const ai = {
+    calls: [],
+    async run(model, input) {
+      this.calls.push(input);
+      const parsed = JSON.parse(input.messages[1].content);
+      const hasContext = Array.isArray(parsed.recentIncidents) && parsed.recentIncidents.length > 0;
+      return {
+        response: JSON.stringify(
+          hasContext
+            ? { notify: true, impact: 'HIGH', reason: '事故仍持續，值得再次提醒', confidence: 0.9, sameIncident: true, materialChange: true }
+            : { notify: true, impact: 'HIGH', reason: '第一次發現', confidence: 0.9 }
+        ),
+      };
+    },
+  };
+  const env = await notifyEnabledEnv({ AI: ai });
+  const first = await processQueuedPbsEvent(env, await buildQueueMessage({ source: 'freeway', event: freewayAccidentEvent(), eventId: 'FRW-V270B-1', fingerprint: 'fp-v270b-1' }), NOW);
+  assert.equal(first.lineSent, true);
+
+  const later = new Date(NOW.getTime() + 21 * 60_000);
+  const second = await processQueuedPbsEvent(
+    env,
+    await buildQueueMessage({ source: 'pbs', event: pbsRawEvent(), eventId: 'PBS-V270B-2', fingerprint: 'fp-v270b-2', now: later }),
+    later
+  );
+  assert.equal(second.outcome, 'AI_NOTIFY_TRUE');
+  assert.equal(second.materialChange, true);
+  assert.equal(second.lineAttempted, true, 'materialChange:true must go through, exactly like before this round');
+  assert.equal(second.lineSent, true);
+});
+
+test('V2.7.0 (c): a genuinely first-ever event (memoryCandidateCount=0, sameIncident/materialChange both undefined) is never touched by the new gate — direct unit-level confirmation, not just an integration-level absence of side effects', async () => {
+  const ai = { calls: [], async run(model, input) { this.calls.push(input); return { response: JSON.stringify({ notify: true, impact: 'HIGH', reason: '第一次發現', confidence: 0.9 }) }; } };
+  const env = await notifyEnabledEnv({ AI: ai });
+  const result = await processQueuedPbsEvent(env, await buildQueueMessage({ source: 'freeway', event: freewayAccidentEvent() }), NOW);
+  assert.equal(result.outcome, 'AI_NOTIFY_TRUE');
+  assert.equal(result.memoryCandidateCount, 0);
+  // The AI response itself never included sameIncident/materialChange at
+  // all (no memory context -> aiDecisionEngine.js never asked for them) —
+  // confirms these are genuinely `undefined`, not silently defaulted to
+  // `false`, on the very object the new gate's `=== true`/`=== false`
+  // checks read.
+  assert.equal(result.sameIncident, undefined);
+  assert.equal(result.materialChange, undefined);
+  assert.equal(result.lineAttempted, true, 'the new gate (undefined === true is false) must never fire for a first-ever event');
+  assert.equal(result.lineSent, true);
+});

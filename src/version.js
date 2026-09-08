@@ -2803,7 +2803,134 @@
 // other file) needed modification. Full regression 2062/2029/33; git
 // stash -u baseline 2058/2025/33; failure-name-set comparison confirms
 // NEW_FAILURES=0.
-export const APP_VERSION = 'V2.6.1';
+// V2.7.0 (2026-09-08, 路況-061, following 路況-060's own plan) — the AI's
+// own sameIncident/materialChange verdict now actually gates whether an
+// event is pushed, closing a genuine Production bug: a real incident
+// (國3北向86.3K, 19:10 TDX then 19:31 PBS, 21 minutes apart) had the AI
+// correctly judge sameIncident:true/materialChange:false — "same
+// incident, nothing new, don't bother the driver again" — yet the gate
+// only ever checked decision.notify, which the AI ALSO happened to leave
+// true, so the system pushed anyway. This is NOT a new rule invented this
+// round: test/tdxUnifiedAiPipeline.test.js's own CASE 4/5/6 mocks
+// (pre-existing, unmodified) already assumed a real AI would return
+// notify:false for exactly this combination — this round closes the gap
+// between that long-standing assumption and what the gate actually
+// enforced. MINOR — this directly changes which AI-approved events get
+// pushed (not a pure display/observability change), the first time this
+// round's own broader CCTV/Telegram/Observatory series has touched the
+// AI-approved push decision itself.
+//
+// WHAT CHANGED, PER FILE:
+//   - pbs/debugPush.js#runAiDecisionPath(): new early-return block,
+//     structurally symmetric to (and placed immediately after) the
+//     existing `if (!decision.notify) {...}` block, before
+//     suppressLineNotify is even computed and before
+//     runAiApprovedPbsBroadcast() (and therefore incidentSuppression.js's
+//     own 10-minute collision-window check) ever runs:
+//       `decision.notify && decision.sameIncident === true &&
+//        decision.materialChange === false`
+//     STRICT `===` (not bare truthy/falsy) — a first-ever sighting
+//     (memoryCandidateCount===0) never has expectMemoryFields set at
+//     AI-call time (aiDecisionEngine.js), so sameIncident/materialChange
+//     are `undefined`, not `false`; `undefined === true` is always false,
+//     so this can NEVER fire for a first-ever notification, by
+//     construction — no separate memoryCandidateCount guard needed (see
+//     the new V2.7.0 (c) unit test, which asserts this directly on the
+//     AI's own returned decision object, not just an absence of side
+//     effects). When it fires: persistSighting(false) still runs
+//     (incident memory's own lastSeenAt/latestSource/latestRawSummary
+//     still advance; lastNotifiedAt does not), runAiApprovedPbsBroadcast()
+//     is NEVER called (zero CCTV prep, zero LINE/Telegram calls), and the
+//     returned object is BYTE-FOR-BYTE the same shape as the existing
+//     "AI_NOTIFY_TRUE but 0 real targets reached" case (lineAttempted/
+//     lineSent/telegramAttempted/telegramSent all explicit `false`, never
+//     left `undefined`) — outcome stays AI_NOTIFY_TRUE (the AI genuinely
+//     said notify:true; AI_NOTIFY_FALSE would misrepresent what the AI
+//     actually returned).
+//     ALSO (路況-059's own discovery, 路況-060 section 三's plan): a NEW
+//     `memoryContextFingerprint` field, computed once right after
+//     `memoryCandidates` (via incidentMemory.js's own already-exported
+//     buildMemoryContextFingerprint(), the EXACT same input
+//     aiDecisionEngine.js independently uses for its own cache-key
+//     fingerprint) and threaded onto every AI_NOTIFY_TRUE/AI_NOTIFY_FALSE
+//     return object this function produces (including the outer
+//     catch-block crash-fallback, for consistency with the rest of this
+//     function's own fields on that path).
+//   - pbs/aiObservatoryIndex.js: buildAiObservatoryRecord() gains
+//     `memoryContextFingerprint` (default null, inserted immediately
+//     after memoryCandidateCount) — an old record (or any caller that
+//     never passes it, e.g. memoryCandidateCount===0) degrades to null,
+//     same convention every other optional field here already uses.
+//   - pbs/aiObservatoryView.js#loadAiDecisionDetail(): FIXED — this used
+//     to call computeAiDecisionCacheKeyHash({eventId, fingerprint}) only
+//     (2 args), while aiDecisionEngine.js writes the cache under a 3-part
+//     hash (…:memoryContextFingerprint) whenever the event had ANY memory
+//     candidates at all. Every such record was therefore a GUARANTEED
+//     cache miss — not unique to the real incident above, systemic for
+//     every event with memoryCandidateCount>0 since V2.4.0 — silently
+//     rendering UNKNOWN/NOT RECORDED for reason/impact/confidence even
+//     though the real decision was persisted right there under a
+//     different key. Now reads `record.memoryContextFingerprint` (the
+//     value debugPush.js already persisted at decision time) and passes
+//     it straight through — never re-derived from live incidentMemory.js
+//     state at view time, which would not reproduce the value actually
+//     used at decision time (memory state keeps moving). A record with no
+//     stored fingerprint (memoryCandidateCount===0, or a pre-V2.7.0
+//     record read back within its still-live 48h TTL) degrades to
+//     exactly today's 2-part-hash behavior — zero change for either case.
+//
+// EXPLICITLY UNCHANGED THIS ROUND: AI Prompt/model, incidentSuppression.js
+// (its 10-minute collision window — zero lines touched; it remains fully
+// intact as a residual defense for any case this new gate does not catch,
+// though in practice it will rarely be the thing that actually fires for
+// a same-incident/no-change duplicate anymore, since this gate now
+// front-runs it for exactly that condition — a genuinely LATER duplicate,
+// like the real 21-minute-apart incident above, was already outside the
+// 10-minute window's own reach to begin with, per 路況-058's own
+// investigation), suppressLineNotify (Phase B/C TDX production-readiness
+// switch), CCTV production/eligibility logic, LINE/Telegram send logic
+// itself (line/pushMessage.js, telegram/pushMessage.js — zero lines
+// touched), aiObservatoryIndex.js#deriveFinalDecisionReason()'s own
+// `sameIncident===true && materialChange===false` branch (already
+// shipped, already correctly reused as-is — confirmed by re-running its
+// own original regression test, test/v2412ObservatoryNoSendReasonHighVisibilityUI.test.js
+// CASE 7, unmodified, which now reaches the NEW suppression path instead
+// of the old collision-window path and still passes byte-for-byte
+// unchanged), already-sealed V2.6.1 or earlier records.
+//
+// TESTS: test/tdxPhaseCProductionNotify.test.js — 3 new V2.7.0 (a)/(b)/(c)
+// tests: (a) sameIncident:true/materialChange:false 21 minutes later
+// (OUTSIDE the 10-minute collision window) still suppressed — the actual
+// new capability this round adds, not merely redundant with
+// incidentSuppression.js; (b) materialChange:true 21 minutes later still
+// notifies normally (regression lock); (c) a first-ever event
+// (memoryCandidateCount=0) directly confirmed unaffected, asserting
+// sameIncident/materialChange are genuinely `undefined` on the AI's own
+// returned decision object, not just an absence of observable side
+// effects. test/v2412ObservatoryNoSendReasonHighVisibilityUI.test.js — 1
+// new test: the 21-minute suppression path renders the SAME pre-existing
+// "重複事件：...未重複發送" text as CASE 7's own 10-minute scenario, zero
+// aiObservatoryIndex.js/aiObservatoryView.js display-code changes needed.
+// test/aiObservatoryView.test.js — 2 new tests: a real end-to-end
+// memoryContextFingerprint join (two sequential PBS pushes for the same
+// location; the second call's own real AI reason/confidence now actually
+// renders, proving the join fix works, not just that it doesn't throw)
+// and a backward-compat regression lock (a record built without
+// memoryContextFingerprint renders without throwing, degrading to the
+// existing UNKNOWN/NOT RECORDED join-miss display) + the pre-existing
+// APP_VERSION lock test bumped to 'V2.7.0'. COMPATIBILITY VERIFICATION
+// (order's own explicit requirement): re-ran
+// test/tdxPhaseCProductionNotify.test.js (all pre-existing tests using
+// alwaysNotifyTrueAi()), test/tdxUnifiedAiPipeline.test.js (CASE 4/5/6/7),
+// and test/v2412ObservatoryNoSendReasonHighVisibilityUI.test.js (CASE 7)
+// BEFORE writing any new test — all passed unmodified, 0 changes needed
+// to any pre-existing test in any of those three files; CASE 7 in
+// particular was confirmed (via its own console.log output) to now reach
+// the new AI_NOTIFY_TRUE_SUPPRESSED_NO_CHANGE path instead of the old
+// incidentSuppression.js collision-window path, while asserting the
+// identical outcome. Full regression 2068/2035/33; git stash -u baseline
+// 2062/2029/33; failure-name-set comparison confirms NEW_FAILURES=0.
+export const APP_VERSION = 'V2.7.0';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

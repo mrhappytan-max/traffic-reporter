@@ -16,6 +16,7 @@
   ```
 - **容量規則延續**：本卷同樣受 81920-byte 單檔上限規範。未來若本卷也接近上限，依同一原則建立 `07_KNOWN_ISSUES_04.md` 依序延續，禁止提前刪除任一舊卷。
 - **同步治理註記（與 Volume 02 開頭敘述不同，以現況為準；不回頭改寫 Volume 02 既有文字）**：Google Drive 鏡像已於路況-007 決議退休（`.github/workflows/sync-engineering-memory.yml` 已停用 push 觸發），GitHub 上的 `engineering-memory/` 為唯一正本。本卷**不需**加入 `scripts/drive-sync-manifest.json`，不涉及任何 Drive 同步。
+- **本卷已封存（2026-09-08 起，路況-061）**：本輪施工前量測為 77,022/81,920 bytes，本輪自身修正紀錄（含真實觸發事件、根因、架構性後果、查修頁join漏洞修正範圍、測試相容性驗證）預估將使本卷超出 81,920-byte 單檔上限，依既有慣例（Volume 01 於 81,898/81,920、Volume 02 於 79,617/81,920 時建立下一卷承接）立即建立 `07_KNOWN_ISSUES_04.md`（VOLUME 04，CURRENT）承接，本次施工的完整修正紀錄寫入該卷。新記錄請寫入 `07_KNOWN_ISSUES_04.md`。
 
 ## 處置紀錄｜traffic-reporter-v1865 worktree 已清理（2026-09-07）
 

@@ -239,6 +239,17 @@ export function buildAiObservatoryRecord({
   // 'pbs', every new field defaults to null/false).
   source = 'pbs',
   memoryCandidateCount = null,
+  // V2.7.0 (路況-061, following 路況-060's own plan) — the EXACT fingerprint
+  // debugPush.js already computed (from the SAME memoryCandidates handed
+  // to the AI) and used at DECISION time as part of the AI decision
+  // cache's own key — persisted here so aiObservatoryView.js can look up
+  // that SAME cache entry later without re-deriving anything from live
+  // (and by-then-moved-on) incidentMemory.js state. null for a record with
+  // no memory candidates (memoryCandidateCount===0) or a pre-V2.7.0 record
+  // read back within its still-live 48h TTL — both degrade to exactly
+  // today's join-miss/UNKNOWN display, same convention every other
+  // optional field here already uses.
+  memoryContextFingerprint = null,
   sameIncident = null,
   materialChange = null,
   primarySource = null,
@@ -318,6 +329,7 @@ export function buildAiObservatoryRecord({
     imageStrategy,
     r2ReadbackElapsedMs,
     memoryCandidateCount,
+    memoryContextFingerprint,
     sameIncident,
     materialChange,
     primarySource,
