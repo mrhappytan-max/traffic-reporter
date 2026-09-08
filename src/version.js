@@ -2734,7 +2734,76 @@
 // this round's own report for the exact per-file breakdown); git stash -u
 // baseline 2045/2012/33; failure-name-set comparison confirms
 // NEW_FAILURES=0.
-export const APP_VERSION = 'V2.6.0';
+// V2.6.1 (2026-09-08, 路況-056, following 路況-055's own disclosed gap) —
+// aiObservatoryIndex.js#deriveFinalDecisionReason() (查修頁收合卡片
+// SENT/NOT_SENT摘要判斷) now checks `lineSent || telegramSent`, not just
+// `lineSent` — a record where ONLY Telegram succeeded (LINE failed or was
+// never ready) now correctly reads SENT on the collapsed card, matching
+// what the expanded detail section already showed correctly since V2.6.0.
+// PATCH — pure display-logic fix, same precedent as V2.0.1/V2.5.1: no
+// send/decision logic touched, only which of two ALREADY-COMPUTED
+// booleans (lineSent/telegramSent, both correct since V2.6.0) this one
+// summary-line function reads.
+//
+// RELATIONSHIP TO V2.5.0 (Telegram) AND V2.6.0 (independent delivery
+// paths) — 路況-055 itself already found and disclosed this exact gap in
+// its own report (section 十二/section 三 of its own engineering-memory
+// record): the collapsed card's SENT/NOT_SENT line only ever checked
+// `record.lineSent`. 路況-055's own order explicitly did NOT authorize
+// touching deriveFinalDecisionReason() (its own item 二 forbade widening
+// that round's scope beyond the lineSent/telegramSent field computation
+// itself), so it was left as a disclosed, unresolved gap for a follow-up
+// order. This round IS that follow-up — not a correction of a V2.5.0 or
+// V2.6.0 mistake, but the deliberately-deferred next step both of those
+// rounds' own reports already named.
+//
+// WHAT CHANGED: exactly one function, aiObservatoryIndex.js#
+// deriveFinalDecisionReason(). The single `if (record.lineSent)` branch
+// is now three branches — lineSent&&telegramSent, lineSent-only,
+// telegramSent-only — each returning a DISTINCT reason string so the
+// summary line never blurs which channel(s) actually delivered:
+//   - LINE only: '重大事故' — byte-for-byte UNCHANGED (order's own
+//     explicit "僅LINE成功：維持既有文字風格" requirement; a regression
+//     test locks this).
+//   - Telegram only: '重大事故（經 Telegram 發送）' — the exact case
+//     路況-055 disclosed as reading NOT_SENT before this round, now
+//     correctly SENT with a channel-specific reason.
+//   - Both: '重大事故（LINE、Telegram 皆已發送）'.
+// Every other branch in the function (GEO/road-policy exclusions, AI
+// failures, PROCESSING_FAILED, AI_NOT_INVOKED_LEGACY_PATH, the
+// AI_NOTIFY_TRUE sameIncident/materialChange repeat-suppression case,
+// the final UNKNOWN/NOT RECORDED fallback) is UNTOUCHED — same condition,
+// same text, same order — order's own explicit "不得修改既有NOT_SENT各
+// 分支的判斷條件或文字" requirement. Re-ran
+// test/v246TracePageTdxAndDecisionReasonSummary.test.js (this function's
+// own existing lock suite) BEFORE making any change to confirm which
+// assertions could be affected: only one test asserts on the SENT branch
+// at all (`lineSent=true -> SENT regardless of outcome value`), and it
+// only ever asserted `.status`, never the `.reason` string — it still
+// passes unmodified. Every other existing assertion in that file targets
+// a NOT_SENT/PROCESSING_FAILED/PENDING branch, none of which this round
+// touches; confirmed by running the full pre-existing 20-test suite
+// unchanged before writing a single new test, and again after — 20/20
+// pass both times, 0 modifications needed to any pre-existing test in
+// that file.
+//
+// EXPLICITLY UNCHANGED THIS ROUND: AI decision logic, CCTV production/
+// eligibility logic, LINE/Telegram send logic itself
+// (aiApprovedPbsBroadcast.js, line/pushMessage.js, telegram/pushMessage.js
+// — zero lines touched), the lineSent/telegramSent FIELD COMPUTATION
+// itself (debugPush.js, V2.6.0, already correct — this round only changes
+// which of those two already-correct booleans one summary function
+// reads), already-sealed V2.6.0 or earlier records.
+//
+// TESTS: test/v246TracePageTdxAndDecisionReasonSummary.test.js — 4 new
+// tests (telegram-only -> SENT with channel-specific text, both-channels
+// -> SENT with combined text, line-only text explicitly locked
+// byte-for-byte unchanged, both-false/undefined still falls through to
+// the untouched NOT_SENT branches). 0 existing tests in this file (or any
+// other file) needed modification. Full regression 2062/2029/33; git
+// stash -u baseline 2058/2025/33; failure-name-set comparison confirms
+// NEW_FAILURES=0.
+export const APP_VERSION = 'V2.6.1';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

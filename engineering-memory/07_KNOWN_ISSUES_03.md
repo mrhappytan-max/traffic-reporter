@@ -321,3 +321,20 @@
 **待現場觀察事項（明確記錄，不得寫成已確認）**：真實Production事件下，LINE與電報兩管道各自的`attempted`/`succeeded`計數、查修頁新增的Telegram小節與徽章、以及`lineSent`修正後的實際顯示效果——尚未取得。`deriveFinalDecisionReason()`未涵蓋`telegramSent`的已知落差，尚無現場案例驗證其實際影響範圍。
 
 **V2.6.0封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-08，路況-055）。封版依據：程式碼變更完成、全量迴歸2058項／2025通過／33失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.6.0`、commit已push main並驗證。發現問題一律開下一個版本，不回頭改已封版的`V2.6.0`。
+
+## 修正紀錄｜V2.6.1 修正查修頁收合卡片摘要判斷，同時涵蓋LINE與電報發送狀態（2026-09-08）
+
+**與路況-055的關係（核心記錄，須完整理解，不得描述為修正路況-055的錯誤）**：路況-055自己已在該輪報告十二節誠實揭露此落差——`deriveFinalDecisionReason()`僅檢查`record.lineSent`，未檢查`record.telegramSent`——並明確記錄「本輪訂單未要求觸碰...故本輪未修正，未來如需處理應另開工單」。本輪即為該延後工單，**不是**修正路況-055的錯誤，而是路況-055自己規劃好的下一步。
+
+**修正內容**：`aiObservatoryIndex.js#deriveFinalDecisionReason()`的SENT判斷由僅檢查`record.lineSent`，改為`lineSent || telegramSent`，並拆為三個獨立分支給出不同文字，避免收合卡片摘要行混淆兩管道：
+- 僅LINE成功：`'重大事故'`（逐字不動，依訂單明文「維持既有文字風格」要求）
+- 僅電報成功：`'重大事故（經 Telegram 發送）'`（此即路況-055揭露的原始落差情境，修正前顯示NOT_SENT，現正確顯示SENT）
+- 兩者皆成功：`'重大事故（LINE、Telegram 皆已發送）'`
+
+**既有NOT_SENT各分支確認未受影響**：已確認。函式其餘分支（GEO/道路政策排除、AI處理失敗、`PROCESSING_FAILED`、`AI_NOT_INVOKED_LEGACY_PATH`、`AI_NOTIFY_TRUE`同事件重複抑制、預設UNKNOWN）判斷條件與文字逐字未動。施工前後皆完整執行`test/v246TracePageTdxAndDecisionReasonSummary.test.js`既有20則測試，兩次皆20/20通過，其中唯一涉及SENT分支的既有測試（`lineSent=true -> SENT regardless of outcome value`）本就只斷言`.status`未斷言`.reason`文字，故不需修改即通過。
+
+**測試**：`test/v246TracePageTdxAndDecisionReasonSummary.test.js`新增4則——電報單獨成功（驗證SENT且文字明確標示電報，不同於LINE專屬文字）、兩者皆成功（驗證合併文字）、LINE單獨成功文字逐字鎖定不變（regression lock）、`telegramSent`缺省或為false時不影響既有NOT_SENT分支。既有測試0則需修改。全量迴歸2062項（2058+4新增），2029通過／33失敗；`git stash -u`基準（2058項，2025通過／33失敗），測試名稱集合比對，`NEW_FAILURES=0`。
+
+**APP_VERSION**：`V2.6.0`→`V2.6.1`（PATCH，純顯示邏輯修正，比照V2.0.1/V2.5.1先例，未觸碰任何發送/決策邏輯本身，僅改變`deriveFinalDecisionReason()`讀取哪些既有布林欄位）。
+
+**V2.6.1封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-08，路況-056）。封版依據：程式碼變更完成、全量迴歸2062項／2029通過／33失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.6.1`、commit已push main並驗證。發現問題一律開下一個版本，不回頭改已封版的`V2.6.1`。

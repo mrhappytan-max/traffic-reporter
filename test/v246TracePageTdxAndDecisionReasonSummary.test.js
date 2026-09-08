@@ -114,6 +114,45 @@ test('deriveFinalDecisionReason: lineSent=true -> SENT regardless of outcome val
   assert.equal(r.status, FINAL_DECISION_STATUS.SENT);
 });
 
+// =======================================================================
+// V2.6.1 (路況-056, following 路況-055's own disclosed gap) — SENT must
+// now reflect LINE OR Telegram, with distinct reason text per combination
+// so the collapsed card's summary line never blurs the two channels
+// together. The pre-existing LINE-only case above (reason left
+// unasserted, only status checked) is joined by the three new
+// combinations below.
+// =======================================================================
+
+test('deriveFinalDecisionReason: telegramSent=true, lineSent=false -> SENT (the exact gap 路況-055 disclosed and left unresolved), reason explicitly names Telegram', () => {
+  const r = deriveFinalDecisionReason({ outcome: AI_OUTCOME.AI_NOTIFY_TRUE, lineSent: false, telegramSent: true });
+  assert.equal(r.status, FINAL_DECISION_STATUS.SENT, 'a Telegram-only success must no longer read as NOT_SENT');
+  assert.equal(r.reason, '重大事故（經 Telegram 發送）');
+  assert.notEqual(r.reason, '重大事故', 'must be distinguishable from the LINE-only reason text — never blur the two channels together');
+});
+
+test('deriveFinalDecisionReason: both lineSent and telegramSent true -> SENT, reason reflects both channels', () => {
+  const r = deriveFinalDecisionReason({ outcome: AI_OUTCOME.AI_NOTIFY_TRUE, lineSent: true, telegramSent: true });
+  assert.equal(r.status, FINAL_DECISION_STATUS.SENT);
+  assert.equal(r.reason, '重大事故（LINE、Telegram 皆已發送）');
+});
+
+test('deriveFinalDecisionReason: lineSent=true, telegramSent=false -> SENT, reason text is byte-for-byte the pre-existing LINE-only string (order\'s own explicit "維持既有文字風格" requirement)', () => {
+  const r = deriveFinalDecisionReason({ outcome: AI_OUTCOME.AI_NOTIFY_TRUE, lineSent: true, telegramSent: false });
+  assert.equal(r.status, FINAL_DECISION_STATUS.SENT);
+  assert.equal(r.reason, '重大事故', 'unchanged from before this round — LINE-only behavior must not regress');
+});
+
+test('deriveFinalDecisionReason: both lineSent and telegramSent false/undefined -> falls through to the existing NOT_SENT branches, completely unaffected by this round', () => {
+  // telegramSent omitted entirely (pre-V2.6.0 record shape) must behave
+  // identically to telegramSent explicitly false — both falsy.
+  const withoutTelegramField = deriveFinalDecisionReason({ outcome: AI_OUTCOME.GEO_EXCLUDED_OUTSIDE_HSINCHU, lineSent: false });
+  assert.equal(withoutTelegramField.status, FINAL_DECISION_STATUS.NOT_SENT);
+  assert.equal(withoutTelegramField.reason, '非新竹縣市');
+  const withTelegramFalse = deriveFinalDecisionReason({ outcome: AI_OUTCOME.GEO_EXCLUDED_OUTSIDE_HSINCHU, lineSent: false, telegramSent: false });
+  assert.equal(withTelegramFalse.status, FINAL_DECISION_STATUS.NOT_SENT);
+  assert.equal(withTelegramFalse.reason, '非新竹縣市');
+});
+
 test('deriveFinalDecisionReason: GEO_EXCLUDED_OUTSIDE_HSINCHU -> NOT_SENT / 非新竹縣市', () => {
   const r = deriveFinalDecisionReason({ outcome: AI_OUTCOME.GEO_EXCLUDED_OUTSIDE_HSINCHU });
   assert.equal(r.status, FINAL_DECISION_STATUS.NOT_SENT);

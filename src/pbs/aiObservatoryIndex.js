@@ -351,8 +351,27 @@ export function deriveFinalDecisionReason(record) {
   if (!record || typeof record !== 'object') {
     return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: 'UNKNOWN / NOT RECORDED' };
   }
+  // V2.6.1 (路況-056, following 路況-055's own disclosed gap) — SENT now
+  // means "delivered to LINE OR Telegram", not "delivered to LINE" — a
+  // record where ONLY telegramSent is true (LINE failed or was never
+  // ready) must show as SENT here too, matching what the expanded detail
+  // section already correctly shows per-channel since V2.6.0. Never
+  // guesses WHICH channel — reads record.lineSent/telegramSent directly,
+  // same "only already-persisted data" discipline this whole function
+  // already follows. Three distinct reason strings so the collapsed
+  // card's summary line never blurs LINE and Telegram together: the
+  // pre-existing LINE-only text ('重大事故') is kept byte-for-byte
+  // unchanged (order's own explicit requirement — 僅LINE成功維持既有文字
+  // 風格), Telegram-only and both-channels each get their own,
+  // unambiguous suffix.
+  if (record.lineSent && record.telegramSent) {
+    return { status: FINAL_DECISION_STATUS.SENT, reason: '重大事故（LINE、Telegram 皆已發送）' };
+  }
   if (record.lineSent) {
     return { status: FINAL_DECISION_STATUS.SENT, reason: '重大事故' };
+  }
+  if (record.telegramSent) {
+    return { status: FINAL_DECISION_STATUS.SENT, reason: '重大事故（經 Telegram 發送）' };
   }
   switch (record.outcome) {
     case AI_OUTCOME.GEO_EXCLUDED_OUTSIDE_HSINCHU:
