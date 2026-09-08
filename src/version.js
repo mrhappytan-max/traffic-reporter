@@ -2584,7 +2584,157 @@
 // because no test in this file has ever been able to produce one. Full
 // regression 2045/2012/33; git stash -u baseline 2033/2000/33; failure-
 // name-set comparison confirms NEW_FAILURES=0.
-export const APP_VERSION = 'V2.5.1';
+// V2.6.0 (2026-09-08, 路況-055, following 路況-054's own plan) — LINE and
+// Telegram become two FULLY INDEPENDENT delivery paths, closing the
+// readiness-level coupling V2.5.0's own sealed report had already
+// disclosed (and deliberately accepted, in-scope for that round). MINOR —
+// this changes runAiApprovedPbsBroadcast()'s own execution structure,
+// its `result` object's public shape (new per-channel fields), AND fixes
+// a genuine, pre-existing Observatory display bug (lineSent), not a pure
+// observability addition (that would be the V2.0.1/V2.5.1 PATCH
+// precedent) — see 路況-054's own report for the version-level reasoning.
+//
+// WHAT CHANGED, PER FILE:
+//   - traffic/notified.js: NOTIFIED_KEY is now exported and accepted as
+//     an optional parameter by readNotifiedState/persistNotifiedState
+//     (default unchanged: 'line:notified-state'). Every existing caller
+//     that never passes a key (broadcastPipeline.js, the legacy Cron
+//     path) is completely unaffected. No other logic in this module
+//     changed.
+//   - traffic/aiApprovedPbsBroadcast.js: split into two fully independent
+//     delivery paths — deliverToLineTargets() and deliverToTelegram(),
+//     each with its OWN readiness check, OWN notified-state KV record
+//     (LINE: 'line:notified-state', unchanged; Telegram: NEW
+//     'telegram:notified-state', TELEGRAM_NOTIFIED_KEY), OWN target
+//     resolution, OWN push, OWN error recording. Run CONCURRENTLY via
+//     Promise.all — chosen over sequential because the two channels share
+//     no mutable state once content resolution is memoized (see
+//     makeBroadcastContentResolver), and concurrent execution shortens
+//     total latency with no correctness cost. Content preparation
+//     (`text`/CCTV `messages`/`completedProduct`) stays SHARED, computed
+//     AT MOST ONCE per event regardless of which (or both) channels
+//     trigger it — 路況-054 section 三's own conclusion, reaffirmed by
+//     this round's own order ("不得拆分內容準備"). Incident suppression,
+//     broadcast hours, and service area all stay GLOBAL gates ahead of
+//     both channels, unchanged. `suppressLineNotify` (V2.4.0 Phase B)
+//     keeps its EXACT pre-existing scope (already suppressed Telegram
+//     too, from the moment V2.5.0 added it into the same shared early-
+//     return this flag already gated) — this round only restructures HOW
+//     that suppression applies (per-channel instead of one shared early-
+//     return), never its observable effect. `result` gains
+//     `telegramReady` and per-channel `line{attempted,succeeded}`/
+//     `telegram{attempted,succeeded}`; `pushAttempted`/`pushSucceeded`
+//     REMAIN the combined total across both channels — unchanged meaning,
+//     for every existing reader that already treats them as "any real
+//     push at all" (e.g. debugPush.js's own incident-memory
+//     persistSighting(pushSucceeded > 0) bookkeeping, deliberately not
+//     re-scoped this round).
+//   - pbs/debugPush.js: lineSent/lineAttempted FIXED to read
+//     broadcastResult.line{attempted,succeeded} exclusively — this was a
+//     genuine, pre-existing Observatory display bug (not introduced this
+//     round, but only DISCOVERED this round, per 路況-054's own
+//     investigation): pushAttempted/pushSucceeded were the COMBINED
+//     total across LINE and Telegram from the moment V2.5.0 added
+//     Telegram as a synthetic target sharing those two counters, so a
+//     Telegram-only failure could make an Observatory record say
+//     "LINE 發送失敗" even when every real LINE target succeeded (and
+//     symmetrically, a LINE-only failure could mask a real Telegram
+//     success). No V2.5.0/V2.5.1 test ever caught this because none of
+//     them asserted on debugPush.js's own lineSent computation — only on
+//     aiApprovedPbsBroadcast.js's own (deliberately combined)
+//     pushSucceeded. New symmetric telegramAttempted/telegramSent
+//     computed the same way, off broadcastResult.telegram, and passed
+//     through to buildAiObservatoryRecord().
+//   - pbs/aiObservatoryIndex.js: buildAiObservatoryRecord() gains
+//     telegramAttempted/telegramSent (default false, inserted immediately
+//     after lineSent, before sharedFeedPersisted) — an old record (or any
+//     caller that never passes them, e.g. the legacy AI_NOT_INVOKED_
+//     LEGACY_PATH/AI_CALL_FAILED call sites, which have no Telegram
+//     concept at all) degrades to false/false, never null/undefined.
+//   - pbs/aiObservatoryView.js: new symmetric "Telegram" detail-section
+//     (attempted/sent rows + 未執行原因/失敗原因, mirroring the existing
+//     LINE section's own structure exactly) immediately after the LINE
+//     section; new telegramSummaryBadge() alongside the existing
+//     lineSummaryBadge() on the collapsed card. lineNotAttemptedReason()
+//     is REUSED as-is for Telegram's own 未執行原因 (despite its name, its
+//     actual logic derives purely from `record.outcome` — a reason
+//     equally applicable to either channel never having been attempted at
+//     all; not LINE-specific in content, only in name).
+//
+// DISCLOSED, OUT-OF-SCOPE GAP (found this round, NOT fixed — deriving
+// "SENT vs NOT_SENT" for the collapsed card's own reason line,
+// deriveFinalDecisionReason() in aiObservatoryIndex.js, still checks
+// ONLY record.lineSent, never record.telegramSent): an event where
+// Telegram alone succeeded (LINE failed or was never ready) still shows
+// as NOT_SENT overall on the collapsed reason line, even though it WAS
+// delivered to Telegram. This is NOT a regression this round introduces
+// (record.lineSent already excluded a Telegram-only success from meaning
+// "sent" before this round too, since the old combined pushSucceeded
+// calc would also have landed on false in that exact scenario) and this
+// round's own order never asked deriveFinalDecisionReason() to be
+// touched — flagged here for the Meeting Room's awareness, not resolved.
+//
+// KV OPERATIONS RECOUNT (order item 八, this round's own required
+// exercise): per delivered event, notified-state reads go from 1 shared
+// get to up to 2 (LINE's own + Telegram's own, whenever Telegram is
+// configured — which it already is in Production per V2.5.0); writes go
+// from 1 shared put (whenever ANY target succeeded) to up to 2 separate
+// puts (one per channel that itself had a successful send — in the
+// common case where BOTH channels succeed for the same event, this is a
+// genuine +1 put versus before). HONEST CAVEAT: engineering-memory's own
+// 2026-09-07 "Cloudflare 付費方案額度" record (07_KNOWN_ISSUES_02.md)
+// already established that the historical "1,000 KV writes/day" FREE-
+// TIER cap this project's older cost formulas (V1.9.7/V2.2.0/V2.3.0-era)
+// were built against NO LONGER APPLIES — the account is on the $5/mo
+// paid plan, KV reads/writes/deletes are now pay-as-you-go with NO daily
+// cap. No per-KV-operation overage RATE is recorded anywhere in
+// engineering-memory (unlike requests/CPU, which do have published
+// $/million rates) — this round could not find one and does not
+// fabricate one. What IS assessable: the ABSOLUTE operation-count
+// increase. Real observed volume (00_CURRENT_STATE.md's own 2026-09-07
+// Real-world Confirmation): 165 AI calls over ~65 hours ≈ 61/day — near
+// the LOW end of the 50/100/200-events/day range this project's older
+// planning formulas used. At that real-observed scale, this round's
+// change adds at most ~61 extra gets/day (Telegram's own read, on every
+// event reaching the delivery stage) and at most ~61 extra puts/day (on
+// the subset where both channels succeed for the same event); at the
+// historical 200/day planning ceiling, at most ~200 extra gets/day and
+// ~200 extra puts/day. Both are low-hundreds-per-day absolute increases,
+// smaller in magnitude than the request/CPU volumes this $5/mo plan
+// already prices in bulk (10M requests/mo included) — judged reasonable
+// on operation-count grounds; a precise dollar-cost judgment is not
+// possible without the missing per-operation rate, and is not claimed
+// here.
+//
+// EXPLICITLY UNCHANGED THIS ROUND: AI decision logic, CCTV production/
+// eligibility logic (resolveCctvEligibility() — zero lines of
+// dynamicCollage.js touched), content preparation (text/CCTV messages —
+// still shared, per 路況-054 section 三's own conclusion, reaffirmed by
+// this round's order), incident suppression's own real-incident dedup
+// logic, LINE_PUSH_POLICY, already-sealed V2.5.0 or V2.5.1 records.
+//
+// TESTS: test/aiApprovedPbsBroadcast.test.js — V2.5.0 (a)/(b)/(c)/(f)
+// extended with per-channel result.line/result.telegram assertions
+// (still pass unmodified on the combined pushSucceeded/pushAttempted
+// fields too — those kept their pre-existing meaning); V2.5.0 (e)
+// extended to verify TWO separate KV records now exist; 4 new V2.6.0
+// (a)-(d) regression locks proving readiness and notified-state KV
+// independence in both directions. test/tdxPhaseCProductionNotify.test.js
+// — 2 new V2.6.0 (e)/(f) end-to-end tests proving the actual
+// debugPush.js-level lineSent/telegramSent fix, through the real
+// processQueuedPbsEvent path (not just aiApprovedPbsBroadcast.js's own
+// result shape). test/aiObservatoryIndex.test.js — 3 new tests
+// (telegramAttempted/telegramSent independence both directions,
+// backward-compat degrade to false/false). test/aiObservatoryView.test.js
+// — 4 new tests (Telegram sent/failed/never-attempted rendering,
+// backward-compat regression lock) + the pre-existing APP_VERSION lock
+// test bumped to 'V2.6.0'. Full regression 2058/2025/33 (2045+13 new: 4
+// in aiApprovedPbsBroadcast.test.js, 2 in tdxPhaseCProductionNotify.test.js,
+// 3 in aiObservatoryIndex.test.js, 4 in aiObservatoryView.test.js — see
+// this round's own report for the exact per-file breakdown); git stash -u
+// baseline 2045/2012/33; failure-name-set comparison confirms
+// NEW_FAILURES=0.
+export const APP_VERSION = 'V2.6.0';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

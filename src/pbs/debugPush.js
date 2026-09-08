@@ -1335,15 +1335,40 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
     console.log(
       `[pbs-debug-push][ai-decision] event=AI_LINE_ATTEMPTED eventId=${eventId} lifecycle=${lifecycle} ` +
         `source=${source} suppressLineNotify=${suppressLineNotify} serviceAreaEligible=${broadcastResult.serviceAreaEligible} ` +
-        `lineReady=${broadcastResult.lineReady} suppressed=${broadcastResult.suppressed} ` +
+        `lineReady=${broadcastResult.lineReady} telegramReady=${broadcastResult.telegramReady} suppressed=${broadcastResult.suppressed} ` +
         `pendingTargets=${broadcastResult.pendingTargetCount} pushAttempted=${broadcastResult.pushAttempted} ` +
-        `pushSucceeded=${broadcastResult.pushSucceeded}`
+        `pushSucceeded=${broadcastResult.pushSucceeded} lineAttempted=${broadcastResult.line.attempted} ` +
+        `lineSucceeded=${broadcastResult.line.succeeded} telegramAttempted=${broadcastResult.telegram.attempted} ` +
+        `telegramSucceeded=${broadcastResult.telegram.succeeded}`
     );
-    const lineSent = broadcastResult.pushAttempted > 0 && broadcastResult.pushSucceeded === broadcastResult.pushAttempted;
+    // V2.6.0 (路況-055, following 路況-054's own plan) — FIXED: this used
+    // to be computed from broadcastResult.pushAttempted/pushSucceeded,
+    // which are the COMBINED total across LINE and Telegram — meaning a
+    // Telegram-only failure could make this record say "LINE 發送失敗" even
+    // when every real LINE target succeeded (and vice versa). Now reads
+    // broadcastResult.line{attempted,succeeded} exclusively — see that
+    // module's own V2.6.0 comment on why these per-channel fields exist.
+    // This was a genuine, pre-existing Observatory display bug introduced
+    // the moment V2.5.0 added Telegram as a synthetic target sharing the
+    // SAME pushAttempted/pushSucceeded counters — never caught by any
+    // V2.5.0/V2.5.1 test, since none of those asserted on debugPush.js's
+    // own lineSent computation, only on aiApprovedPbsBroadcast.js's own
+    // (deliberately combined) pushSucceeded. See 路況-054/055's own
+    // engineering-memory record for the full writeup.
+    const lineSent = broadcastResult.line.attempted > 0 && broadcastResult.line.succeeded === broadcastResult.line.attempted;
+    // V2.6.0 — the new, symmetric counterpart. Same formula, LINE's own
+    // per-channel fields swapped for Telegram's.
+    const telegramSent = broadcastResult.telegram.attempted > 0 && broadcastResult.telegram.succeeded === broadcastResult.telegram.attempted;
     console.log(
-      `[pbs-debug-push][ai-decision] event=${lineSent ? 'AI_LINE_SENT' : broadcastResult.pushAttempted > 0 ? 'AI_LINE_FAILED' : 'AI_LINE_NOT_ATTEMPTED'} ` +
+      `[pbs-debug-push][ai-decision] event=${lineSent ? 'AI_LINE_SENT' : broadcastResult.line.attempted > 0 ? 'AI_LINE_FAILED' : 'AI_LINE_NOT_ATTEMPTED'} ` +
         `eventId=${eventId} lifecycle=${lifecycle}`
     );
+    if (broadcastResult.telegram.attempted > 0 || broadcastResult.telegramErrors.length > 0) {
+      console.log(
+        `[pbs-debug-push][ai-decision] event=${telegramSent ? 'AI_TELEGRAM_SENT' : 'AI_TELEGRAM_FAILED'} ` +
+          `eventId=${eventId} lifecycle=${lifecycle}`
+      );
+    }
 
     // V2.4.0 — "notified" for memory bookkeeping means a REAL push
     // succeeded, not merely "AI said notify:true" — matches order section
@@ -1376,8 +1401,18 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
       cacheStatus,
       source,
       memoryCandidateCount: memoryCandidates.length,
-      lineAttempted: broadcastResult.pushAttempted > 0,
+      // V2.6.0 (路況-055) — LINE-only now, see this file's own V2.6.0
+      // comment above on the lineSent fix this pairs with.
+      lineAttempted: broadcastResult.line.attempted > 0,
       lineSent,
+      // V2.6.0 (路況-055, following 路況-054's own plan) — the symmetric
+      // Telegram counterpart to lineAttempted/lineSent immediately above,
+      // read the same way off broadcastResult.telegram. Always present
+      // (never undefined) — an event where Telegram was never configured
+      // or never had anything pending simply gets false/false, same
+      // convention as lineAttempted/lineSent's own existing defaults.
+      telegramAttempted: broadcastResult.telegram.attempted > 0,
+      telegramSent,
       sharedFeedPersisted: sharedFeedCommitted,
       imageUrlPresent: Boolean(firstProduct && firstProduct.imageUrl),
       // V2.5.1 (路況-053, following 路況-046's own plan) — the same

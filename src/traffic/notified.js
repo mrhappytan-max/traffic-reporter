@@ -31,7 +31,17 @@
 
 import { computeFingerprint } from './dedupe.js';
 
-const NOTIFIED_KEY = 'line:notified-state';
+// V2.6.0 (路況-055, following 路況-054's own plan) — this was a hardcoded
+// constant until this round. Exported (not just a module-private default)
+// so a caller that wants a SEPARATE, independently-persisted notified-
+// state record (e.g. aiApprovedPbsBroadcast.js's Telegram delivery path,
+// which now reads/writes its own key — see that module's own V2.6.0
+// comment) can pass its own key while every existing caller that never
+// passes one keeps getting exactly this same key, unchanged. The stored
+// SCHEMA and every exported function's LOGIC are byte-for-byte identical
+// to before this round — only the key is now a parameter, never
+// hardcoded inside the read/write functions themselves.
+export const NOTIFIED_KEY = 'line:notified-state';
 
 // V1.2C: how long a target's most recent congestion notification for a
 // given corridor "covers" it, regardless of the reported KM range
@@ -53,8 +63,11 @@ function safeErrorMessage(err) {
   return 'Unknown KV error';
 }
 
-/** Read-only. */
-export async function readNotifiedState(kv) {
+/** Read-only. `key` (V2.6.0, default NOTIFIED_KEY) lets a caller read a
+ * SEPARATE notified-state record under its own key — see this module's
+ * own V2.6.0 comment on NOTIFIED_KEY. Every existing caller that omits it
+ * reads exactly the same record as before this round. */
+export async function readNotifiedState(kv, key = NOTIFIED_KEY) {
   if (!kv) {
     return {
       kvAvailable: false,
@@ -66,7 +79,7 @@ export async function readNotifiedState(kv) {
   }
 
   try {
-    const raw = await kv.get(NOTIFIED_KEY);
+    const raw = await kv.get(key);
     let notifiedMap = {};
     let lastLinePushAt = null;
     let lastPartialPushFailureCount = 0;
@@ -169,11 +182,14 @@ export function removePrunedEvents(notifiedMap, prunedKeys) {
 /** The only write in this module. `lastPartialPushFailureCount` is a
  * snapshot of THIS run's partial-failure event count (0 if none this run)
  * — /debug/status reads it, it does not compute it live (dry-run never
- * pushes, so it has nothing live to compute). */
-export async function persistNotifiedState(kv, notifiedMap, lastLinePushAt, now = new Date(), lastPartialPushFailureCount = 0) {
+ * pushes, so it has nothing live to compute). `key` (V2.6.0, default
+ * NOTIFIED_KEY) — see readNotifiedState's own V2.6.0 comment; every
+ * existing caller that omits it writes to exactly the same key as
+ * before this round. */
+export async function persistNotifiedState(kv, notifiedMap, lastLinePushAt, now = new Date(), lastPartialPushFailureCount = 0, key = NOTIFIED_KEY) {
   try {
     await kv.put(
-      NOTIFIED_KEY,
+      key,
       JSON.stringify({ events: notifiedMap, lastLinePushAt, lastPartialPushFailureCount, updatedAt: now.toISOString() })
     ); // no TTL
     return { committed: true };

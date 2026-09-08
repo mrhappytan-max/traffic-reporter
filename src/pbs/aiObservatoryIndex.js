@@ -187,6 +187,8 @@ function safeErrorMessage(err) {
  * @param {'HIT'|'MISS'|null} [params.cacheStatus]
  * @param {boolean} [params.lineAttempted]
  * @param {boolean} [params.lineSent]
+ * @param {boolean} [params.telegramAttempted]
+ * @param {boolean} [params.telegramSent]
  * @param {boolean|null} [params.sharedFeedPersisted]
  * @param {boolean|null} [params.imageUrlPresent]
  * @param {Date} [params.now]
@@ -200,6 +202,15 @@ export function buildAiObservatoryRecord({
   cacheStatus = null,
   lineAttempted = false,
   lineSent = false,
+  // V2.6.0 (路況-055, following 路況-054's own plan) — the symmetric
+  // Telegram counterpart to lineAttempted/lineSent, same default-false
+  // convention. A pre-V2.6.0 record (or any caller that doesn't pass
+  // these — e.g. the legacy AI_NOT_INVOKED_LEGACY_PATH/AI_CALL_FAILED
+  // call sites, which have no Telegram concept at all) degrades to
+  // exactly false/false, never null/undefined — same boolean-always
+  // convention lineAttempted/lineSent themselves already use.
+  telegramAttempted = false,
+  telegramSent = false,
   sharedFeedPersisted = null,
   imageUrlPresent = null,
   // V2.5.1 (路況-053, following 路況-046's own plan) — the CCTV diagnostic
@@ -297,6 +308,8 @@ export function buildAiObservatoryRecord({
     cacheStatus,
     lineAttempted: Boolean(lineAttempted),
     lineSent: Boolean(lineSent),
+    telegramAttempted: Boolean(telegramAttempted),
+    telegramSent: Boolean(telegramSent),
     sharedFeedPersisted,
     imageUrlPresent,
     imageUrl,

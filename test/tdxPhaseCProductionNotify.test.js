@@ -645,3 +645,53 @@ test('INCIDENT_SUPPRESSION_COLLISION_WINDOW_MS is within the order\'s own sugges
   assert.ok(INCIDENT_SUPPRESSION_COLLISION_WINDOW_MS >= 5 * 60_000);
   assert.ok(INCIDENT_SUPPRESSION_COLLISION_WINDOW_MS <= 10 * 60_000);
 });
+
+// =======================================================================
+// V2.6.0 (路況-055, following 路況-054's own plan) — end-to-end proof, at
+// the Observatory-record level (debugPush.js#runAiDecisionPath, reached
+// here via processQueuedPbsEvent exactly like every CASE above), that the
+// FIX to lineSent/telegramSent's own computation (see debugPush.js's own
+// V2.6.0 comment) actually holds: neither field's boolean value is
+// polluted by the OTHER channel's outcome. This is a different layer than
+// aiApprovedPbsBroadcast.js's own V2.6.0 (a)-(d) regression locks (which
+// prove independence inside that function's own `result` shape) — these
+// two tests prove the FINAL Observatory record debugPush.js builds from
+// that `result` is correct too, closing the gap that let the original bug
+// (路況-054's own discovery: pre-V2.6.0, one channel's failure could flip
+// the OTHER channel's `lineSent` boolean) ship undetected through all of
+// V2.5.0's and V2.5.1's own test suites.
+// =======================================================================
+
+test('V2.6.0 (e): Telegram configured and FAILING does not flip lineSent to false when every real LINE target succeeded', async () => {
+  const ai = { calls: [], async run(model, input) { this.calls.push(input); return { response: JSON.stringify({ notify: true, impact: 'HIGH', reason: 'PBS事故', confidence: 0.9 }) }; } };
+  const env = await baseEnv({ AI: ai, TELEGRAM_BOT_TOKEN: 'tg-tok', TELEGRAM_CHAT_ID: '-1004328365784' });
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('api.line.me')) return new Response('{}', { status: 200 });
+    if (u.includes('api.telegram.org')) return new Response('error', { status: 500 }); // Telegram deliberately broken
+    throw new Error(`unexpected fetch: ${u}`);
+  };
+  const result = await processQueuedPbsEvent(env, await buildQueueMessage({ source: 'pbs', event: pbsRawEvent(), eventId: 'PBS-V260E-1', fingerprint: 'fp-v260e' }), NOW);
+  assert.equal(result.outcome, 'AI_NOTIFY_TRUE');
+  assert.equal(result.lineSent, true, 'THE BUG THIS ROUND FIXES: before V2.6.0 this would have been false, because pushAttempted/pushSucceeded were combined across both channels');
+  assert.equal(result.lineAttempted, true);
+  assert.equal(result.telegramAttempted, true);
+  assert.equal(result.telegramSent, false, 'Telegram genuinely did fail — telegramSent must say so, independently of lineSent');
+});
+
+test('V2.6.0 (f) symmetric: LINE configured and FAILING does not flip telegramSent to false when Telegram succeeded', async () => {
+  const ai = { calls: [], async run(model, input) { this.calls.push(input); return { response: JSON.stringify({ notify: true, impact: 'HIGH', reason: 'PBS事故', confidence: 0.9 }) }; } };
+  const env = await baseEnv({ AI: ai, TELEGRAM_BOT_TOKEN: 'tg-tok', TELEGRAM_CHAT_ID: '-1004328365784' });
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('api.line.me')) return new Response('error', { status: 500 }); // LINE deliberately broken
+    if (u.includes('api.telegram.org')) return new Response('{}', { status: 200 });
+    throw new Error(`unexpected fetch: ${u}`);
+  };
+  const result = await processQueuedPbsEvent(env, await buildQueueMessage({ source: 'pbs', event: pbsRawEvent(), eventId: 'PBS-V260F-1', fingerprint: 'fp-v260f' }), NOW);
+  assert.equal(result.outcome, 'AI_NOTIFY_TRUE');
+  assert.equal(result.telegramSent, true, 'Telegram genuinely did succeed — telegramSent must say so, independently of lineSent');
+  assert.equal(result.telegramAttempted, true);
+  assert.equal(result.lineAttempted, true);
+  assert.equal(result.lineSent, false, 'LINE genuinely did fail — lineSent must say so, unaffected by Telegram succeeding');
+});

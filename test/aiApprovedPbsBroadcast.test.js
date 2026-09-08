@@ -425,8 +425,14 @@ test('V2.5.0 (a): with Telegram configured, a real accident push sends to BOTH L
   const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: WITHIN_HOURS });
   assert.equal(pushCalls.length, 1, 'LINE still gets exactly 1 push');
   assert.equal(telegramCalls.length, 1, 'Telegram gets exactly 1 push, same event');
-  assert.equal(result.pushSucceeded, 2, 'both destinations count toward pushSucceeded (1 LINE target + 1 Telegram target)');
+  assert.equal(result.pushSucceeded, 2, 'both destinations count toward the COMBINED pushSucceeded — unchanged meaning, V2.6.0 keeps this field summed for existing readers (e.g. incident-memory bookkeeping)');
   assert.deepEqual(result.telegramErrors, []);
+  // V2.6.0 (路況-055) — the NEW per-channel fields debugPush.js now reads
+  // for lineSent/telegramSent, verified directly here.
+  assert.deepEqual(result.line, { attempted: 1, succeeded: 1 });
+  assert.deepEqual(result.telegram, { attempted: 1, succeeded: 1 });
+  assert.equal(result.lineReady, true);
+  assert.equal(result.telegramReady, true);
 });
 
 test('V2.5.0 (b) CRITICAL regression lock — Telegram failing (500) does NOT affect LINE\'s existing successful push', async () => {
@@ -438,10 +444,16 @@ test('V2.5.0 (b) CRITICAL regression lock — Telegram failing (500) does NOT af
   const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: WITHIN_HOURS });
   assert.equal(pushCalls.length, 1, 'LINE call still happened');
   assert.equal(telegramCalls.length, 1, 'Telegram was attempted');
-  assert.equal(result.pushSucceeded, 1, 'only the LINE target counts as succeeded');
+  assert.equal(result.pushSucceeded, 1, 'only the LINE target counts as succeeded (combined total)');
   assert.equal(result.lineErrors.length, 0, 'LINE has no errors of its own');
   assert.equal(result.telegramErrors.length, 1, 'the Telegram failure is recorded, separately from lineErrors');
   assert.match(result.telegramErrors[0], /telegram push failed/);
+  // V2.6.0 — per-channel fields make the fix this round exists for
+  // directly checkable: LINE's own count is untouched by Telegram's
+  // failure, which is exactly the bug 路況-054/055 found in debugPush.js's
+  // OLD lineSent computation (see that module's own V2.6.0 comment).
+  assert.deepEqual(result.line, { attempted: 1, succeeded: 1 }, 'LINE succeeded==attempted, i.e. what a correct lineSent computation must see');
+  assert.deepEqual(result.telegram, { attempted: 1, succeeded: 0 });
 });
 
 test('V2.5.0 (c) symmetric regression lock — LINE failing (500) does NOT affect Telegram\'s successful send', async () => {
@@ -453,9 +465,12 @@ test('V2.5.0 (c) symmetric regression lock — LINE failing (500) does NOT affec
   const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: WITHIN_HOURS });
   assert.equal(pushCalls.length, 1, 'LINE was attempted');
   assert.equal(telegramCalls.length, 1, 'Telegram call still happened');
-  assert.equal(result.pushSucceeded, 1, 'only the Telegram target counts as succeeded');
+  assert.equal(result.pushSucceeded, 1, 'only the Telegram target counts as succeeded (combined total)');
   assert.equal(result.telegramErrors.length, 0, 'Telegram has no errors of its own');
   assert.equal(result.lineErrors.length, 1, 'the LINE failure is recorded, unaffected by Telegram succeeding');
+  // V2.6.0 — symmetric per-channel check.
+  assert.deepEqual(result.line, { attempted: 1, succeeded: 0 });
+  assert.deepEqual(result.telegram, { attempted: 1, succeeded: 1 }, 'Telegram succeeded==attempted, i.e. what a correct telegramSent computation must see');
 });
 
 test('V2.5.0 (d): no CCTV image -> Telegram uses sendMessage, request body carries no photo field', async () => {
@@ -475,7 +490,7 @@ test('V2.5.0 (d): no CCTV image -> Telegram uses sendMessage, request body carri
   assert.ok(typeof telegramCalls[0].body.text === 'string' && telegramCalls[0].body.text.length > 0);
 });
 
-test('V2.5.0 (e) dedupe regression lock — the SAME event, unchanged content, called twice does NOT re-send to Telegram the second time (reuses notified-state exactly like LINE does)', async () => {
+test('V2.5.0 (e) dedupe regression lock — the SAME event, unchanged content, called twice does NOT re-send to either channel a second time; V2.6.0 (路況-055) update — proves this now works via TWO SEPARATE notified-state KV records, not one shared record', async () => {
   const kv = createMockKV();
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   originalFetch = globalThis.fetch;
@@ -485,9 +500,17 @@ test('V2.5.0 (e) dedupe regression lock — the SAME event, unchanged content, c
   await runAiApprovedPbsBroadcast(env, { event, now: WITHIN_HOURS });
   assert.equal(telegramCalls.length, 1);
   assert.equal(pushCalls.length, 1);
+  // V2.6.0 — two DISTINCT KV records now exist, one per channel, proving
+  // the persistence itself (not just the observable "don't resend"
+  // behavior) is genuinely split — see notified.js's own V2.6.0 comment
+  // on NOTIFIED_KEY becoming a parameter and aiApprovedPbsBroadcast.js's
+  // own TELEGRAM_NOTIFIED_KEY.
+  assert.ok(kv.store.has('line:notified-state'), 'LINE\'s own notified-state record exists');
+  assert.ok(kv.store.has('telegram:notified-state'), 'Telegram has its OWN, separate notified-state record');
+  assert.notEqual(kv.store.get('line:notified-state'), kv.store.get('telegram:notified-state'), 'the two records are not merely aliases of the same content by coincidence');
   await runAiApprovedPbsBroadcast(env, { event, now: new Date(WITHIN_HOURS.getTime() + 60_000) });
-  assert.equal(telegramCalls.length, 1, 'identical content to the already-notified Telegram target must not resend — same fingerprint dedupe LINE already relies on');
-  assert.equal(pushCalls.length, 1, 'LINE dedupe is unaffected, still 1');
+  assert.equal(telegramCalls.length, 1, 'identical content to the already-notified Telegram target must not resend — reads its OWN record');
+  assert.equal(pushCalls.length, 1, 'LINE dedupe is unaffected, still 1 — reads its OWN record');
 });
 
 test('V2.5.0 (f) config-off regression lock — WITHOUT TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID configured, no telegram-channel target is ever added and 0 calls reach api.telegram.org', async () => {
@@ -499,6 +522,108 @@ test('V2.5.0 (f) config-off regression lock — WITHOUT TELEGRAM_BOT_TOKEN/TELEG
   const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: WITHIN_HOURS });
   assert.equal(pushCalls.length, 1);
   assert.equal(telegramCalls.length, 0, 'Telegram must never be attempted when unconfigured');
-  assert.equal(result.pushSucceeded, 1, 'exactly the same as pre-V2.5.0 behavior — only the LINE target');
+  assert.equal(result.pushSucceeded, 1, 'exactly the same as pre-V2.5.0 behavior — only the LINE target (combined total)');
   assert.deepEqual(result.telegramErrors, []);
+  // V2.6.0 — per-channel fields: Telegram unconfigured means telegramReady
+  // stays false WITHOUT an error (a deliberate "feature off" state, never
+  // a failure) and its own KV key is never even touched.
+  assert.deepEqual(result.line, { attempted: 1, succeeded: 1 });
+  assert.deepEqual(result.telegram, { attempted: 0, succeeded: 0 });
+  assert.equal(result.telegramReady, false);
+  assert.equal(kv.store.has('telegram:notified-state'), false, 'unconfigured Telegram must never touch its own KV key at all');
+});
+
+// ============================================================================
+// V2.6.0 (路況-055, following 路況-054's own plan) — LINE and Telegram are
+// now two fully independent delivery paths: independent readiness gates
+// (deliverToLineTargets/deliverToTelegram, see that module's own V2.6.0
+// comment), independent notified-state persistence (line:notified-state
+// vs telegram:notified-state). The regression locks below are the ones
+// order #路況-055 item 六-3/六-4 explicitly required: proof in BOTH
+// directions that a readiness failure OR a notified-state KV failure on
+// one channel has ZERO effect on the other.
+// ============================================================================
+
+test('V2.6.0 (a) readiness independence — LINE_CHANNEL_ACCESS_TOKEN missing -> LINE not ready, but Telegram (fully configured) still sends normally', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineAndTelegramFetch();
+  const env = { TRAFFIC_KV: kv, ...TELEGRAM_ENV }; // no LINE_CHANNEL_ACCESS_TOKEN at all
+  const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: WITHIN_HOURS });
+  assert.equal(result.lineReady, false);
+  assert.equal(pushCalls.length, 0, 'LINE never attempted — no token');
+  assert.equal(telegramCalls.length, 1, 'Telegram is completely unaffected by LINE missing its token');
+  assert.equal(result.telegramReady, true);
+  assert.deepEqual(result.telegram, { attempted: 1, succeeded: 1 });
+  assert.match(result.lineErrors[0], /LINE_CHANNEL_ACCESS_TOKEN not configured/);
+  assert.deepEqual(result.telegramErrors, []);
+});
+
+test('V2.6.0 (b) readiness independence, symmetric — Telegram not configured (no TELEGRAM_BOT_TOKEN) -> Telegram not ready, but LINE (fully configured) still sends normally', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineAndTelegramFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv, TELEGRAM_CHAT_ID: '-1004328365784' }; // no TELEGRAM_BOT_TOKEN
+  const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: WITHIN_HOURS });
+  assert.equal(result.telegramReady, false);
+  assert.equal(telegramCalls.length, 0, 'Telegram never attempted — missing bot token');
+  assert.equal(pushCalls.length, 1, 'LINE is completely unaffected by Telegram missing its own token');
+  assert.equal(result.lineReady, true);
+  assert.deepEqual(result.line, { attempted: 1, succeeded: 1 });
+  assert.deepEqual(result.telegramErrors, [], 'an unconfigured Telegram degrades silently — never an error');
+});
+
+test('V2.6.0 (c) notified-state KV independence — LINE\'s own notified-state KV read fails -> LINE fails closed, 0 push, but Telegram (own, healthy KV key) still sends normally', async () => {
+  const store = new Map();
+  // A KV whose get() throws ONLY for LINE's own key ('line:notified-state')
+  // — subscriptions and Telegram's own key both work normally. Proves the
+  // isolation is genuinely per-KEY, not merely per-env-var.
+  const kv = {
+    async get(key) {
+      if (key === 'line:notified-state') throw new Error('line notified-state KV outage');
+      return store.has(key) ? store.get(key) : null;
+    },
+    async put(key, value) {
+      store.set(key, value);
+    },
+    store,
+  };
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineAndTelegramFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv, ...TELEGRAM_ENV };
+  const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: WITHIN_HOURS });
+  assert.equal(result.lineReady, false, 'LINE fails closed — its own notified-state KV read threw');
+  assert.equal(pushCalls.length, 0, 'LINE never pushes when fail-closed, even though subscriptions/token were fine');
+  assert.match(result.lineErrors.find((e) => e.includes('notified state unavailable')) || '', /notified state unavailable/);
+  assert.equal(result.telegramReady, true, 'Telegram reads its OWN key (telegram:notified-state), untouched by the outage');
+  assert.equal(telegramCalls.length, 1, 'Telegram sends normally, completely unaffected by LINE\'s KV outage');
+  assert.deepEqual(result.telegram, { attempted: 1, succeeded: 1 });
+});
+
+test('V2.6.0 (d) notified-state KV independence, symmetric — Telegram\'s own notified-state KV read fails -> Telegram fails closed, 0 send, but LINE (own, healthy KV key) still sends normally', async () => {
+  const store = new Map();
+  const kv = {
+    async get(key) {
+      if (key === 'telegram:notified-state') throw new Error('telegram notified-state KV outage');
+      return store.has(key) ? store.get(key) : null;
+    },
+    async put(key, value) {
+      store.set(key, value);
+    },
+    store,
+  };
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineAndTelegramFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv, ...TELEGRAM_ENV };
+  const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: WITHIN_HOURS });
+  assert.equal(result.telegramReady, false, 'Telegram fails closed — its own notified-state KV read threw');
+  assert.equal(telegramCalls.length, 0, 'Telegram never sends when fail-closed, even though its token/chat_id were fine');
+  assert.match(result.telegramErrors.find((e) => e.includes('telegram notified state unavailable')) || '', /telegram notified state unavailable/);
+  assert.equal(result.lineReady, true, 'LINE reads its OWN key (line:notified-state), untouched by the outage');
+  assert.equal(pushCalls.length, 1, 'LINE sends normally, completely unaffected by Telegram\'s KV outage');
+  assert.deepEqual(result.line, { attempted: 1, succeeded: 1 });
 });

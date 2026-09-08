@@ -286,7 +286,7 @@ test('11: missing/expired AI decision cache data renders UNKNOWN / NOT RECORDED,
 // only bump the literal), same discipline test/versionLineage.test.js's
 // own series-prefix check already follows.
 test('12: APP_VERSION reflects the current release', () => {
-  assert.equal(APP_VERSION, 'V2.5.1');
+  assert.equal(APP_VERSION, 'V2.6.0');
 });
 
 test('SERVICE_AREA_EXCLUDED events show "服務區域外", never routed through AI at all', async () => {
@@ -424,4 +424,82 @@ test('V2.5.1: the pre-existing imageUrlPresent YES/NO/UNKNOWN calculation is com
   const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
   // renderField('CCTV', ...) still reads record.imageUrlPresent exactly as before — verified by presence of the YES label this file's other tests never had reason to check directly, alongside the new fields now sitting next to it.
   assert.match(html, /CCTV<\/div><div class="value">YES/);
+});
+
+// ============================================================================
+// V2.6.0 (路況-055, following 路況-054's own plan) — the symmetric Telegram
+// section/badge rendering, same seeding approach as the V2.5.1 CCTV tests
+// above (buildAiObservatoryRecord()/recordAiObservatoryEntry() directly —
+// this round's own new fields are plain booleans with no I/O-dependent
+// path, so there is no equivalent test-infrastructure limit to disclose
+// here the way V2.5.1's CCTV fields had).
+// ============================================================================
+
+test('V2.6.0: Telegram sent scenario renders "Telegram sent: YES" and the ✅ Telegram 已發送 badge, independently of LINE\'s own status', async () => {
+  const env = await baseEnv();
+  await seedObservatoryRecord(env, {
+    eventId: 'PBS-TG-OK',
+    lineAttempted: true,
+    lineSent: false, // deliberately the OPPOSITE of Telegram, proving no cross-contamination in rendering either
+    telegramAttempted: true,
+    telegramSent: true,
+  });
+  const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
+  assert.match(html, /Telegram sent<\/div><div class="value">YES/);
+  assert.ok(html.includes('✅ Telegram 已發送'));
+  assert.match(html, /LINE sent<\/div><div class="value">NO/, 'LINE\'s own field must independently still say NO');
+  assert.ok(html.includes('❌ LINE 發送失敗'));
+});
+
+test('V2.6.0 symmetric: Telegram failed scenario renders "Telegram sent: NO" and the ❌ Telegram 發送失敗 badge, independently of LINE\'s own status', async () => {
+  const env = await baseEnv();
+  await seedObservatoryRecord(env, {
+    eventId: 'PBS-TG-FAIL',
+    lineAttempted: true,
+    lineSent: true,
+    telegramAttempted: true,
+    telegramSent: false,
+  });
+  const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
+  assert.match(html, /Telegram sent<\/div><div class="value">NO/);
+  assert.ok(html.includes('❌ Telegram 發送失敗'));
+  assert.match(html, /LINE sent<\/div><div class="value">YES/, 'LINE\'s own field must independently still say YES');
+  assert.ok(html.includes('✅ LINE 已發送'));
+});
+
+test('V2.6.0: Telegram never attempted (e.g. unconfigured) renders "⏭️ Telegram 未發送" and a 未執行原因 field, same convention as LINE\'s own not-attempted state', async () => {
+  const env = await baseEnv();
+  await seedObservatoryRecord(env, {
+    eventId: 'PBS-TG-NONE',
+    lineAttempted: true,
+    lineSent: true,
+    telegramAttempted: false,
+    telegramSent: false,
+  });
+  const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
+  assert.match(html, /Telegram attempted<\/div><div class="value">NO/);
+  assert.ok(html.includes('⏭️ Telegram 未發送'));
+});
+
+test('V2.6.0 backward-compat regression lock: a record built WITHOUT telegramAttempted/telegramSent (simulating a pre-V2.6.0, within-48h-TTL record) renders without throwing, degrading to the same "未發送" state as a genuinely-never-attempted event', async () => {
+  const env = await baseEnv();
+  // Deliberately the OLD call shape — no telegramAttempted/telegramSent
+  // passed at all, exactly what a record written before this round would
+  // look like when read back within its still-live 48h TTL.
+  const record = buildAiObservatoryRecord({
+    candidate: { road: '國道一號' },
+    eventId: 'PBS-TG-OLD',
+    lifecycle: 'NEW',
+    fingerprint: 'fp-tg-old',
+    outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+    lineAttempted: true,
+    lineSent: true,
+    now: NOW,
+  });
+  await recordAiObservatoryEntry(env.TRAFFIC_KV, record, { taipeiDate: taipeiDateString(NOW), idempotencyKeyHash: 'hash-tg-old', now: NOW });
+
+  const res = await handleAiObservatoryView(env, viewRequest(), NOW);
+  assert.equal(res.status, 200, 'must render successfully, never throw, for a record missing the new Telegram fields');
+  const html = await res.text();
+  assert.ok(html.includes('⏭️ Telegram 未發送'), 'undefined telegramAttempted/telegramSent must degrade to the same not-attempted display as false/false');
 });

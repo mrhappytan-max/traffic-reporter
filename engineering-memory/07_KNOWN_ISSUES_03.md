@@ -296,3 +296,28 @@
 **APP_VERSION**：`V2.5.0`→`V2.5.1`（PATCH，純觀測性變更，比照V2.0.1建立Observatory index本身即為PATCH的先例）。全量迴歸2045項（2033+12新增），2012通過／33失敗；`git stash -u`基準（2033項，2000通過／33失敗），測試名稱集合比對，`NEW_FAILURES=0`。
 
 **V2.5.1封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-08，路況-053）。封版依據：程式碼變更完成、全量迴歸2045項／2012通過／33失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.5.1`、commit已push main並驗證。**待現場觀察事項（觀察記錄，非封版條件）**：查修頁上5個新欄位在真實Production事件（尤其成功組出CCTV圖片的情境）下的實際顯示效果——尚未取得。發現問題一律開下一個PATCH版本，不回頭改已封版的`V2.5.1`。
+
+## 修正紀錄｜V2.6.0 LINE與電報改為兩條完全獨立路徑，去重記錄分開持久化，修正lineSent顯示落差（2026-09-08）
+
+**與V2.5.0的關係（核心記錄，須完整理解，不得描述為修正V2.5.0的錯誤）**：V2.5.0當時的合成target設計本身沒有錯——就緒閘門／去重共用是V2.5.0授權範圍內、路況-050「Plan B」明確選擇的簡化方案，且V2.5.0已用兩則對稱regression lock測試證明**發送層級**互相獨立。V2.5.0封版報告當時就已誠實記錄一項就緒層級（非發送層級）耦合：「`LINE_CHANNEL_ACCESS_TOKEN`缺失或subscriptions/notified-state KV讀取失敗時電報也不會發送」。本輪（路況-054規劃、路況-055執行）是回應真人稍後定案的、更嚴格的「完全獨立」目標，把這項當初就已揭露、當時判斷可接受的耦合進一步拆解——**不是**修正V2.5.0的錯誤，而是架構升級。
+
+**意外發現並一併修正（路況-054查證所得，本輪修正）**：`debugPush.js`的`lineSent`欄位計算方式（`pushAttempted>0 && pushSucceeded===pushAttempted`）自V2.5.0起就讀取LINE與電報**合計**的計數器——電報失敗會讓查修頁誤顯示「LINE發送失敗」，即使LINE本身100%成功（反之亦然）。此為V2.5.0上線後才存在、直到路況-054查證才被發現的既有顯示層落差，非本輪造成，V2.5.0／V2.5.1任何測試皆未涵蓋此欄位的正確性。本輪已修正。
+
+**架構變更**：
+- `traffic/notified.js`：`NOTIFIED_KEY`常數改為`export`並可由呼叫端傳入（預設值不變，維持`'line:notified-state'`）。`readNotifiedState`/`persistNotifiedState`新增`key`參數，兩函式內部邏輯逐字未動。既有呼叫端（`broadcastPipeline.js`）從未傳入新參數，行為完全不變。
+- `traffic/aiApprovedPbsBroadcast.js`：拆分為`deliverToLineTargets()`／`deliverToTelegram()`兩個私有函式，各自完成就緒檢查→target建構→per-target發送→錯誤記錄。LINE讀寫`line:notified-state`（不變）；電報改讀寫**新key**`telegram:notified-state`（`TELEGRAM_NOTIFIED_KEY`，已export）。兩函式以`Promise.all`**並行**執行（取捨理由：兩管道自此不共用任何可變狀態，內容準備已透過`makeBroadcastContentResolver()`記憶化，並行不會造成CCTV重複執行，且能縮短總延遲）。`result`新增`telegramReady`與`result.line{attempted,succeeded}`／`result.telegram{attempted,succeeded}`兩組per-channel欄位；`pushAttempted`／`pushSucceeded`**維持合計值不變**（供既有讀者如incident-memory的`persistSighting(pushSucceeded>0)`沿用，本輪未重新定義其語意）。`suppressLineNotify`（Phase B）範圍不變——本就已同時擋住LINE與電報（V2.5.0接入電報時即共用同一早退點），本輪僅將套用方式從「一次共用早退」改為「各管道各自檢查」，可觀察行為零改變。內容準備（`text`/CCTV）維持共用、每事件最多執行一次，不拆分（依路況-054三節論證，本輪訂單同樣明文禁止拆分）。事故重複抑制（`incidentSuppression.js`）維持共用判斷，不拆分。
+- `pbs/debugPush.js`：`lineSent`/`lineAttempted`改為只讀`broadcastResult.line`；新增`telegramAttempted`/`telegramSent`，同法讀`broadcastResult.telegram`。
+- `pbs/aiObservatoryIndex.js`：`buildAiObservatoryRecord()`新增`telegramAttempted`/`telegramSent`兩參數/回傳欄位，緊接`lineSent`之後、`sharedFeedPersisted`之前，預設`false`（非null，向下相容舊記錄讀回時自然缺欄位視為false/false）。
+- `pbs/aiObservatoryView.js`：新增對稱「Telegram」detail-section（比照現有LINE小節結構：attempted/sent兩列＋未執行/失敗原因，`lineNotAttemptedReason()`直接重用——該函式邏輯本身只讀`record.outcome`，並非LINE專屬，僅命名沿用歷史）；collapsed card新增`telegramSummaryBadge()`比照`lineSummaryBadge()`。
+
+**規劃外發現，本輪未處理，誠實揭露**：`aiObservatoryIndex.js`的`deriveFinalDecisionReason()`（收合卡片SENT/NOT_SENT判斷）目前只檢查`record.lineSent`，未檢查`record.telegramSent`——若某事件僅電報成功、LINE失敗或未就緒，收合卡片仍會顯示NOT_SENT，即使電報確實已送達。此非本輪造成（修正前的合計式`lineSent`在這個情境下同樣會是false，並非本輪引入的退化），本輪訂單也未要求觸碰`deriveFinalDecisionReason()`，故未修正，僅記錄供會議室知悉，未來如需修正應另開工單。
+
+**測試**：`test/aiApprovedPbsBroadcast.test.js`——既有V2.5.0 (a)(b)(c)(f)四則追加per-channel（`result.line`/`result.telegram`）斷言（原斷言的合計值`pushSucceeded`/`pushAttempted`保留不動，未被要求重寫即通過）；V2.5.0 (e)追加直接驗證兩把獨立KV key的斷言；新增V2.6.0 (a)-(d)四則regression lock，雙向證明就緒層級與notified-state KV層級的獨立性。`test/tdxPhaseCProductionNotify.test.js`新增V2.6.0 (e)(f)兩則，透過真實`processQueuedPbsEvent`路徑（非僅`aiApprovedPbsBroadcast.js`自身回傳值）端到端證明`lineSent`/`telegramSent`的修正確實生效。`test/aiObservatoryIndex.test.js`新增3則（telegramAttempted/telegramSent雙向獨立、向下相容降級為false/false）。`test/aiObservatoryView.test.js`新增4則（Telegram已發送/失敗/未執行三態渲染、向下相容regression lock）＋既有`APP_VERSION`鎖定測試bump為`'V2.6.0'`。全量迴歸2058項（2045+13新增：aiApprovedPbsBroadcast.test.js+4、tdxPhaseCProductionNotify.test.js+2、aiObservatoryIndex.test.js+3、aiObservatoryView.test.js+4），2025通過／33失敗；`git stash -u`基準（2045項，2012通過／33失敗），測試名稱集合比對，`NEW_FAILURES=0`。
+
+**KV操作次數重新核算（依訂單第八項要求）**：分開持久化後，per-event notified-state操作由1次get＋1次put（兩管道合計共用）變為最多2次get＋2次put（各管道各自一次，皆已配置電報時）。**誠實揭露**：`07_KNOWN_ISSUES_02.md`已記載的既有查證（2026-09-07）確認Cloudflare帳號現為付費方案，KV讀寫/刪除/列出已從「1,000次/日免費上限」改為按量計價、**無日上限**——路況-013/017/020等輪次沿用的舊有「相對於1,000次/日上限」評估前提已失效，本輪不再以該上限為基準。**查不到**：engineering-memory中沒有記錄KV操作的實際每百萬次計價費率（不同於request/CPU皆有記載明確費率），故本輪無法換算精確金額，如實標記為查不到，不杜撰數字。改以**次數量級**判斷合理性：依`00_CURRENT_STATE.md`已記錄的2026-09-07實測數據（165次AI呼叫／約65小時，約61次/日），本輪變更最多增加約61次/日額外get（電報已配置時，每則到達發送階段的事件都會多讀一次自己的key）與最多約61次/日額外put（兩管道同一事件皆成功發送的子集合）；以V2.2.0/V2.3.0時代規劃用的200事件/日上限估算，最多增加約200次/日get與約200次/日put。兩者皆為每日低兩位數至三位數量級的絕對增量，相較此付費方案本身已內含的每月1,000萬次請求額度，量級微小，判斷合理，惟精確金額判斷因費率缺失無法給出，如實揭露此限制。
+
+**APP_VERSION**：`V2.5.1`→`V2.6.0`（MINOR，理由：改變`runAiApprovedPbsBroadcast()`執行結構與`result`物件對外形狀，並修正一項既有Observatory顯示邏輯錯誤，非純觀測性新增，不比照V2.0.1/V2.5.1的PATCH先例；比照V2.5.0「新增一整條通知子系統」定案為MINOR的先例）。
+
+**待現場觀察事項（明確記錄，不得寫成已確認）**：真實Production事件下，LINE與電報兩管道各自的`attempted`/`succeeded`計數、查修頁新增的Telegram小節與徽章、以及`lineSent`修正後的實際顯示效果——尚未取得。`deriveFinalDecisionReason()`未涵蓋`telegramSent`的已知落差，尚無現場案例驗證其實際影響範圍。
+
+**V2.6.0封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-08，路況-055）。封版依據：程式碼變更完成、全量迴歸2058項／2025通過／33失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.6.0`、commit已push main並驗證。發現問題一律開下一個版本，不回頭改已封版的`V2.6.0`。

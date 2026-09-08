@@ -174,6 +174,63 @@ test('buildAiObservatoryRecord: omitting all 5 new fields (pre-V2.5.1 caller sha
   assert.equal(record.r2ReadbackElapsedMs, null);
 });
 
+// ============================================================================
+// V2.6.0 (路況-055, following 路況-054's own plan) — telegramAttempted/
+// telegramSent, the symmetric counterpart to lineAttempted/lineSent, same
+// default-false convention (see this module's own V2.6.0 comment above
+// the parameter declarations for why these degrade to false, not null,
+// unlike the CCTV fields above).
+// ============================================================================
+
+test('buildAiObservatoryRecord: telegramAttempted/telegramSent independent of lineAttempted/lineSent — LINE sent, Telegram failed', () => {
+  const record = buildAiObservatoryRecord({
+    candidate: { road: '國道一號' },
+    eventId: 'E24',
+    lifecycle: 'NEW',
+    fingerprint: 'fp24',
+    outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+    lineAttempted: true,
+    lineSent: true,
+    telegramAttempted: true,
+    telegramSent: false,
+  });
+  assert.equal(record.lineSent, true);
+  assert.equal(record.telegramAttempted, true);
+  assert.equal(record.telegramSent, false, 'Telegram genuinely failed — must not be masked by LINE succeeding');
+});
+
+test('buildAiObservatoryRecord: telegramAttempted/telegramSent independent of lineAttempted/lineSent — symmetric, LINE failed, Telegram sent', () => {
+  const record = buildAiObservatoryRecord({
+    candidate: { road: '國道一號' },
+    eventId: 'E25',
+    lifecycle: 'NEW',
+    fingerprint: 'fp25',
+    outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+    lineAttempted: true,
+    lineSent: false,
+    telegramAttempted: true,
+    telegramSent: true,
+  });
+  assert.equal(record.lineSent, false, 'LINE genuinely failed — must not be masked by Telegram succeeding');
+  assert.equal(record.telegramSent, true);
+});
+
+test('buildAiObservatoryRecord: omitting telegramAttempted/telegramSent (pre-V2.6.0 caller shape, e.g. the legacy AI_NOT_INVOKED_LEGACY_PATH/AI_CALL_FAILED call sites) degrades to false/false — never null/undefined', () => {
+  const record = buildAiObservatoryRecord({
+    candidate: null,
+    eventId: 'E26',
+    lifecycle: 'NEW',
+    fingerprint: 'fp26',
+    outcome: AI_OUTCOME.AI_NOT_INVOKED_LEGACY_PATH,
+    lineAttempted: false,
+    lineSent: false,
+  });
+  assert.equal(record.telegramAttempted, false);
+  assert.equal(record.telegramSent, false);
+  assert.equal(typeof record.telegramAttempted, 'boolean', 'always boolean, never null/undefined — same convention as lineAttempted/lineSent');
+  assert.equal(typeof record.telegramSent, 'boolean');
+});
+
 test('recordAiObservatoryEntry: writes exactly 1 KV put, key under the dedicated prefix, TTL set', async () => {
   const kv = countingKV();
   const record = buildAiObservatoryRecord({ candidate: null, eventId: 'E4', lifecycle: 'NEW', fingerprint: 'fp4', outcome: AI_OUTCOME.AI_NOT_INVOKED_LEGACY_PATH });

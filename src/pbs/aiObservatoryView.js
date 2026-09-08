@@ -606,6 +606,14 @@ function renderDetail(record, decision, idem, now = new Date()) {
     ${renderField('CCTV 策略', record.imageStrategy)}
     ${renderField('R2 讀回耗時（ms）', record.r2ReadbackElapsedMs)}
   </div>
+  <div class="detail-section">
+    <h4>Telegram</h4>
+    ${renderField('Telegram attempted', record.telegramAttempted ? 'YES' : 'NO')}
+    ${renderField('Telegram sent', record.telegramSent ? 'YES' : 'NO')}
+    ${!record.telegramAttempted ? renderField('未執行原因', lineNotAttemptedReason(record)) : ''}
+    ${record.telegramAttempted && !record.telegramSent ? renderField('失敗原因', 'UNKNOWN / NOT RECORDED（僅記錄嘗試/成功與否；詳細錯誤見 Workers Logs）') : ''}
+    ${renderField('Telegram 發送時間', 'NOT RECORDED')}
+  </div>
 </div>`;
 }
 
@@ -617,6 +625,19 @@ function lineSummaryBadge(record) {
   if (record.lineSent) return '<span class="badge badge-line-ok">✅ LINE 已發送</span>';
   if (record.lineAttempted) return '<span class="badge badge-line-fail">❌ LINE 發送失敗</span>';
   return '<span class="badge badge-line-none">⏭️ LINE 未發送</span>';
+}
+
+// V2.6.0 (路況-055, following 路況-054's own plan) — the symmetric
+// Telegram counterpart to lineSummaryBadge, same three-state vocabulary.
+// A pre-V2.6.0 record read back from KV has no telegramAttempted/
+// telegramSent keys at all (undefined, not false) — both are falsy, so
+// this degrades to the same "⏭️ Telegram 未發送" badge as an event where
+// Telegram genuinely was never attempted, same convention lineSummaryBadge
+// itself already relies on for its own two fields.
+function telegramSummaryBadge(record) {
+  if (record.telegramSent) return '<span class="badge badge-telegram-ok">✅ Telegram 已發送</span>';
+  if (record.telegramAttempted) return '<span class="badge badge-telegram-fail">❌ Telegram 發送失敗</span>';
+  return '<span class="badge badge-telegram-none">⏭️ Telegram 未發送</span>';
 }
 
 // V2.4.6 (order section 二/十一) — FINAL_DECISION_REASON_SUMMARY: the
@@ -772,6 +793,7 @@ function renderRow(record, decision, idem, now) {
     <span class="pill pill-${meta.cls}">${meta.emoji} ${escapeHtml(meta.label)}</span>
     ${impactBadge}
     ${lineSummaryBadge(record)}
+    ${telegramSummaryBadge(record)}
     ${finalReasonLine(record, decision)}
   </summary>
   ${renderDetail(record, decision, idem, now)}
@@ -910,6 +932,9 @@ const PAGE_STYLE = `
   .badge-line-ok { background: #12261a; color: #3fb950; }
   .badge-line-fail { background: #2b1414; color: #f85149; }
   .badge-line-none { background: #262b34; color: #9aa1ac; }
+  .badge-telegram-ok { background: #12261a; color: #3fb950; }
+  .badge-telegram-fail { background: #2b1414; color: #f85149; }
+  .badge-telegram-none { background: #262b34; color: #9aa1ac; }
   .flow-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 8px 0 14px; }
   .flow-chip { display: flex; align-items: center; gap: 5px; background: #12151a; border: 1px solid #262b34; border-radius: 999px; padding: 4px 10px; font-size: 12px; }
   .flow-icon { font-size: 13px; }
