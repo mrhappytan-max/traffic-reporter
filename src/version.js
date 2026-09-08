@@ -2396,7 +2396,84 @@
 // 路況-047 before this round began). Full regression 2019/1986/33; stash-
 // -u baseline 2013/1980/33; failure-name-set comparison (not just count)
 // confirms NEW_FAILURES=0.
-export const APP_VERSION = 'V2.4.18';
+
+// V2.5.0 (2026-09-08, 路況-052, following 路況-050's own plan) — Telegram
+// channel push: a second, fully independent notification destination
+// alongside LINE. MINOR (human-decided this round, per 路況-050's own
+// framing: "新增一整條通知子系統" rather than a fix to existing behavior).
+//
+// WHAT: a private Telegram channel ("路況播報員"), Bot already added as
+// admin with post permission. New src/telegram/pushMessage.js#
+// pushTelegramMessage(env, chatId, text, imageUrl) — sendPhoto (photo by
+// URL + caption) when an image is present, sendMessage otherwise; single
+// call either way, this project's own message templates are always well
+// under Telegram's 1024-char caption limit. 8s AbortSignal.timeout(), same
+// idiom as tdx/hsinchuCctvProbe.js:988's own CCTV frame fetch.
+//
+// HOW IT'S WIRED (路況-050's own "Plan B", executed as planned): NOT a
+// bolt-on call after the LINE loop. traffic/aiApprovedPbsBroadcast.js adds
+// ONE synthetic entry to its existing `targets` array — `{kind:
+// 'telegram-channel', id: env.TELEGRAM_CHAT_ID}` — only when both
+// TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are configured. That target then
+// flows through the SAME pre-existing targetNeedsNotification()/
+// applyNotifiedTargets()/persistNotifiedState() dedupe machinery every
+// LINE target already used (notified.js's own dedupe key is already
+// `${target.kind}:${target.id}` — 'telegram-channel' can never collide
+// with 'user'/'group') — zero new dedupe/persistence code, and the SAME
+// per-target try/catch loop dispatches to pushTelegramMessage() instead of
+// pushLineMessages() by `target.kind`. The pre-existing LINE branch inside
+// that loop (condition, call, success/error handling) is byte-for-byte
+// unchanged — verified directly in the diff, not just by intent.
+//
+// FAILURE ISOLATION (order's own highest-priority requirement): Telegram
+// errors are collected into a NEW, separate `result.telegramErrors` array
+// — never `lineErrors` — and a Telegram failure inside the shared loop
+// hits `continue` after its own catch, never reaching or affecting the
+// LINE branch's own try/catch for a DIFFERENT target in the SAME loop.
+// Proven by two symmetric regression-lock tests (V2.5.0 (b)/(c) below):
+// Telegram failing leaves LINE's success completely untouched, and vice
+// versa.
+//
+// A REAL, DISCLOSED COUPLING (not fixed this round — fixing it would mean
+// rewriting the pre-existing LINE-readiness gate this order explicitly
+// forbids touching): the function's existing early-return gate — missing
+// LINE_CHANNEL_ACCESS_TOKEN, or a subscriptions/notified-state KV read
+// failure — returns BEFORE either destination's push loop is ever reached,
+// so in that narrow scenario Telegram would also not send, purely because
+// it shares this control flow with LINE. Today's LINE token/KV are
+// healthy in Production, so this is dormant, not active — but it is a
+// real exception to "互不影響" at the READINESS layer (never at the SEND
+// layer, which is genuinely independent — see above), worth recording
+// honestly rather than silently.
+//
+// EXPLICITLY UNCHANGED THIS ROUND: AI decision logic, LINE_PUSH_POLICY,
+// CCTV eligibility/produce logic, who gets notified or what content they
+// see — Telegram fires only after the exact same notify:true/eligibility/
+// dedupe decisions LINE targets already went through, reusing the SAME
+// already-computed `text`/`completedProduct.imageUrl`, never a second
+// judgment. Driver-facing subscription/webhook/reply machinery is
+// out of scope this round — single private channel (the human), no
+// two-way interaction.
+//
+// wrangler.jsonc gains one new var, TELEGRAM_CHAT_ID (not a secret — see
+// that file's own comment: the numeric chat_id alone grants no access;
+// only TELEGRAM_BOT_TOKEN, a Cloudflare Secret the human set directly in
+// the Dashboard and which never passed through any Claude session, can
+// act on it). No other Secret/Queue/KV/AI change.
+//
+// TESTS: test/telegramPushMessage.test.js — 8 new unit tests for the
+// module itself (sendPhoto vs sendMessage dispatch, the 8s timeout signal,
+// missing-token/missing-chatId, non-2xx, network error, token-never-in-
+// error-message). test/aiApprovedPbsBroadcast.test.js — 6 new integration
+// tests (V2.5.0 (a)-(f)): both destinations fire once each for a real
+// event; the two CRITICAL symmetric failure-isolation regression locks
+// (b)/(c); no-image -> sendMessage; same-event-twice -> Telegram dedupes
+// exactly like LINE; and Telegram fully absent (0 calls) when unconfigured
+// — proving zero behavior change for every existing LINE-only caller. All
+// 15 pre-existing tests in that file (9 original + 6 from V2.4.18) needed
+// zero changes. Full regression 2033/2000/33; git stash -u baseline
+// 2019/1986/33; failure-name-set comparison confirms NEW_FAILURES=0.
+export const APP_VERSION = 'V2.5.0';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

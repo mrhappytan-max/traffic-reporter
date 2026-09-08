@@ -205,7 +205,14 @@
     // cctv:freeway-metadata:v1. CCTV metadata refresh stays manual/
     // on-demand either way (order section 三) — this only decides whether
     // that manual trigger itself is allowed to make its one TDX call.
-    "TDX_CCTV_METADATA_REFRESH_ENABLED": "false"
+    "TDX_CCTV_METADATA_REFRESH_ENABLED": "false",
+    // V2.5.0 (路況-052) — Telegram channel push, second notification
+    // destination alongside LINE. Not a secret: knowing a channel's
+    // numeric chat_id grants no access on its own (no join, no post) —
+    // only TELEGRAM_BOT_TOKEN (a Cloudflare Secret, never here) combined
+    // with that Bot already being a channel admin can act on it. See
+    // src/telegram/pushMessage.js's own module comment.
+    "TELEGRAM_CHAT_ID": "-1004328365784"
   },
   "vpc_services": [
     {

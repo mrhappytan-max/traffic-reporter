@@ -44,6 +44,18 @@
 //   point since V2.4.16.
 // - line/pushMessage.js#pushLineMessages — the one real LINE API call.
 //
+// V2.5.0 (路況-052) — telegram/pushMessage.js#pushTelegramMessage, a
+// second, fully independent notification destination (a private Telegram
+// channel). Wired in as one more synthetic entry in the SAME `targets`
+// array LINE's own subscribers already populate (`kind:
+// 'telegram-channel'`) — see this function's own body comment at that
+// array's construction — so it reuses every piece of the machinery listed
+// above (dedupe, notified-state, per-target failure isolation) with zero
+// new dedupe/persistence code. Does not affect who gets notified or what:
+// it fires only after the exact same notify:true/eligibility/dedupe
+// decisions LINE targets already went through, using the SAME already-
+// computed `text`/`completedProduct.imageUrl` — never a second judgment.
+//
 // WHAT IT STILL ENFORCES (order section 三 — "必須保留")
 // ---------------------------------------------------------
 // Broadcast hours (traffic/broadcastHours.js) — execution/quota safety,
@@ -80,6 +92,7 @@ import {
 import { readIncidentSuppressionState, resolveIncidentNotifications, persistIncidentSuppressionState } from './incidentSuppression.js';
 import { formatEventMessage } from './messageFormat.js';
 import { pushLineMessages } from '../line/pushMessage.js';
+import { pushTelegramMessage } from '../telegram/pushMessage.js';
 import { prepareCctvImageForEvent } from '../cctv/dynamicCollage.js';
 
 function safeErrorMessage(err) {
@@ -150,6 +163,12 @@ export async function runAiApprovedPbsBroadcast(env, { event, now = new Date(), 
     pushSucceeded: 0,
     completedProducts: [],
     lineErrors: [],
+    // V2.5.0 (路況-052) — kept fully separate from lineErrors: a Telegram
+    // failure is never a LINE failure, and this keeps that true in the
+    // observable result shape too, not just in execution. Always present
+    // (never undefined) so a caller/test can assert on it unconditionally,
+    // same convention as lineErrors itself.
+    telegramErrors: [],
   };
 
   // V2.4.4 — order section 七's own geographic HARD GATE, checked FIRST,
@@ -193,6 +212,23 @@ export async function runAiApprovedPbsBroadcast(env, { event, now = new Date(), 
     ...enabledUsers.map(([id, e]) => ({ kind: 'user', id, enabledAt: e.enabledAt })),
     ...enabledGroups.map(([id, e]) => ({ kind: 'group', id, enabledAt: e.enabledAt })),
   ];
+
+  // V2.5.0 (路況-052, 路況-050's own "Plan B") — Telegram channel push, a
+  // second, independent notification destination. Deliberately a
+  // SYNTHETIC entry in this SAME `targets` array — not a separate call
+  // path with its own dedupe — so it flows through the EXISTING
+  // targetNeedsNotification()/applyNotifiedTargets()/persistNotifiedState()
+  // machinery below unchanged, getting the same "don't resend identical
+  // content" fingerprint-based dedupe every real LINE target already gets,
+  // for free, with zero new dedupe code. notified.js's own dedupe key is
+  // already `${target.kind}:${target.id}` (see that module's own
+  // targetKey), so `kind: 'telegram-channel'` can never collide with
+  // LINE's existing 'user'/'group' kinds. Added only when BOTH env vars
+  // are present — an unconfigured Telegram integration must degrade to
+  // exactly today's LINE-only behavior, never a half-broken attempt.
+  if (env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID) {
+    targets.push({ kind: 'telegram-channel', id: env.TELEGRAM_CHAT_ID, enabledAt: null });
+  }
 
   // Incident suppression — accident type only, same scope as the legacy
   // pipeline's own use of it. Persisted regardless of suppressed/not,
@@ -280,6 +316,27 @@ export async function runAiApprovedPbsBroadcast(env, { event, now = new Date(), 
   const successfulTargets = [];
   for (const target of pendingTargets) {
     result.pushAttempted += 1;
+    // V2.5.0 (路況-052) — the ONLY new logic in this loop: dispatch by
+    // target.kind. The 'telegram-channel' branch is fully independent of
+    // the LINE branch below — its own try/catch, its own API call, its
+    // own text (already-computed `text`, never `messages`, which is
+    // LINE's own message-object array shape) and its own already-computed
+    // completedProduct.imageUrl. A Telegram failure here can never reach
+    // the LINE branch (different target, different loop iteration) and
+    // never rethrows past this catch — same fail-safe shape the LINE
+    // branch below has always had. The existing LINE branch itself
+    // (condition, pushLineMessages call, success/error handling) is
+    // byte-for-byte unchanged.
+    if (target.kind === 'telegram-channel') {
+      try {
+        await pushTelegramMessage(env, target.id, text, completedProduct.imageUrl);
+        successfulTargets.push(target);
+        result.pushSucceeded += 1;
+      } catch (err) {
+        result.telegramErrors.push(`telegram push failed: ${safeErrorMessage(err)}`);
+      }
+      continue;
+    }
     try {
       await pushLineMessages(env, target.id, messages);
       successfulTargets.push(target);

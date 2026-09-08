@@ -328,3 +328,120 @@ test('V2.4.18 (d) incident suppression regression lock — the SAME real acciden
   assert.equal(result.suppressed, true);
   assert.equal(pushCalls.length, 1, 'incident suppression (accident-type gate at line 208, untouched) still works exactly as before');
 });
+
+// ============================================================================
+// V2.5.0 (路況-052) — Telegram channel push, wired in as a synthetic
+// `pendingTargets` entry (kind: 'telegram-channel') alongside real LINE
+// targets — see aiApprovedPbsBroadcast.js's own V2.5.0 comments at the
+// `targets` construction and inside the push loop.
+// ============================================================================
+
+let telegramCalls;
+/**
+ * One combined fetch mock covering BOTH LINE (api.line.me) and Telegram
+ * (api.telegram.org) — routes by host, tracks each destination's calls
+ * separately, and lets a test force either destination's HTTP status
+ * independently (for the failure-isolation regression locks below).
+ */
+function mockLineAndTelegramFetch({ lineStatus = 200, telegramStatus = 200 } = {}) {
+  pushCalls = [];
+  telegramCalls = [];
+  return async (url, init) => {
+    const u = String(url);
+    if (u.includes('api.telegram.org')) {
+      telegramCalls.push({ url: u, body: JSON.parse(init.body) });
+      return new Response(telegramStatus === 200 ? '{}' : 'error', { status: telegramStatus });
+    }
+    pushCalls.push({ url: u, body: JSON.parse(init.body) });
+    return new Response(lineStatus === 200 ? '{}' : 'error', { status: lineStatus });
+  };
+}
+
+const TELEGRAM_ENV = { TELEGRAM_BOT_TOKEN: 'tg-tok', TELEGRAM_CHAT_ID: '-1004328365784' };
+
+test('V2.5.0 (a): with Telegram configured, a real accident push sends to BOTH LINE and Telegram, once each', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineAndTelegramFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv, ...TELEGRAM_ENV };
+  const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: WITHIN_HOURS });
+  assert.equal(pushCalls.length, 1, 'LINE still gets exactly 1 push');
+  assert.equal(telegramCalls.length, 1, 'Telegram gets exactly 1 push, same event');
+  assert.equal(result.pushSucceeded, 2, 'both destinations count toward pushSucceeded (1 LINE target + 1 Telegram target)');
+  assert.deepEqual(result.telegramErrors, []);
+});
+
+test('V2.5.0 (b) CRITICAL regression lock — Telegram failing (500) does NOT affect LINE\'s existing successful push', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineAndTelegramFetch({ telegramStatus: 500 });
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv, ...TELEGRAM_ENV };
+  const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: WITHIN_HOURS });
+  assert.equal(pushCalls.length, 1, 'LINE call still happened');
+  assert.equal(telegramCalls.length, 1, 'Telegram was attempted');
+  assert.equal(result.pushSucceeded, 1, 'only the LINE target counts as succeeded');
+  assert.equal(result.lineErrors.length, 0, 'LINE has no errors of its own');
+  assert.equal(result.telegramErrors.length, 1, 'the Telegram failure is recorded, separately from lineErrors');
+  assert.match(result.telegramErrors[0], /telegram push failed/);
+});
+
+test('V2.5.0 (c) symmetric regression lock — LINE failing (500) does NOT affect Telegram\'s successful send', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineAndTelegramFetch({ lineStatus: 500 });
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv, ...TELEGRAM_ENV };
+  const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: WITHIN_HOURS });
+  assert.equal(pushCalls.length, 1, 'LINE was attempted');
+  assert.equal(telegramCalls.length, 1, 'Telegram call still happened');
+  assert.equal(result.pushSucceeded, 1, 'only the Telegram target counts as succeeded');
+  assert.equal(result.telegramErrors.length, 0, 'Telegram has no errors of its own');
+  assert.equal(result.lineErrors.length, 1, 'the LINE failure is recorded, unaffected by Telegram succeeding');
+});
+
+test('V2.5.0 (d): no CCTV image -> Telegram uses sendMessage, request body carries no photo field', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineAndTelegramFetch();
+  // No CCTV_IMAGES R2 binding -> prepareCctvImageForEvent degrades to
+  // {ok:false}, completedProduct.imageUrl stays null (same fixture used by
+  // the pre-existing "CCTV failure never blocks the text push" test above).
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv, ...TELEGRAM_ENV };
+  await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: WITHIN_HOURS });
+  assert.equal(telegramCalls.length, 1);
+  assert.match(telegramCalls[0].url, /\/sendMessage$/);
+  assert.equal('photo' in telegramCalls[0].body, false);
+  assert.equal('caption' in telegramCalls[0].body, false);
+  assert.ok(typeof telegramCalls[0].body.text === 'string' && telegramCalls[0].body.text.length > 0);
+});
+
+test('V2.5.0 (e) dedupe regression lock — the SAME event, unchanged content, called twice does NOT re-send to Telegram the second time (reuses notified-state exactly like LINE does)', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineAndTelegramFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv, ...TELEGRAM_ENV };
+  const event = pbsAccidentEvent();
+  await runAiApprovedPbsBroadcast(env, { event, now: WITHIN_HOURS });
+  assert.equal(telegramCalls.length, 1);
+  assert.equal(pushCalls.length, 1);
+  await runAiApprovedPbsBroadcast(env, { event, now: new Date(WITHIN_HOURS.getTime() + 60_000) });
+  assert.equal(telegramCalls.length, 1, 'identical content to the already-notified Telegram target must not resend — same fingerprint dedupe LINE already relies on');
+  assert.equal(pushCalls.length, 1, 'LINE dedupe is unaffected, still 1');
+});
+
+test('V2.5.0 (f) config-off regression lock — WITHOUT TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID configured, no telegram-channel target is ever added and 0 calls reach api.telegram.org', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineAndTelegramFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv }; // no TELEGRAM_* vars at all
+  const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: WITHIN_HOURS });
+  assert.equal(pushCalls.length, 1);
+  assert.equal(telegramCalls.length, 0, 'Telegram must never be attempted when unconfigured');
+  assert.equal(result.pushSucceeded, 1, 'exactly the same as pre-V2.5.0 behavior — only the LINE target');
+  assert.deepEqual(result.telegramErrors, []);
+});

@@ -249,3 +249,22 @@
 **試行狀態**：本規則為2026-09-08試行，非永久定案，會議室後續若認為精簡後回報難以核對或遺漏關鍵資訊，可隨時撤回或修改，不需要特別的理由門檻。
 
 **對照範例**：**路況-050（Telegram推播雙軌接入規劃）明確指定為本次精簡格式生效前的「精簡前」對照範例，本輪未回頭改寫路況-050原始回報內容**，保留原樣供未來評估「精簡後的下一輪類似規劃單回報」時兩相比較，判斷精簡效果是否可接受。
+
+## 修正紀錄｜V2.5.0 Telegram頻道推播——LINE之外的第二通知管道（2026-09-08）
+
+**新增內容**（依路況-050規劃執行，方案B）：
+- 新模組`src/telegram/pushMessage.js`：`pushTelegramMessage(env, chatId, text, imageUrl)`，有圖呼叫`sendPhoto`（`photo`+`caption`一次送出），無圖呼叫`sendMessage`；逾時`AbortSignal.timeout(8000)`；`TelegramPushError`絕不在錯誤訊息中帶token（含URL本身，因Telegram API的token在URL路徑中，不同於LINE的Authorization header）。
+- `wrangler.jsonc`新增`vars.TELEGRAM_CHAT_ID = "-1004328365784"`（非機密——單獨持有chat_id無法做任何事，須搭配已是頻道管理員的Bot Token才有意義）。`TELEGRAM_BOT_TOKEN`為Cloudflare Secret，真人已直接於Dashboard設定，全程未經過任何Claude session。
+- `aiApprovedPbsBroadcast.js`：於既有`targets`陣列建構處，`TELEGRAM_BOT_TOKEN`與`TELEGRAM_CHAT_ID`皆存在時，加入合成target`{kind:'telegram-channel', id:chatId}`，重用既有`targetNeedsNotification`/`applyNotifiedTargets`/`persistNotifiedState`去重機制（`notified.js`既有dedupe key本就是`${kind}:${id}`，零新增去重程式碼）。既有per-target迴圈依`kind`分派：`telegram-channel`呼叫`pushTelegramMessage()`，其餘不變呼叫`pushLineMessages()`；LINE分支本身逐字未動（`git diff`核對確認）。新增獨立的`result.telegramErrors`陣列（不與`lineErrors`混用），電報失敗只記錄、不拋出、不影響同迴圈內其他target。
+
+**本階段範圍（明確記錄）**：僅單一私有頻道（真人自己），不涉及司機開放、訂閱者管理、雙向互動（webhook/回覆/簽章驗證）。
+
+**一項誠實揭露的既有耦合（本輪未修正，因修正即牴觸「不得改寫既有LINE分支判斷」的授權限制）**：函式既有的LINE就緒閘門（`LINE_CHANNEL_ACCESS_TOKEN`缺失、或subscriptions/notified-state KV讀取失敗）會在push迴圈之前就`return result`，此時電報也不會發送——這是「就緒層級」的耦合，與「發送層級」（本輪已證明完全獨立，見下方測試）是兩回事。現行Production此耦合為隱性（LINE token/KV健康），但誠實記錄供未來參考。
+
+**測試**：`test/telegramPushMessage.test.js`新增8則單元測試（sendPhoto/sendMessage分派、8秒逾時signal、缺token/缺chatId、非2xx、網路錯誤、token絕不外洩）。`test/aiApprovedPbsBroadcast.test.js`新增6則整合測試（V2.5.0 (a)-(f)）：雙管道各發一次；**兩則對稱的失敗隔離regression lock**（電報失敗不影響LINE成功／LINE失敗不影響電報成功，本次「互不影響」原則最關鍵的驗證）；無圖時電報改`sendMessage`；同事件重複呼叫電報不重發（去重regression lock）；未設定Telegram環境變數時電報完全不被觸發（0呼叫，既有LINE-only行為零改變）。既有9+6則LINE測試全數不動、全數通過。全量迴歸2033項（2019+8+6新增），2000通過／33失敗；`git stash -u`基準（2019項，1986通過／33失敗），測試名稱集合比對，`NEW_FAILURES=0`。
+
+**APP_VERSION**：`V2.4.18`→`V2.5.0`（MINOR，真人已定案採「新增一整條通知子系統」判斷）。
+
+**待現場觀察事項（明確記錄，不得寫成已確認）**：真人自己的頻道是否確實收到與LINE同步的通知，含CCTV圖片情境（`sendPhoto`是否正確顯示圖片）——**尚未取得**。
+
+**V2.5.0封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-08，路況-052）。封版依據：程式碼變更完成、全量迴歸2033項／2000通過／33失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.5.0`、commit已push main並驗證。發現問題一律開`V2.5.1`，不回頭改已封版的`V2.5.0`。
