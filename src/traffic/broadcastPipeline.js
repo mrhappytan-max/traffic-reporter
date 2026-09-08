@@ -1120,7 +1120,8 @@ export async function runLineBroadcast(
 // A collage is composed only when the feed has no image for that eventId,
 // or its stored expiry has already passed, or the content fingerprint
 // changed. Combined with sharedFeed.js's matching carry-forward, a single
-// accident costs at most one compose+publish per 15-minute image lifetime,
+// accident costs at most one compose+publish per 24-hour image lifetime
+// (was 15 minutes; see publishedImage.js#PUBLISHED_IMAGE_TTL_SECONDS),
 // not one per 10-minute tick.
 //
 // BUDGET

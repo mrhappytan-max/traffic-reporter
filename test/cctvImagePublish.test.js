@@ -303,6 +303,63 @@ test('4. an object past its expiresAt -> 404, and a best-effort delete is attemp
   assert.equal(env.CCTV_IMAGES.store.has(`cctv/published-image/${published.id}.jpg`), false);
 });
 
+// --- V2.4.17 — PUBLISHED_IMAGE_TTL_SECONDS: 900 (15 min) -> 86400 (24h).
+// Real Production event EVENT_ID=11509080016-5 (路況-042/043): image
+// published/read-back OK at 09:00, but the LINE mobile client did not
+// fetch the URL until 68m41s later — well past the old 15-minute TTL —
+// so handlePublicCctvImage() correctly, but unhelpfully, 404'd a real
+// object that was still perfectly intact in R2. This was the actual
+// root cause of this same broken-image symptom (see 07_KNOWN_ISSUES_03.md
+// for the full timeline/root-cause writeup) — not an application-level
+// race (already ruled out, 路況-042) and not the R2 read-back check
+// added in V2.3.3 (that check was correct and unrelated to this).
+
+test('V2.4.17 (a): PUBLISHED_IMAGE_TTL_SECONDS is now 86400 (24 hours), not 900 (15 minutes)', () => {
+  assert.equal(PUBLISHED_IMAGE_TTL_SECONDS, 86400);
+});
+
+test('V2.4.17 (d): publishCollageImage()\'s expiresAt is exactly createdAt + 24 hours', async () => {
+  const env = baseEnv();
+  const jpegBytes = await makeSolidJpeg(10, 10, [2, 2, 2]);
+  const now = new Date('2026-09-08T09:00:28.000Z');
+  const published = await publishCollageImage(env.CCTV_IMAGES, jpegBytes, now);
+  assert.equal(published.ok, true);
+  assert.equal(published.createdAt, now.toISOString());
+  assert.equal(published.expiresAt, new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString());
+  assert.equal(published.expiresIn, 86400);
+});
+
+test('V2.4.17 (b): an image is still readable well past the old 15-minute mark, as long as it is within the new 24-hour TTL (real-event timeline: published 09:00, first fetched +68m41s)', async () => {
+  const env = baseEnv();
+  const jpegBytes = await makeSolidJpeg(10, 10, [3, 3, 3]);
+  // Real event's own first-fetch delay: 68 minutes 41 seconds after
+  // publish. Would have 404'd under the old 900s/15-minute TTL (68m41s
+  // > 15m); must succeed now that TTL is 24h (68m41s well under 24h).
+  // Published-at is backdated from the real current time (never a fake
+  // Date.now()) so the expiry check inside readPublishedImage — which
+  // reads the real clock — evaluates this object as still fresh.
+  const publishedAt = new Date(Date.now() - (68 * 60 + 41) * 1000);
+  const published = await publishCollageImage(env.CCTV_IMAGES, jpegBytes, publishedAt);
+  assert.equal(published.ok, true);
+
+  const res = await handlePublicCctvImage(env, published.id);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('Content-Type'), 'image/jpeg');
+});
+
+test('V2.4.17 (c): an object published exactly 24 hours + 1 second ago is expired -> 404, best-effort delete attempted', async () => {
+  const env = baseEnv();
+  const jpegBytes = await makeSolidJpeg(10, 10, [4, 4, 4]);
+  const past = new Date(Date.now() - (24 * 60 * 60 * 1000 + 1000)); // 24h + 1s ago
+  const published = await publishCollageImage(env.CCTV_IMAGES, jpegBytes, past);
+  assert.equal(published.ok, true);
+
+  const res = await handlePublicCctvImage(env, published.id);
+  assert.equal(res.status, 404);
+  assert.deepEqual(env.CCTV_IMAGES.deletedKeys, [`cctv/published-image/${published.id}.jpg`]);
+  assert.equal(env.CCTV_IMAGES.store.has(`cctv/published-image/${published.id}.jpg`), false);
+});
+
 // --- 5. missing object -> 404 ---
 
 test('5. a valid-shaped id whose R2 object is missing (never existed) -> 404', async () => {

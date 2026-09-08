@@ -2220,7 +2220,97 @@
 // test/dynamicCollage.test.js / test/dynamicShoulder.test.js /
 // test/pbsAccidentCctvEnrichment.test.js / test/nonCollisionAnomalyClassification.test.js
 // for the updated/added test coverage.
-export const APP_VERSION = 'V2.4.16';
+
+// V2.4.17 (2026-09-08, 路況-044) — CCTV published-image TTL: 900s (15
+// minutes) -> 86400s (24 hours). PATCH — a constant-value reliability
+// fix, not a CCTV logic/architecture change.
+//
+// ROOT CAUSE (found by 路況-042's read-only investigation, confirmed by
+// 路況-043): real Production event EVENT_ID=11509080016-5 (2026-09-08
+// 09:00, PBS, 國道一號南向 90.4K) — the collage image was composed,
+// published to R2, and passed V2.3.3's own read-back verification at
+// 09:00:28, handed to LINE at 09:00:30. The application-level await
+// chain was, once again, completely correct (路況-042 re-confirmed no
+// race condition, no step skipped). The LINE mobile client did not
+// actually fetch the image URL until 10:09:11 — 68 minutes 41 seconds
+// after the 09:00:30 push — well past the old 900-second/15-minute TTL,
+// so handlePublicCctvImage() correctly (by its own rules) 404'd a
+// perfectly intact object and best-effort-deleted it. Decisive control
+// evidence (路況-043): the 2026-09-06 success case (EVENT_ID=
+// 11509060138-0) was fetched by the mobile client at +11m01s (200, then
+// cached by LINE permanently — which is why it still renders today) but
+// by a DESKTOP client at +20 minutes the SAME image already 404'd, with
+// an R2 DeleteObject logged the same minute. Same object, same TTL rule,
+// different client fetch timing, different outcome — conclusively
+// isolating the TTL window (not the pipeline) as the actual variable.
+//
+// CORRECTING PRIOR RECORDS (its own text is NOT rewritten — see V2.3.3's
+// own sealed changelog entry above, byte-for-byte unchanged): that round
+// described this same broken-image symptom class as "cannot be
+// explained by application-level timing; LINE's own remote-fetch
+// behavior is outside this codebase's visibility" and left it there.
+// (V1.8.7.7, elsewhere in this file, is a DIFFERENT broken-image
+// symptom — a gray/truncated frame from a JPEG-marker parsing bug in
+// extractFirstJpegFrame — not this TTL-expiry 404, and is unaffected by
+// this round.) V2.3.3's own conclusion is now known to be INCOMPLETE — the root
+// cause was always inside this codebase's own TTL setting, fully within
+// its visibility and fully within its control. It was never a LINE-side
+// mystery; it was this repo's own published-image lifetime being shorter
+// than how long a real user can plausibly take to open their chat.
+//
+// FIX: exactly one constant, `publishedImage.js#PUBLISHED_IMAGE_TTL_SECONDS`,
+// 900 -> 86400. Expiry-check logic, lazy-delete-on-read behavior, and
+// every other line of readPublishedImage()/handlePublicCctvImage() are
+// byte-for-byte unchanged — only the number changed. Descriptive
+// comments elsewhere that named the old "15 minutes" duration (dynamicCollage.js,
+// broadcastPipeline.js, sharedFeed.js) were updated to match; comments
+// that are themselves historical narrative of an already-sealed prior
+// round (this file's own V2.3.2/V2.3.3 entries above) were deliberately
+// left untouched, since they correctly describe what was true when that
+// round shipped.
+//
+// STORAGE COST (per explicit human review): R2 is billed independently
+// of Workers KV/CPU — free tier is 10 GB storage / 1M Class A / 10M
+// Class B operations per month, egress free. The bucket held 261 objects
+// totaling 8.35 MB at review time (~33 KB/image average). At an
+// estimated 10 images/day, a 24-hour TTL keeps roughly 10 images "alive"
+// at once (~330 KB) — far inside the free tier. Cleanup remains
+// lazy-delete-on-read only (unchanged, no new background sweep/lifecycle
+// rule added this round): an object nobody ever reads again after
+// publish simply persists until manually cleaned or a future round adds
+// a sweep — a known, accepted behavior, not a defect, and explicitly not
+// addressed this round.
+//
+// EXPLICITLY UNCHANGED THIS ROUND: CCTV camera-selection strategy, the
+// four-quadrant layout, image dimensions/JPEG quality, the V2.3.3 R2
+// read-back verification, CCTV_PREPARE_BUDGET_MS and every other
+// existing budget/cap, AI prompt/model/timeout, the Cloudflare Queue, KV,
+// LINE push policy. No background R2 cleanup schedule or lifecycle rule
+// was added. V2.4.16 and every earlier sealed version's own record is
+// unmodified.
+//
+// THREE OBSERVABILITY GAPS FOUND BY 路況-042/043 (explicitly NOT
+// addressed this round — tracked separately in
+// engineering-memory/07_KNOWN_ISSUES_03.md): (a) r2ReadbackElapsedMs is
+// computed but never reaches Pipeline Trace, (b) the real LINE-push code
+// path emits no console.log for CCTV stage/skip-reason diagnostics, (c)
+// Cloudflare Workers Logs redact the 32-hex-char image id, so a log line
+// alone can never be turned back into a full image URL.
+//
+// TESTS: test/cctvImagePublish.test.js — 4 new tests (V2.4.17 (a)-(d)):
+// the constant's new value, an expiresAt = createdAt + 24h check, a
+// same-object-still-readable-at-real-event's-own-+68m41s-delay
+// regression lock, and a past-24h-expiry/lazy-delete check. No existing
+// assertion needed updating: every pre-existing TTL-dependent test
+// (tests 1 and 4 in the same file) already referenced
+// PUBLISHED_IMAGE_TTL_SECONDS dynamically rather than hardcoding 900, so
+// they transparently picked up the new value with zero changes needed.
+//
+// See engineering-memory/07_KNOWN_ISSUES_03.md for the full record
+// (路況-042 investigation, 路況-043 investigation, this round's
+// execution) — including the full 09-06/09-08 control-vs-incident
+// timeline and the three tracked observability gaps.
+export const APP_VERSION = 'V2.4.17';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

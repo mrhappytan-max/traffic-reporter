@@ -101,8 +101,9 @@
 // exactly the same fail-closed, text-only-this-tick treatment as every
 // other reason above, never a retry, never a second publish attempt.
 // This does not change WHY an image might still, rarely, fail to render
-// on LINE's own side (e.g. the pre-existing 15-minute published-image
-// TTL — see 07_KNOWN_ISSUES.md — is a separate, explicitly out-of-scope
+// on LINE's own side (e.g. the pre-existing 24-hour published-image
+// TTL (was 15 minutes; see publishedImage.js#PUBLISHED_IMAGE_TTL_SECONDS)
+// — see 07_KNOWN_ISSUES.md — is a separate, explicitly out-of-scope
 // concern this round does not touch); it only guarantees this codebase
 // never hands LINE a URL for an object that isn't verifiably readable
 // the moment it was published.

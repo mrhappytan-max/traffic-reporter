@@ -73,7 +73,7 @@
 
 const KEY_PREFIX = 'cctv/published-image/';
 const KEY_SUFFIX = '.jpg';
-export const PUBLISHED_IMAGE_TTL_SECONDS = 900; // 15 minutes
+export const PUBLISHED_IMAGE_TTL_SECONDS = 86400; // 24 hours (V2.4.17 — see version.js changelog; was 900/15 minutes)
 const ID_BYTE_LENGTH = 16; // 128 bits of entropy
 const ID_HEX_PATTERN = /^[0-9a-f]{32}$/;
 
@@ -143,7 +143,8 @@ export async function publishCollageImage(bucket, jpegBytes, now = new Date()) {
  * publishCollageImage() succeeds, before that image's URL is ever handed
  * to a LINE image message. Deliberately separate from readPublishedImage
  * (the public-read path's helper, above): that function also enforces
- * the 15-minute expiry/best-effort-delete policy, which is irrelevant
+ * the expiry/best-effort-delete policy (24 hours as of V2.4.17 — see
+ * PUBLISHED_IMAGE_TTL_SECONDS above), which is irrelevant
  * here (this is checked seconds after publish, never expired yet) and
  * would only add an unrelated failure mode to a check whose one job is
  * "did the object we JUST wrote actually land correctly."

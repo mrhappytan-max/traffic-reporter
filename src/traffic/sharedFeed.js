@@ -57,8 +57,9 @@
 // imageExpiresAt
 //             The EXACT expiry stored in that R2 object's customMetadata
 //             (publishedImage.js), never a recomputed approximation. Published
-//             images live PUBLISHED_IMAGE_TTL_SECONDS (15 minutes), so a
-//             consumer must check this before handing the URL to LINE.
+//             images live PUBLISHED_IMAGE_TTL_SECONDS (24 hours as of V2.4.17;
+//             was 15 minutes), so a consumer must check this before handing
+//             the URL to LINE.
 //
 // RETENTION
 // ---------

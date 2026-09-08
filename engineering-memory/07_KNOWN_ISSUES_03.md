@@ -194,3 +194,30 @@
 **取捨**：放棄「封版本身即代表已完成現場驗證」這項保證——SEALED 現在只代表「這輪施工按規則做完了」，不代表「已經在 Production 上驗證過行為正確」。換取的是流程不再因為「等驗證」而長期懸置：封版狀態與驗證進度分開追蹤，兩者各自誠實記錄，不再互相綁架對方的完成度。
 
 **既有兩段式歷史記錄不回頭改寫**：V2.4.15 及更早版本沿用當時的 `SEALED_FOR_PRODUCTION_OBSERVATION`／`SEALED_AND_VALIDATED` 兩段式標記與記錄方式，保留為當時的做法原文，不因本次規則變更而回頭改寫或補標。本規則自路況-041 起適用於後續版本。
+
+## 修正紀錄｜V2.4.17 CCTV 圖片有效期由15分鐘延長為24小時（2026-09-08）
+
+**根因（重點，完整記錄）**：本次破圖（`EVENT_ID=11509080016-5`，2026-09-08 09:00，PBS，國道一號南向90.4K）與2026-08-31那次（`EVENT_ID=11508310005-5`）**是同一個原因**——`PUBLISHED_IMAGE_TTL_SECONDS=900`（15分鐘）。V2.3.3當時新增R2讀回驗證，但那從一開始就不是根因，只是排除了「R2寫入本身有問題」這個可能性，故問題在本次再現。
+
+路況-042查得完整await鏈：圖片於09:00:28成功寫入R2、通過V2.3.3的讀回驗證、09:00:30交給LINE——應用層時序全程正常，無race condition，無圖片未就緒即送出URL的路徑（路況-042已逐行查證排除）。路況-043查得的完整時間軸：LINE手機端直到**10:09:11**才首次抓圖，即推播後**68分41秒**，已超過15分鐘TTL達53分鐘，`readPublishedImage()`依既有邏輯正確判定過期、best-effort刪除物件、回404，LINE因此顯示破圖。
+
+**決定性對照組證據（路況-043查得）**：2026-09-06成功案例（`EVENT_ID=11509060138-0`）——手機端於推播後**+11分01秒**抓圖，得200（LINE收到後永久快取，故時至今日仍正常顯示）；但**同一張圖**若由桌機端於推播後**+20分鐘**抓取，則得404，且R2同分鐘記錄一筆DeleteObject。同一物件、同一TTL規則、不同使用者/裝置的抓取時間點、截然不同的結果——確定性地把「失敗與否」的變因鎖定在TTL時間窗與使用者實際開啟時間的落差，而非管線任何環節故障。
+
+**明確更正既有認知（既有記錄原文不改寫，於此說明更正）**：V2.3.3當時的記錄原文（保留不動，見上方對應章節）將此類破圖症狀描述為「無法用應用層時序解釋……LINE端遠端抓取行為不在本codebase可視範圍」。路況-042／043／044現已確認：**根因自始至終都在本codebase自己的TTL設定裡**，完全在本codebase的可視範圍與控制範圍內，**並非LINE端的謎團**。這不是一個LINE端的問題，而是本repo自己把已發布圖片的存活時間設得比一個真實使用者實際打開聊天視窗所需的時間還短。
+
+**修法內容**：僅改一個常數，`src/cctv/publishedImage.js#PUBLISHED_IMAGE_TTL_SECONDS`，900→86400（15分鐘→24小時）。過期判定邏輯、lazy delete機制、`readPublishedImage()`／`handlePublicCctvImage()`其餘行為逐字不動——只有數字變了。
+
+**儲存成本評估依據（真人已審閱定案）**：R2獨立計費（非Workers KV/CPU），免費額度每月10GB儲存／100萬Class A／1000萬Class B操作，egress免費。評估當下bucket 261個物件共8.35MB（平均約33KB/張）。以每日約10張估算，24小時TTL下同時存活約10張（約330KB），遠低於免費額度。真人已定案：空間充足，設定24小時。
+
+**已一併記錄的三項可觀測性缺口（待辦，本輪不處理）**：
+(a) `r2ReadbackElapsedMs`——路況-042查得：`prepareCctvImageWork()`確實有計算此欄位，但`broadcastPipeline.js`從未把它複製到`traceForEvent`，且`pipelineTrace.js`自己的KV schema函式參數清單裡根本沒有這個欄位——R2讀回驗證本身耗時多久，目前完全無法從Pipeline Trace（不論查修頁畫面或KV原始JSON）觀測到。
+(b) 主推播路徑（`runLineBroadcast`／`broadcastPipeline.js`的AI-approved LINE推播迴圈）沒有任何`console.log`輸出`stageTracker`／`cctvSkippedByReason`等CCTV診斷欄位——目前唯一相關的`console.log`屬於另一條完全不同路徑（`topUpSharedFeedCctvImages`／Shared Feed補圖），不會記錄真正的LINE推播事件。Cloudflare Worker Logs因此對CCTV各階段耗時沒有任何記錄可查。
+(c) Cloudflare Workers Logs會將32位hex的image id視為疑似敏感字串而遮罩為REDACTED，導致即使查得log行也無法從中反查出完整的圖片URL供人工核對。
+
+**R2清理機制的事實（已知行為，非缺陷，不列為待辦）**：過期物件採**lazy delete**——只有在被讀取時才判定是否過期並刪除，**沒有背景清理排程**。因此任何發布後未被再次讀取的物件會**永久殘留**於R2（現有8月份的殘留物件即屬此類）。TTL延長為24小時後，理論上會有更多這類殘留物件累積，但依上方儲存成本評估，即使如此仍遠低於免費額度，故此為已知、可接受的現有行為，本輪不新增背景清理排程或lifecycle規則，也不列為待辦事項。
+
+**測試**：新增4則測試於`test/cctvImagePublish.test.js`（V2.4.17 (a)(b)(c)(d)）——(a)常數新值為86400、(b)沿用真實事件自己的+68分41秒延遲時間軸驗證仍可正常讀取（24小時內）、(c)發布滿24小時又1秒後應過期並觸發lazy delete、(d)`publishCollageImage()`回傳的`expiresAt`精確等於`createdAt`+24小時。既有測試**無一需要更新**——`test/cctvImagePublish.test.js`既有的TTL相關斷言（測試1的`expiresIn`、測試4的過期計算）原本就是動態引用`PUBLISHED_IMAGE_TTL_SECONDS`常數本身，而非寫死900，故不需任何修改即自動反映新值並持續通過。另因版本bump連帶更新`test/aiObservatoryView.test.js`的`APP_VERSION`硬編碼斷言（標準連帶更新）。全量迴歸2013項（2009+4新增），1980通過／33失敗；以`git stash -u`取得變更前同一commit基準（2009項，1976通過／33失敗），以測試名稱集合逐一比對（非僅計數），兩集合完全相同（`comm`結果為空），`NEW_FAILURES=0`。`APP_VERSION`由`V2.4.16`bump為`V2.4.17`。
+
+**同步更新的說明性註解**：`src/cctv/dynamicCollage.js`、`src/traffic/broadcastPipeline.js`、`src/traffic/sharedFeed.js`三處提及「15分鐘」TTL的說明性註解已同步更新為24小時（僅更新TTL描述本身，不動其餘註解文字）。`src/version.js`裡V2.3.2／V2.3.3自己的已封版changelog記錄（描述當時確為15分鐘的歷史事實）刻意保留不動。另查得`src/cctv/publishedImage.js`模組頂端有一段描述舊版（KV時代、已停用）`Cache-Control: max-age=900`的歷史修正說明——該900是描述已作古的舊實作細節（非現行TTL），判斷不屬於本輪「說明性註解與實際值不符」範圍，未觸碰。另查得`src/pbs/pbsConfig.js#CROSS_SOURCE_MAX_TIME_DIFF_MS`與`src/traffic/health.js#STALE_CRITICAL_MS`兩處恰好也是15分鐘，但語意上與CCTV圖片TTL完全無關（分別為PBS/TDX跨來源時間差容許值、健康快照過時判定），純屬巧合同數值，已查出但未修改，並於此列出供會議室知悉。
+
+**V2.4.17封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-08，路況-044）。封版依據：程式碼變更完成（僅一個常數900→86400）、全量迴歸2013項／1980通過／33失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.4.17`、commit已push main並驗證。**待現場觀察事項（觀察記錄，非封版條件）**：下一則國道CCTV通報，若使用者延遲數小時才開啟LINE聊天視窗查看，圖片是否仍可正常顯示（24小時TTL的真實有效性驗證）——尚未取得。發現問題一律開`V2.4.18`，不回頭改已封版的`V2.4.17`。
