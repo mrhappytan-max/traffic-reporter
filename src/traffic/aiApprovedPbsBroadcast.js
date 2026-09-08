@@ -93,7 +93,7 @@ import { readIncidentSuppressionState, resolveIncidentNotifications, persistInci
 import { formatEventMessage } from './messageFormat.js';
 import { pushLineMessages } from '../line/pushMessage.js';
 import { pushTelegramMessage } from '../telegram/pushMessage.js';
-import { prepareCctvImageForEvent } from '../cctv/dynamicCollage.js';
+import { prepareCctvImageForEvent, resolveCctvEligibility } from '../cctv/dynamicCollage.js';
 
 function safeErrorMessage(err) {
   if (err && typeof err.message === 'string') return err.message;
@@ -265,7 +265,23 @@ export async function runAiApprovedPbsBroadcast(env, { event, now = new Date(), 
   // messageFormat.js's own V2.4.8 comment for the presentation this
   // produces.
   const text = formatEventMessage(event, { forecast: false, minutesUntilStart: null, cleanSummary });
-  const completedProduct = { eventKeyStr, fingerprint, text, event, imageUrl: null, imageExpiresAt: null };
+  // V2.5.1 (路況-053, following 路況-046's own plan) — cctvSkippedByReason/
+  // imageStrategy/r2ReadbackElapsedMs added alongside the existing
+  // imageUrl/imageExpiresAt, same style (null default, only ever set
+  // below when the CCTV try block actually runs and has something to
+  // report). See that block's own V2.5.1 comment for exactly when each
+  // gets populated.
+  const completedProduct = {
+    eventKeyStr,
+    fingerprint,
+    text,
+    event,
+    imageUrl: null,
+    imageExpiresAt: null,
+    cctvSkippedByReason: null,
+    imageStrategy: null,
+    r2ReadbackElapsedMs: null,
+  };
   result.completedProducts.push(completedProduct);
 
   // Same real incident, no material change since last notified — 0
@@ -300,12 +316,46 @@ export async function runAiApprovedPbsBroadcast(env, { event, now = new Date(), 
   // (roadManagementPolicyGate.js#resolveTdxRoadManagementEligibility) — see
   // that module's own comment. Everything below this line is byte-for-byte
   // the same logic that already ran for `type === 'accident'` events.
+  //
+  // V2.5.1 (路況-053, following 路況-046's own plan) — three additional,
+  // PURELY OBSERVATIONAL fields, never a new judgment:
+  //   - imageStrategy: read from a SEPARATE, direct call to
+  //     resolveCctvEligibility(event) — the same pure, zero-I/O,
+  //     already-established eligibility check prepareCctvImageForEvent()
+  //     calls internally anyway (broadcastPipeline.js already calls it a
+  //     second time this same way, for its own trace purposes — not a
+  //     new pattern). Chosen over the alternative (having
+  //     prepareCctvImageForEvent() itself return imageStrategy) because
+  //     it touches ONLY this file, never cctv/dynamicCollage.js — this
+  //     round's order explicitly forbids touching CCTV
+  //     production/eligibility logic, and a second read of an already-
+  //     pure function's output is a smaller, safer footprint than
+  //     changing that function's own return shape. Only set when
+  //     eligible — stays null when ineligible (no strategy was ever
+  //     chosen) or when this try block never runs at all (suppressed/
+  //     quiet-hours/etc. — see this function's own earlier early-returns).
+  //   - r2ReadbackElapsedMs: read directly off `cctv` whenever present —
+  //     prepareCctvImageWork()'s own snapshotStageTiming() already
+  //     attaches this on EVERY return path (success AND failure, e.g. a
+  //     genuine 'r2-readback-failed'), so this captures it regardless of
+  //     cctv.ok. This is precisely the field 路況-042/044 found missing
+  //     end-to-end on the OTHER (Cron/broadcastPipeline.js) path; wiring
+  //     it here does not touch that other path or fix that separate gap.
+  //   - cctvSkippedByReason: `cctv.reason` on the `!cctv.ok` branch —
+  //     this file's own try/catch previously just discarded the reason
+  //     entirely (no `else`); this is the one new `else` branch this
+  //     round adds.
   try {
+    const eligibility = resolveCctvEligibility(event);
+    if (eligibility.eligible) completedProduct.imageStrategy = eligibility.imageStrategy;
     const cctv = await prepareCctvImageForEvent(env, event, {});
+    if (typeof cctv.r2ReadbackElapsedMs === 'number') completedProduct.r2ReadbackElapsedMs = cctv.r2ReadbackElapsedMs;
     if (cctv.ok) {
       messages = [{ type: 'text', text }, { type: 'image', originalContentUrl: cctv.imageUrl, previewImageUrl: cctv.imageUrl }];
       completedProduct.imageUrl = cctv.imageUrl;
       completedProduct.imageExpiresAt = cctv.imageExpiresAt;
+    } else {
+      completedProduct.cctvSkippedByReason = cctv.reason;
     }
   } catch (err) {
     // CCTV must never be able to block a text push — same fail-safe

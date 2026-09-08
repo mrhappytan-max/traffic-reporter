@@ -91,6 +91,89 @@ test('buildAiObservatoryRecord: rawComment/rawSourceDetail are stored COMPLETE, 
   assert.equal(record.direction, '南向');
 });
 
+// ============================================================================
+// V2.5.1 (路況-053, following 路況-046's own plan) — CCTV diagnostic detail
+// fields: imageUrl/imageExpiresAt/cctvSkippedByReason/imageStrategy/
+// r2ReadbackElapsedMs. Depending on the actual current code path (路況-053
+// re-verified this before writing these tests — see that round's own
+// report for the full re-check): the V2.4.16/V2.4.18 type-gate removal
+// means `cctv` is now computed for essentially any event that reaches
+// aiApprovedPbsBroadcast.js's CCTV try block, so the two real scenarios
+// this schema needs to represent are just "CCTV ineligible/failed" and
+// "CCTV succeeded" — a `cctv`-never-computed-at-all case still exists
+// (the function's own pre-existing suppressed/quiet-hours/phase-gate
+// early-returns), but it is NOT type-based and is not new — it simply
+// leaves these fields at their null defaults, which the schema already
+// handles via ordinary parameter defaults, no special case needed.
+// ============================================================================
+
+test('buildAiObservatoryRecord: CCTV ineligible/failed scenario — cctvSkippedByReason set, imageUrl/imageExpiresAt/r2ReadbackElapsedMs stay null', () => {
+  const record = buildAiObservatoryRecord({
+    candidate: { road: '國道一號' },
+    eventId: 'E20',
+    lifecycle: 'NEW',
+    fingerprint: 'fp20',
+    outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+    imageUrlPresent: false,
+    cctvSkippedByReason: 'no-camera',
+    imageStrategy: 'quad',
+  });
+  assert.equal(record.cctvSkippedByReason, 'no-camera');
+  assert.equal(record.imageStrategy, 'quad', 'a strategy can be chosen even when the attempt ultimately fails');
+  assert.equal(record.imageUrl, null);
+  assert.equal(record.imageExpiresAt, null);
+  assert.equal(record.r2ReadbackElapsedMs, null);
+});
+
+test('buildAiObservatoryRecord: CCTV success scenario — all 5 fields populated, cctvSkippedByReason stays null', () => {
+  const record = buildAiObservatoryRecord({
+    candidate: { road: '國道一號' },
+    eventId: 'E21',
+    lifecycle: 'NEW',
+    fingerprint: 'fp21',
+    outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+    imageUrlPresent: true,
+    imageUrl: 'https://traffic-reporter.example.workers.dev/cctv/image/abc123',
+    imageExpiresAt: '2026-09-09T09:00:28.000Z',
+    imageStrategy: 'quad',
+    r2ReadbackElapsedMs: 42,
+  });
+  assert.equal(record.imageUrl, 'https://traffic-reporter.example.workers.dev/cctv/image/abc123');
+  assert.equal(record.imageExpiresAt, '2026-09-09T09:00:28.000Z');
+  assert.equal(record.imageStrategy, 'quad');
+  assert.equal(record.r2ReadbackElapsedMs, 42);
+  assert.equal(record.cctvSkippedByReason, null);
+});
+
+test('buildAiObservatoryRecord: r2ReadbackElapsedMs of exactly 0 is preserved (not treated as absent/falsy)', () => {
+  const record = buildAiObservatoryRecord({
+    candidate: null,
+    eventId: 'E22',
+    lifecycle: 'NEW',
+    fingerprint: 'fp22',
+    outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+    r2ReadbackElapsedMs: 0,
+  });
+  assert.equal(record.r2ReadbackElapsedMs, 0);
+});
+
+test('buildAiObservatoryRecord: omitting all 5 new fields (pre-V2.5.1 caller shape) degrades to null for every one of them — backward compatible with the existing imageUrlPresent-only contract', () => {
+  const record = buildAiObservatoryRecord({
+    candidate: null,
+    eventId: 'E23',
+    lifecycle: 'NEW',
+    fingerprint: 'fp23',
+    outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+    imageUrlPresent: true,
+  });
+  assert.equal(record.imageUrlPresent, true, 'the pre-existing field is completely unaffected by this round');
+  assert.equal(record.imageUrl, null);
+  assert.equal(record.imageExpiresAt, null);
+  assert.equal(record.cctvSkippedByReason, null);
+  assert.equal(record.imageStrategy, null);
+  assert.equal(record.r2ReadbackElapsedMs, null);
+});
+
 test('recordAiObservatoryEntry: writes exactly 1 KV put, key under the dedicated prefix, TTL set', async () => {
   const kv = countingKV();
   const record = buildAiObservatoryRecord({ candidate: null, eventId: 'E4', lifecycle: 'NEW', fingerprint: 'fp4', outcome: AI_OUTCOME.AI_NOT_INVOKED_LEGACY_PATH });

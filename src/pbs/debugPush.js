@@ -1380,6 +1380,17 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
       lineSent,
       sharedFeedPersisted: sharedFeedCommitted,
       imageUrlPresent: Boolean(firstProduct && firstProduct.imageUrl),
+      // V2.5.1 (路況-053, following 路況-046's own plan) — the same
+      // `firstProduct` (aiApprovedPbsBroadcast.js's own completedProduct,
+      // extended this same round to carry these) that imageUrlPresent
+      // above already reads .imageUrl off. Purely wiring already-computed
+      // fields the rest of the way through to the Observatory record;
+      // never a new computation here.
+      imageUrl: (firstProduct && firstProduct.imageUrl) || null,
+      imageExpiresAt: (firstProduct && firstProduct.imageExpiresAt) || null,
+      cctvSkippedByReason: (firstProduct && firstProduct.cctvSkippedByReason) || null,
+      imageStrategy: (firstProduct && firstProduct.imageStrategy) || null,
+      r2ReadbackElapsedMs: firstProduct && typeof firstProduct.r2ReadbackElapsedMs === 'number' ? firstProduct.r2ReadbackElapsedMs : null,
       sameIncident: decision.sameIncident,
       materialChange: decision.materialChange,
       primarySource: memoryResult.primarySource,

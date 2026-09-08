@@ -268,3 +268,31 @@
 **待現場觀察事項（明確記錄，不得寫成已確認）**：真人自己的頻道是否確實收到與LINE同步的通知，含CCTV圖片情境（`sendPhoto`是否正確顯示圖片）——**尚未取得**。
 
 **V2.5.0封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-08，路況-052）。封版依據：程式碼變更完成、全量迴歸2033項／2000通過／33失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.5.0`、commit已push main並驗證。發現問題一律開`V2.5.1`，不回頭改已封版的`V2.5.0`。
+
+## 修正紀錄｜V2.5.1 CCTV完整診斷資訊接入AI Observatory index並顯示於查修頁（2026-09-08）
+
+**與路況-046的關係**：本輪執行路況-046原始規劃（imageUrl／imageExpiresAt／cctvSkippedByReason／imageStrategy／r2ReadbackElapsedMs五個欄位接入AI Observatory index與查修頁），但路況-046規劃當時`aiApprovedPbsBroadcast.js`仍有外層`event.type==='accident'`閘門（詳見上方V2.4.18記錄），該規劃自己定義的「情境0」（CCTV完全未被計算，與「有算但不合格」無法區分）正是針對這道閘門而設計。V2.4.18（路況-049）已移除該閘門。
+
+**情境重新核對結果（本輪執行前，依訂單明文指示重新查證，非沿用路況-046原文）**：重新逐行核對現行`aiApprovedPbsBroadcast.js`，確認`prepareCctvImageForEvent()`現已對每個到達該處的事件無條件呼叫——路況-046原本以「事件類型」劃分的「情境0」已**消失**。仍可能出現「CCTV完全未被計算」的結果，但成因已改變：僅來自與CCTV完全無關、且早於V2.4.18就存在的其他早退機制（服務區閘門、LINE就緒閘門fail-closed、離峰靜音時段、事故抑制、notified-state去重、TDX Phase B/C的suppressLineNotify）——這些情況下5個新欄位單純維持null預設值，行為與既有`imageUrl`／`imageExpiresAt`完全一致，不需要特殊處理。**故本輪實際只有2種CCTV專屬情境需要定義欄位值**：(1) 未合格或已合格但失敗——`cctvSkippedByReason`取`cctv.reason`或eligibility的reason；`imageStrategy`在eligibility通過時有值（即使隨後失敗，因為策略確實已選定），未通過則維持null（從未選定策略）；(2) 成功——5個欄位全部有值。**結論：與路況-046原始規劃的落差，是因V2.4.18的既有變更而非本輪造成，本輪據實重新定義，不誤讀路況-046原文為現行行為。**
+
+**檔案清單**：
+- `src/traffic/aiApprovedPbsBroadcast.js`：`completedProduct`初始物件新增3個null預設欄位；CCTV try區塊改為呼叫`resolveCctvEligibility(event)`取得`imageStrategy`（見下方取捨理由），`!cctv.ok`分支補上原本被丟棄的`cctvSkippedByReason`賦值，`r2ReadbackElapsedMs`不論成功失敗只要`cctv`回傳為數字即讀取。
+- `src/pbs/debugPush.js`：`runAiDecisionPath()`的`AI_NOTIFY_TRUE`回傳物件（`imageUrlPresent`既有讀取`firstProduct.imageUrl`處）同層新增4個欄位讀取。
+- `src/pbs/aiObservatoryIndex.js`：`buildAiObservatoryRecord()`新增5個具名參數＋回傳欄位，插入於既有`imageUrlPresent`之後，全部預設null。
+- `src/pbs/aiObservatoryView.js`：新增`imageExpiryLabel()`輔助函式；`renderDetail()`增加`now`參數（由`renderRow()`往下傳遞）；既有CCTV列之後新增5列渲染。
+- `src/version.js`：`APP_VERSION`bump。
+- `test/aiApprovedPbsBroadcast.test.js`（+3）／`test/aiObservatoryIndex.test.js`（+4）／`test/aiObservatoryView.test.js`（+5）。
+
+**imageStrategy取得方式取捨（訂單要求說明理由）**：選擇方案a——在`aiApprovedPbsBroadcast.js`內另外呼叫一次`resolveCctvEligibility(event)`（純函式、零I/O，`broadcastPipeline.js`自身也有「呼叫兩次」的既有先例，非新模式），而非方案b（修改`prepareCctvImageForEvent()`的回傳形狀）。理由：方案a的異動範圍完全侷限在本檔案，`dynamicCollage.js`一行未動；方案b勢必要修改CCTV生產邏輯所在檔案的回傳介面，直接牴觸本單「不得修改CCTV生產邏輯本身／`resolveCctvEligibility()`」的不授權事項。
+
+**`debugPush.js`插入點與訂單原文的落差（誠實揭露，非本輪造成的問題，訂單文字本身有出入）**：訂單原文寫「於`writeObservatoryRecord()`呼叫處」加入5個欄位，但實際追蹤程式碼後，正確／必要的插入點是往上一層——`runAiDecisionPath()`自己的`AI_NOTIFY_TRUE`回傳物件，此物件透過既有`...observatoryOutcome`／`...outcomeFields`展開語法流入`writeObservatoryRecord()`呼叫處；呼叫處本身從未逐一具名這些欄位。本輪已在正確插入點實作，訂單文字落差僅供未來對照參考，不影響功能正確性。
+
+**查修頁渲染細節**：`imageExpiresAt`顯示採即時（display-time）比對——`Date.parse(imageExpiresAt)`與`now.getTime()`比較，標示「已過期」／「尚未過期」，重用既有`formatTaipeiInstant()`，**不新增任何持久化欄位、不新增任何判斷邏輯**（僅顯示層級的即時運算）。`cctvSkippedByReason`直接顯示原始英文字串，**未新增翻譯對照表**（訂單明文禁止；路況-046已查證確認並無現成對照表可重用）。舊格式（24小時TTL部署前寫入、完全無這5個欄位）相容性沿用既有null/undefined雙重檢查慣例（`renderField()`既有null/undefined→"—"顯示邏輯直接適用），**未新增schema版本欄位**。
+
+**已知限制（誠實重申，本輪不解決，非新問題）**：這5個新欄位與既有`imageUrlPresent`同存在同一筆Observatory index KV記錄，48小時TTL到期後這筆記錄本身連同新欄位一併消失，與現行`imageUrlPresent`行為完全一致。更長期保留機制屬路況-046自己定義的「程度C」，明確不在本輪範圍。
+
+**測試**：`test/aiApprovedPbsBroadcast.test.js`+3——eligible但CCTV失敗（no-frames）設定`cctvSkippedByReason`與`imageStrategy`、`r2ReadbackElapsedMs`維持null；ineligible（不支援道路）設定`cctvSkippedByReason`為eligibility reason、`imageStrategy`維持null；CCTV try區塊完全未執行（離峰靜音）時5個欄位自然維持初始null，與既有`imageUrl`/`imageExpiresAt`行為一致。`test/aiObservatoryIndex.test.js`+4——失敗/不合格情境、成功情境（5欄位全populate）、`r2ReadbackElapsedMs`為`0`時不被當成falsy正確保留（`assert.equal`非`assert.ok`）、省略全部5個新參數的向下相容性（全部降級為null，`imageUrlPresent`不受影響）。`test/aiObservatoryView.test.js`+5——成功渲染（含「尚未過期」標示）、失敗渲染（原始英文字串逐字顯示）、已過期/未過期標示分別驗證、舊格式記錄（5欄位全缺）不拋錯的回歸鎖、`imageUrlPresent`既有YES/NO判斷不受新欄位影響。**誠實揭露既有測試基礎設施限制（V2.4.18已記錄過的同一限制，非本輪新增）**：受限於`dynamicCollage.js`真實JPEG codec在`node --test`環境的「Node-incompatible dynamic import」限制，加上`aiApprovedPbsBroadcast.js`呼叫`prepareCctvImageForEvent()`時未對外暴露`codecOverride`，本輪測試無法從該檔案呼叫端驗證真正`cctv.ok:true`或`r2ReadbackElapsedMs`非null數值的完整路徑；已驗證的是null/absent分支的正確性，這正是本輪新增接線實際需要覆蓋的部分。
+
+**APP_VERSION**：`V2.5.0`→`V2.5.1`（PATCH，純觀測性變更，比照V2.0.1建立Observatory index本身即為PATCH的先例）。全量迴歸2045項（2033+12新增），2012通過／33失敗；`git stash -u`基準（2033項，2000通過／33失敗），測試名稱集合比對，`NEW_FAILURES=0`。
+
+**V2.5.1封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-08，路況-053）。封版依據：程式碼變更完成、全量迴歸2045項／2012通過／33失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.5.1`、commit已push main並驗證。**待現場觀察事項（觀察記錄，非封版條件）**：查修頁上5個新欄位在真實Production事件（尤其成功組出CCTV圖片的情境）下的實際顯示效果——尚未取得。發現問題一律開下一個PATCH版本，不回頭改已封版的`V2.5.1`。

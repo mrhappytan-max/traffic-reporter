@@ -294,6 +294,63 @@ test('V2.4.18 (a) negative control: an ineligible non-accident event (unsupporte
   assert.equal(cctvFetchCalls.length, 0, 'an unsupported road must never reach a frame fetch — resolveCctvEligibility itself fails closed, same as before');
 });
 
+// ============================================================================
+// V2.5.1 (路況-053, following 路況-046's own plan) — completedProduct now
+// also carries cctvSkippedByReason/imageStrategy/r2ReadbackElapsedMs.
+// KNOWN, DISCLOSED TEST-INFRASTRUCTURE LIMIT (same one V2.4.18's own tests
+// above already documented, unchanged by this round): a genuine
+// cctv.ok:true (or a late failure like 'r2-readback-failed', which itself
+// requires having gotten through the same codec-dependent compose step
+// first) cannot be reached from this call site in `node --test` without a
+// codecOverride this file's caller does not expose. r2ReadbackElapsedMs is
+// therefore only actually reachable, in this test environment, on its
+// null/absent branch — the tests below prove that branch is handled
+// correctly (never crashes, never fabricates a value), which is the real,
+// achievable regression lock for the wiring THIS round adds.
+// ============================================================================
+
+test('V2.5.1: an eligible-but-failed CCTV attempt (no-frames) sets cctvSkippedByReason and imageStrategy, but leaves r2ReadbackElapsedMs null (that stage was never reached)', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  await kv.put(FREEWAY_METADATA_KEY, JSON.stringify({ records: [freewayCctvRecord()], fetchedAt: new Date().toISOString() }));
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLinePushAndCctvFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv, CCTV_IMAGES: { put: async () => {}, get: async () => null } };
+  const event = pbsControlEvent({ displayKM: 94 });
+  const result = await runAiApprovedPbsBroadcast(env, { event, now: WITHIN_HOURS });
+  const product = result.completedProducts[0];
+  assert.equal(product.cctvSkippedByReason, 'no-frames', 'all mocked frame fetches return 500, so every candidate fails to decode a frame');
+  assert.equal(product.imageStrategy, 'quad', 'a strategy IS chosen — eligibility passed — even though the attempt then failed');
+  assert.equal(product.r2ReadbackElapsedMs, null, 'never reached the R2 readback stage, so this must stay null, never undefined or a stale value');
+  assert.equal(product.imageUrl, null);
+  assert.equal(product.imageExpiresAt, null);
+});
+
+test('V2.5.1: an ineligible CCTV event (unsupported road) sets cctvSkippedByReason to the eligibility reason, and imageStrategy stays null (no strategy was ever chosen)', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLinePushAndCctvFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv, CCTV_IMAGES: { put: async () => {}, get: async () => null } };
+  const event = pbsControlEvent({ road: '台68線', displayKM: 5 }); // not in CCTV_SUPPORTED_ROADS
+  const result = await runAiApprovedPbsBroadcast(env, { event, now: WITHIN_HOURS });
+  const product = result.completedProducts[0];
+  assert.equal(product.cctvSkippedByReason, 'unresolvable-road');
+  assert.equal(product.imageStrategy, null, 'ineligible before a strategy was ever chosen');
+  assert.equal(product.r2ReadbackElapsedMs, null);
+});
+
+test('V2.5.1: when the CCTV try block never runs at all (e.g. quiet hours), completedProducts stays empty — the new fields simply never get the chance to be set, same as imageUrl/imageExpiresAt already behaved', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLinePushFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+  const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: new Date('2026-08-28T07:59:00+08:00') });
+  assert.equal(result.withinBroadcastHours, false);
+  assert.equal(result.completedProducts.length, 0, 'this early-return happens before completedProduct is even built — pre-existing behavior, unchanged');
+});
+
 test('V2.4.18 (b) Gate A regression lock — a dynamic-shoulder (OPEN/STOPPED) event is still rejected by tdx/roadManagementPolicyGate.js#resolveTdxRoadManagementEligibility, independently of and unaffected by this round\'s change (this file\'s own removed gate is downstream of, and irrelevant to, this upstream gate)', () => {
   const openEvent = { source: 'freeway', dynamicShoulder: { state: 'OPEN' } };
   const stoppedEvent = { source: 'freeway', dynamicShoulder: { state: 'STOPPED' } };

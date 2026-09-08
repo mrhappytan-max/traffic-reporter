@@ -512,7 +512,20 @@ function renderTdxRoadPolicySection(record) {
   return `<div class="detail-section"><h4>③ ROAD_POLICY（道路管理政策）</h4><div class="row"><div class="label">結果</div><div class="value">${text}</div></div></div>`;
 }
 
-function renderDetail(record, decision, idem) {
+// V2.5.1 (路況-053) — pure display-time computation, never a new
+// persisted field: compares the already-stored imageExpiresAt against the
+// moment this page happens to render. Reuses formatTaipeiInstant() for
+// the timestamp itself, same as every other Asia/Taipei field on this
+// page — no new date-formatting logic.
+function imageExpiryLabel(imageExpiresAt, now) {
+  const formatted = formatTaipeiInstant(imageExpiresAt);
+  if (!formatted) return null;
+  const expiresMs = Date.parse(imageExpiresAt);
+  const expired = Number.isFinite(expiresMs) && expiresMs <= now.getTime();
+  return `${formatted}（${expired ? '已過期' : '尚未過期'}）`;
+}
+
+function renderDetail(record, decision, idem, now = new Date()) {
   const isTdx = record.source === 'freeway' || record.source === 'highway';
   const cacheLabel = record.cacheStatus === 'HIT' ? 'HIT（沿用先前已驗證的判讀，本次 0 次 AI 呼叫）' : record.cacheStatus === 'MISS' ? 'MISS（本次呼叫了 Workers AI）' : null;
   const stage = deriveAiStageFlags(record.outcome);
@@ -587,6 +600,11 @@ function renderDetail(record, decision, idem) {
     ${renderField('LINE 發送時間', 'NOT RECORDED')}
     ${renderField('Shared Feed', record.sharedFeedPersisted === null || record.sharedFeedPersisted === undefined ? 'UNKNOWN / NOT RECORDED' : record.sharedFeedPersisted ? 'YES' : 'NO')}
     ${renderField('CCTV', record.imageUrlPresent === null || record.imageUrlPresent === undefined ? 'UNKNOWN / NOT RECORDED' : record.imageUrlPresent ? 'YES' : 'NO')}
+    ${renderField('CCTV 圖片網址', record.imageUrl)}
+    ${renderField('CCTV 圖片到期時間（Asia/Taipei）', record.imageExpiresAt ? imageExpiryLabel(record.imageExpiresAt, now) : null)}
+    ${renderField('CCTV 跳過原因', record.cctvSkippedByReason)}
+    ${renderField('CCTV 策略', record.imageStrategy)}
+    ${renderField('R2 讀回耗時（ms）', record.r2ReadbackElapsedMs)}
   </div>
 </div>`;
 }
@@ -756,7 +774,7 @@ function renderRow(record, decision, idem, now) {
     ${lineSummaryBadge(record)}
     ${finalReasonLine(record, decision)}
   </summary>
-  ${renderDetail(record, decision, idem)}
+  ${renderDetail(record, decision, idem, now)}
 </details>`;
 }
 

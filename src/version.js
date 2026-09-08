@@ -2473,7 +2473,118 @@
 // 15 pre-existing tests in that file (9 original + 6 from V2.4.18) needed
 // zero changes. Full regression 2033/2000/33; git stash -u baseline
 // 2019/1986/33; failure-name-set comparison confirms NEW_FAILURES=0.
-export const APP_VERSION = 'V2.5.0';
+
+// V2.5.1 (2026-09-08, 路況-053, following 路況-046's own plan) — CCTV
+// diagnostic detail wired into the AI Observatory index/page: imageUrl,
+// imageExpiresAt, cctvSkippedByReason, imageStrategy, r2ReadbackElapsedMs.
+// PATCH — purely observational (same precedent as V2.0.1, which itself
+// introduced the whole Observatory index as a PATCH).
+//
+// RE-VERIFIED PREMISE BEFORE EXECUTING (order's own explicit
+// instruction): 路況-046's plan was written while aiApprovedPbsBroadcast.js
+// still had the `event.type === 'accident'` gate around CCTV — its own
+// "情境0" (cctv never computed at all, indistinguishable from "reached
+// but ineligible") was specifically about that gate. V2.4.18 (路況-049)
+// removed it. Re-checked this round, fresh, against the actual current
+// code: `prepareCctvImageForEvent()` is now called unconditionally for
+// every event that reaches that point — 路況-046's type-based "情境0" is
+// GONE. A structurally similar "cctv never computed" outcome can still
+// occur, but only via entirely unrelated, pre-existing early-returns
+// (service-area gate, LINE-readiness fail-closed, quiet hours, incident
+// suppression, notified-state dedupe, TDX Phase B/C's suppressLineNotify)
+// that have nothing to do with CCTV and predate V2.4.18 — those simply
+// leave the new fields at their null defaults, exactly like imageUrl/
+// imageExpiresAt already did, no special-casing needed. So there are
+// really only TWO CCTV-specific scenarios to define values for:
+//   - eligible-or-not, then failed (or plain ineligible): cctvSkippedByReason
+//     = cctv.reason (or the eligibility reason); imageStrategy is set
+//     when eligibility passed (a strategy WAS chosen even though the
+//     attempt then failed) and stays null when ineligible (no strategy
+//     was ever chosen); imageUrl/imageExpiresAt/r2ReadbackElapsedMs stay
+//     null unless the failure happened at/after the R2-readback stage
+//     (r2ReadbackElapsedMs is read directly off `cctv` whenever numeric,
+//     regardless of ok/not-ok — prepareCctvImageWork()'s own
+//     snapshotStageTiming() already attaches it on every return path).
+//   - succeeded: all 5 fields populated.
+//
+// WHAT CHANGED, PER FILE:
+//   - traffic/aiApprovedPbsBroadcast.js: completedProduct gains
+//     cctvSkippedByReason/imageStrategy/r2ReadbackElapsedMs (null
+//     defaults, same style as the existing imageUrl/imageExpiresAt). The
+//     CCTV try block calls resolveCctvEligibility(event) directly — a
+//     SEPARATE call to the same pure, zero-I/O function
+//     prepareCctvImageForEvent() already calls internally (broadcastPipeline.js
+//     already does this exact "call it twice" pattern for its own trace
+//     purposes — not a new pattern) — purely to read its imageStrategy;
+//     chosen over the alternative (prepareCctvImageForEvent() itself
+//     returning imageStrategy) specifically because it touches ONLY this
+//     file, never cctv/dynamicCollage.js, which this round's order
+//     explicitly forbids modifying. The previously-missing `else` branch
+//     on `!cctv.ok` now sets cctvSkippedByReason — this file's try/catch
+//     used to just discard the reason entirely.
+//   - pbs/debugPush.js: runAiDecisionPath()'s own AI_NOTIFY_TRUE return
+//     object (the one imageUrlPresent already reads `firstProduct.imageUrl`
+//     off) gains the same four fields, read off the same `firstProduct`.
+//     NOTE on the actual insertion point: the order described this as
+//     "writeObservatoryRecord()呼叫處" — the real, correct insertion point
+//     turned out to be one level up, in the object that FLOWS INTO those
+//     calls via `...observatoryOutcome`/`...outcomeFields` spreads, not
+//     the call sites themselves (which never named these fields
+//     individually to begin with — they just spread whatever
+//     runAiDecisionPath() already returned). No functional difference,
+//     stated here for anyone tracing this against the order text later.
+//   - pbs/aiObservatoryIndex.js: buildAiObservatoryRecord() gains the 5
+//     named parameters + return fields, inserted immediately after the
+//     existing imageUrlPresent, all defaulting to null — an old record
+//     read back within its 48h TTL (or any caller that doesn't pass them)
+//     degrades to exactly today's imageUrlPresent-only shape.
+//   - pbs/aiObservatoryView.js: 5 new rendered rows immediately after the
+//     existing "CCTV" row, same detail section. imageExpiresAt gets a
+//     live 已過期/尚未過期 label — a pure display-time comparison against
+//     `now` (now threaded from renderRow() into renderDetail(), which
+//     already received it but never passed it down) against the
+//     already-stored value, reusing the existing formatTaipeiInstant() —
+//     never a new persisted field, never a new judgment.
+//     cctvSkippedByReason renders the raw reason string verbatim — no
+//     translation table added (order explicitly forbids one; 路況-046
+//     already confirmed none exists to reuse).
+//
+// EXPLICITLY UNCHANGED THIS ROUND: Render relay, the legacy Pipeline
+// Trace view, any "程度 C" mechanism (LINE fetch-behavior logging, longer-
+// than-48h retention), cctvSkippedByReason's raw string values themselves,
+// AI decision logic, LINE_PUSH_POLICY, Telegram push logic (V2.5.0, just
+// shipped, untouched), CCTV production/eligibility logic itself
+// (resolveCctvEligibility() — zero lines of dynamicCollage.js touched).
+//
+// KNOWN LIMITATION, RESTATED HONESTLY (not solved this round, not new):
+// these 5 fields still live in the SAME 48h-TTL Observatory index KV
+// record as imageUrlPresent already did — they disappear with the rest
+// of that record after 48 hours, same as before. A longer retention
+// mechanism is 路況-046's own "程度 C", explicitly out of this round's
+// scope.
+//
+// TESTS: test/aiObservatoryIndex.test.js — 4 new unit tests (failed/
+// ineligible scenario, success scenario, r2ReadbackElapsedMs===0
+// preserved not treated as falsy, and full backward-compat with zero new
+// fields passed). test/aiObservatoryView.test.js — 5 new tests (success
+// rendering, failure rendering with the raw reason string, expired vs
+// not-yet-expired labeling, a backward-compat record with none of the 5
+// fields rendering without throwing, and imageUrlPresent's own existing
+// YES/NO calculation confirmed unaffected). test/aiApprovedPbsBroadcast.test.js
+// — 3 new tests covering the two real reachable CCTV scenarios
+// (eligible-but-failed, ineligible) plus the pre-existing "try block never
+// runs" early-return case. HONEST, DISCLOSED LIMIT (same pre-existing one
+// V2.4.18's own tests already documented, not new): a genuine cctv.ok:true
+// — or any failure late enough to carry a real r2ReadbackElapsedMs value —
+// cannot be exercised from aiApprovedPbsBroadcast.js's own call site in
+// `node --test` without a codecOverride it does not expose; the tests
+// above prove the null/absent branch of that field is handled correctly,
+// which is what this round's actual new wiring needs covered — they do
+// not, and cannot, prove a real non-null numeric value survives the trip,
+// because no test in this file has ever been able to produce one. Full
+// regression 2045/2012/33; git stash -u baseline 2033/2000/33; failure-
+// name-set comparison confirms NEW_FAILURES=0.
+export const APP_VERSION = 'V2.5.1';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

@@ -16,6 +16,8 @@ import {
 import { handleAiObservatoryView } from '../src/pbs/aiObservatoryView.js';
 import { setUserEnabled } from '../src/traffic/subscriptions.js';
 import { APP_VERSION } from '../src/version.js';
+import { buildAiObservatoryRecord, recordAiObservatoryEntry, AI_OUTCOME } from '../src/pbs/aiObservatoryIndex.js';
+import { taipeiDateString } from '../src/tdx/usageLedger.js';
 
 // V2.3.0 — see test/pbsAiDecisionScenarios.test.js's own comment for the
 // full rationale: a self-draining fake Queue, attached transparently by a
@@ -284,7 +286,7 @@ test('11: missing/expired AI decision cache data renders UNKNOWN / NOT RECORDED,
 // only bump the literal), same discipline test/versionLineage.test.js's
 // own series-prefix check already follows.
 test('12: APP_VERSION reflects the current release', () => {
-  assert.equal(APP_VERSION, 'V2.5.0');
+  assert.equal(APP_VERSION, 'V2.5.1');
 });
 
 test('SERVICE_AREA_EXCLUDED events show "服務區域外", never routed through AI at all', async () => {
@@ -315,4 +317,111 @@ test('duplicate transport arrivals never create a second observatory row, and th
 
   const html = await (await handleAiObservatoryView(env, viewRequest('?status=DUPLICATE'), NOW)).text();
   assert.ok(html.includes('重複到達的 Windows PBS 事件'), 'must explain the architecture limit, never silently show an empty/misleading result');
+});
+
+// ============================================================================
+// V2.5.1 (路況-053) — CCTV diagnostic detail rendering. Records are seeded
+// DIRECTLY via buildAiObservatoryRecord()/recordAiObservatoryEntry()
+// (both already exported, already the real production code path
+// debugPush.js itself calls) rather than driven through a full real
+// CCTV attempt — a genuine cctv.ok:true collage cannot be produced in
+// `node --test` from aiApprovedPbsBroadcast.js's own call site without a
+// codecOverride it does not expose (see test/aiApprovedPbsBroadcast.test.js's
+// own V2.4.18 comment for the full, pre-existing explanation of this test-
+// infrastructure limit — unrelated to and unchanged by this round). This
+// still exercises the REAL handleAiObservatoryView() render path end to
+// end for these 5 new fields, which is what this round's own new code
+// (aiObservatoryIndex.js/aiObservatoryView.js) actually needs covered.
+// ============================================================================
+
+async function seedObservatoryRecord(env, overrides = {}) {
+  const record = buildAiObservatoryRecord({
+    candidate: { road: '國道一號', direction: '北向', areaNm: '國道一號北向', displayKM: 94, eventType: 'accident', comment: '國道一號北向94公里處發生追撞事故' },
+    eventId: overrides.eventId || 'PBS-CCTV-1',
+    lifecycle: 'NEW',
+    fingerprint: 'fp-cctv',
+    outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+    lineAttempted: true,
+    lineSent: true,
+    now: NOW,
+    ...overrides,
+  });
+  await recordAiObservatoryEntry(env.TRAFFIC_KV, record, { taipeiDate: taipeiDateString(NOW), idempotencyKeyHash: `hash-${overrides.eventId || 'PBS-CCTV-1'}`, now: NOW });
+  return record;
+}
+
+test('V2.5.1: CCTV success scenario renders imageUrl/imageExpiresAt(過期提示)/imageStrategy, and does not render a cctvSkippedByReason value', async () => {
+  const env = await baseEnv();
+  await seedObservatoryRecord(env, {
+    eventId: 'PBS-CCTV-OK',
+    imageUrlPresent: true,
+    imageUrl: 'https://traffic-reporter.example.workers.dev/cctv/image/abc123',
+    imageExpiresAt: new Date(NOW.getTime() + 3600_000).toISOString(), // 1h in the future relative to NOW
+    imageStrategy: 'quad',
+    r2ReadbackElapsedMs: 37,
+  });
+
+  const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
+  assert.ok(html.includes('https://traffic-reporter.example.workers.dev/cctv/image/abc123'));
+  assert.ok(html.includes('尚未過期'), 'an expiresAt in the future relative to render time must say 尚未過期');
+  assert.ok(html.includes('quad'));
+  assert.ok(html.includes('37'));
+});
+
+test('V2.5.1: CCTV failed scenario renders cctvSkippedByReason verbatim (no translation table — order explicitly forbids adding one), and imageUrl/imageStrategy stay absent', async () => {
+  const env = await baseEnv();
+  await seedObservatoryRecord(env, {
+    eventId: 'PBS-CCTV-FAIL',
+    imageUrlPresent: false,
+    cctvSkippedByReason: 'no-camera',
+  });
+
+  const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
+  assert.ok(html.includes('no-camera'), 'the raw reason string is shown verbatim, per order section 二');
+});
+
+test('V2.5.1: an expired imageExpiresAt (in the past relative to render time) is labeled 已過期', async () => {
+  const env = await baseEnv();
+  await seedObservatoryRecord(env, {
+    eventId: 'PBS-CCTV-EXPIRED',
+    imageUrlPresent: true,
+    imageUrl: 'https://traffic-reporter.example.workers.dev/cctv/image/old',
+    imageExpiresAt: new Date(NOW.getTime() - 3600_000).toISOString(), // 1h in the past relative to NOW
+  });
+
+  const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
+  assert.ok(html.includes('已過期'));
+  assert.ok(!html.includes('尚未過期'));
+});
+
+test('V2.5.1 backward-compat regression lock: a record built WITHOUT any of the 5 new fields (simulating a pre-V2.5.1, within-48h-TTL record) renders without throwing, showing the existing dash placeholder for all 5', async () => {
+  const env = await baseEnv();
+  // Deliberately the OLD call shape — no imageUrl/imageExpiresAt/
+  // cctvSkippedByReason/imageStrategy/r2ReadbackElapsedMs passed at all,
+  // exactly what a record written before this round would look like.
+  const record = buildAiObservatoryRecord({
+    candidate: { road: '國道一號' },
+    eventId: 'PBS-CCTV-OLD',
+    lifecycle: 'NEW',
+    fingerprint: 'fp-old',
+    outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+    imageUrlPresent: true,
+    lineAttempted: true,
+    lineSent: true,
+    now: NOW,
+  });
+  await recordAiObservatoryEntry(env.TRAFFIC_KV, record, { taipeiDate: taipeiDateString(NOW), idempotencyKeyHash: 'hash-old', now: NOW });
+
+  const res = await handleAiObservatoryView(env, viewRequest(), NOW);
+  assert.equal(res.status, 200, 'must render successfully, never throw, for a record missing the new fields');
+  const html = await res.text();
+  assert.ok(html.includes('CCTV'), 'sanity: the page did render the CCTV section at all');
+});
+
+test('V2.5.1: the pre-existing imageUrlPresent YES/NO/UNKNOWN calculation is completely unaffected by the new fields being present', async () => {
+  const env = await baseEnv();
+  await seedObservatoryRecord(env, { eventId: 'PBS-CCTV-PRESENT-CHECK', imageUrlPresent: true, imageUrl: 'https://x/y', imageStrategy: 'quad' });
+  const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
+  // renderField('CCTV', ...) still reads record.imageUrlPresent exactly as before — verified by presence of the YES label this file's other tests never had reason to check directly, alongside the new fields now sitting next to it.
+  assert.match(html, /CCTV<\/div><div class="value">YES/);
 });

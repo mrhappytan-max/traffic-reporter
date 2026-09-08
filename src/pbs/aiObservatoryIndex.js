@@ -202,6 +202,19 @@ export function buildAiObservatoryRecord({
   lineSent = false,
   sharedFeedPersisted = null,
   imageUrlPresent = null,
+  // V2.5.1 (路況-053, following 路況-046's own plan) — the CCTV diagnostic
+  // detail imageUrlPresent alone could never answer: was there no
+  // CCTV attempt at all, an attempt that failed (and why), or a
+  // successful publish whose URL/expiry a human might want to check by
+  // hand. All four default null/undefined-safe, same convention as every
+  // other optional field here — a caller that doesn't pass them (or an
+  // old record from before this round, read back within the 48h TTL)
+  // degrades to exactly today's imageUrlPresent-only picture.
+  imageUrl = null,
+  imageExpiresAt = null,
+  cctvSkippedByReason = null,
+  imageStrategy = null,
+  r2ReadbackElapsedMs = null,
   now = new Date(),
   // V2.4.0 (order section 十六) — the minimal additional observability
   // fields for the shared PBS+TDX AI pipeline: which source this
@@ -286,6 +299,11 @@ export function buildAiObservatoryRecord({
     lineSent: Boolean(lineSent),
     sharedFeedPersisted,
     imageUrlPresent,
+    imageUrl,
+    imageExpiresAt,
+    cctvSkippedByReason,
+    imageStrategy,
+    r2ReadbackElapsedMs,
     memoryCandidateCount,
     sameIncident,
     materialChange,
