@@ -125,3 +125,17 @@ A release used to seal in two passes: `SEALED_FOR_PRODUCTION_OBSERVATION` at shi
 - **A problem found after sealing always opens a new version.** This was already the rule and is unchanged: never edit a sealed version's code or its seal record to fix something found later — bump to the next version and fix it there.
 - **Sealing is not proof of verification.** Every sealed release must still say, in engineering memory, what should be observed in production going forward. Whether that observation ever gets filled in does not change the seal status — but an unfilled observation item must stay visibly marked as pending, never be written up as confirmed.
 - **Existing two-pass records are historical and are not rewritten.** Releases sealed under the old `SEALED_FOR_PRODUCTION_OBSERVATION` → `SEALED_AND_VALIDATED` flow (e.g. V2.4.15) keep that record exactly as written; this rule governs releases from 路況-041 onward, not retroactively.
+
+---
+
+## 7. Report format: concise-by-default (TRIAL, effective 2026-09-08, 路況-051)
+
+Reports had grown to thousands of words per round. The content itself — the 已驗證/推測 distinction, the untouched-item accounting, the reasoning behind a trade-off — is not the problem and is not being cut. The problem is presentation: prose repeating information a table or list would carry more clearly.
+
+- **This does not lower the bar for what a report must say.** Every existing substantive obligation stays: the 已驗證/推測區分, an explicit accounting of what was and wasn't touched, the reasoning behind any multi-option trade-off. Only *how* it's presented changes, never *whether* it's said.
+- **Prefer tables/lists over prose for parallel items.** A field inventory, several options being compared, a list of test cases — lay these out as a table or bullet list instead of one full sentence per item.
+- **不授權事項 confirmation collapses to one line when clean.** If the order already lists its own 不授權事項, the report does not need to restate each one — `不授權事項逐項確認：全數未觸碰` suffices. The moment even one item is an exception (touched, needs explaining), that one gets its own explanation; the rest can still ride the one-line confirmation.
+- **Cite prior rounds instead of re-narrating them.** Background already established by an earlier order ("依路況-XXX既有查證") can be referenced directly rather than retold in full.
+- **Don't rewrite the order's own words back at it.** No need to restate an order's background or authorized scope in your own prose before reporting on it.
+- **Never cut for brevity's sake**: any 已查得/查不到 verdict and its basis, any fact/inference distinction, anything out-of-scope or unexpected that surfaces (surface it in full even if that makes the report longer — this is the one place erring long is correct), and hard fields like commit SHA / push verification. Trimming presentation is the goal; trimming disclosure is the opposite of it.
+- **Trial status**: this is a 2026-09-08 trial, not a permanent rule. If the Meeting Room finds a concise report hard to verify or missing something it needed, it can revoke or amend this section at any time — no particular bar has to be cleared to roll it back. 路況-050 (Telegram push planning) is preserved exactly as written, unedited, as the deliberate "before" reference point for judging whether this trial's "after" reports read better.
