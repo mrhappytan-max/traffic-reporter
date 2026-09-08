@@ -1,11 +1,22 @@
 // V1.6.1 — "資料來源與 TDX 用量瘦身". Exercises the real Cron path
 // (runScheduledTdxSync) end to end for the required acceptance scenarios:
 // TDX (國道+省道 only) is fetched at most every 20 minutes (minute
-// 00/20/40), only 08:00–21:59:59 Asia/Taipei; PBS keeps running every
-// tick, 24/7; CMS/Bus Alert/VD static+live must never receive a
+// 00/20/40), only within broadcastHours.js's own window (see below for
+// current boundary); CMS/Bus Alert/VD static+live must never receive a
 // scheduled request at all; a skipped/sleeping TDX tick must never be
 // misread as a TDX failure in the health snapshot; TDX/PBS failures stay
 // isolated from each other exactly as before this round.
+//
+// V2.8.0 (路況-064, following 路況-063's own read-only查證) — TDX's window
+// moved 07:00:00–22:30:59 Asia/Taipei (from 08:00:00–21:59:59). "PBS keeps
+// running every tick, 24/7" above was this file's own V1.6.1-era claim and
+// has been stale since V1.9.3/V1.9.8 — envWithPbs()'s simulated PBS calls
+// below exist only to exercise this repo's own pre-existing PBS/CCTV/dedup
+// test fixtures (via `env.PBS_30_MIN_POLLING_ENABLED` — see pbsConfig.js's
+// own comment), not because real Production PBS still runs on Cloudflare's
+// own Cron schedule at all — see pbsConfig.js's own PBS_30_MIN_POLLING_ENABLED
+// comment for the real Production picture (Windows-ingress push, disabled
+// Cloudflare-side polling by default).
 //
 // Unit-level coverage of the pure schedule decision itself lives in
 // tdxSchedule.test.js — this file is the integration-level regression
@@ -15,7 +26,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { resetTdxTokenCache } from '../src/tdx/auth.js';
 import { runScheduledTdxSync } from '../src/traffic/scheduled.js';
-import { readHealthSnapshot } from '../src/traffic/healthSnapshot.js';
+import { readHealthSnapshot, buildHealthSnapshot } from '../src/traffic/healthSnapshot.js';
 import { getTdxScheduleState } from '../src/traffic/tdxSchedule.js';
 import { setUserEnabled } from '../src/traffic/subscriptions.js';
 
@@ -184,16 +195,30 @@ test('5. 21:30 -> PBS only (TDX is between its own 20-minute marks)', async () =
   assert.equal(pbsCalls.length, 1);
 });
 
-test('6. 22:00 -> PBS only, TDX enters night-sleep', async () => {
-  assert.equal(getTdxScheduleState(taipei('2026-08-18T22:00:00+08:00')), 'night-sleep');
+// V2.8.0 (路況-064, following 路況-063's own read-only查證) — TDX's window
+// moved 08:00-22:00 -> 07:00-22:30; pbsSchedule.js's own 07:00-22:00 window
+// was explicitly NOT touched this round (order's own不授權事項 — it is a
+// disabled/retired legacy mechanism, see pbsConfig.js's own comment). This
+// means TDX's window is now a SUPERSET of PBS's simulated-test window
+// (both start at 07:00; TDX now ends 30 minutes LATER than PBS) — the OLD
+// "22:00 -> PBS only, TDX asleep" scenario this test exercised no longer
+// exists anywhere on the clock (there is no time where PBS's own window is
+// active and TDX's is not). This is an intentional, disclosed
+// architectural consequence of the order's own real-boundary requirement,
+// not an oversight — the roles have flipped: this test now exercises the
+// mirror-image "TDX only, PBS's own window has ended" band (22:00-22:30),
+// which is new territory this round's change actually created.
+test('6. 22:20 -> TDX only, PBS\'s own (untouched, disabled-in-real-Production) 07:00-22:00 window has already ended', async () => {
+  assert.equal(getTdxScheduleState(taipei('2026-08-18T22:20:00+08:00')), 'scheduled');
 
   const pbsCalls = [];
   const env = await envWithPbs(pbsCalls);
   const hits = [];
-  await withTdxFetch(hits, {}, () => runScheduledTdxSync(env, taipei('2026-08-18T22:00:00+08:00')));
+  await withTdxFetch(hits, {}, () => runScheduledTdxSync(env, taipei('2026-08-18T22:20:00+08:00')));
 
-  assert.equal(hits.length, 0);
-  assert.equal(pbsCalls.length, 1);
+  assert.ok(hits.some((h) => h.includes('/RoadEvent/LiveEvent/Freeway')));
+  assert.ok(hits.some((h) => h.includes('/RoadEvent/LiveEvent/Highway')));
+  assert.equal(pbsCalls.length, 0, 'PBS\'s own window (unchanged, 07:00-22:00) has already closed by 22:20');
 });
 
 test('7. 03:00 -> BOTH TDX and PBS skip (deep night; V1.9.3: PBS is no longer 24/7 either)', async () => {
@@ -206,7 +231,12 @@ test('7. 03:00 -> BOTH TDX and PBS skip (deep night; V1.9.3: PBS is no longer 24
   assert.equal(pbsCalls.length, 0); // pre-V1.9.3 this was 1 (PBS ran 24/7) — now correctly 0
 });
 
-test('8. 07:30 -> PBS only (PBS\'s own 07:00-22:00 window starts an hour before TDX\'s 08:00-22:00 one)', async () => {
+// V2.8.0 (路況-064) — TDX's window now also starts at 07:00 (moved from
+// 08:00), so the two windows now share the same start time; this test
+// still holds, but only because minute 30 isn't a 20-minute TDX fetch
+// mark, not because TDX's window hasn't started yet (title updated to
+// stop asserting a relationship that no longer exists post-V2.8.0).
+test('8. 07:30 -> PBS only, TDX skipped-by-schedule (minute 30 is not a 20-minute mark, not because TDX is asleep — both windows now start at 07:00)', async () => {
   const pbsCalls = [];
   const env = await envWithPbs(pbsCalls);
   const hits = [];
@@ -306,16 +336,45 @@ test('13. 09:10 TDX skipped-by-schedule -> /health must not show degraded/critic
   assert.equal(snapshot.status, 'normal');
 });
 
-test('14. night-sleep tick -> /health must not show degraded/critical because TDX is sleeping', async () => {
-  const pbsCalls = [];
-  const env = await envWithPbs(pbsCalls);
-  const hits = [];
-  await withTdxFetch(hits, {}, async () => {
-    await runScheduledTdxSync(env, taipei('2026-08-18T21:40:00+08:00')); // last real daytime fetch, healthy
-    await runScheduledTdxSync(env, taipei('2026-08-18T22:00:00+08:00')); // night-sleep
+// V2.8.0 (路況-064) — window moved 08:00-22:00 -> 07:00-22:30. This test
+// used to chain two real runScheduledTdxSync ticks (21:40 real fetch, then
+// 22:00 night-sleep) and read the persisted snapshot back from KV — that
+// only worked because 22:00 ALSO happened to be pbsSchedule.js's own last
+// 30-minute PBS fetch mark (unchanged this round, 07:00-22:00 inclusive),
+// which forced a genuine content change past persistHealthSnapshot's own
+// WRITE_ON_CHANGE gate (healthSnapshot.js's stripVolatileTimeFields()
+// strips tdx.sleeping/scheduledThisRun from the comparison itself — see
+// that module's own comment — so TDX's own sleeping flip alone never
+// forces a write; the coincidental PBS write is what always did).
+//
+// DISCLOSED ARCHITECTURAL CONSEQUENCE (not a defect, not touched/fixed
+// this round — healthSnapshot.js's WRITE_ON_CHANGE logic is out of this
+// order's authorized scope): TDX's window (07:00-22:30) is now a SUPERSET
+// of PBS's unchanged window (07:00-22:00) — there is no longer ANY tick
+// after PBS's own last 22:00 mark where a PBS-driven content change can
+// coincide with TDX's transition into night-sleep (TDX doesn't reach
+// night-sleep until 22:31, by which point PBS has been asleep, and
+// write-suppressed, for 31 minutes). The OLD two-tick KV-round-trip
+// version of this exact scenario can no longer be constructed for the
+// tail end of the day. Real Production behavior is UNCHANGED and correct
+// either way (buildHealthSnapshot() below proves the underlying
+// computation is right); only this test's own OLD method of observing it
+// through a full KV round-trip lost its forcing mechanism. Redesigned
+// to unit-test buildHealthSnapshot() directly (pure, no I/O, no
+// WRITE_ON_CHANGE gate involved) — this is the SAME function
+// scheduled.js's real Cron path already calls, never a re-implementation.
+test('14. night-sleep tick -> buildHealthSnapshot must not show degraded/critical because TDX is sleeping', () => {
+  const previousTdx = { tokenOk: true, successfulSourceCount: 2, totalSourceCount: 2, sources: [], lastFetchedAt: '2026-08-18T21:40:00.000Z' };
+  const snapshot = buildHealthSnapshot({
+    summary: { sources: [], kvAvailable: true },
+    pbsSummary: { pbsOk: true },
+    lineSummary: { lineReady: true, partialPushFailures: 0 },
+    now: new Date('2026-08-18T22:31:00+08:00'),
+    tdxScheduleState: 'night-sleep',
+    previousTdx,
+    pbsScheduleState: 'night-sleep',
+    previousPbs: { ok: true },
   });
-
-  const { snapshot } = await readHealthSnapshot(env.TRAFFIC_KV);
   assert.equal(snapshot.tdx.sleeping, true);
   assert.equal(snapshot.tdx.scheduledThisRun, false);
   assert.equal(snapshot.tdx.successfulSourceCount, 2); // carried forward, still healthy

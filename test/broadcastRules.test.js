@@ -32,8 +32,20 @@ test('60-min rule: an accident currently happening (started earlier, still open)
   assert.equal(isBroadcastRelevant({ effectiveStart: '2026-08-15T14:55:00+08:00', effectiveEnd: null }, now1510), true);
 });
 
-test('broadcast hours: 07:59:59 Taipei -> not within hours (0 push)', () => {
-  assert.equal(isWithinBroadcastHours(new Date('2026-08-15T07:59:59+08:00')), false);
+// V2.8.0 (路況-064) — window moved 08:00-22:00 -> 07:00-22:30. The four
+// boundary tests below replace the old 07:59:59/22:00:00 edge assertions
+// (which asserted `false` under the OLD boundary — both are now `true`
+// under the new one, so those exact assertions would be actively wrong,
+// not just stale) with the new edges, matching the order's own required
+// regression-lock set (06:59/07:00/22:30/22:31) exactly. 08:00:00 and
+// 21:59:59 stay as mid-window sanity checks — both remain `true` under
+// either boundary, so no change needed there.
+test('broadcast hours: 06:59:59 Taipei -> not within hours (0 push)', () => {
+  assert.equal(isWithinBroadcastHours(new Date('2026-08-15T06:59:59+08:00')), false);
+});
+
+test('broadcast hours: 07:00:00 Taipei -> within hours (push allowed)', () => {
+  assert.equal(isWithinBroadcastHours(new Date('2026-08-15T07:00:00+08:00')), true);
 });
 
 test('broadcast hours: 08:00:00 Taipei -> within hours (push allowed)', () => {
@@ -44,8 +56,12 @@ test('broadcast hours: 21:59:59 Taipei -> within hours (push allowed)', () => {
   assert.equal(isWithinBroadcastHours(new Date('2026-08-15T21:59:59+08:00')), true);
 });
 
-test('broadcast hours: 22:00:00 Taipei -> not within hours (0 push)', () => {
-  assert.equal(isWithinBroadcastHours(new Date('2026-08-15T22:00:00+08:00')), false);
+test('broadcast hours: 22:30:00 Taipei -> within hours (push allowed)', () => {
+  assert.equal(isWithinBroadcastHours(new Date('2026-08-15T22:30:00+08:00')), true);
+});
+
+test('broadcast hours: 22:31:00 Taipei -> not within hours (0 push)', () => {
+  assert.equal(isWithinBroadcastHours(new Date('2026-08-15T22:31:00+08:00')), false);
 });
 
 test('formatTaipeiTime renders a readable +08:00 timestamp', () => {

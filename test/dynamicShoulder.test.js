@@ -671,7 +671,11 @@ test('26. V57.2 gating regression — crossSourceDedup unaffected: an unmatched 
   assert.equal(result.filteredFreewayEvents[0], pbsEvent);
 });
 
-test('27. dynamic-shoulder is gated by the SAME 08:00-22:00 Asia/Taipei broadcast-hours rule — no second hours policy', async () => {
+// V2.8.0 (路況-064, following 路況-063's own read-only查證) — window moved
+// 08:00-22:00 -> 07:00-22:30; 07:59/22:00 are now both WITHIN the new
+// window, so the probe times moved to 06:59/22:31 — genuinely outside the
+// new window either way, same relative shape.
+test('27. dynamic-shoulder is gated by the SAME 07:00-22:30 Asia/Taipei broadcast-hours rule — no second hours policy', async () => {
   const kv = createMockKV();
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   const { fetchFn, pushCalls } = makeFullPipelineFetch();
@@ -682,7 +686,7 @@ test('27. dynamic-shoulder is gated by the SAME 08:00-22:00 Asia/Taipei broadcas
   const before = await runLineBroadcast(env, {
     allEvents: [shoulderEvent('OPEN')],
     dedupeAvailable: true,
-    now: new Date('2026-08-21T07:59:00+08:00'),
+    now: new Date('2026-08-21T06:59:00+08:00'),
   });
   assert.equal(before.withinBroadcastHours, false);
   assert.equal(before.pushSucceeded, 0);
@@ -691,7 +695,7 @@ test('27. dynamic-shoulder is gated by the SAME 08:00-22:00 Asia/Taipei broadcas
   const after = await runLineBroadcast(env, {
     allEvents: [shoulderEvent('OPEN')],
     dedupeAvailable: true,
-    now: new Date('2026-08-21T22:00:00+08:00'),
+    now: new Date('2026-08-21T22:31:00+08:00'),
   });
   assert.equal(after.withinBroadcastHours, false);
   assert.equal(after.pushSucceeded, 0);

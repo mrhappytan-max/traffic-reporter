@@ -76,13 +76,49 @@ test('fail-closed: missing LINE_CHANNEL_ACCESS_TOKEN -> lineReady=false, 0 push'
   assert.equal(result.pushSucceeded, 0);
 });
 
-test('quiet hours (execution safety, not a content judgment): 07:59 Taipei -> 0 push', async () => {
+test('quiet hours (execution safety, not a content judgment): 06:59 Taipei -> 0 push (V2.8.0: window is now 07:00-22:30, moved from 06:59 -> 07:59 as the sub-boundary value)', async () => {
   const kv = createMockKV();
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   originalFetch = globalThis.fetch;
   globalThis.fetch = mockLinePushFetch();
   const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
-  const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: new Date('2026-08-28T07:59:00+08:00') });
+  const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: new Date('2026-08-28T06:59:00+08:00') });
+  assert.equal(result.withinBroadcastHours, false);
+  assert.equal(result.pushSucceeded, 0);
+  assert.equal(pushCalls.length, 0);
+});
+
+test('V2.8.0 (路況-064): 07:00 Taipei (the new lower boundary, previously quiet under the old 08:00-22:00 window) -> push allowed', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLinePushFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+  const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: new Date('2026-08-28T07:00:00+08:00') });
+  assert.equal(result.withinBroadcastHours, true);
+  assert.equal(result.pushSucceeded, 1);
+  assert.equal(pushCalls.length, 1);
+});
+
+test('V2.8.0 (路況-064): 22:30 Taipei (the new upper boundary, previously quiet under the old 08:00-22:00 window) -> push allowed', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLinePushFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+  const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: new Date('2026-08-28T22:30:00+08:00') });
+  assert.equal(result.withinBroadcastHours, true);
+  assert.equal(result.pushSucceeded, 1);
+  assert.equal(pushCalls.length, 1);
+});
+
+test('V2.8.0 (路況-064): 22:31 Taipei -> quiet hours, 0 push', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLinePushFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+  const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: new Date('2026-08-28T22:31:00+08:00') });
   assert.equal(result.withinBroadcastHours, false);
   assert.equal(result.pushSucceeded, 0);
   assert.equal(pushCalls.length, 0);
@@ -346,7 +382,9 @@ test('V2.5.1: when the CCTV try block never runs at all (e.g. quiet hours), comp
   originalFetch = globalThis.fetch;
   globalThis.fetch = mockLinePushFetch();
   const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
-  const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: new Date('2026-08-28T07:59:00+08:00') });
+  // V2.8.0 (路況-064): 06:59 replaces the old 07:59 quiet-hours probe value
+  // — the window is now 07:00-22:30, so 07:59 would no longer be quiet.
+  const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: new Date('2026-08-28T06:59:00+08:00') });
   assert.equal(result.withinBroadcastHours, false);
   assert.equal(result.completedProducts.length, 0, 'this early-return happens before completedProduct is even built — pre-existing behavior, unchanged');
 });

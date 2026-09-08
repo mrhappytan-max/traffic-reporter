@@ -41,3 +41,27 @@
 **待現場觀察事項（明確記錄，不得寫成已確認）**：下一則同一事故的無實質變化更新，是否確實被正確攔截——尚未取得。10分鐘collision window實際觸發率下降的現場驗證——尚未取得。
 
 **V2.7.0封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-08，路況-061）。封版依據：程式碼變更完成、全量迴歸2068項／2035通過／33失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.7.0`、commit已push main並驗證。發現問題一律開下一個版本，不回頭改已封版的`V2.7.0`。
+
+## 修正紀錄｜V2.8.0 播報/抓取時間窗調整為07:00~22:30，修正過期回覆文字（2026-09-08）
+
+**背景**：路況-063（唯讀查證）確立現況：TDX抓取與LINE/電報推播共用`broadcastHours.js#isWithinBroadcastHours()`，皆為08:00~22:00且只比較小時、無法表達分鐘邊界；`pbsSchedule.js`的07:00-22:00窗屬已停用（V1.9.8起`resolvePbsPollingEnabled(env)`預設false）legacy機制，非真實PBS路徑；LINE Bot固定回覆文字「僅通知目前或未來60分鐘內會影響行車的路況」與真實系統行為不符（該60分鐘forecast邏輯僅存在於幾乎收不到流量的legacy `broadcastPipeline.js`路徑）；查修頁對「因非播報時段而抑制」缺乏專屬顯示理由，落入通用UNKNOWN。真人決定：TDX與LINE/電報採**相同**07:00~22:30邊界，沿用共用函式架構（不拆分）；窗外事件維持直接捨棄（不新增暫存補送）。
+
+**修正內容**：
+1. `broadcastHours.js#isWithinBroadcastHours()`改寫為分鐘數比較（比照`pbsSchedule.js`既有`WINDOW_START_MINUTES`/`WINDOW_END_MINUTES`寫法），邊界07:00~22:30。此為TDX抓取（`tdxSchedule.js`）與LINE/電報推播（`aiApprovedPbsBroadcast.js`）唯一共用入口，改一處即同步生效兩個真實呼叫點，兩呼叫點本身零修改。
+2. `tdxSchedule.js`模組header comment修正過期的「PBS keeps running every tick, 24/7」敘述（V1.9.3/V1.9.8起已不成立）。
+3. `line/webhook.js`的`REPLY_ENABLED`固定回覆文字：時間窗同步07:00～22:30；移除與真實行為不符的60分鐘forecast宣稱，改為如實描述（AI依語意判斷，非固定時間窗）。
+4. `aiObservatoryIndex.js`：`buildAiObservatoryRecord()`新增`withinBroadcastHours`欄位（`aiApprovedPbsBroadcast.js`早已算出但被`debugPush.js`成功路徑回傳物件silently dropped，本輪補上傳遞）；`deriveFinalDecisionReason()`的`AI_NOTIFY_TRUE`分支新增`withinBroadcastHours===false`專屬判斷，回傳「通知時段外（07:00～22:30外）」——此文字沿用V2.4.6原始訂單自己列出但當時因無持久化訊號而未實作的既定用詞。嚴格`===false`比較，pre-V2.8.0記錄（欄位不存在，值為null）不受影響，仍走既有UNKNOWN預設值。
+
+**明確不觸碰（依訂單不授權事項）**：`pbsSchedule.js`本身（已停用legacy機制，非本輪範圍）；窗外事件暫存/補送機制（真人定案維持直接捨棄）；TDX與LINE/電報邊界拆分為獨立函式（真人定案維持共用）；AI Prompt/model、`incidentSuppression.js`、`sameIncident`/`materialChange`推播閘門邏輯（V2.7.0剛完成，零行變動）。
+
+**延遲後果（如實記錄）**：窗外事件延遲區間由「00:00-07:59」縮短為「00:00-06:59」（起算邊界08:00提早至07:00）；日終邊界22:00延後至22:30，播報窗整體變長。
+
+**規劃外發現，完整揭露**：TDX的07:00-22:30窗現在是PBS舊有（已停用）07:00-22:00窗的SUPERSET（兩者現在同時07:00起算，TDX尾端多出30分鐘）。這使`test/tdxUsageReduction.test.js`原本第14個測試（透過兩次真實Cron tick + KV round-trip驗證night-sleep）失去了原本賴以強制寫入的巧合機制——原本21:40/22:00這兩個探測時間點，22:00剛好也是`pbsSchedule.js`自己的30分鐘排程整點，帶來真實內容差異，才能通過`persistHealthSnapshot()`的WRITE_ON_CHANGE比對（此機制本身未受本輪任何修改，見`healthSnapshot.js`自己的`stripVolatileTimeFields()`comment）。日終時段內，此巧合窗口在新邊界下已完全消失（TDX最早22:31才進入night-sleep，此時PBS早已停止30分鐘）。已將該測試改為直接呼叫`buildHealthSnapshot()`這個純函式驗證（與`scheduled.js`真實Cron路徑呼叫的函式完全相同，非重新實作）；該檔案另兩則既有測試（test 6/8）同步修正邊界數字或補充說明文字，零筆刪除，斷言邏輯本身不變。
+
+**測試**：`broadcastRules.test.js`4→6則、`tdxSchedule.test.js`5→7則、`aiApprovedPbsBroadcast.test.js`+3則、`webhook.test.js`+1則（固定文字regression lock）、`aiObservatoryIndex.test.js`+5則（withinBroadcastHours傳遞＋新分支＋null不誤判＋SENT優先權regression lock）——共12則新測試。`broadcastPipeline.test.js`/`dynamicShoulder.test.js`/`tdxUsageReduction.test.js`既有測試邊界數字或探測方式更新，零筆刪除。全量迴歸2080項／2047通過／33失敗；`git stash -u`基準2068項／2035通過／33失敗；測試名稱集合逐字比對確認`NEW_FAILURES=0`。
+
+**APP_VERSION**：`V2.7.0`→`V2.8.0`（MINOR，直接改變TDX抓取/LINE電報推播的真實決策時間窗，非純觀測性變更）。
+
+**待現場觀察事項（明確記錄，不得寫成已確認）**：07:00開始後第一則TDX/PBS事件是否確實被正確抓取與推播——尚未取得。22:30邊界是否正確生效（22:30仍推播、22:31起停止）——尚未取得。
+
+**V2.8.0封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-08，路況-064）。封版依據：程式碼變更完成、全量迴歸2080項／2047通過／33失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.8.0`、commit已push main並驗證。發現問題一律開下一個版本，不回頭改已封版的`V2.8.0`。

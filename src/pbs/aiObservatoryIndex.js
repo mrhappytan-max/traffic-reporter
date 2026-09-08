@@ -250,6 +250,20 @@ export function buildAiObservatoryRecord({
   // today's join-miss/UNKNOWN display, same convention every other
   // optional field here already uses.
   memoryContextFingerprint = null,
+  // V2.8.0 (路況-064, following 路況-063's own read-only查證) — the SAME
+  // withinBroadcastHours aiApprovedPbsBroadcast.js already computes and
+  // returns on its own result object (broadcastHours.js#isWithinBroadcastHours,
+  // 路況-063 confirmed this), now propagated all the way through
+  // debugPush.js's success-path return into this record — previously
+  // computed but silently dropped before reaching Observatory, exactly the
+  // same pre-existing pattern suppressedForPhase's own V2.4.6 comment
+  // above already documents for a different field. null for a pre-V2.8.0
+  // record (read back within its still-live 48h TTL) or any outcome that
+  // never reached runAiApprovedPbsBroadcast() at all (e.g. GEO/road-policy
+  // exclusions, AI_NOTIFY_FALSE) — deriveFinalDecisionReason() below only
+  // ever reads this for the one AI_NOTIFY_TRUE-but-not-sent case it can
+  // actually explain with it, never guessed elsewhere.
+  withinBroadcastHours = null,
   sameIncident = null,
   materialChange = null,
   primarySource = null,
@@ -330,6 +344,7 @@ export function buildAiObservatoryRecord({
     r2ReadbackElapsedMs,
     memoryCandidateCount,
     memoryContextFingerprint,
+    withinBroadcastHours,
     sameIncident,
     materialChange,
     primarySource,
@@ -353,12 +368,18 @@ export function buildAiObservatoryRecord({
 // The order's own example vocabulary (section 二): 壅塞／一般施工／機動路肩
 // 開放／機動路肩關閉／施工僅封1車道／非新竹縣市／地理位置無法確認／AI判定
 // 影響低／通知時段外／TDX通知開關關閉／AI處理失敗／背景重試失敗 — every
-// branch below maps to one of these using only already-persisted data;
-// "通知時段外" has no persisted signal in this record today (no existing
-// outcome/field distinguishes it), so it is deliberately NOT guessed at —
-// order section 三's own "UI 絕不可以自行猜測" — an event whose real
-// upstream reason this record can't distinguish falls through to the
-// nearest accurate existing label instead of a fabricated one.
+// branch below maps to one of these using only already-persisted data.
+//
+// V2.8.0 (路況-064, following 路況-063's own read-only查證) — "通知時段外"
+// used to have no persisted signal in this record (this comment's own
+// prior text said exactly that), so it was deliberately not guessed at.
+// That gap is now closed: withinBroadcastHours (see buildAiObservatoryRecord
+// above) is the SAME broadcastHours.js#isWithinBroadcastHours() value
+// aiApprovedPbsBroadcast.js already computed at decision time, now
+// propagated through instead of dropped — see the AI_NOTIFY_TRUE branch
+// below. Every other branch here is UNCHANGED — order section 三's own
+// "UI 絕不可以自行猜測" still holds for every reason this record genuinely
+// can't distinguish.
 export function deriveFinalDecisionReason(record) {
   if (!record || typeof record !== 'object') {
     return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: 'UNKNOWN / NOT RECORDED' };
@@ -441,6 +462,16 @@ export function deriveFinalDecisionReason(record) {
     case AI_OUTCOME.AI_NOTIFY_TRUE:
       if (record.sameIncident === true && record.materialChange === false) {
         return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: '重複事件：與近期已通知過的同一起事故相同，且無實質變化，未重複發送' };
+      }
+      // V2.8.0 (路況-064) — the AI approved notify=true but
+      // aiApprovedPbsBroadcast.js's own withinBroadcastHours early return
+      // (broadcastHours.js#isWithinBroadcastHours, 07:00-22:30) fired
+      // before any push was attempted — strict `=== false`, never `!`, so
+      // a pre-V2.8.0 record (withinBroadcastHours===null, unknown) still
+      // falls through to the honest default below instead of being
+      // misread as "outside hours".
+      if (record.withinBroadcastHours === false) {
+        return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: '通知時段外（07:00～22:30外）' };
       }
       return { status: FINAL_DECISION_STATUS.NOT_SENT, reason: 'UNKNOWN / NOT RECORDED' };
     default:

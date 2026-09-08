@@ -1512,6 +1512,13 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
       // convention as lineAttempted/lineSent's own existing defaults.
       telegramAttempted: broadcastResult.telegram.attempted > 0,
       telegramSent,
+      // V2.8.0 (路況-064, following 路況-063's own read-only查證) —
+      // aiApprovedPbsBroadcast.js already computed this (broadcastHours.js
+      // #isWithinBroadcastHours) and put it on its own result object, but
+      // it was silently dropped here before ever reaching the Observatory
+      // record — see aiObservatoryIndex.js's own V2.8.0 comment on the
+      // deriveFinalDecisionReason() branch this now feeds.
+      withinBroadcastHours: broadcastResult.withinBroadcastHours,
       sharedFeedPersisted: sharedFeedCommitted,
       imageUrlPresent: Boolean(firstProduct && firstProduct.imageUrl),
       // V2.5.1 (路況-053, following 路況-046's own plan) — the same

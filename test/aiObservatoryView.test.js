@@ -286,7 +286,7 @@ test('11: missing/expired AI decision cache data renders UNKNOWN / NOT RECORDED,
 // only bump the literal), same discipline test/versionLineage.test.js's
 // own series-prefix check already follows.
 test('12: APP_VERSION reflects the current release', () => {
-  assert.equal(APP_VERSION, 'V2.7.0');
+  assert.equal(APP_VERSION, 'V2.8.0');
 });
 
 test('SERVICE_AREA_EXCLUDED events show "服務區域外", never routed through AI at all', async () => {

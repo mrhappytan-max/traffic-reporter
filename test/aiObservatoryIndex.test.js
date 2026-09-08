@@ -9,6 +9,8 @@ import {
   buildAiObservatoryRecord,
   recordAiObservatoryEntry,
   listAiObservatoryEntries,
+  deriveFinalDecisionReason,
+  FINAL_DECISION_STATUS,
 } from '../src/pbs/aiObservatoryIndex.js';
 
 function countingKV() {
@@ -229,6 +231,97 @@ test('buildAiObservatoryRecord: omitting telegramAttempted/telegramSent (pre-V2.
   assert.equal(record.telegramSent, false);
   assert.equal(typeof record.telegramAttempted, 'boolean', 'always boolean, never null/undefined — same convention as lineAttempted/lineSent');
   assert.equal(typeof record.telegramSent, 'boolean');
+});
+
+// V2.8.0 (路況-064, following 路況-063's own read-only查證) — withinBroadcastHours
+// propagation and the new deriveFinalDecisionReason() branch it feeds.
+
+test('buildAiObservatoryRecord: withinBroadcastHours is passed through unchanged, both true and false', () => {
+  const recordTrue = buildAiObservatoryRecord({
+    candidate: { road: '國道一號' },
+    eventId: 'E27',
+    lifecycle: 'NEW',
+    fingerprint: 'fp27',
+    outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+    lineAttempted: true,
+    lineSent: true,
+    withinBroadcastHours: true,
+  });
+  assert.equal(recordTrue.withinBroadcastHours, true);
+
+  const recordFalse = buildAiObservatoryRecord({
+    candidate: { road: '國道一號' },
+    eventId: 'E28',
+    lifecycle: 'NEW',
+    fingerprint: 'fp28',
+    outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+    lineAttempted: false,
+    lineSent: false,
+    withinBroadcastHours: false,
+  });
+  assert.equal(recordFalse.withinBroadcastHours, false);
+});
+
+test('buildAiObservatoryRecord: omitting withinBroadcastHours (pre-V2.8.0 caller shape) degrades to null, never guessed as true or false', () => {
+  const record = buildAiObservatoryRecord({
+    candidate: null,
+    eventId: 'E29',
+    lifecycle: 'NEW',
+    fingerprint: 'fp29',
+    outcome: AI_OUTCOME.AI_NOT_INVOKED_LEGACY_PATH,
+    lineAttempted: false,
+    lineSent: false,
+  });
+  assert.equal(record.withinBroadcastHours, null);
+});
+
+test('deriveFinalDecisionReason: AI_NOTIFY_TRUE + withinBroadcastHours===false + 0 push -> 通知時段外, not UNKNOWN', () => {
+  const record = buildAiObservatoryRecord({
+    candidate: { road: '國道一號' },
+    eventId: 'E30',
+    lifecycle: 'NEW',
+    fingerprint: 'fp30',
+    outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+    lineAttempted: false,
+    lineSent: false,
+    telegramAttempted: false,
+    telegramSent: false,
+    withinBroadcastHours: false,
+  });
+  const result = deriveFinalDecisionReason(record);
+  assert.equal(result.status, FINAL_DECISION_STATUS.NOT_SENT);
+  assert.equal(result.reason, '通知時段外（07:00～22:30外）');
+});
+
+test('deriveFinalDecisionReason: withinBroadcastHours===null (pre-V2.8.0 record, or genuinely unknown) never guessed as 通知時段外 — falls through to the honest UNKNOWN default', () => {
+  const record = buildAiObservatoryRecord({
+    candidate: { road: '國道一號' },
+    eventId: 'E31',
+    lifecycle: 'NEW',
+    fingerprint: 'fp31',
+    outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+    lineAttempted: false,
+    lineSent: false,
+  });
+  assert.equal(record.withinBroadcastHours, null);
+  const result = deriveFinalDecisionReason(record);
+  assert.equal(result.reason, 'UNKNOWN / NOT RECORDED');
+});
+
+test('deriveFinalDecisionReason: withinBroadcastHours===false is irrelevant once lineSent is true — SENT still wins (branch ordering regression lock)', () => {
+  const record = buildAiObservatoryRecord({
+    candidate: { road: '國道一號' },
+    eventId: 'E32',
+    lifecycle: 'NEW',
+    fingerprint: 'fp32',
+    outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+    lineAttempted: true,
+    lineSent: true,
+    withinBroadcastHours: false,
+  });
+  const result = deriveFinalDecisionReason(record);
+  assert.equal(result.status, FINAL_DECISION_STATUS.SENT);
+  assert.equal(result.reason, '重大事故');
 });
 
 test('recordAiObservatoryEntry: writes exactly 1 KV put, key under the dedicated prefix, TTL set', async () => {

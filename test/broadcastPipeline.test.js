@@ -94,7 +94,11 @@ test('fail-closed: subscriptions read failure -> 0 push', async () => {
   assert.equal(result.lineReady, false);
 });
 
-test('quiet hours: 07:59 Taipei -> 0 push even with a ready system and a real event', async () => {
+// V2.8.0 (路況-064, following 路況-063's own read-only查證) — window moved
+// 08:00-22:00 -> 07:00-22:30. 07:59/22:00 are both now WITHIN the new
+// window (would push, not stay quiet), so these probe times moved to
+// 06:59/22:31 — genuinely outside the new window either way.
+test('quiet hours: 06:59 Taipei -> 0 push even with a ready system and a real event', async () => {
   const kv = createMockKV();
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   originalFetch = globalThis.fetch;
@@ -104,14 +108,14 @@ test('quiet hours: 07:59 Taipei -> 0 push even with a ready system and a real ev
   const result = await runLineBroadcast(env, {
     allEvents: [accidentEvent()],
     dedupeAvailable: true,
-    now: new Date('2026-08-15T07:59:00+08:00'),
+    now: new Date('2026-08-15T06:59:00+08:00'),
   });
   assert.equal(result.withinBroadcastHours, false);
   assert.equal(result.pushSucceeded, 0);
   assert.equal(pushCalls.length, 0);
 });
 
-test('quiet hours: 22:00 Taipei -> 0 push', async () => {
+test('quiet hours: 22:31 Taipei -> 0 push', async () => {
   const kv = createMockKV();
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   originalFetch = globalThis.fetch;
@@ -121,7 +125,7 @@ test('quiet hours: 22:00 Taipei -> 0 push', async () => {
   const result = await runLineBroadcast(env, {
     allEvents: [accidentEvent()],
     dedupeAvailable: true,
-    now: new Date('2026-08-15T22:00:00+08:00'),
+    now: new Date('2026-08-15T22:31:00+08:00'),
   });
   assert.equal(result.withinBroadcastHours, false);
   assert.equal(result.pushSucceeded, 0);
@@ -144,47 +148,54 @@ test('0 subscribers -> LINE API is never called, even with a relevant event insi
 });
 
 // ---------------------------------------------------------------------
-// seen != notified: an event seen well before 08:00 (outside hours) must
+// seen != notified: an event seen well before 07:00 (outside hours) must
 // still be notified the first time we're inside broadcast hours, even
 // though the base pipeline's own seen-dedupe already considers it a
 // "duplicate" by then.
+//
+// V2.8.0 (路況-064, following 路況-063's own read-only查證) — window moved
+// 08:00-22:00 -> 07:00-22:30. The old probe times (07:35 pre-hours, 08:00
+// boundary) no longer fit: 07:35 is now WITHIN the window, so it would no
+// longer exercise the "seen before hours" case at all. Moved to 06:35
+// (still genuinely pre-hours) / 07:00 (the new boundary) / 07:05
+// (unchanged-content re-check), same relative shape, one hour earlier.
 // ---------------------------------------------------------------------
-test('seen at 07:35 (pre-hours), still active at 08:00 -> must be notified exactly once at 08:00', async () => {
+test('seen at 06:35 (pre-hours), still active at 07:00 -> must be notified exactly once at 07:00', async () => {
   const kv = createMockKV();
   await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
   originalFetch = globalThis.fetch;
   globalThis.fetch = mockLinePushFetch();
   const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
 
-  const event = accidentEvent({ startTime: '2026-08-15T07:30:00+08:00' });
+  const event = accidentEvent({ startTime: '2026-08-15T06:30:00+08:00' });
 
-  // 07:35: outside broadcast hours -> 0 push, regardless of relevance.
-  const at0735 = await runLineBroadcast(env, {
+  // 06:35: outside broadcast hours -> 0 push, regardless of relevance.
+  const at0635 = await runLineBroadcast(env, {
     allEvents: [event],
     dedupeAvailable: true,
-    now: new Date('2026-08-15T07:35:00+08:00'),
+    now: new Date('2026-08-15T06:35:00+08:00'),
   });
-  assert.equal(at0735.withinBroadcastHours, false);
-  assert.equal(at0735.pushSucceeded, 0);
+  assert.equal(at0635.withinBroadcastHours, false);
+  assert.equal(at0635.pushSucceeded, 0);
 
-  // 08:00: event still active (never ended) -> must push exactly once.
-  const at0800 = await runLineBroadcast(env, {
+  // 07:00: event still active (never ended) -> must push exactly once.
+  const at0700 = await runLineBroadcast(env, {
     allEvents: [event],
     dedupeAvailable: true,
-    now: new Date('2026-08-15T08:00:00+08:00'),
+    now: new Date('2026-08-15T07:00:00+08:00'),
   });
-  assert.equal(at0800.withinBroadcastHours, true);
-  assert.equal(at0800.pushSucceeded, 1);
+  assert.equal(at0700.withinBroadcastHours, true);
+  assert.equal(at0700.pushSucceeded, 1);
   assert.equal(pushCalls.length, 1);
 
-  // 08:05, unchanged content -> must NOT push again.
+  // 07:05, unchanged content -> must NOT push again.
   pushCalls.length = 0;
-  const at0805 = await runLineBroadcast(env, {
+  const at0705 = await runLineBroadcast(env, {
     allEvents: [event],
     dedupeAvailable: true,
-    now: new Date('2026-08-15T08:05:00+08:00'),
+    now: new Date('2026-08-15T07:05:00+08:00'),
   });
-  assert.equal(at0805.pushSucceeded, 0);
+  assert.equal(at0705.pushSucceeded, 0);
   assert.equal(pushCalls.length, 0);
 });
 

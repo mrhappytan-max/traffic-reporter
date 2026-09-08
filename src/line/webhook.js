@@ -10,8 +10,15 @@ import { replyLineMessage } from './replyMessage.js';
 import { setUserEnabled, setGroupEnabled, readSubscriptions, isUserEnabled, isGroupEnabled } from '../traffic/subscriptions.js';
 import { parseBroadcastCommand } from './broadcastIntent.js';
 
+// V2.8.0 (路況-064, following 路況-063's own read-only查證) — two fixes:
+// (1) 時間窗數字同步07:00～22:30（broadcastHours.js#isWithinBroadcastHours()
+// 同輪變更）；(2) 移除「僅通知...未來60分鐘內」——查證確認該60分鐘forecast
+// 邏輯（effectiveWindow.js/broadcastRules.js#isBroadcastRelevant()）僅被
+// legacy的broadcastPipeline.js呼叫，真實Production推播路徑
+// aiApprovedPbsBroadcast.js從未使用，此句與真實系統行為不符已久。改為如實
+// 描述現行行為：AI依語意判斷是否值得通知，非固定時間窗過濾。
 const REPLY_ENABLED =
-  '✅ 路況播報已啟動\n播報時間：08:00～22:00\n僅通知目前或未來60分鐘內會影響行車的路況。';
+  '✅ 路況播報已啟動\n播報時間：07:00～22:30\n由AI依路況內容判斷是否值得通知，非單純時間窗過濾。';
 const REPLY_DISABLED = '🔕 路況播報已關閉';
 
 export async function handleLineWebhook(request, env, now = new Date()) {

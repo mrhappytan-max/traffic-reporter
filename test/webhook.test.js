@@ -140,6 +140,41 @@ test('user: 啟動播報 -> enabled + reply, 播報狀態 -> "已啟動", 關閉
   assert.match(repliesSent.at(-1).body.messages[0].text, /已關閉/);
 });
 
+// V2.8.0 (路況-064, following 路況-063's own read-only查證) — regression
+// lock for the fixed 啟動播報 reply text itself. No prior test locked its
+// exact content (only the "已啟動"/"已關閉" substrings above), so the old
+// 08:00～22:00／60分鐘 text could have drifted silently. This pins the
+// NEW text exactly: window updated to 07:00～22:30 (broadcastHours.js's own
+// V2.8.0 boundary), and the old "僅通知目前或未來60分鐘內會影響行車的路況"
+// claim removed — 路況-063 confirmed that 60-minute forecast logic is
+// dead on the real aiApprovedPbsBroadcast.js path, so keeping it would
+// have kept describing behavior the system doesn't actually have.
+test('user: 啟動播報 reply text exactly matches the current window and no longer claims the unused 60-minute forecast rule', async () => {
+  const kv = createMockKV();
+  const env = { LINE_CHANNEL_SECRET: SECRET, LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineReplyFetch();
+
+  const body = {
+    events: [
+      {
+        type: 'message',
+        replyToken: 'rt-text-lock',
+        message: { type: 'text', text: '啟動播報' },
+        source: { type: 'user', userId: 'U-TEXT-LOCK' },
+      },
+    ],
+  };
+  const bodyText = JSON.stringify(body);
+  await handleLineWebhook(makeRequest(body, sign(bodyText)), env);
+
+  const replyText = repliesSent.at(-1).body.messages[0].text;
+  assert.equal(replyText, '✅ 路況播報已啟動\n播報時間：07:00～22:30\n由AI依路況內容判斷是否值得通知，非單純時間窗過濾。');
+  assert.ok(!replyText.includes('08:00'), '舊時間窗數字不得殘留');
+  assert.ok(!replyText.includes('22:00'), '舊時間窗數字不得殘留');
+  assert.ok(!replyText.includes('60分鐘'), '與真實系統行為不符的60分鐘宣稱必須移除');
+});
+
 test('user: 停止播報 also disables (synonym for 關閉播報)', async () => {
   const kv = createMockKV();
   const env = { LINE_CHANNEL_SECRET: SECRET, LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv };
