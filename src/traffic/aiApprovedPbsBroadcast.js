@@ -34,9 +34,14 @@
 //   so an AI-approved accident doesn't spam the same real crash.
 // - traffic/messageFormat.js#formatEventMessage — byte-identical message
 //   text to every other source.
-// - cctv/dynamicCollage.js#prepareCctvImageForEvent (accident type only)
-//   — the SAME CCTV eligibility/budget/fail-safe machinery; no CCTV logic
-//   duplicated here.
+// - cctv/dynamicCollage.js#prepareCctvImageForEvent — the SAME CCTV
+//   eligibility/budget/fail-safe machinery; no CCTV logic duplicated here.
+//   V2.4.18 — no longer gated to "accident type only" at this call site
+//   (that separate, pre-existing `event.type === 'accident'` gate around
+//   this call is REMOVED this round; see the call site's own V2.4.18
+//   comment) — eligibility is now decided exclusively by that function's
+//   own internal resolveCctvEligibility(), same as every other CCTV entry
+//   point since V2.4.16.
 // - line/pushMessage.js#pushLineMessages — the one real LINE API call.
 //
 // WHAT IT STILL ENFORCES (order section 三 — "必須保留")
@@ -247,19 +252,29 @@ export async function runAiApprovedPbsBroadcast(env, { event, now = new Date(), 
   }
 
   let messages = [{ type: 'text', text }];
-  if (event.type === 'accident') {
-    try {
-      const cctv = await prepareCctvImageForEvent(env, event, {});
-      if (cctv.ok) {
-        messages = [{ type: 'text', text }, { type: 'image', originalContentUrl: cctv.imageUrl, previewImageUrl: cctv.imageUrl }];
-        completedProduct.imageUrl = cctv.imageUrl;
-        completedProduct.imageExpiresAt = cctv.imageExpiresAt;
-      }
-    } catch (err) {
-      // CCTV must never be able to block a text push — same fail-safe
-      // principle as the legacy pipeline's own CCTV integration.
-      result.lineErrors.push(`CCTV prepare failed (non-blocking): ${safeErrorMessage(err)}`);
+  // V2.4.18 — the `event.type === 'accident'` gate that used to wrap this
+  // whole block is REMOVED (see this module's own header comment for the
+  // full root-cause writeup). CCTV eligibility is now decided exclusively
+  // by cctv/dynamicCollage.js#resolveCctvEligibility (called internally by
+  // prepareCctvImageForEvent) — the same source/road/KM data-trustworthiness
+  // check V2.4.16 already put there, now finally reachable from this, the
+  // real broadcast path. Dynamic-shoulder (single-strategy) events remain
+  // fully unaffected: they are dropped upstream, before ever reaching this
+  // function, by tdx/tdxQueueIngress.js's own Gate A
+  // (roadManagementPolicyGate.js#resolveTdxRoadManagementEligibility) — see
+  // that module's own comment. Everything below this line is byte-for-byte
+  // the same logic that already ran for `type === 'accident'` events.
+  try {
+    const cctv = await prepareCctvImageForEvent(env, event, {});
+    if (cctv.ok) {
+      messages = [{ type: 'text', text }, { type: 'image', originalContentUrl: cctv.imageUrl, previewImageUrl: cctv.imageUrl }];
+      completedProduct.imageUrl = cctv.imageUrl;
+      completedProduct.imageExpiresAt = cctv.imageExpiresAt;
     }
+  } catch (err) {
+    // CCTV must never be able to block a text push — same fail-safe
+    // principle as the legacy pipeline's own CCTV integration.
+    result.lineErrors.push(`CCTV prepare failed (non-blocking): ${safeErrorMessage(err)}`);
   }
 
   const successfulTargets = [];

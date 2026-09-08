@@ -2310,7 +2310,93 @@
 // (路況-042 investigation, 路況-043 investigation, this round's
 // execution) — including the full 09-06/09-08 control-vs-incident
 // timeline and the three tracked observability gaps.
-export const APP_VERSION = 'V2.4.17';
+
+// V2.4.18 (2026-09-08, 路況-049) — removes the `event.type === 'accident'`
+// gate that used to wrap the CCTV call in
+// traffic/aiApprovedPbsBroadcast.js (the real broadcast path for every
+// AI-approved PBS/TDX event — see 路況-045's own finding). PATCH.
+//
+// RELATIONSHIP TO V2.4.16 (this is NOT a correction of a V2.4.16 mistake —
+// see 路況-047's own writeup for the full reasoning, reproduced here):
+// V2.4.16 modified exactly one function, cctv/dynamicCollage.js's
+// resolveCctvEligibility(), removing that function's OWN internal
+// `event.type === 'accident'` check — a change 路況-047 re-verified this
+// round as correct, complete, and requiring no further edits. V2.4.16's
+// own authorized scope never included aiApprovedPbsBroadcast.js at all.
+// What 路況-047's read-only investigation found is a SEPARATE, independent
+// gate — aiApprovedPbsBroadcast.js's own `if (event.type === 'accident')`
+// wrapped around its call to prepareCctvImageForEvent(), pre-existing
+// since V1.9.9 Phase 3B, never touched by V2.4.16 because it was never in
+// that round's scope. Two different layers, two different rounds: V2.4.16
+// fixed the eligibility FUNCTION's own logic (correctly); this round
+// removes an unrelated, upstream CALL-SITE gate that had been silently
+// preventing that already-correct logic from ever running for a
+// non-accident event on the real broadcast path. `resolveCctvEligibility()`
+// itself is UNCHANGED this round — not one line of dynamicCollage.js was
+// touched.
+//
+// ROOT CAUSE / TRIGGERING EVENT: the same real Production event that
+// originally motivated V2.4.16, EVENT_ID
+// A15040100H-01-20260907075536353100022 (TDX freeway, "其他異常告警-故障
+// 車", classified type:'other', AI-approved notify:true, LINE text sent,
+// no CCTV image) — 路況-047 confirmed that, even after V2.4.16 shipped and
+// sealed, this exact class of event still could not get a CCTV image on
+// the real broadcast path, because aiApprovedPbsBroadcast.js's own gate
+// (line ~250) never let a type:'other' event reach
+// prepareCctvImageForEvent() at all. This round removes that gate, so the
+// same class of event should now be able to receive a CCTV image going
+// forward (待現場觀察 — see engineering memory for the explicit,
+// not-yet-confirmed observation item).
+//
+// EVENT TYPES NEWLY REACHING CCTV (quad) as a result: construction,
+// closure, control, congestion, other — the exact set V2.4.16 always
+// intended to open up (路況-039's own plan), now actually reachable from
+// the real broadcast path for the first time.
+//
+// FIX: exactly one call site, aiApprovedPbsBroadcast.js — the
+// `if (event.type === 'accident') { ... }` wrapper around the CCTV
+// try/catch block is removed; the try/catch body itself (the
+// prepareCctvImageForEvent() call, cctv.ok handling, messages/
+// completedProduct assignment, catch's fail-safe error handling) is
+// byte-for-byte unchanged, just no longer conditionally skipped. CCTV
+// eligibility is now decided exclusively by resolveCctvEligibility()'s
+// own source/road/KM checks, exactly as V2.4.16 already intended.
+//
+// EXPLICITLY UNCHANGED / UNTOUCHED THIS ROUND:
+//   - The OTHER `event.type === 'accident'` check in the same file (line
+//     ~203, gating traffic/incidentSuppression.js reuse) — a completely
+//     separate subsystem (real-incident repeat-notification suppression),
+//     not CCTV-related, not touched.
+//   - cctv/dynamicCollage.js#resolveCctvEligibility and every other line
+//     of that file — 路況-047 confirmed it needs no change; none was made.
+//   - Gate A (tdx/tdxQueueIngress.js /
+//     tdx/roadManagementPolicyGate.js#resolveTdxRoadManagementEligibility /
+//     traffic/dynamicShoulderClassification.js) — completely untouched.
+//     Dynamic-shoulder (single-strategy) events remain fully protected:
+//     they are dropped upstream, before ever reaching the Queue/AI/this
+//     function at all, by Gate A — independently of, and unaffected by,
+//     this round's change (路況-047 re-traced this entire chain fresh
+//     this round, not assumed from prior rounds).
+//   - AI prompt/model/timeout, the Cloudflare Queue, KV, LINE push policy,
+//     CCTV_SUPPORTED_ROADS, CCTV_PREPARE_BUDGET_MS and every other
+//     existing budget/cap.
+//
+// TESTS: test/aiApprovedPbsBroadcast.test.js — 6 new tests (V2.4.18
+// (a)-(d)): non-accident types (control, plus a loop over construction/
+// closure/congestion/other) now reach CCTV frame-fetch (observed via a
+// freeway.gov.tw fetch spy — see that file's own comment on why a
+// genuine ok:true collage cannot be exercised from this call site in a
+// Node test run, a pre-existing test-infrastructure limit unrelated to
+// this round), a negative control (unsupported road still correctly
+// rejected, unchanged), a Gate A regression lock (dynamic-shoulder still
+// rejected upstream), an accident-type symmetry check (unchanged
+// behavior), and an incident-suppression regression lock (line ~203
+// untouched). All 9 pre-existing tests in that file needed zero changes —
+// none of them locked in the removed gate's behavior (verified by
+// 路況-047 before this round began). Full regression 2019/1986/33; stash-
+// -u baseline 2013/1980/33; failure-name-set comparison (not just count)
+// confirms NEW_FAILURES=0.
+export const APP_VERSION = 'V2.4.18';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,
