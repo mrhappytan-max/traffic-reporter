@@ -546,6 +546,22 @@ function imageExpiryLabel(imageExpiresAt, now) {
   return `${formatted}（${expired ? '已過期' : '尚未過期'}）`;
 }
 
+// 路況-066 (order section 一) — the six section titles renderDetail's HTML
+// output AND buildDetailPlainText's plain-text mirror both need, pulled
+// into one shared function so the two can never silently drift apart on
+// section numbering/wording. Pure string selection, same literals as
+// before this round — no field's computed VALUE changes.
+function detailSectionTitles(isTdx) {
+  return {
+    sectionOneTitle: isTdx ? '① SOURCE（TDX 原始資料）' : '① PBS / Windows',
+    rawCommentLabel: isTdx ? '【TDX 原始描述（完整原文，未經摘要／截斷／改寫）】' : '【PBS 原始通報 comment（完整原文，未經摘要／截斷／改寫）】',
+    rawSourceDetailLabel: isTdx ? '【TDX 原始地點描述（完整原文）】' : '【PBS 原始通報 sourceDetail（完整原文）】',
+    queueSectionTitle: isTdx ? '④ QUEUE（Cloudflare／PBS_AI_QUEUE）' : '② Cloudflare',
+    aiSectionTitle: isTdx ? '⑤ AI' : '③ AI',
+    lineSectionTitle: isTdx ? '⑥ LINE' : '④ LINE',
+  };
+}
+
 function renderDetail(record, decision, idem, now = new Date()) {
   const isTdx = record.source === 'freeway' || record.source === 'highway';
   const cacheLabel = record.cacheStatus === 'HIT' ? 'HIT（沿用先前已驗證的判讀，本次 0 次 AI 呼叫）' : record.cacheStatus === 'MISS' ? 'MISS（本次呼叫了 Workers AI）' : null;
@@ -560,16 +576,12 @@ function renderDetail(record, decision, idem, now = new Date()) {
       : idem.status === IDEMPOTENCY_STATUS.PROCESSING
         ? '⏳ Cloudflare 已收件，已交由背景流程處理（尚未完成）'
         : '⚠️ 收件後處理未完成（狀態未知）';
-  const sectionOneTitle = isTdx ? '① SOURCE（TDX 原始資料）' : '① PBS / Windows';
-  const rawCommentLabel = isTdx ? '【TDX 原始描述（完整原文，未經摘要／截斷／改寫）】' : '【PBS 原始通報 comment（完整原文，未經摘要／截斷／改寫）】';
-  const rawSourceDetailLabel = isTdx ? '【TDX 原始地點描述（完整原文）】' : '【PBS 原始通報 sourceDetail（完整原文）】';
-  const queueSectionTitle = isTdx ? '④ QUEUE（Cloudflare／PBS_AI_QUEUE）' : '② Cloudflare';
-  const aiSectionTitle = isTdx ? '⑤ AI' : '③ AI';
-  const lineSectionTitle = isTdx ? '⑥ LINE' : '④ LINE';
+  const { sectionOneTitle, rawCommentLabel, rawSourceDetailLabel, queueSectionTitle, aiSectionTitle, lineSectionTitle } = detailSectionTitles(isTdx);
 
   return `
 <div class="detail">
   ${renderFlowStrip(record, idem)}
+  ${renderCopyAllTextBlock(record, decision, idem, now)}
   <div class="detail-section">
     <h4>${sectionOneTitle}</h4>
     ${renderField('EVENT_ID', record.eventId)}
@@ -636,6 +648,214 @@ function renderDetail(record, decision, idem, now = new Date()) {
     ${renderField('Telegram 發送時間', 'NOT RECORDED')}
   </div>
 </div>`;
+}
+
+// 路況-066 (order section 一) — plain-text field/raw-text-block mirrors of
+// renderField/renderRawTextBlock above, used ONLY by buildDetailPlainText
+// below. Same fallback conventions (empty/null/undefined -> '—', no text
+// -> '') as their HTML counterparts — this is a FORMATTING difference
+// only (plain "label：value" line vs. an HTML row), never a different
+// value or a different computation.
+function plainField(label, value) {
+  const display = value === null || value === undefined || value === '' ? '—' : String(value);
+  return `${label}：${display}`;
+}
+function plainRawTextBlock(label, text) {
+  if (!text) return '';
+  return `${label}\n${text}`;
+}
+
+// 路況-066 (order section 一/二, following 路況-065's own stop-and-report:
+// see this module's V2.0.1 header comment on the zero-client-side-JS
+// Admin CSP discipline — navigator.clipboard.writeText() is not available
+// on this page, and this round does not touch that) — a pure plain-text
+// mirror of renderDetail()'s exact field list, in the SAME section order,
+// for the copy-all text block below. Reads the SAME record/decision/idem/
+// now already computed for HTML rendering — every value here is read
+// through the SAME helper functions renderDetail() itself calls
+// (outcomeMeta/sourceLabel/formatTaipeiInstant/triStateLabel/
+// lineNotAttemptedReason/imageExpiryLabel/deriveAiStageFlags/
+// deriveFinalDecisionReason) — never a new calculation, never a new data
+// source (order section 三/不授權事項's own "不得改變任何欄位的計算方式或
+// 資料來源"). Kept as its OWN function (some duplication with renderDetail's
+// HTML) rather than refactoring renderDetail into a shared data-first
+// structure that then renders to HTML OR text — order section 三 scopes
+// this round to a pure additive display-layer change, and reshaping
+// renderDetail's existing HTML-generation code would risk altering output
+// no existing test currently guards byte-for-byte. Exported alongside
+// handleAiObservatoryView purely so this exact text can be unit-tested
+// directly, same "export a pure helper for direct testing" convention
+// this file already uses for deriveCompactNoSendReason.
+export function buildDetailPlainText(record, decision, idem, now = new Date()) {
+  const isTdx = record.source === 'freeway' || record.source === 'highway';
+  const cacheLabel = record.cacheStatus === 'HIT' ? 'HIT（沿用先前已驗證的判讀，本次 0 次 AI 呼叫）' : record.cacheStatus === 'MISS' ? 'MISS（本次呼叫了 Workers AI）' : null;
+  const stage = deriveAiStageFlags(record.outcome);
+  const debrisFinalReason = deriveFinalDecisionReason(record).reason;
+  const cloudflareStatusLabel = !idem
+    ? 'UNKNOWN / NOT RECORDED（冪等記錄已過期或未寫入，或本事件於 Gate A 就已排除、從未進入 Queue）'
+    : idem.status === IDEMPOTENCY_STATUS.COMPLETED
+      ? 'Cloudflare 已收件，已交由背景流程處理完成'
+      : idem.status === IDEMPOTENCY_STATUS.PROCESSING
+        ? 'Cloudflare 已收件，已交由背景流程處理（尚未完成）'
+        : '收件後處理未完成（狀態未知）';
+  const { sectionOneTitle, rawCommentLabel, rawSourceDetailLabel, queueSectionTitle, aiSectionTitle, lineSectionTitle } = detailSectionTitles(isTdx);
+
+  const sections = [];
+
+  sections.push(
+    [
+      sectionOneTitle,
+      plainField('EVENT_ID', record.eventId),
+      plainField('來源', sourceLabel(record.source)),
+      plainField('lifecycle', record.lifecycle),
+      plainField('道路 road（解析結果）', record.road),
+      plainField('方向 direction（解析結果）', record.direction),
+      plainField('areaNm（解析結果）', record.areaNm),
+      plainField('displayKM（解析結果）', record.displayKM),
+      plainField('事件類型（解析結果）', record.eventType),
+      plainField('封閉車道數 blockedLanes', record.blockedLanes),
+      plainField('longitude', record.longitude),
+      plainField('latitude', record.latitude),
+      plainRawTextBlock(rawCommentLabel, record.rawComment) || plainField(rawCommentLabel, null),
+      plainRawTextBlock(rawSourceDetailLabel, record.rawSourceDetail),
+      plainField('送件時間（generatedAt，Asia/Taipei）', formatTaipeiInstant(record.generatedAt)),
+      plainField('發生時間 / 更新時間', 'NOT RECORDED'),
+    ]
+      .filter(Boolean)
+      .join('\n')
+  );
+
+  if (record.cleanSummary || record.finalRenderedMessage) {
+    sections.push(
+      [
+        'AI 文字編輯（原文 → AI 整理 → LINE 最終內容）',
+        plainRawTextBlock('【AI 整理後 cleanSummary】', record.cleanSummary) ||
+          plainField('【AI 整理後 cleanSummary】', 'UNKNOWN / NOT RECORDED（cleanSummary 缺失或無效，已 fallback 至既有規則式排版）'),
+        plainRawTextBlock('【LINE 最終內容 finalRenderedMessage】', record.finalRenderedMessage) ||
+          plainField('【LINE 最終內容 finalRenderedMessage】', 'NOT RECORDED（本次未實際組出 LINE 訊息，例如 notify=false 或未實際嘗試推播）'),
+      ].join('\n')
+    );
+  }
+
+  if (isTdx) {
+    const geoStatus = layerStatusForTdxGeo(record);
+    const geoText = geoStatus === 'fail' ? `❌ ${outcomeMeta(record).label}` : '✅ 通過（新竹縣市範圍內）';
+    const evidenceLabel = GEO_EVIDENCE_TYPE_LABELS[record.geoEvidenceType] || (geoStatus === 'fail' ? '❌ 無足夠證據' : null);
+    const evidenceExtra =
+      evidenceLabel && record.geoEvidenceType === 'FREEWAY_KM_VERIFIED_RANGE' && record.road && typeof record.displayKM === 'number'
+        ? `（證據：${record.road} ${record.displayKM}K → VERIFIED_FREEWAY_KM_RANGE）`
+        : '';
+    sections.push(
+      ['② GEO（地理判定）', plainField('結果', geoText), evidenceLabel ? plainField('地理判定來源', `${evidenceLabel}${evidenceExtra}`) : '']
+        .filter(Boolean)
+        .join('\n')
+    );
+
+    const roadStatus = layerStatusForTdxRoadPolicy(record);
+    const roadText =
+      roadStatus === 'none' ? '⏭️ 未執行（地理已排除，未到此關卡）' : roadStatus === 'fail' ? `❌ ${outcomeMeta(record).label}` : '✅ 通過（非機動路肩管制／施工封鎖車道數足夠）';
+    sections.push(['③ ROAD_POLICY（道路管理政策）', plainField('結果', roadText)].join('\n'));
+  }
+
+  const risk = record.debrisRisk;
+  if (risk && risk.isDebrisEvent) {
+    const meta = DEBRIS_RISK_META[risk.classification] || { emoji: 'ℹ️', label: risk.classification || '未知' };
+    const evidence = risk.evidence || {};
+    sections.push(
+      [
+        '散落物安全風險分級（DEBRIS RISK）',
+        plainField('分級', `${meta.emoji} ${meta.label}`),
+        plainField('行車道位置 lanePosition', evidence.lanePosition),
+        plainField('物體類型 objectType', evidence.objectType),
+        plainField('數量／範圍 quantity', evidence.quantity),
+        plainField('已清除 cleared', evidence.cleared ? 'TRUE' : 'FALSE'),
+        plainField('明確交通影響 trafficImpact', evidence.trafficImpact ? 'TRUE' : 'FALSE'),
+        plainField('判定理由 reasons', Array.isArray(risk.reasons) && risk.reasons.length ? risk.reasons.join('；') : null),
+        plainField('最終通知結果原因 FINAL_NOTIFY_REASON', debrisFinalReason),
+      ].join('\n')
+    );
+  }
+
+  sections.push(
+    [
+      queueSectionTitle,
+      plainField('收件狀態', cloudflareStatusLabel),
+      plainField('Cloudflare 收到時間（Asia/Taipei）', formatTaipeiInstant(record.timestamp)),
+      plainField('transport idempotency status', idem ? idem.status : null),
+      plainField('attemptCount', idem ? idem.attemptCount : null),
+      plainField('AI 完成時間（idempotency completedAt，Asia/Taipei）', idem && idem.completedAt ? formatTaipeiInstant(idem.completedAt) : null),
+      plainField('是否為 transport duplicate', 'NO（本紀錄本身即代表首次接受；重複到達不會另外建立紀錄，見本頁下方「重複事件」說明）'),
+    ].join('\n')
+  );
+
+  sections.push(
+    [
+      aiSectionTitle,
+      plainField('AI candidate created', triStateLabel(stage.candidateCreated, 'YES', 'NO')),
+      plainField('AI call started', triStateLabel(stage.aiCallStarted, 'YES', 'NO')),
+      plainField('Model', PBS_AI_MODEL_ID),
+      plainField('Cache', cacheLabel),
+      plainField('notify', decision ? (decision.notify ? 'TRUE' : 'FALSE') : record.outcome === AI_OUTCOME.AI_CALL_FAILED || record.outcome === AI_OUTCOME.AI_DECISION_INVALID ? 'N/A（判讀失敗）' : 'UNKNOWN / NOT RECORDED'),
+      plainField('impact', decision ? decision.impact : null),
+      plainField('confidence', decision ? decision.confidence : null),
+      plainField('reason', decision ? decision.reason : record.outcome === AI_OUTCOME.AI_CALL_FAILED || record.outcome === AI_OUTCOME.AI_DECISION_INVALID ? 'UNKNOWN / NOT RECORDED（判讀失敗，無有效 decision）' : 'UNKNOWN / NOT RECORDED'),
+    ].join('\n')
+  );
+
+  sections.push(
+    [
+      lineSectionTitle,
+      plainField('LINE attempted', record.lineAttempted ? 'YES' : 'NO'),
+      plainField('LINE sent', record.lineSent ? 'YES' : 'NO'),
+      !record.lineAttempted ? plainField('未執行原因', lineNotAttemptedReason(record)) : '',
+      record.lineAttempted && !record.lineSent ? plainField('失敗原因', 'UNKNOWN / NOT RECORDED（僅記錄嘗試/成功與否；詳細錯誤見 Workers Logs）') : '',
+      plainField('LINE 發送時間', 'NOT RECORDED'),
+      plainField('Shared Feed', record.sharedFeedPersisted === null || record.sharedFeedPersisted === undefined ? 'UNKNOWN / NOT RECORDED' : record.sharedFeedPersisted ? 'YES' : 'NO'),
+      plainField('CCTV', record.imageUrlPresent === null || record.imageUrlPresent === undefined ? 'UNKNOWN / NOT RECORDED' : record.imageUrlPresent ? 'YES' : 'NO'),
+      plainField('CCTV 圖片網址', record.imageUrl),
+      plainField('CCTV 圖片到期時間（Asia/Taipei）', record.imageExpiresAt ? imageExpiryLabel(record.imageExpiresAt, now) : null),
+      plainField('CCTV 跳過原因', record.cctvSkippedByReason),
+      plainField('CCTV 策略', record.imageStrategy),
+      plainField('R2 讀回耗時（ms）', record.r2ReadbackElapsedMs),
+    ]
+      .filter(Boolean)
+      .join('\n')
+  );
+
+  sections.push(
+    [
+      'Telegram',
+      plainField('Telegram attempted', record.telegramAttempted ? 'YES' : 'NO'),
+      plainField('Telegram sent', record.telegramSent ? 'YES' : 'NO'),
+      !record.telegramAttempted ? plainField('未執行原因', lineNotAttemptedReason(record)) : '',
+      record.telegramAttempted && !record.telegramSent ? plainField('失敗原因', 'UNKNOWN / NOT RECORDED（僅記錄嘗試/成功與否；詳細錯誤見 Workers Logs）') : '',
+      plainField('Telegram 發送時間', 'NOT RECORDED'),
+    ]
+      .filter(Boolean)
+      .join('\n')
+  );
+
+  return sections.join('\n\n');
+}
+
+// 路況-066 (order section 一/二/三) — pure CSS "select all on click" text
+// block: zero JavaScript, zero CSP change (see buildDetailPlainText's own
+// comment above for the full 路況-065 stop-and-report background).
+// `tabindex="0"` makes it keyboard-focusable; `.copy-all-text { user-
+// select: all }` (order section 一's own suggested mechanism) makes a
+// single click/tap select this element's ENTIRE text content — a human
+// still has to press Ctrl+C / use the long-press "複製" menu themselves,
+// per order section 二's own explicit "本單只負責讓「選取全部」這一步自動
+// 化，不負責「複製」這一步本身". Each event's `<details>` row calls this
+// with its OWN record/decision/idem — order section 三's own "複製範圍僅
+// 限這一筆事件" is satisfied structurally: there is one independent block
+// per row, never a page-wide one.
+function renderCopyAllTextBlock(record, decision, idem, now) {
+  const text = buildDetailPlainText(record, decision, idem, now);
+  return `<div class="copy-all-wrap">
+    <div class="copy-all-label">📋 點選下方區塊可全選本筆事件完整內容，再自行複製（Ctrl+C／長按選單）</div>
+    <pre class="copy-all-text" tabindex="0" role="textbox" aria-readonly="true" aria-label="本筆事件完整內容，點選或聚焦後可全選">${escapeHtml(text)}</pre>
+  </div>`;
 }
 
 // order section 十三 — the mobile-first summary card must always show
@@ -967,6 +1187,25 @@ const PAGE_STYLE = `
   .raw-text-block { background: #12151a; border: 1px solid #262b34; border-radius: 8px; padding: 8px 10px; margin: 4px 0; }
   .raw-text-label { font-size: 12px; color: #9aa1ac; margin-bottom: 4px; }
   .raw-text-value { font-size: 14px; color: #e8e9ec; white-space: pre-wrap; word-break: break-word; }
+  /* 路況-066 (order section 一/二) — pure CSS "select all on click", zero
+     JavaScript, zero CSP change (see buildDetailPlainText's own comment
+     for the full 路況-065 stop-and-report background). user-select:all is
+     the mechanism itself: a single click/tap inside .copy-all-text
+     selects the ENTIRE element content in every current major engine —
+     the human still presses Ctrl+C / uses the long-press 複製 menu
+     themselves. tabindex="0" on the element (set in renderCopyAllTextBlock)
+     adds keyboard focusability for accessibility; the focus outline below
+     is purely a visual affordance, not itself a selection trigger. */
+  .copy-all-wrap { background: #12151a; border: 1px solid #262b34; border-radius: 8px; padding: 8px 10px; margin: 0 0 4px; }
+  .copy-all-label { font-size: 12px; color: #9aa1ac; margin-bottom: 6px; }
+  .copy-all-text {
+    margin: 0; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5;
+    color: #e8e9ec; background: #0f1115; border: 1px solid #333a46; border-radius: 6px; padding: 8px 10px;
+    cursor: text;
+    user-select: all; -webkit-user-select: all; -moz-user-select: all; -ms-user-select: all;
+  }
+  .copy-all-text:focus { outline: 2px solid #58a6ff; outline-offset: 1px; }
   .detail { display: flex; flex-direction: column; gap: 10px; padding: 4px 12px 14px; border-top: 1px solid #262b34; }
   .detail-section h4 { font-size: 13px; margin: 8px 0 4px; color: #c3c9d1; }
   .row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; border-bottom: 1px solid #21252c; font-size: 13px; }

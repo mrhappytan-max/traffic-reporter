@@ -13,7 +13,7 @@ import {
   PBS_DEBUG_PUSH_PATH,
   resetPbsDebugPushIdempotencyState,
 } from '../src/pbs/debugPush.js';
-import { handleAiObservatoryView } from '../src/pbs/aiObservatoryView.js';
+import { handleAiObservatoryView, buildDetailPlainText } from '../src/pbs/aiObservatoryView.js';
 import { setUserEnabled } from '../src/traffic/subscriptions.js';
 import { APP_VERSION } from '../src/version.js';
 import { buildAiObservatoryRecord, recordAiObservatoryEntry, AI_OUTCOME } from '../src/pbs/aiObservatoryIndex.js';
@@ -286,7 +286,7 @@ test('11: missing/expired AI decision cache data renders UNKNOWN / NOT RECORDED,
 // only bump the literal), same discipline test/versionLineage.test.js's
 // own series-prefix check already follows.
 test('12: APP_VERSION reflects the current release', () => {
-  assert.equal(APP_VERSION, 'V2.8.0');
+  assert.equal(APP_VERSION, 'V2.8.1');
 });
 
 test('SERVICE_AREA_EXCLUDED events show "服務區域外", never routed through AI at all', async () => {
@@ -577,4 +577,135 @@ test('V2.7.0 backward-compat regression lock: a record built WITHOUT memoryConte
   assert.equal(res.status, 200, 'must render successfully, never throw, for a record missing memoryContextFingerprint');
   const html = await res.text();
   assert.ok(html.includes('UNKNOWN / NOT RECORDED'), 'no cache entry exists for this key — must degrade honestly, never fabricate a reason');
+});
+
+// ============================================================================
+// 路況-066 (取代路況-065) — copy-all "select all on click" text block.
+// 路況-065 originally asked for a button that copies straight to the
+// clipboard via navigator.clipboard.writeText(); the engineering
+// department stopped and reported that this Admin page (and every other
+// Admin page — src/security/adminAuth.js#applyAdminSecurityHeaders()'s
+// shared CSP is `default-src 'none'` with no script-src exception) is
+// deliberately zero-client-side-JavaScript, so that API is unavailable
+// here without a CSP change outside this order's authorized scope. 路況-066
+// is the real human's own decision to proceed with the reported 方案B
+// instead: a pure CSS/HTML "select all on click" text block — zero
+// JavaScript, zero CSP change, the human still presses Ctrl+C or uses the
+// long-press 複製 menu themselves.
+// ============================================================================
+
+function extractCopyAllTextBlocks(html) {
+  return [...html.matchAll(/<pre class="copy-all-text"[^>]*>([\s\S]*?)<\/pre>/g)].map((m) => m[1]);
+}
+
+test('路況-066: the expanded detail includes exactly one copy-all-text container per event, focusable and CSS-only (no JavaScript, no inline handler)', async () => {
+  const env = await baseEnv();
+  await seedObservatoryRecord(env, { eventId: 'PBS-COPY-1' });
+  const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
+
+  assert.ok(html.includes('class="copy-all-text"'), 'the copy-all text container must be present');
+  assert.ok(html.includes('tabindex="0"'), 'the container must be keyboard-focusable, per order section 一\'s own "可聚焦"');
+  assert.ok(html.includes('user-select: all'), 'the pure-CSS select-all mechanism (order section 一\'s own suggested `user-select: all`) must be present in the page style');
+  assert.equal(extractCopyAllTextBlocks(html).length, 1, 'exactly one seeded event must produce exactly one copy-all-text block');
+  assert.ok(!html.includes('<script'), '路況-065 stop-and-report: this page must remain zero client-side JavaScript');
+  assert.ok(!html.includes('onclick'), 'no inline event handler — pure CSS/HTML, per order section 二\'s own explicit prohibition');
+  assert.ok(!html.includes('navigator.clipboard'), 'the Clipboard API is not available on this zero-JS page — 方案B never attempts to call it');
+});
+
+test('路況-066: the copy-all-text container holds THIS event\'s own field values, in the same section order as the visible expanded detail', async () => {
+  const env = await baseEnv();
+  await seedObservatoryRecord(env, {
+    eventId: 'PBS-COPY-2',
+    candidate: { road: '國道一號', direction: '北向', areaNm: '國道一號北向', displayKM: 94, eventType: 'accident', comment: '國道一號北向94公里處發生追撞事故' },
+    lineAttempted: true,
+    lineSent: true,
+  });
+  const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
+  const [block] = extractCopyAllTextBlocks(html);
+  assert.ok(block, 'sanity: the one seeded event must have produced a copy-all-text block');
+
+  assert.ok(block.includes('EVENT_ID：PBS-COPY-2'));
+  assert.ok(block.includes('道路 road（解析結果）：國道一號'));
+  assert.ok(block.includes('方向 direction（解析結果）：北向'));
+  assert.ok(block.includes('國道一號北向94公里處發生追撞事故'));
+  assert.ok(block.includes('LINE attempted：YES'));
+  assert.ok(block.includes('LINE sent：YES'));
+
+  const sourceIdx = block.indexOf('① PBS / Windows');
+  const cfIdx = block.indexOf('② Cloudflare');
+  const aiIdx = block.indexOf('③ AI');
+  const lineIdx = block.indexOf('④ LINE');
+  assert.ok(sourceIdx >= 0 && cfIdx > sourceIdx && aiIdx > cfIdx && lineIdx > aiIdx, 'sections must appear in the SAME visible order renderDetail() itself uses: SOURCE → Cloudflare → AI → LINE');
+});
+
+test('路況-066: with two events expanded on the same page, each copy-all-text block stays scoped to its OWN event — order section 三\'s own "複製範圍僅限這一筆事件"', async () => {
+  const env = await baseEnv();
+  await seedObservatoryRecord(env, {
+    eventId: 'PBS-COPY-A',
+    fingerprint: 'fp-copy-a',
+    candidate: { road: '國道一號', direction: '北向', areaNm: '國道一號北向', displayKM: 10, eventType: 'accident', comment: 'AAA-ONLY-MARKER-事故內容' },
+  });
+  await seedObservatoryRecord(env, {
+    eventId: 'PBS-COPY-B',
+    fingerprint: 'fp-copy-b',
+    candidate: { road: '台61線', direction: '南向', areaNm: '台61線南向', displayKM: 20, eventType: 'construction', comment: 'BBB-ONLY-MARKER-施工內容' },
+  });
+
+  const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
+  const blocks = extractCopyAllTextBlocks(html);
+  assert.equal(blocks.length, 2, 'sanity: two seeded events must produce two independent copy-all-text blocks');
+
+  const blockWithA = blocks.find((b) => b.includes('AAA-ONLY-MARKER'));
+  const blockWithB = blocks.find((b) => b.includes('BBB-ONLY-MARKER'));
+  assert.ok(blockWithA, "event A's own block must contain its own marker text");
+  assert.ok(blockWithB, "event B's own block must contain its own marker text");
+  assert.ok(!blockWithA.includes('BBB-ONLY-MARKER'), "event A's block must never leak event B's content");
+  assert.ok(!blockWithB.includes('AAA-ONLY-MARKER'), "event B's block must never leak event A's content");
+});
+
+test('路況-066: buildDetailPlainText() renders section titles/field labels/raw-text blocks for a PBS record, in renderDetail()\'s own exact section order', () => {
+  const record = buildAiObservatoryRecord({
+    candidate: {
+      road: '國道一號',
+      direction: '北向',
+      areaNm: '國道一號北向',
+      displayKM: 94,
+      eventType: 'accident',
+      comment: '測試原文內容',
+      blockedLanes: 2,
+      longitude: 121.5,
+      latitude: 24.9,
+      sourceDetail: '測試地點描述',
+    },
+    eventId: 'UNIT-PLAINTEXT-1',
+    lifecycle: 'NEW',
+    fingerprint: 'fp-unit-1',
+    outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+    lineAttempted: true,
+    lineSent: true,
+    telegramAttempted: true,
+    telegramSent: false,
+    now: NOW,
+  });
+  const decision = { notify: true, impact: 'HIGH', reason: '測試理由文字', confidence: 0.88 };
+  const text = buildDetailPlainText(record, decision, null, NOW);
+
+  assert.ok(text.startsWith('① PBS / Windows'), "the first section must be renderDetail()'s own first section, byte-identical title");
+  assert.ok(text.includes('EVENT_ID：UNIT-PLAINTEXT-1'));
+  assert.ok(text.includes('道路 road（解析結果）：國道一號'));
+  assert.ok(text.includes('封閉車道數 blockedLanes：2'));
+  assert.ok(text.includes('【PBS 原始通報 comment（完整原文，未經摘要／截斷／改寫）】\n測試原文內容'));
+  assert.ok(text.includes('【PBS 原始通報 sourceDetail（完整原文）】\n測試地點描述'));
+  assert.ok(text.includes('reason：測試理由文字'));
+  assert.ok(text.includes('confidence：0.88'));
+  assert.ok(text.includes('LINE attempted：YES'));
+  assert.ok(text.includes('Telegram attempted：YES'));
+  assert.ok(text.includes('Telegram sent：NO'));
+
+  const sourceIdx = text.indexOf('① PBS / Windows');
+  const cfIdx = text.indexOf('② Cloudflare');
+  const aiIdx = text.indexOf('③ AI');
+  const lineIdx = text.indexOf('④ LINE');
+  const tgIdx = text.indexOf('Telegram');
+  assert.ok(sourceIdx < cfIdx && cfIdx < aiIdx && aiIdx < lineIdx && lineIdx < tgIdx, "sections must appear in renderDetail()'s exact visible order");
 });

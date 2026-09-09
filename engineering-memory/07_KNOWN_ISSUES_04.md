@@ -65,3 +65,25 @@
 **待現場觀察事項（明確記錄，不得寫成已確認）**：07:00開始後第一則TDX/PBS事件是否確實被正確抓取與推播——尚未取得。22:30邊界是否正確生效（22:30仍推播、22:31起停止）——尚未取得。
 
 **V2.8.0封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-08，路況-064）。封版依據：程式碼變更完成、全量迴歸2080項／2047通過／33失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.8.0`、commit已push main並驗證。發現問題一律開下一個版本，不回頭改已封版的`V2.8.0`。
+
+## 修正紀錄｜V2.8.1 查修頁展開卡片新增一鍵全選文字區塊（路況-066，取代路況-065）（2026-09-09）
+
+**路況-065：工程部正確停下回報，非執行錯誤**。路況-065原授權「按鈕點擊即以`navigator.clipboard.writeText()`自動複製到剪貼簿」。工程部在動任何程式碼前先查證：查修頁整組Admin頁面（`aiObservatoryView.js`／`pipelineTraceView.js`／`deploymentStatusView.js`）刻意設計為零client-side JavaScript，這三個檔案的header comment各自重複明文記載此設計；CSP為`src/security/adminAuth.js#applyAdminSecurityHeaders()`統一套用於**全部**Admin頁面（含本頁）的`default-src 'none'`無script-src例外，其header comment明寫「this project ships no external JS/CSS on any admin page」。`navigator.clipboard.writeText()`需要執行JavaScript，若照單面字執行，唯一路徑是放寬CSP——但這需要修改`adminAuth.js`（全Admin頁面共用的安全模組），超出路況-065僅授權`aiObservatoryView.js`單一檔案、且限定「純顯示層變更」的範圍，也是一項安全政策變更而非顯示層變更。工程部依AGENTS.md第0節「一旦有任何地方與單子對不上，停下並回報」，在未動任何程式碼、未commit的狀態下回報此衝突，並提出A（放寬CSP，需追加授權）／B（純CSS全選，零JS零CSP變更）／C（維持現狀待裁示）三個選項。**真人裁示採方案B**，開立路況-066取代路況-065（路況-065本身未執行任何變更，不存在需要回滾的程式碼）。
+
+**方案B修正內容**（僅`aiObservatoryView.js`一個檔案，零JavaScript、零CSP變更）：
+1. 新增`detailSectionTitles(isTdx)`：把`renderDetail()`原本內聯計算的六個section標題（①SOURCE／②GEO或Cloudflare／③ROAD_POLICY或AI／④QUEUE或LINE...視來源而定）抽成共用函式，供HTML渲染與新的純文字渲染共用同一份標題字串，避免兩者未來各自修改而逐漸不同步。純字串抽取，字面值與原本完全相同，`renderDetail()`的HTML輸出byte-for-byte不變（既有測試全數不動即通過，證明零回歸）。
+2. 新增`buildDetailPlainText(record, decision, idem, now)`：`renderDetail()`既有HTML欄位清單的純文字鏡像，section順序、標題、欄位標籤與原本HTML畫面完全比照。每個欄位值讀取`renderDetail()`本身已在用的同一批既有函式（`outcomeMeta`／`sourceLabel`／`formatTaipeiInstant`／`triStateLabel`／`lineNotAttemptedReason`／`imageExpiryLabel`／`deriveAiStageFlags`／`deriveFinalDecisionReason`）——零新計算、零新資料來源，僅格式從HTML row改為純文字`label：value`行。獨立於`renderDetail()`的HTML產生邏輯之外（而非重構`renderDetail()`成先產資料再各自渲染HTML／文字的共用結構），因訂單範圍限定純新增顯示層、避免改動`renderDetail()`既有HTML產生路徑帶來未被任何既有測試逐位元把關的意外輸出差異。
+3. 新增`renderCopyAllTextBlock()`：每筆事件展開區塊最上方（flow strip之後、①SOURCE之前）新增`<pre class="copy-all-text" tabindex="0" role="textbox" aria-readonly="true">`容器，內容為該筆事件自己的`buildDetailPlainText()`輸出（經`escapeHtml`跳脫，非innerHTML）。每筆事件各自獨立一個容器——結構上即保證複製範圍不會跨筆事件，不需額外邏輯把關。
+4. CSS新增`.copy-all-text { user-select: all; -webkit-user-select: all; ... }`：點擊／觸控該區塊即選取其全部文字內容，這是瀏覽器原生行為，不需任何JavaScript。`tabindex="0"`提供鍵盤可聚焦性（協助工具用途），聚焦外框純為視覺提示，並非選取觸發本身——使用者仍需自行按Ctrl+C或使用長按選單的「複製」完成最後一步，本輪只負責讓「全選」這一步自動化，如實揭露不是路況-065原本要求的「按鈕點擊即自動複製」。
+
+**明確不觸碰（依訂單不授權事項）**：`src/security/adminAuth.js`或任何CSP設定（零行變動）；任何`<script>`標籤或inline事件處理器；AI決策邏輯、CCTV產圖邏輯、LINE或電報發送邏輯；任何欄位的計算方式或資料來源；任何KV讀寫；已封版之前所有版本（V2.8.0及更早）的任何記錄。
+
+**測試**：`test/aiObservatoryView.test.js`新增4則——(1)容器存在性＋`tabindex="0"`＋CSS`user-select: all`存在＋零`<script>`／`onclick`／`navigator.clipboard`regression lock；(2)單筆事件容器內文字正確對應該筆事件欄位值，section順序與`renderDetail()`一致；(3)雙筆事件情境下，兩個容器互不污染（各自僅含自己事件的標記文字，無交叉洩漏）；(4)直接對`buildDetailPlainText()`的單元測試，驗證section標題／欄位標籤／原始文字區塊格式與順序。
+
+**規劃外發現，完整揭露**：本沙盒環境`node --test`從repo根目錄執行的全量迴歸結果（1857/1841/16，此輪前）與工程記憶既有記載的Production歷史封版基準（如V2.8.0封版時的2080/2047/33）規模不同——差異來自本沙盒環境缺少部分原生依賴（CCTV拼圖/JPEG編解碼相關套件），導致16個測試檔案於載入或執行階段失敗（`pbs-relay/scripts/debug-push-test.mjs`、多個`cctv*`/`dynamicCollage`/`dynamicShoulder*`/`freeway3CctvAudit`/`hsinchuCctvCollageEndpoint`/`pipelineTraceIntegration`/`productionIntegrationFixtures`/`singleCctvBudgetFairness`/`tdxPhaseCProductionNotify`/`testJpegCodec`），與本輪異動（`aiObservatoryView.js`一個檔案）完全無關，本輪未修改上述任一檔案。已確認`git stash -u`前後兩次全量迴歸的失敗測試名稱集合逐字相同（16個檔案級失敗完全相同），僅是本沙盒既有環境限制，非本輪引入，如實揭露而非隱藏此數字差異。
+
+**APP_VERSION**：`V2.8.0`→`V2.8.1`（PATCH，純顯示層新增，比照V2.5.1/V2.6.1先例——不改變任何既有欄位的計算、判斷或資料來源）。全量迴歸1861項／1845通過／16失敗；`git stash -u`基準1857項／1841通過／16失敗；測試名稱集合逐字比對確認`NEW_FAILURES=0`（4則新測試全數通過，既有16則失敗與基準逐字相同，0新增0消失）。
+
+**待現場觀察事項（明確記錄，不得寫成已確認）**：真實Production查修頁上，這個「點選即全選」容器在手機瀏覽器（尤其iOS Safari長按選單、Android Chrome）的實際使用體驗——尚未取得。真人回報此功能是否確實達成「出錯時方便直接貼給會議室」的原始需求——尚未取得。
+
+**V2.8.1封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-09，路況-066）。封版依據：程式碼變更完成、全量迴歸1861項／1845通過／16失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.8.1`、commit已push main並驗證。發現問題一律開下一個版本，不回頭改已封版的`V2.8.1`。路況-065本身未執行任何程式碼變更（純查證與停下回報），不構成需要封版或回滾的版本。

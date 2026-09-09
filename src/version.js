@@ -3019,7 +3019,64 @@
 // 全量迴歸2080/2047/33；git stash -u基準2068/2035/33；測試名稱集合比對
 // 確認NEW_FAILURES=0（12則新測試全數通過，既有33則失敗與基準逐字相同，
 // 0新增0消失）。
-export const APP_VERSION = 'V2.8.0';
+// V2.8.1 (2026-09-09, 路況-066, 取代路況-065) — 查修頁展開卡片新增「一鍵
+// 全選文字區塊」，純CSS/HTML，零JavaScript，零CSP變更。
+//
+// 背景：路況-065原要求按鈕點擊即以navigator.clipboard.writeText()自動複製
+// 到剪貼簿。工程部查證後停下並回報：查修頁整組Admin頁面
+// （aiObservatoryView.js／pipelineTraceView.js／deploymentStatusView.js）
+// 刻意設計為零client-side JavaScript，CSP為`default-src 'none'`無
+// script-src例外，這是src/security/adminAuth.js#applyAdminSecurityHeaders()
+// 共用於全部Admin頁面的架構級安全決策，非本頁專屬、非疏漏——放寬CSP才能讓
+// navigator.clipboard.writeText()可用，但這超出路況-065僅授權
+// aiObservatoryView.js單一檔案、且僅限「純顯示層變更」的範圍。此為工程部
+// 正確的停下回報，不是執行錯誤。真人收到回報後定案採方案B：不放寬CSP，
+// 改用純CSS「點選即全選」文字區塊，使用者仍需自行按Ctrl+C或長按複製，本輪
+// 只負責讓「全選」這一步自動化。
+//
+// 修正內容（僅aiObservatoryView.js一個檔案）：
+//   1. 新增`buildDetailPlainText(record, decision, idem, now)`——
+//      renderDetail()既有HTML欄位清單的純文字鏡像，section順序與標題完全
+//      比照renderDetail()本身（新增`detailSectionTitles()`小工具函式，
+//      兩者共用同一份section標題字串，避免未來各自為政、逐漸不同步）。
+//      每個欄位值皆讀取renderDetail()原本已在用的同一批既有函式
+//      （outcomeMeta/sourceLabel/formatTaipeiInstant/triStateLabel/
+//      lineNotAttemptedReason/imageExpiryLabel/deriveAiStageFlags/
+//      deriveFinalDecisionReason）——零新計算、零新資料來源，只是格式從
+//      HTML row改成純文字`label：value`行。
+//   2. 新增`renderCopyAllTextBlock()`：每筆事件展開區塊最上方（flow strip
+//      之後、①SOURCE之前）新增一個`<pre class="copy-all-text" tabindex="0"
+//      role="textbox" aria-readonly="true">`，內容為該筆事件自己的
+//      `buildDetailPlainText()`輸出（經escapeHtml，非innerHTML）。每筆
+//      事件各自獨立一個容器，結構上即保證複製範圍不會跨筆事件。
+//   3. CSS新增`.copy-all-text { user-select: all; ... }`（含
+//      -webkit/-moz/-ms前綴）——點擊/觸控該區塊即選取其全部文字內容，這是
+//      瀏覽器原生行為，不需要任何JavaScript。`tabindex="0"`提供鍵盤可
+//      聚焦性（協助工具用途），焦點外框純為視覺提示，並非選取觸發本身。
+//   4. 零`<script>`標籤、零inline事件處理器（`onclick`等）、零KV讀寫、
+//      零後端邏輯、零AI/CCTV/LINE/電報計算或送出邏輯變動——這些欄位本身的
+//      計算方式與資料來源全部未變，只是額外多顯示一份純文字版本。
+//
+// 明確不觸碰（依訂單不授權事項）：`src/security/adminAuth.js`或任何CSP
+// 設定（零行變動）；AI決策邏輯、CCTV產圖邏輯、LINE或電報發送邏輯；任何
+// 欄位的計算方式或資料來源；已封版之前所有版本（V2.8.0及更早）的任何
+// 記錄。
+//
+// PATCH——純顯示層新增（一個新的唯讀文字容器＋CSS），不改變任何既有欄位
+// 的行為、判斷或資料，比照V2.5.1/V2.6.1先例。
+//
+// 測試：test/aiObservatoryView.test.js新增4則——(1)容器存在性＋
+// tabindex="0"＋CSS`user-select: all`存在＋零`<script>`／`onclick`／
+// `navigator.clipboard`regression lock；(2)單筆事件容器內文字正確對應
+// 該筆事件欄位值，section順序與renderDetail()一致；(3)雙筆事件情境下，
+// 兩個容器互不污染（各自僅含自己事件的標記文字）；(4)直接對
+// `buildDetailPlainText()`的單元測試，驗證section標題／欄位標籤／原始
+// 文字區塊格式與順序。全量迴歸1861項／1845通過／16失敗（此沙盒環境原生
+// 依賴限制導致的既有已知失敗，與Production歷史封版時的33則失敗基準為
+// 不同執行環境下的既有缺口，非本輪引入）；`git stash -u`基準1857項／
+// 1841通過／16失敗；測試名稱集合逐字比對確認`NEW_FAILURES=0`（4則新測試
+// 全數通過，既有16則失敗與基準逐字相同，0新增0消失）。
+export const APP_VERSION = 'V2.8.1';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,
