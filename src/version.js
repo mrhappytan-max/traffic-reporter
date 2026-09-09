@@ -3076,7 +3076,45 @@
 // 不同執行環境下的既有缺口，非本輪引入）；`git stash -u`基準1857項／
 // 1841通過／16失敗；測試名稱集合逐字比對確認`NEW_FAILURES=0`（4則新測試
 // 全數通過，既有16則失敗與基準逐字相同，0新增0消失）。
-export const APP_VERSION = 'V2.8.1';
+// V2.8.2 (2026-09-09, 路況-068, following 路況-067's own read-only查證) —
+// 查修頁AI區塊固定顯示sameIncident/materialChange欄位，純顯示層新增。
+//
+// 背景：路況-067查證確立：`record.sameIncident`/`record.materialChange`
+// 自V2.7.0起已寫入每一筆Observatory記錄，`deriveFinalDecisionReason()`
+// 也已在讀取這兩個值判斷NOT_SENT分支，但查修頁AI區塊（⑤AI）的渲染從未
+// 把它們列出來——不是顯示UNKNOWN，是整段缺席。路況-067真實案例證明此缺口
+// 的實際影響：真人需直接翻Cloudflare Dashboard的KV原始資料，才能確認
+// 一次事故的二次推播是否合理，查修頁本身給不出答案。
+//
+// 修正內容（僅`aiObservatoryView.js`一個檔案）：AI區塊`reason`欄位之後
+// 新增`sameIncident`／`materialChange`兩行，三態顯示（`true`／`false`／
+// `—`）。判斷邏輯：`record.sameIncident === undefined || === null`時傳
+// `null`給既有`renderField()`（自動渲染`—`），否則`String(record.
+// sameIncident)`——沿用既有函式的既有fallback行為，未新增任何新的顯示
+// 輔助函式或計算邏輯。同步套用於`buildDetailPlainText()`（路況-066/
+// V2.8.1新增的一鍵全選文字鏡像函式），避免純文字複製版本與畫面顯示產生
+// 新的不同步缺口。兩個欄位本身的計算方式與寫入邏輯（V2.7.0的
+// `debugPush.js#runAiDecisionPath()`攔截判斷）**零行變動**——本輪純粹是
+// 讓既有欄位可見，不影響任何推播決策。
+//
+// 明確不觸碰（依訂單不授權事項）：AI決策邏輯、`sameIncident`/
+// `materialChange`的計算或判斷方式本身；V2.7.0的推播攔截邏輯
+// （`debugPush.js`的重複事件攔截判斷）；任何KV讀寫；已封版之前所有版本
+// （V2.8.1及更早）的任何記錄。
+//
+// PATCH——純顯示層新增（既有欄位補上渲染），不改變任何決策或資料，比照
+// V2.5.1/V2.6.1/V2.8.1先例。
+//
+// 測試：`test/aiObservatoryView.test.js`新增4則——(1)`sameIncident:true`/
+// `materialChange:true`（路況-067真實案例情境）正確顯示；(2)
+// `sameIncident:true`/`materialChange:false`（V2.7.0攔截情境）正確顯示；
+// (3)首次事件（欄位undefined/null）正確顯示為`—`，不誤判為`false`；(4)
+// `buildDetailPlainText()`純文字輸出同步包含這兩行且三態顯示與HTML一致
+// 的直接單元測試。全量迴歸1865項／1849通過／16失敗（既有16則失敗為此
+// 沙盒環境原生依賴限制，與本輪異動檔案無關）；`git stash -u`基準1861
+// 項／1845通過／16失敗；測試名稱集合逐字比對確認`NEW_FAILURES=0`（4則
+// 新測試全數通過，既有16則失敗與基準逐字相同，0新增0消失）。
+export const APP_VERSION = 'V2.8.2';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

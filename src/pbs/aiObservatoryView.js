@@ -577,6 +577,19 @@ function renderDetail(record, decision, idem, now = new Date()) {
         ? '⏳ Cloudflare 已收件，已交由背景流程處理（尚未完成）'
         : '⚠️ 收件後處理未完成（狀態未知）';
   const { sectionOneTitle, rawCommentLabel, rawSourceDetailLabel, queueSectionTitle, aiSectionTitle, lineSectionTitle } = detailSectionTitles(isTdx);
+  // 路況-068 (following 路況-067's own read-only查證) — record.sameIncident/
+  // record.materialChange have been stored on every record since V2.7.0
+  // (deriveFinalDecisionReason() already reads them for its own NOT_SENT
+  // branch), but the AI section below never rendered them at all — not
+  // even as UNKNOWN, simply absent, forcing a human to read raw KV data
+  // to check a repeat-suppression decision. Pure display addition: read
+  // straight off the two already-stored fields, never guessed as false
+  // when undefined/null (a first-ever sighting, memoryCandidateCount=0,
+  // genuinely has both undefined — distinct from a real AI-computed
+  // false — renderField's own null/undefined -> '—' fallback handles this
+  // correctly without a new helper).
+  const sameIncidentDisplay = record.sameIncident === undefined || record.sameIncident === null ? null : String(record.sameIncident);
+  const materialChangeDisplay = record.materialChange === undefined || record.materialChange === null ? null : String(record.materialChange);
 
   return `
 <div class="detail">
@@ -623,6 +636,8 @@ function renderDetail(record, decision, idem, now = new Date()) {
     ${renderField('impact', decision ? decision.impact : null)}
     ${renderField('confidence', decision ? decision.confidence : null)}
     ${renderField('reason', decision ? decision.reason : record.outcome === AI_OUTCOME.AI_CALL_FAILED || record.outcome === AI_OUTCOME.AI_DECISION_INVALID ? 'UNKNOWN / NOT RECORDED（判讀失敗，無有效 decision）' : 'UNKNOWN / NOT RECORDED')}
+    ${renderField('sameIncident', sameIncidentDisplay)}
+    ${renderField('materialChange', materialChangeDisplay)}
   </div>
   <div class="detail-section">
     <h4>${lineSectionTitle}</h4>
@@ -699,6 +714,12 @@ export function buildDetailPlainText(record, decision, idem, now = new Date()) {
         ? 'Cloudflare 已收件，已交由背景流程處理（尚未完成）'
         : '收件後處理未完成（狀態未知）';
   const { sectionOneTitle, rawCommentLabel, rawSourceDetailLabel, queueSectionTitle, aiSectionTitle, lineSectionTitle } = detailSectionTitles(isTdx);
+  // 路況-068 — same sameIncident/materialChange display rule renderDetail()
+  // itself now uses, kept identical here so the copy-all plain-text mirror
+  // never drifts from what the screen shows (order section 二's own
+  // explicit requirement).
+  const sameIncidentDisplay = record.sameIncident === undefined || record.sameIncident === null ? null : String(record.sameIncident);
+  const materialChangeDisplay = record.materialChange === undefined || record.materialChange === null ? null : String(record.materialChange);
 
   const sections = [];
 
@@ -799,6 +820,8 @@ export function buildDetailPlainText(record, decision, idem, now = new Date()) {
       plainField('impact', decision ? decision.impact : null),
       plainField('confidence', decision ? decision.confidence : null),
       plainField('reason', decision ? decision.reason : record.outcome === AI_OUTCOME.AI_CALL_FAILED || record.outcome === AI_OUTCOME.AI_DECISION_INVALID ? 'UNKNOWN / NOT RECORDED（判讀失敗，無有效 decision）' : 'UNKNOWN / NOT RECORDED'),
+      plainField('sameIncident', sameIncidentDisplay),
+      plainField('materialChange', materialChangeDisplay),
     ].join('\n')
   );
 

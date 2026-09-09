@@ -87,3 +87,23 @@
 **待現場觀察事項（明確記錄，不得寫成已確認）**：真實Production查修頁上，這個「點選即全選」容器在手機瀏覽器（尤其iOS Safari長按選單、Android Chrome）的實際使用體驗——尚未取得。真人回報此功能是否確實達成「出錯時方便直接貼給會議室」的原始需求——尚未取得。
 
 **V2.8.1封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-09，路況-066）。封版依據：程式碼變更完成、全量迴歸1861項／1845通過／16失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.8.1`、commit已push main並驗證。發現問題一律開下一個版本，不回頭改已封版的`V2.8.1`。路況-065本身未執行任何程式碼變更（純查證與停下回報），不構成需要封版或回滾的版本。
+
+## 修正紀錄｜V2.8.2 查修頁AI區塊固定顯示sameIncident/materialChange欄位（路況-068，依路況-067查證）（2026-09-09）
+
+**路況-067發現的缺口**：查修頁展開卡片的AI區塊（⑤AI）只顯示`notify`/`impact`/`confidence`/`reason`/`cleanSummary`，完全沒有渲染`sameIncident`/`materialChange`這兩個欄位——不是顯示UNKNOWN，是整段缺席。這兩個欄位自V2.7.0（路況-061）起已寫入每一筆Observatory記錄，`aiObservatoryIndex.js#deriveFinalDecisionReason()`也早已在讀取這兩個值判斷NOT_SENT分支（同一事故無實質變化的重複攔截），但AI區塊本身從未把它們列出來給人看。真實案例已證明此缺口的實際影響：路況-067需要真人在Cloudflare Dashboard直接翻KV原始資料，才能確認一次二次推播是否合理，查修頁本身給不出答案。
+
+**修正內容（僅`aiObservatoryView.js`一個檔案，純顯示層新增）**：
+1. `renderDetail()`的AI區塊，緊接`reason`欄位之後新增兩行：`sameIncident`／`materialChange`，三態顯示（`true`／`false`／`—`）。
+2. 顯示邏輯：`record.sameIncident === undefined || record.sameIncident === null`（`materialChange`同理）時傳`null`給既有`renderField()`，沿用其既有的null/undefined→`—`fallback；否則傳`String(record.sameIncident)`（`true`/`false`小寫字面值）。未新增任何新的顯示輔助函式，也未修改`renderField()`本身。
+3. `buildDetailPlainText()`（路況-066/V2.8.1新增的一鍵全選文字鏡像函式）同步新增這兩行，使用完全相同的判斷邏輯（各自在`renderDetail()`與`buildDetailPlainText()`內以區域變數`sameIncidentDisplay`/`materialChangeDisplay`計算一次），確保純文字複製版本與畫面顯示不會出現新的不同步缺口。
+4. `record.sameIncident`／`record.materialChange`欄位本身的計算方式與寫入邏輯（V2.7.0的`debugPush.js#runAiDecisionPath()`重複事件攔截判斷）**零行變動**——本輪純粹是讓既有欄位對人可見，不影響任何推播決策。
+
+**明確不觸碰（依訂單不授權事項）**：AI決策邏輯、`sameIncident`/`materialChange`的計算或判斷方式本身；V2.7.0的推播攔截邏輯（`debugPush.js`的重複事件攔截判斷）；任何KV讀寫；已封版之前所有版本（V2.8.1及更早）的任何記錄；真人本機工作目錄；Cloudflare或Google Drive操作。
+
+**測試**：`test/aiObservatoryView.test.js`新增4則——(1)`sameIncident:true`/`materialChange:true`（路況-067真實案例情境）正確顯示兩行對應值；(2)`sameIncident:true`/`materialChange:false`（V2.7.0攔截情境）正確顯示；(3)首次事件（欄位undefined/null，`memoryCandidateCount=0`）正確顯示為`—`，不誤判為`false`；(4)`buildDetailPlainText()`純文字輸出同步包含這兩行且三態顯示與HTML畫面一致的直接單元測試。既有APP_VERSION版本鎖定測試同步更新至`V2.8.2`。
+
+**APP_VERSION**：`V2.8.1`→`V2.8.2`（PATCH，純顯示層新增，比照V2.5.1/V2.6.1/V2.8.1先例）。全量迴歸1865項／1849通過／16失敗；`git stash -u`基準1861項／1845通過／16失敗；測試名稱集合逐字比對確認`NEW_FAILURES=0`（4則新測試全數通過，既有16則失敗與基準逐字相同，0新增0消失——同一組沙盒環境原生依賴限制既有失敗，與本輪異動檔案無關）。
+
+**待現場觀察事項（明確記錄，不得寫成已確認）**：真實Production查修頁上，這兩個新欄位在真正發生同一事故二次通報（V2.7.0攔截情境）時的實際顯示效果，是否確實讓真人不再需要翻KV原始資料——尚未取得。
+
+**V2.8.2封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-09，路況-068）。封版依據：程式碼變更完成、全量迴歸1865項／1849通過／16失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.8.2`、commit已push main並驗證。發現問題一律開下一個版本，不回頭改已封版的`V2.8.2`。

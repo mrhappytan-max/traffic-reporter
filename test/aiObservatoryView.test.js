@@ -286,7 +286,7 @@ test('11: missing/expired AI decision cache data renders UNKNOWN / NOT RECORDED,
 // only bump the literal), same discipline test/versionLineage.test.js's
 // own series-prefix check already follows.
 test('12: APP_VERSION reflects the current release', () => {
-  assert.equal(APP_VERSION, 'V2.8.1');
+  assert.equal(APP_VERSION, 'V2.8.2');
 });
 
 test('SERVICE_AREA_EXCLUDED events show "服務區域外", never routed through AI at all', async () => {
@@ -708,4 +708,75 @@ test('路況-066: buildDetailPlainText() renders section titles/field labels/raw
   const lineIdx = text.indexOf('④ LINE');
   const tgIdx = text.indexOf('Telegram');
   assert.ok(sourceIdx < cfIdx && cfIdx < aiIdx && aiIdx < lineIdx && lineIdx < tgIdx, "sections must appear in renderDetail()'s exact visible order");
+});
+
+// ============================================================================
+// 路況-068 (following 路況-067's own read-only查證) — the AI section never
+// rendered record.sameIncident/record.materialChange at all, even though
+// both have been stored on every record since V2.7.0 and are the exact
+// values V2.7.0's own repeat-suppression gate and
+// deriveFinalDecisionReason()'s NOT_SENT branch already decide on. 路況-067
+// found a real case where a human had to read raw KV data in the
+// Cloudflare Dashboard to answer a question this page should have
+// answered directly. Pure display addition — no new computation.
+// ============================================================================
+
+test('路況-068: sameIncident:true/materialChange:true renders both fields verbatim in the AI section (路況-067\'s own real-case scenario)', async () => {
+  const env = await baseEnv();
+  await seedObservatoryRecord(env, { eventId: 'PBS-SIMC-TRUE-TRUE', sameIncident: true, materialChange: true });
+  const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
+  assert.match(html, /sameIncident<\/div><div class="value">true/);
+  assert.match(html, /materialChange<\/div><div class="value">true/);
+});
+
+test('路況-068: sameIncident:true/materialChange:false renders both fields verbatim (V2.7.0\'s own repeat-suppression interception scenario)', async () => {
+  const env = await baseEnv();
+  await seedObservatoryRecord(env, { eventId: 'PBS-SIMC-TRUE-FALSE', sameIncident: true, materialChange: false });
+  const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
+  assert.match(html, /sameIncident<\/div><div class="value">true/);
+  assert.match(html, /materialChange<\/div><div class="value">false/);
+});
+
+test('路況-068: a first-ever sighting (sameIncident/materialChange both undefined/null, memoryCandidateCount=0) renders both as — , never guessed as false', async () => {
+  const env = await baseEnv();
+  // Deliberately the OLD/first-sighting shape — sameIncident/
+  // materialChange left at their buildAiObservatoryRecord() default
+  // (null), exactly what a genuinely-first event (or a pre-V2.7.0 record)
+  // looks like.
+  await seedObservatoryRecord(env, { eventId: 'PBS-SIMC-FIRST' });
+  const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
+  assert.match(html, /sameIncident<\/div><div class="value"><span class="dim">—<\/span>/, 'undefined/null must degrade to the — placeholder, never be misread as false');
+  assert.match(html, /materialChange<\/div><div class="value"><span class="dim">—<\/span>/, 'undefined/null must degrade to the — placeholder, never be misread as false');
+  assert.ok(!html.includes('sameIncident</div><div class="value">false'), 'a first sighting must never render sameIncident as false');
+  assert.ok(!html.includes('materialChange</div><div class="value">false'), 'a first sighting must never render materialChange as false');
+});
+
+test('路況-068: buildDetailPlainText() includes sameIncident/materialChange, matching the HTML screen exactly (true/false/—)', () => {
+  const baseCandidate = { road: '國道三號', direction: '北向', areaNm: '國道三號北向', displayKM: 86.3, eventType: 'accident', comment: '測試內容' };
+
+  const trueFalseRecord = buildAiObservatoryRecord({
+    candidate: baseCandidate,
+    eventId: 'UNIT-SIMC-1',
+    lifecycle: 'NEW',
+    fingerprint: 'fp-unit-simc-1',
+    outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+    sameIncident: true,
+    materialChange: false,
+    now: NOW,
+  });
+  const textA = buildDetailPlainText(trueFalseRecord, { notify: true, impact: 'LOW', reason: '同一事故無實質變化', confidence: 0.9 }, null, NOW);
+  assert.ok(textA.includes('sameIncident：true'));
+  assert.ok(textA.includes('materialChange：false'));
+
+  const firstSightingRecord = buildAiObservatoryRecord({
+    candidate: baseCandidate,
+    eventId: 'UNIT-SIMC-2',
+    lifecycle: 'NEW',
+    fingerprint: 'fp-unit-simc-2',
+    outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+    now: NOW,
+  });
+  const textB = buildDetailPlainText(firstSightingRecord, { notify: true, impact: 'HIGH', reason: '第一次發現', confidence: 0.9 }, null, NOW);
+  assert.ok(textB.includes('sameIncident：—'), 'undefined/null must degrade to the — placeholder in plain text too, never false');
+  assert.ok(textB.includes('materialChange：—'), 'undefined/null must degrade to the — placeholder in plain text too, never false');
 });
