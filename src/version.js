@@ -3114,7 +3114,91 @@
 // 沙盒環境原生依賴限制，與本輪異動檔案無關）；`git stash -u`基準1861
 // 項／1845通過／16失敗；測試名稱集合逐字比對確認`NEW_FAILURES=0`（4則
 // 新測試全數通過，既有16則失敗與基準逐字相同，0新增0消失）。
-export const APP_VERSION = 'V2.8.2';
+// V2.9.0 (2026-09-10, 路況-070, executing 路況-069's own read-only規劃) —
+// "一小時內同位置不重複推播"硬性規則，優先權高於V2.7.0的AI語意判斷。
+//
+// 產品方向轉向（明確記錄，非V2.7.0有誤）：V2.7.0讓AI的sameIncident/
+// materialChange成為唯一語意守門人的設計本身沒有錯——連續兩天真實案例
+// （2026-09-09國3北向追撞、2026-09-10砂石車追撞）證明AI兩次都正確判斷了
+// 實質變化。真人在看過這兩次真實案例後認為，即使AI判斷合理，同位置頻繁
+// 重複通知仍讓司機觀感不佳，因此決定疊加一條優先權更高的硬性規則。V2.7.0
+// 既有的sameIncident/materialChange判斷機制（`debugPush.js`的
+// `suppressForNoChange`區塊）本身**零行變動**，本輪為疊加，非取代。
+//
+// 真人定案的完整規則：①同路、同方向、公里數相差在1公里內視為同位置；②從
+// 該位置最近一次成功推播算起60分鐘內；③預設不推播，不論AI的notify/
+// sameIncident/materialChange為何；④例外：新事件impact為HIGH、且該位置
+// 先前最高impact為LOW時，例外放行並重新起算60分鐘窗口。
+//
+// 新增獨立模組`src/pbs/positionCooldown.js`（獨立KV key
+// `line:position-cooldown-state`）——依路況-069三節建議，刻意不沿用/修改
+// `incidentMemory.js`（其分組受AI自己的sameIncident判斷牽動，同位置但AI
+// 判斷sameIncident:false的事件會被漏掉）或`incidentSuppression.js`（僅
+// accident類型適用，其既有常數/函式本身不得被本規則牽動）。純KM比對（1
+// 公里，獨立常數，未比對座標，依路況-069三節查證未定案座標比對而採用最
+// 簡單的KM-only設計）；{road,direction,km}描述沿用（唯讀取，非修改）
+// `incidentMemory.js`既有匯出的`deriveEventLocationForMemory()`，使PBS
+// （displayKM）與TDX（startKM/endKM中點）事件能透過同一份描述正確互相比對
+// （已用跨來源測試驗證）。impact欄位僅HIGH/LOW二元值（依路況-069四節查證
+// `aiDecisionEngine.js`的`VALID_IMPACT_VALUES`），故「升級」只有LOW->HIGH
+// 一種可能；`maxImpactNotified`一旦為HIGH永不降級（真人定案原文），記錄
+// 保留期限採8小時（本輪自訂假設，路況-069/070原文皆未指定，已於施工回報
+// 中揭露，沿用`incidentMemory.js`同一資料領域已用的TTL量級）。
+//
+// 插入位置：`debugPush.js#runAiDecisionPath()`內，V2.7.0`suppressForNoChange`
+// 判斷之後、`suppressLineNotify`計算之前（依路況-069一節選項A）。攔截時
+// return shape完全比照`suppressForNoChange`（`lineAttempted`/`lineSent`/
+// `telegramAttempted`/`telegramSent`皆明確`false`，不呼叫
+// `runAiApprovedPbsBroadcast()`——0 CCTV、0 LINE、0 Telegram、0 Shared
+// Feed，`completedProducts`從未建立），新增`positionCooldownBlocked:true`
+// 欄位供未來查修頁擴充使用（本輪已寫入Observatory記錄，
+// `aiObservatoryIndex.js#buildAiObservatoryRecord()`新增對應參數；查修頁
+// `aiObservatoryView.js`本身未新增顯示分支——訂單本輪列為非必要，留待
+// 後續派工單）。位置冷卻記錄只在**真正成功推播**（`broadcastResult.
+// pushSucceeded>0`）之後才更新，與`incidentMemory.js`自己的`notified`
+// 判斷同一慣例——被本規則或其他任何機制攔下、或推播嘗試失敗的事件，皆
+// 不更新視窗起算時間。
+//
+// 60分鐘邊界（本輪自訂假設，已於施工回報中揭露）：採inclusive
+// （elapsedMs<=60分鐘仍在窗口內，60分00秒仍攔截，60分00秒01毫秒才視為
+// 過期），比照本專案`broadcastHours.js`（V2.8.0/路況-064，07:00~22:30，
+// 22:30仍推播、22:31起停止）既有的closed-interval慣例，是本專案唯一直接
+// 可比對的既有精確邊界先例。
+//
+// Shared Feed：被本規則攔下的事件完全不寫入Shared Feed（比照V2.7.0
+// suppressForNoChange既有行為——`completedProducts`從未建立，
+// `runSharedFeedPersist`從未被呼叫），已用regression lock測試驗證（見
+// test/positionCooldown.test.js scenario 9）。
+//
+// 明確不觸碰（依訂單不授權事項）：AI Prompt/model；V2.7.0既有的
+// sameIncident/materialChange判斷機制與`suppressForNoChange`區塊（零行
+// 變動）；`incidentMemory.js`的`proximityMatch()`與`incidentSuppression.js`
+// 的既有函式/常數（`INCIDENT_MAX_KM_DIFF`等，零行變動）；CCTV、LINE、
+// 電報發送邏輯本身；已封版之前所有版本（V2.8.2及更早）的任何記錄。
+//
+// 測試：新增`test/positionCooldown.test.js`（23則）——Part 1純函式單元
+// 測試13則（KM比對邊界、視窗判斷、例外邏輯、maxImpactNotified不降級、
+// TTL剪除、WRITE_ON_CHANGE、fail-open）；Part 2端到端pipeline測試10則
+// （APP_VERSION版本鎖定＋依路況-069七節/路況-070四節情境清單9則）：60分鐘
+// 內無升級擋下、LOW->HIGH例外放行並重新起算、超過60分鐘不受影響、不同
+// 位置不受影響、與V2.7.0交互（materialChange:true但本規則仍攔截，證明
+// 優先權更高）、60分鐘邊界（60分00秒/60分01秒）、首次事件不受影響、跨
+// 來源（PBS/TDX同位置）正確攔截、Shared Feed regression lock。既有
+// V2.7.0/V2.8.x相關測試檔案（test/tdxUnifiedAiPipeline.test.js、
+// test/tdxPhaseCProductionNotify.test.js、test/pbsAiDecisionScenarios.test.js、
+// test/aiObservatoryView.test.js、test/aiObservatoryIndex.test.js、
+// test/v2412ObservatoryNoSendReasonHighVisibilityUI.test.js等）**零筆修改
+// 即全數通過**（已於施工前逐一確認）——本規則只在AI決策已通過
+// suppressForNoChange檢查、且同位置60分鐘內已有真實成功推播記錄時才會
+// 產生行為差異，既有測試從未建構出這個精確條件組合。`test/aiObservatoryView.
+// test.js`既有APP_VERSION版本鎖定測試同步更新至V2.9.0。
+//
+// MINOR bump（直接改變LINE/電報實際推播決策，比照V2.7.0/V2.6.0先例，非
+// 純顯示層變更）。全量迴歸1888項／1872通過／16失敗；`git stash -u`基準
+// 1865項／1849通過／16失敗；測試名稱集合逐字比對確認`NEW_FAILURES=0`
+// （23則新測試全數通過，既有16則失敗與基準逐字相同，0新增0消失——此沙盒
+// 環境原生依賴限制導致的既有已知失敗，與本輪異動檔案無關）。
+export const APP_VERSION = 'V2.9.0';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

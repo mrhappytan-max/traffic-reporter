@@ -325,6 +325,13 @@ import { isTdxRoadEventProductionNotifyEnabled } from '../traffic/sourceMode.js'
 import { taipeiDateString } from '../tdx/usageLedger.js';
 import { buildAiObservatoryRecord, recordAiObservatoryEntry, AI_OUTCOME } from './aiObservatoryIndex.js';
 import {
+  readPositionCooldownState,
+  findPositionCooldownMatch,
+  evaluatePositionCooldown,
+  buildPositionCooldownUpdate,
+  persistPositionCooldownState,
+} from './positionCooldown.js';
+import {
   readIncidentMemory,
   selectMemoryCandidates,
   buildIncidentMemoryUpdate,
@@ -1421,6 +1428,82 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
     };
   }
 
+  // V2.9.0 (路況-070, executing 路況-069's own規劃) — "一小時內同位置不
+  // 重複推播" 硬性規則，優先權高於本函式上方剛判斷過的V2.7.0
+  // suppressForNoChange（該區塊完全未修改，仍照舊運作、仍會攔下它自己該
+  // 攔的情境）。這是疊加在其上的獨立硬性限制，不論AI的notify/
+  // sameIncident/materialChange為何，只要同位置60分鐘內已經成功推播過、
+  // 且這次沒有嚴重度從LOW升級到HIGH的例外，就直接擋下——見
+  // src/pbs/positionCooldown.js自己的header comment，完整說明為何這是
+  // 獨立於incidentMemory.js／incidentSuppression.js之外的第三個機制、
+  // 以及此規則本身的產品方向轉向緣由（連續兩天真實案例：2026-09-09追撞、
+  // 2026-09-10砂石車追撞——AI兩次都判斷正確，真人仍要求疊加此硬性限制）。
+  // 刻意檢查在這裡（suppressForNoChange之後、suppressLineNotify計算之前，
+  // 依路況-069一節選項A）：兩者return shape完全比照，若本規則判定攔截，
+  // 同樣不呼叫runAiApprovedPbsBroadcast()——0 CCTV、0 LINE、0 Telegram、
+  // 0 Shared Feed（completedProducts從未建立）。`eventLocation`是本函式
+  // 上方已經為incidentMemory.js算好的同一份{road,direction,km}描述——唯
+  // 讀取沿用，比對邏輯本身（findPositionCooldownMatch/
+  // evaluatePositionCooldown）與incidentMemory.js/incidentSuppression.js
+  // 完全獨立，見positionCooldown.js自己的說明。
+  const positionCooldownState = await readPositionCooldownState(env.TRAFFIC_KV);
+  const positionCooldownGroupKey = `${eventLocation.road || ''}|${eventLocation.direction || ''}`;
+  const positionCooldownMatch = findPositionCooldownMatch(positionCooldownState.groups[positionCooldownGroupKey], eventLocation.km);
+  const positionCooldownVerdict = evaluatePositionCooldown(positionCooldownMatch, now, decision.impact);
+
+  if (positionCooldownVerdict.blocked) {
+    const memoryResult = await persistSighting(false);
+    console.log(
+      `[pbs-debug-push][ai-decision] event=AI_NOTIFY_TRUE_SUPPRESSED_POSITION_COOLDOWN eventId=${eventId} lifecycle=${lifecycle} ` +
+        `road=${eventLocation.road} direction=${eventLocation.direction} km=${eventLocation.km} impact=${decision.impact} ` +
+        `maxImpactNotified=${positionCooldownMatch ? positionCooldownMatch.maxImpactNotified : 'n/a'}`
+    );
+    return {
+      outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+      cacheStatus,
+      source,
+      memoryCandidateCount: memoryCandidates.length,
+      memoryContextFingerprint,
+      lineAttempted: false,
+      lineSent: false,
+      telegramAttempted: false,
+      telegramSent: false,
+      sameIncident: decision.sameIncident,
+      materialChange: decision.materialChange,
+      primarySource: memoryResult.primarySource,
+      lastNotifiedAt: memoryResult.lastNotifiedAt,
+      memoryWrite: memoryResult.written,
+      cleanSummary: decision.cleanSummary,
+      finalRenderedMessage: null,
+      // V2.9.0 (路況-070) — the Observatory's own dedicated flag for this
+      // NEW gate, distinct from sameIncident/materialChange (V2.7.0's own
+      // fields, always present here too since this gate runs strictly
+      // AFTER suppressForNoChange already found them non-suppressing) so
+      // a future reader can tell WHICH mechanism actually blocked this
+      // event. Not yet surfaced in aiObservatoryView.js's own display
+      // (order section 三 — optional this round); the raw field is
+      // available for a future round to render.
+      positionCooldownBlocked: true,
+    };
+  }
+
+  // Reused by the position-cooldown gate above (read-only there, this
+  // event's own group of records — never mutated here) and by
+  // persistPositionCooldownAfterPush below (which builds the NEXT state
+  // from this SAME already-read positionCooldownState.groups, same
+  // "read once, reuse" discipline persistSighting() above already
+  // follows for memoryState.groups).
+  async function persistPositionCooldownAfterPush() {
+    const nextGroups = buildPositionCooldownUpdate(positionCooldownState.groups, eventLocation, decision.impact, now);
+    const persistResult = await persistPositionCooldownState(env.TRAFFIC_KV, nextGroups, now, {
+      previousGroups: positionCooldownState.groups,
+      previousStateExisted: positionCooldownState.existed,
+    });
+    if (!persistResult.committed) {
+      console.error(`[pbs-debug-push][position-cooldown] eventId=${eventId} persist failed: ${persistResult.error}`);
+    }
+  }
+
   // Phase B/C gate, see this function's own header comment. A TDX-origin
   // (freeway/highway) event is suppressed UNLESS the Phase C canonical
   // switch is explicitly on; PBS (source==='pbs') is never suppressed,
@@ -1475,6 +1558,17 @@ async function runAiDecisionPath(env, { candidate, normalizedEvent, eventId, lif
     // Phase B suppressLineNotify or a 0-pending-target/fail-closed
     // outcome never actually delivered).
     const memoryResult = await persistSighting(broadcastResult.pushSucceeded > 0);
+    // V2.9.0 (路況-070) — same "a REAL push succeeded, not merely notify:
+    // true" gate as persistSighting's own `notified` argument immediately
+    // above: the position-cooldown record's own lastNotifiedAt/
+    // maxImpactNotified must only ever advance on an ACTUAL delivery,
+    // never on a suppressLineNotify=true (Phase B) or 0-pending-target
+    // outcome that never really reached a driver — otherwise this rule's
+    // own 60-minute window would start ticking for a position nothing was
+    // ever really pushed to yet.
+    if (broadcastResult.pushSucceeded > 0) {
+      await persistPositionCooldownAfterPush();
+    }
 
     let sharedFeedCommitted = false;
     // V2.4.0 — Shared Feed persistence stays scoped to what actually

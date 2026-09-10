@@ -107,3 +107,32 @@
 **待現場觀察事項（明確記錄，不得寫成已確認）**：真實Production查修頁上，這兩個新欄位在真正發生同一事故二次通報（V2.7.0攔截情境）時的實際顯示效果，是否確實讓真人不再需要翻KV原始資料——尚未取得。
 
 **V2.8.2封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-09，路況-068）。封版依據：程式碼變更完成、全量迴歸1865項／1849通過／16失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.8.2`、commit已push main並驗證。發現問題一律開下一個版本，不回頭改已封版的`V2.8.2`。
+
+## 修正紀錄｜V2.9.0「一小時內同位置不重複推播」硬性規則（路況-070，執行路況-069規劃）（2026-09-10）
+
+**產品方向轉向（明確記錄，非V2.7.0有誤）**：連續兩天真實案例——2026-09-09國3北向追撞、2026-09-10砂石車追撞——證明V2.7.0（路況-061）讓AI的`sameIncident`/`materialChange`成為唯一語意守門人的設計本身運作正確：AI兩次都正確判斷了實質變化，不是bug。真人在看過這兩次真實案例後認為，即使AI判斷合理，同位置頻繁重複通知仍讓司機觀感不佳，因此決定疊加一條**優先權高於AI判斷**的硬性規則：60分鐘內同位置預設不推播，不論AI的notify/sameIncident/materialChange為何，唯一例外是嚴重程度真的從LOW升級到HIGH。**V2.7.0既有的`suppressForNoChange`區塊本身零行變動**，本輪是疊加在其上的新規則，不是取代或否定V2.7.0。
+
+**真人定案的完整規則**：①同路、同方向、公里數相差在1公里內視為同位置；②從該位置最近一次成功推播算起60分鐘內；③預設不推播，不論AI判斷為何；④例外：新事件impact為HIGH、且該位置先前記錄的最高impact為LOW時，例外放行並將此次視為新的「最近一次成功推播」，重新起算60分鐘窗口。
+
+**新增獨立模組`src/pbs/positionCooldown.js`**（獨立KV key`line:position-cooldown-state`）——依路況-069三節建議，刻意不沿用/修改`incidentMemory.js`（其分組受AI自己的sameIncident判斷牽動，同位置但AI判斷sameIncident:false的事件會被漏掉）或`incidentSuppression.js`（僅accident類型適用，其既有常數/函式`INCIDENT_MAX_KM_DIFF`等本輪零行變動）。純KM比對（1公里，獨立常數`POSITION_COOLDOWN_MAX_KM_DIFF`，未比對座標）；{road,direction,km}描述沿用（唯讀取，非修改）`incidentMemory.js`既有匯出的`deriveEventLocationForMemory()`，使PBS（displayKM）與TDX（startKM/endKM中點）事件能透過同一份描述正確互相比對——已用跨來源測試驗證（`test/positionCooldown.test.js` scenario 8）。依路況-069四節查證，`aiDecisionEngine.js`的`impact`欄位僅HIGH/LOW二元值（無MEDIUM），故「升級」只有LOW->HIGH一種可能；`maxImpactNotified`一旦為HIGH永不降級（真人定案原文「若本次為HIGH則覆蓋，否則維持既有值不降級」）。
+
+**插入位置**：`debugPush.js#runAiDecisionPath()`內，V2.7.0`suppressForNoChange`判斷之後、`suppressLineNotify`計算之前（依路況-069一節選項A）。攔截時return shape完全比照`suppressForNoChange`（`lineAttempted`/`lineSent`/`telegramAttempted`/`telegramSent`皆明確`false`，不呼叫`runAiApprovedPbsBroadcast()`——0 CCTV、0 LINE、0 Telegram、0 Shared Feed，`completedProducts`從未建立），新增`positionCooldownBlocked:true`欄位寫入Observatory記錄（`aiObservatoryIndex.js#buildAiObservatoryRecord()`新增對應參數）供未來查修頁擴充使用。位置冷卻記錄只在**真正成功推播**（`broadcastResult.pushSucceeded>0`）之後才更新，與`incidentMemory.js`自己的`notified`判斷同一慣例。
+
+**查修頁顯示（依訂單本輪明確列為非必要）**：本輪未新增`deriveFinalDecisionReason()`專屬分支——`positionCooldownBlocked`欄位已寫入記錄但暫未在畫面上呈現專屬理由文字，留待後續派工單視需要處理。
+
+**本輪自訂假設，完整揭露（訂單原文皆未指定，供會議室視現場觀察結果確認是否合適）**：
+1. **記錄保留期限8小時**——`maxImpactNotified`的「不降級」規則需要記錄在60分鐘窗口過期後仍然存在才能比較，故不能讓記錄在60分鐘一到就整筆消失。沿用`incidentMemory.js`同一資料領域（road+direction+km）已在用的8小時TTL量級作為預設保留期限（`POSITION_COOLDOWN_RECORD_TTL_MS`）。
+2. **60分鐘邊界採inclusive**——`elapsedMs<=60分鐘`仍視為在窗口內（60分00秒仍攔截，60分00秒01毫秒才視為過期），比照本專案`broadcastHours.js`（V2.8.0/路況-064，07:00~22:30，22:30仍推播、22:31起停止）既有的closed-interval慣例，是本專案唯一直接可比對的既有精確邊界先例。
+3. **KM-only比對，未比對座標**——真人定案文字僅提到「公里數相差在1公里內」，未提及座標比對，依路況-069三節查證未定案座標比對，本輪採最簡單的KM-only設計，km為null時永不攔截（與既有兩個模組的「無法確認位置就不猜」哲學一致）。
+
+**明確不觸碰（依訂單不授權事項）**：AI Prompt/model；V2.7.0既有的sameIncident/materialChange判斷機制與`suppressForNoChange`區塊（零行變動）；`incidentMemory.js`的`proximityMatch()`與`incidentSuppression.js`的既有函式/常數（零行變動）；CCTV、LINE、電報發送邏輯本身；已封版之前所有版本（V2.8.2及更早）的任何記錄。
+
+**測試**：新增`test/positionCooldown.test.js`（23則）——Part 1純函式單元測試13則（KM比對邊界、視窗判斷、例外邏輯、maxImpactNotified不降級、TTL剪除、WRITE_ON_CHANGE、fail-open）；Part 2端到端pipeline測試10則（APP_VERSION版本鎖定＋依路況-069七節/路況-070四節情境清單9則：60分鐘內無升級擋下、LOW->HIGH例外放行並重新起算、超過60分鐘不受影響、不同位置不受影響、與V2.7.0交互驗證優先權更高、60分鐘邊界、首次事件不受影響、跨來源正確攔截、Shared Feed regression lock）。既有V2.7.0/V2.8.x相關測試檔案（`tdxUnifiedAiPipeline.test.js`／`tdxPhaseCProductionNotify.test.js`／`pbsAiDecisionScenarios.test.js`／`aiObservatoryView.test.js`／`aiObservatoryIndex.test.js`／`v2412ObservatoryNoSendReasonHighVisibilityUI.test.js`等）**零筆修改即全數通過**（施工前逐一確認）——本規則只在AI決策已通過suppressForNoChange檢查、且同位置60分鐘內已有真實成功推播記錄時才會產生行為差異，既有測試從未建構出這個精確條件組合；`aiObservatoryView.test.js`既有APP_VERSION版本鎖定測試同步更新至V2.9.0。
+
+**規劃外發現，完整揭露**：施工前檢查發現`test/pbsDebugPush.test.js`／`test/pbsAiObservatoryFourLayer.test.js`各自有一組精確KV get/put次數斷言的既有測試（`KV cost quantification`/`KV cost formula`），原本擔心本輪新增的位置冷卻KV讀寫會打破這些斷言——查證後確認這兩組測試皆刻意使用**legacy（AI停用）路徑**（`PBS_AI_DECISION_ENABLED`未設定，預設false），完全不會呼叫`runAiDecisionPath()`，因此不受本輪影響，無需修改任何既有斷言。
+
+**APP_VERSION**：`V2.8.2`→`V2.9.0`（MINOR，直接改變LINE/電報實際推播決策，比照V2.7.0/V2.6.0先例，非純顯示層變更）。全量迴歸1888項／1872通過／16失敗；`git stash -u`基準1865項／1849通過／16失敗；測試名稱集合逐字比對確認`NEW_FAILURES=0`（23則新測試全數通過，既有16則失敗與基準逐字相同，0新增0消失——此沙盒環境原生依賴限制導致的既有已知失敗，與本輪異動檔案無關）。
+
+**待現場觀察事項（明確記錄，不得寫成已確認）**：下一次60分鐘內同位置事件是否正確攔截——尚未取得；下一次LOW→HIGH升級是否正確例外放行——尚未取得；本輪自訂的8小時記錄保留期限與60分鐘inclusive邊界，是否符合真人實際期待——尚未取得現場驗證。
+
+**V2.9.0封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-10，路況-070）。封版依據：程式碼變更完成、全量迴歸1888項／1872通過／16失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.9.0`、commit已push main並驗證。發現問題一律開下一個版本，不回頭改已封版的`V2.9.0`。

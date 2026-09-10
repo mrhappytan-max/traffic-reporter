@@ -266,6 +266,23 @@ export function buildAiObservatoryRecord({
   withinBroadcastHours = null,
   sameIncident = null,
   materialChange = null,
+  // V2.9.0 (路況-070, executing 路況-069's own規劃) — true ONLY when
+  // src/pbs/positionCooldown.js's own 60-minute同位置硬性規則actually
+  // blocked this event (see debugPush.js#runAiDecisionPath's own V2.9.0
+  // comment for exactly where this gate sits, strictly AFTER V2.7.0's
+  // sameIncident/materialChange check already found nothing to suppress).
+  // Distinct from sameIncident/materialChange above — a record can have
+  // sameIncident:true/materialChange:true (V2.7.0 would have approved a
+  // re-notification) AND positionCooldownBlocked:true (this NEWER, higher-
+  // priority rule blocked it anyway) at the same time; the two fields
+  // together let a future reader tell exactly which mechanism actually
+  // stopped the push. null for every event this gate never reached
+  // (not AI_NOTIFY_TRUE, or blocked earlier by suppressForNoChange) or a
+  // pre-V2.9.0 record read back within its still-live 48h TTL — never
+  // guessed as false. Not yet rendered by aiObservatoryView.js (路況-070
+  // order section 三 left this optional) — the raw field is available for
+  // a future round.
+  positionCooldownBlocked = null,
   primarySource = null,
   lastNotifiedAt = null,
   memoryWrite = false,
@@ -347,6 +364,7 @@ export function buildAiObservatoryRecord({
     withinBroadcastHours,
     sameIncident,
     materialChange,
+    positionCooldownBlocked,
     primarySource,
     lastNotifiedAt,
     memoryWrite: Boolean(memoryWrite),
