@@ -433,3 +433,38 @@ test('group: 啟動播報/關閉播報/播報狀態 work the same as 1:1, indepe
   assert.equal(isGroupEnabled(subs.subscriptions, 'Cabc'), false);
   assert.match(repliesSent.at(-1).body.messages[0].text, /已關閉/);
 });
+
+// V2.10.0 (路況-074, executing 路況-073's own規劃) — LINE_NOTIFY_ENABLED
+// 只控制src/traffic/aiApprovedPbsBroadcast.js#deliverToLineTargets()這一
+// 個函式（主動事故推播），這個檔案（webhook.js）走完全不同的程式路徑
+// （replyLineMessage，見那個模組自己的import，從未import
+// aiApprovedPbsBroadcast.js），regression lock：即使LINE_NOTIFY_ENABLED
+// 設為關閉，LINE Bot既有互動回覆功能（啟動播報/關閉播報/播報狀態）必須
+// 完全正常運作，不受任何影響。
+test('V2.10.0 regression lock: LINE_NOTIFY_ENABLED=FALSE (主動事故推播已退役) 完全不影響LINE Bot互動回覆功能（啟動播報/關閉播報/播報狀態）', async () => {
+  const kv = createMockKV();
+  const env = { LINE_CHANNEL_SECRET: SECRET, LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv, LINE_NOTIFY_ENABLED: 'FALSE' };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineReplyFetch();
+
+  async function send(text) {
+    const body = {
+      events: [{ type: 'message', replyToken: `rt-${text}`, message: { type: 'text', text }, source: { type: 'user', userId: 'U74' } }],
+    };
+    const bodyText = JSON.stringify(body);
+    return handleLineWebhook(makeRequest(body, sign(bodyText)), env);
+  }
+
+  await send('啟動播報');
+  let subs = await readSubscriptions(kv);
+  assert.equal(isUserEnabled(subs.subscriptions, 'U74'), true);
+  assert.match(repliesSent.at(-1).body.messages[0].text, /已啟動/);
+
+  await send('播報狀態');
+  assert.match(repliesSent.at(-1).body.messages[0].text, /已啟動/);
+
+  await send('關閉播報');
+  subs = await readSubscriptions(kv);
+  assert.equal(isUserEnabled(subs.subscriptions, 'U74'), false);
+  assert.match(repliesSent.at(-1).body.messages[0].text, /已關閉/);
+});

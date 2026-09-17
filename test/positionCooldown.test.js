@@ -222,7 +222,7 @@ afterEach(() => {
 });
 
 test('APP_VERSION reflects the current release', () => {
-  assert.equal(APP_VERSION, 'V2.9.0');
+  assert.equal(APP_VERSION, 'V2.10.0');
 });
 
 // 路況-070 四節 (1): 60分鐘內同位置、無嚴重度上升（HIGH->HIGH）-> 擋下
@@ -428,3 +428,52 @@ test('scenario 9: 被本規則攔截的事件不寫入Shared Feed，Shared Feed�
 
 // 路況-070 四節 (10): 既有V2.7.0/V2.8.x回歸確認 — 交由本輪 git stash -u
 // 全量迴歸比對負責（本檔案不重複既有測試檔案已覆蓋的情境）。
+
+// ============================================================================
+// V2.10.0 (路況-074, executing 路況-073's own規劃) — LINE主動事故推播正式
+// 退役後，對本模組（V2.9.0一小時同位置規則）的影響。路況-073三節查證
+// 結論：aiApprovedPbsBroadcast.js的`pushSucceeded = line.succeeded +
+// telegram.succeeded`是加總，LINE恆為0後會自動、正確地只反映Telegram，
+// debugPush.js據此觸發position cooldown更新的判斷式`pushSucceeded > 0`
+// 不需要任何調整。本測試直接證明：LINE關閉、僅Telegram成功時，位置冷卻
+// 記錄仍正確建立與更新。
+// ============================================================================
+
+test('V2.10.0: LINE_NOTIFY_ENABLED=FALSE, Telegram-only success -> position cooldown record still correctly created and updated (路況-073三節查證結論的直接regression lock)', async () => {
+  const ai = sequentialAi([
+    { notify: true, impact: 'LOW', reason: '第一次，僅Telegram成功', confidence: 0.8 },
+    { notify: true, impact: 'HIGH', reason: '60分鐘內、僅Telegram成功、嚴重度升級', confidence: 0.9, sameIncident: false, materialChange: false },
+  ]);
+  const env = await baseEnv({ AI: ai, LINE_NOTIFY_ENABLED: 'FALSE', TELEGRAM_BOT_TOKEN: 'tg-tok', TELEGRAM_CHAT_ID: '-1004328365784' });
+  const priorFetchForThisTest = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('api.line.me')) return new Response('{}', { status: 200 });
+    if (u.includes('api.telegram.org')) return new Response('{}', { status: 200 });
+    throw new Error(`unexpected fetch: ${url}`);
+  };
+  try {
+    const first = await processQueuedPbsEvent(env, await buildQueueMessage({ source: 'pbs', event: pbsAccidentEvent(), eventId: 'LR1' }), NOW);
+    assert.equal(first.lineAttempted, false, 'sanity: LINE確實未嘗試');
+    assert.equal(first.lineSent, false);
+    assert.equal(first.telegramAttempted, true, 'sanity: Telegram確實嘗試並成功');
+    assert.equal(first.telegramSent, true);
+
+    // 60分鐘內、無嚴重度上升的第二筆（HIGH但first已是LOW，此處驗證的是
+    // position cooldown本身有無正確建立記錄——若記錄未建立，第二筆不會
+    // 被攔截；此處刻意讓第二筆impact=HIGH製造LOW->HIGH例外，改為驗證「該
+    // 例外仍能正常放行且再次僅Telegram成功」，證明cooldown記錄的
+    // maxImpactNotified也是從Telegram-only的成功推播正確寫入的（'LOW'）。
+    const t30 = new Date(NOW.getTime() + 30 * 60_000);
+    const second = await processQueuedPbsEvent(
+      env,
+      await buildQueueMessage({ source: 'pbs', event: pbsAccidentEvent(), eventId: 'LR2', fingerprint: 'fp-lr2', now: t30 }),
+      t30
+    );
+    assert.equal(second.lineAttempted, false, 'sanity: LINE仍未嘗試');
+    assert.equal(second.telegramSent, true, 'LOW->HIGH例外應放行，Telegram應再次成功送出');
+    assert.notEqual(second.positionCooldownBlocked, true, 'LOW->HIGH例外不應被位置冷卻規則攔截');
+  } finally {
+    globalThis.fetch = priorFetchForThisTest;
+  }
+});

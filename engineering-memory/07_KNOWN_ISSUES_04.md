@@ -136,3 +136,32 @@
 **待現場觀察事項（明確記錄，不得寫成已確認）**：下一次60分鐘內同位置事件是否正確攔截——尚未取得；下一次LOW→HIGH升級是否正確例外放行——尚未取得；本輪自訂的8小時記錄保留期限與60分鐘inclusive邊界，是否符合真人實際期待——尚未取得現場驗證。
 
 **V2.9.0封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-10，路況-070）。封版依據：程式碼變更完成、全量迴歸1888項／1872通過／16失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.9.0`、commit已push main並驗證。發現問題一律開下一個版本，不回頭改已封版的`V2.9.0`。
+
+## 修正紀錄｜V2.10.0 LINE主動事故推播正式退役（路況-074，執行路況-073規劃）（2026-09-17）
+
+**決策依據**：真人確認Telegram已觀察數日、穩定、無額度問題，LINE主動事故推播正式退役。真人已定案：關開關、程式碼保留（可隨時復原），不刪除任何LINE相關程式碼、依賴、測試、Secret；現有訂閱LINE的計程車群組（含「小黃多元計程車分享群」）靜默停止，不主動通知。
+
+**範圍界線（明確記錄，避免誤解）**：本輪**僅**退役主動事故推播（`aiApprovedPbsBroadcast.js#deliverToLineTargets()`這一條路徑）。LINE Bot既有互動回覆功能（`line/webhook.js`透過`line/replyMessage.js`的「啟動播報」/「關閉播報」/「播報狀態」指令）走完全不同的程式路徑，從未import`aiApprovedPbsBroadcast.js`，**完全不受影響**，已用`test/webhook.test.js`新增regression lock驗證。
+
+**實作內容**：
+1. 新增`isLineNotifyEnabled(env)`（`src/traffic/aiApprovedPbsBroadcast.js`）。polarity刻意比照同專案`src/traffic/sourceMode.js#isCctvImageEnabled()`既有寫法（未設定/非'FALSE'/'0'/'OFF'皆視為開啟）——而非TDX系列switch`resolveBooleanVar()`的「預設關閉」polarity。此為路況-073一節查證已識別並迴避的真實風險：若誤用「預設關閉」polarity，任何忘記在wrangler.jsonc明確宣告的環境（含本專案`test/aiApprovedPbsBroadcast.test.js`既有31則測試，皆未設定過此類環境變數）都會在真人尚未決定的情況下意外關閉LINE。
+2. 開關置於`deliverToLineTargets()`函式**最開頭**，短路於`readSubscriptions()`/`readNotifiedState()`兩次KV讀取之前——`line:subscriptions`訂閱名單因此完全不被讀取也不被寫入，自然達成「靜默保留」，不需要額外處理。`deliverToTelegram()`函式**逐字未動**。
+3. 同一輪在`wrangler.jsonc`的`vars`區塊新增`"LINE_NOTIFY_ENABLED": "FALSE"`，完成「新增開關」與「真正關閉」兩件事於同一輪。
+
+**對V2.9.0一小時同位置規則的影響**：路況-073三節查證結論——`aiApprovedPbsBroadcast.js`的`pushSucceeded = line.succeeded + telegram.succeeded`是加總計算，LINE關閉後`line.succeeded`恆為0，`pushSucceeded`自動、正確地只反映Telegram，`debugPush.js`用來觸發position cooldown更新的`pushSucceeded > 0`判斷式**不需要任何調整**。已用`test/positionCooldown.test.js`新增的端到端測試直接驗證（LINE關閉、僅Telegram成功時，位置冷卻記錄仍正確建立、LOW→HIGH例外仍正確放行）。
+
+**復原方式**：`LINE_CHANNEL_ACCESS_TOKEN`（Cloudflare Secret）與`line:subscriptions`訂閱名單皆保留不動——僅需將`LINE_NOTIFY_ENABLED`改回`"true"`（或整行移除，回落程式碼預設值）即可完整復原，零程式碼變更、零憑證重設、零訂閱名單重建。
+
+**明確不觸碰（依訂單不授權事項）**：`deliverToTelegram()`（零行變動）；AI決策邏輯、CCTV產圖邏輯、V2.7.0/V2.9.0既有判斷邏輯本身；`line/webhook.js`/`line/replyMessage.js`；`line:subscriptions`名單本身（零寫入）；任何LINE相關程式碼、依賴、測試、Secret的刪除；已封版之前所有版本（V2.9.0及更早）的任何記錄。
+
+**測試**：新增7則——`test/aiApprovedPbsBroadcast.test.js`4則（開關關閉時短路於KV讀取之前且Telegram完全不受影響、未設定時預設開啟的regression lock、明確'true'時維持開啟、大小寫/空白不敏感的關閉值皆正確生效）；`test/aiObservatoryView.test.js`1則（查修頁「⏭️ LINE 未發送」與「重大事故（經Telegram發送）」既有V2.6.1分支正確涵蓋，零新增顯示邏輯）；`test/positionCooldown.test.js`1則（V2.9.0交互驗證）；`test/webhook.test.js`1則（LINE Bot互動回覆功能不受影響regression lock）。既有`test/aiApprovedPbsBroadcast.test.js`原31則測試**零筆修改**即全數通過（已實際執行驗證，非僅推測）。
+
+**規劃外發現，完整揭露**：`test/pbsAiConfigDriftHotfixV202.test.js`既有一則「no Secret name...was added to wrangler.jsonc vars this round」測試，對`wrangler.jsonc`的`vars`區塊做原始文字（含註解）掃描。本輪`wrangler.jsonc`新增註解草稿初版內文提及`LINE_CHANNEL_ACCESS_TOKEN`字面字串（僅為說明文字，非真的新增此變數宣告），觸發此既有測試的字面字串比對而短暫失敗；`test/positionCooldown.test.js`既有的APP_VERSION版本鎖定測試也在第一次全量迴歸時因忘記同步更新而短暫失敗。兩者皆已修正（前者改寫註解措辭避開字面字串比對，後者更新版本斷言值），修正後確認全數通過，兩則既有測試本身的斷言邏輯皆未被修改。
+
+**測試總數跨輪銜接揭露（依AGENTS.md第6節路況-071新增規則）**：本輪`git stash -u`基準1888項／1872通過／16失敗，與上一輪（V2.9.0，路況-070；路況-071/072/073皆為純文件或純規劃，未執行測試）報告收尾的1888/1872/16完全銜接，無落差。
+
+**APP_VERSION**：`V2.9.0`→`V2.10.0`（MINOR，直接改變LINE/電報實際推播決策，比照V2.6.0/V2.7.0/V2.9.0先例）。全量迴歸1895項／1879通過／16失敗；`git stash -u`基準1888項／1872通過／16失敗；測試名稱集合逐字比對確認`NEW_FAILURES=0`（7則新測試全數通過，既有16則失敗與基準逐字相同，0新增0消失——此沙盒環境原生依賴限制導致的既有已知失敗，與本輪異動檔案無關）。
+
+**待現場觀察事項（明確記錄，不得寫成已確認）**：LINE群組（含「小黃多元計程車分享群」）靜默停止後，是否確實無人反應異常或詢問——尚未取得；Telegram作為唯一主動推播管道，實際運作是否持續穩定——尚未取得。
+
+**V2.10.0封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-17，路況-074）。封版依據：程式碼變更完成、全量迴歸1895項／1879通過／16失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.10.0`、commit已push main並驗證。發現問題一律開下一個版本，不回頭改已封版的`V2.10.0`。

@@ -231,6 +231,26 @@ function makeBroadcastContentResolver(env, event, text, completedProduct, lineEr
   };
 }
 
+// V2.10.0 (路況-074, executing 路況-073's own規劃) — LINE 主動事故推播正式
+// 退役的開關。真人確認 Telegram 已觀察數日、穩定、無額度問題後定案：關開關、
+// 程式碼保留（可隨時復原），僅限主動事故推播（本檔案的`pushLineMessages`
+// 路徑）——LINE Bot 既有互動回覆功能（`line/webhook.js`透過
+// `line/replyMessage.js`的「開啟播報」/「關閉播報」/「播報狀態」）完全不
+// 在本開關控制範圍內，零行變動。
+//
+// polarity 刻意比照本專案`traffic/sourceMode.js#isCctvImageEnabled()`
+// 既有寫法（未設定→預設true／開啟，需明確設為'FALSE'/'0'/'OFF'才關閉），
+// 而非`resolveBooleanVar()`（TDX系列switch「預設false／關閉」的寫法）——
+// 路況-073一節查證確認：若誤用後者的polarity，任何忘記在wrangler.jsonc
+// 明確宣告的環境（含本專案`test/aiApprovedPbsBroadcast.test.js`既有31則
+// 測試，皆未設定任何LINE開關類環境變數）都會在真人尚未決定的情況下被
+// 意外關閉LINE，這正是`isCctvImageEnabled()`本身已經在Production安全
+// 運作至今、且完全未在wrangler.jsonc宣告過的同一個既有安全先例。
+function isLineNotifyEnabled(env) {
+  const raw = env && typeof env.LINE_NOTIFY_ENABLED === 'string' ? env.LINE_NOTIFY_ENABLED.trim().toUpperCase() : '';
+  return raw !== 'FALSE' && raw !== '0' && raw !== 'OFF';
+}
+
 /**
  * LINE's own, fully independent delivery path — own readiness check (LINE
  * token + LINE subscriptions KV + LINE's own notified-state KV), own
@@ -241,6 +261,19 @@ function makeBroadcastContentResolver(env, event, text, completedProduct, lineEr
  */
 async function deliverToLineTargets(env, { now, eventKeyStr, fingerprint, suppressLineNotify, resolveContent }) {
   const errors = [];
+
+  // V2.10.0 (路況-074) — checked BEFORE any KV read (readSubscriptions/
+  // readNotifiedState below), unlike suppressLineNotify's own check
+  // further down this function (which intentionally still reads both, so
+  // Phase B's observability picture stays intact) — this is a genuine
+  // retirement, not an observation phase, so there is nothing left to
+  // observe once this is off. `line:subscriptions` is therefore never even
+  // read, let alone written, while disabled — the existing subscriber list
+  // (including 小黃多元計程車分享群) stays exactly as-is for a future
+  // re-enable, with zero extra handling needed (路況-073六節).
+  if (!isLineNotifyEnabled(env)) {
+    return { ready: false, attempted: 0, succeeded: 0, errors, pendingCount: 0 };
+  }
 
   const hasToken = Boolean(env.LINE_CHANNEL_ACCESS_TOKEN);
   if (!hasToken) errors.push('LINE_CHANNEL_ACCESS_TOKEN not configured');

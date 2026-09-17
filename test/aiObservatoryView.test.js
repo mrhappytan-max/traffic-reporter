@@ -286,7 +286,7 @@ test('11: missing/expired AI decision cache data renders UNKNOWN / NOT RECORDED,
 // only bump the literal), same discipline test/versionLineage.test.js's
 // own series-prefix check already follows.
 test('12: APP_VERSION reflects the current release', () => {
-  assert.equal(APP_VERSION, 'V2.9.0');
+  assert.equal(APP_VERSION, 'V2.10.0');
 });
 
 test('SERVICE_AREA_EXCLUDED events show "服務區域外", never routed through AI at all', async () => {
@@ -779,4 +779,42 @@ test('路況-068: buildDetailPlainText() includes sameIncident/materialChange, m
   const textB = buildDetailPlainText(firstSightingRecord, { notify: true, impact: 'HIGH', reason: '第一次發現', confidence: 0.9 }, null, NOW);
   assert.ok(textB.includes('sameIncident：—'), 'undefined/null must degrade to the — placeholder in plain text too, never false');
   assert.ok(textB.includes('materialChange：—'), 'undefined/null must degrade to the — placeholder in plain text too, never false');
+});
+
+// ============================================================================
+// V2.10.0 (路況-074, executing 路況-073's own規劃) — LINE主動事故推播正式
+// 退役後，查修頁的顯示是否需要新增邏輯。路況-073二節查證結論：V2.6.1既有
+// 的lineSummaryBadge()/telegramSummaryBadge()三態邏輯與
+// deriveFinalDecisionReason()的SENT分支已經完整涵蓋「LINE未嘗試、僅
+// Telegram成功」這個情境，不需要新增任何顯示分支——本測試直接證明這個
+// 結論，走完整handlePbsDebugPush()→handleAiObservatoryView()真實流程。
+// ============================================================================
+
+test('V2.10.0: with LINE_NOTIFY_ENABLED=FALSE and Telegram configured, the collapsed card shows "⏭️ LINE 未發送" (never "❌ LINE 發送失敗") and "重大事故（經 Telegram 發送）" — zero new display logic needed, existing V2.6.1 branches already correct', async () => {
+  const env = await baseEnv({
+    LINE_NOTIFY_ENABLED: 'FALSE',
+    TELEGRAM_BOT_TOKEN: 'tg-tok',
+    TELEGRAM_CHAT_ID: '-1004328365784',
+    AI: mockAi(verdictJson({ notify: true, impact: 'HIGH', reason: '國道事故' })),
+  });
+  const priorFetchForThisTest = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('api.line.me')) return new Response('{}', { status: 200 });
+    if (u.includes('api.telegram.org')) return new Response('{}', { status: 200 });
+    throw new Error(`unexpected fetch: ${url}`);
+  };
+  try {
+    await handlePbsDebugPush(pushRequest({ body: validPayload({ eventId: 'PBS-LINE-RETIRED', fingerprint: 'fp-line-retired', event: fullEventFields() }) }), env, NOW);
+  } finally {
+    globalThis.fetch = priorFetchForThisTest;
+  }
+
+  const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
+  assert.ok(html.includes('⏭️ LINE 未發送'), 'LINE disabled must render as "未發送" (never attempted), never as a failure');
+  assert.ok(!html.includes('❌ LINE 發送失敗'), 'LINE being disabled must never be misread as a delivery failure');
+  assert.ok(html.includes('✅ Telegram 已發送'));
+  assert.ok(html.includes('重大事故（經 Telegram 發送）'), 'the collapsed-card summary must correctly attribute the send to Telegram, using the existing V2.6.1 branch — no new branch added this round');
+  assert.match(html, /LINE sent<\/div><div class="value">NO/);
+  assert.match(html, /LINE attempted<\/div><div class="value">NO/);
 });

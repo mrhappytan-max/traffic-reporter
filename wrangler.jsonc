@@ -212,7 +212,20 @@
     // only TELEGRAM_BOT_TOKEN (a Cloudflare Secret, never here) combined
     // with that Bot already being a channel admin can act on it. See
     // src/telegram/pushMessage.js's own module comment.
-    "TELEGRAM_CHAT_ID": "-1004328365784"
+    "TELEGRAM_CHAT_ID": "-1004328365784",
+    // V2.10.0 (路況-074, executing 路況-073's own規劃) — LINE 主動事故推播
+    // 正式退役。真人確認 Telegram 已觀察數日、穩定、無額度問題後定案。
+    // polarity 刻意「未設定→預設true／開啟」（比照下方 CCTV_IMAGE_ENABLED
+    // 尚未在此宣告過也仍安全運作的既有先例，見
+    // src/traffic/sourceMode.js#isCctvImageEnabled()），此處明確寫
+    // "FALSE" 才是真正關閉推播的那一步——程式碼本身、既有LINE存取憑證
+    // （Cloudflare Secret，非此處宣告）、line:subscriptions 訂閱名單皆
+    // 完整保留不動，僅需把這個值改回 "true"（或整行移除，回落程式碼預設值）
+    // 即可完整復原，零程式碼變更、零憑證重設、零訂閱名單重建。範圍僅限
+    // 主動事故推播（src/traffic/aiApprovedPbsBroadcast.js#
+    // deliverToLineTargets()）——LINE Bot 既有互動回覆功能（「開啟播報」/
+    // 「關閉播報」/「播報狀態」，走 src/line/replyMessage.js）不受影響。
+    "LINE_NOTIFY_ENABLED": "FALSE"
   },
   "vpc_services": [
     {

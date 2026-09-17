@@ -665,3 +665,81 @@ test('V2.6.0 (d) notified-state KV independence, symmetric — Telegram\'s own n
   assert.equal(pushCalls.length, 1, 'LINE sends normally, completely unaffected by Telegram\'s KV outage');
   assert.deepEqual(result.line, { attempted: 1, succeeded: 1 });
 });
+
+// ============================================================================
+// V2.10.0 (路況-074, executing 路況-073's own規劃) — LINE 主動事故推播正式
+// 退役。新增 LINE_NOTIFY_ENABLED 開關（polarity 比照 traffic/sourceMode.js
+// #isCctvImageEnabled() — 未設定/非'FALSE'/'0'/'OFF' 皆視為開啟），置於
+// deliverToLineTargets() 函式最開頭，短路於 readSubscriptions()/
+// readNotifiedState() 兩次 KV 讀取之前。deliverToTelegram() 本身零行變動。
+// ============================================================================
+
+test('V2.10.0 (a): LINE_NOTIFY_ENABLED=FALSE short-circuits BEFORE any KV read (readSubscriptions/readNotifiedState never called), pushLineMessages never called, Telegram completely unaffected', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  const getCallsByKey = [];
+  const trackedKv = {
+    async get(key) {
+      getCallsByKey.push(key);
+      return kv.get(key);
+    },
+    async put(key, value) {
+      return kv.put(key, value);
+    },
+    store: kv.store,
+  };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineAndTelegramFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: trackedKv, LINE_NOTIFY_ENABLED: 'FALSE', ...TELEGRAM_ENV };
+  const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: WITHIN_HOURS });
+
+  assert.equal(result.lineReady, false);
+  assert.deepEqual(result.line, { attempted: 0, succeeded: 0 });
+  assert.equal(pushCalls.length, 0, 'pushLineMessages must never be called while LINE is disabled');
+  assert.deepEqual(result.lineErrors, [], '關閉是刻意的設定，不是失敗，不得產生任何error');
+  assert.ok(!getCallsByKey.includes('line:subscriptions'), 'readSubscriptions() must never be called while disabled — line:subscriptions is never even read');
+  assert.ok(!getCallsByKey.includes('line:notified-state'), 'readNotifiedState() must never be called while disabled');
+
+  assert.equal(result.telegramReady, true, 'Telegram completely unaffected');
+  assert.equal(telegramCalls.length, 1);
+  assert.deepEqual(result.telegram, { attempted: 1, succeeded: 1 });
+  assert.equal(result.pushSucceeded, 1, '關閉LINE後，pushSucceeded（line.succeeded+telegram.succeeded的加總）自動、正確地只反映Telegram——路況-073三節查證結論的直接regression lock，證明無需調整此判定式');
+});
+
+test('V2.10.0 (b) default-value regression lock — LINE_NOTIFY_ENABLED completely UNSET behaves exactly as before this round (LINE still sends normally)', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineAndTelegramFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv, ...TELEGRAM_ENV }; // no LINE_NOTIFY_ENABLED key at all
+  const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: WITHIN_HOURS });
+  assert.equal(result.lineReady, true, '未設定必須維持現況（開啟），比照isCctvImageEnabled()既有polarity，絕不能意外關閉LINE');
+  assert.deepEqual(result.line, { attempted: 1, succeeded: 1 });
+  assert.equal(pushCalls.length, 1);
+});
+
+test('V2.10.0 (c): LINE_NOTIFY_ENABLED explicitly "true" (or any value other than FALSE/0/OFF) also keeps LINE enabled', async () => {
+  const kv = createMockKV();
+  await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mockLineAndTelegramFetch();
+  const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv, LINE_NOTIFY_ENABLED: 'true', ...TELEGRAM_ENV };
+  const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: WITHIN_HOURS });
+  assert.equal(result.lineReady, true);
+  assert.deepEqual(result.line, { attempted: 1, succeeded: 1 });
+  assert.equal(pushCalls.length, 1);
+});
+
+test('V2.10.0 (d) case/whitespace-insensitive off values — "false", " FALSE ", "0", "off" (any case/whitespace) all disable LINE, matching isCctvImageEnabled()\'s own convention', async () => {
+  for (const offValue of ['false', ' FALSE ', '0', 'off', 'OFF']) {
+    const kv = createMockKV();
+    await setUserEnabled(kv, 'U1', true, ENROLLED_AT);
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = mockLineAndTelegramFetch();
+    const env = { LINE_CHANNEL_ACCESS_TOKEN: 'tok', TRAFFIC_KV: kv, LINE_NOTIFY_ENABLED: offValue, ...TELEGRAM_ENV };
+    const result = await runAiApprovedPbsBroadcast(env, { event: pbsAccidentEvent(), now: WITHIN_HOURS });
+    assert.equal(result.lineReady, false, `LINE_NOTIFY_ENABLED=${JSON.stringify(offValue)} must disable LINE`);
+    assert.equal(pushCalls.length, 0);
+    assert.equal(telegramCalls.length, 1, `Telegram must still send normally when LINE_NOTIFY_ENABLED=${JSON.stringify(offValue)}`);
+  }
+});
