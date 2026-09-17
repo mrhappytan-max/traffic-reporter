@@ -286,7 +286,7 @@ test('11: missing/expired AI decision cache data renders UNKNOWN / NOT RECORDED,
 // only bump the literal), same discipline test/versionLineage.test.js's
 // own series-prefix check already follows.
 test('12: APP_VERSION reflects the current release', () => {
-  assert.equal(APP_VERSION, 'V2.10.0');
+  assert.equal(APP_VERSION, 'V2.10.1');
 });
 
 test('SERVICE_AREA_EXCLUDED events show "服務區域外", never routed through AI at all', async () => {
@@ -790,7 +790,7 @@ test('路況-068: buildDetailPlainText() includes sameIncident/materialChange, m
 // 結論，走完整handlePbsDebugPush()→handleAiObservatoryView()真實流程。
 // ============================================================================
 
-test('V2.10.0: with LINE_NOTIFY_ENABLED=FALSE and Telegram configured, the collapsed card shows "⏭️ LINE 未發送" (never "❌ LINE 發送失敗") and "重大事故（經 Telegram 發送）" — zero new display logic needed, existing V2.6.1 branches already correct', async () => {
+test('V2.10.0/V2.10.1: with LINE_NOTIFY_ENABLED=FALSE and Telegram configured, the collapsed card correctly attributes the send to Telegram and never mislabels LINE as a failure; V2.10.1 upgrades the LINE badge to the specific "⏸️ LINE 已停用" and adds the expanded LINE 服務狀態 line', async () => {
   const env = await baseEnv({
     LINE_NOTIFY_ENABLED: 'FALSE',
     TELEGRAM_BOT_TOKEN: 'tg-tok',
@@ -811,10 +811,119 @@ test('V2.10.0: with LINE_NOTIFY_ENABLED=FALSE and Telegram configured, the colla
   }
 
   const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
-  assert.ok(html.includes('⏭️ LINE 未發送'), 'LINE disabled must render as "未發送" (never attempted), never as a failure');
+  // V2.10.1 (路況-075) UPDATE — this test's own scenario (LINE_NOTIFY_
+  // ENABLED=FALSE) is now correctly distinguished from a generic
+  // never-attempted state: the collapsed badge shows the more specific
+  // "⏸️ LINE 已停用" instead of the fallback "⏭️ LINE 未發送" this
+  // assertion originally locked under V2.10.0 (before this field
+  // existed). Still never mislabeled as a failure — see the negative
+  // assertion below, unchanged.
+  assert.ok(html.includes('⏸️ LINE 已停用'), 'LINE genuinely retired (LINE_NOTIFY_ENABLED=FALSE) must render the specific 已停用 badge, per 路況-075');
   assert.ok(!html.includes('❌ LINE 發送失敗'), 'LINE being disabled must never be misread as a delivery failure');
   assert.ok(html.includes('✅ Telegram 已發送'));
   assert.ok(html.includes('重大事故（經 Telegram 發送）'), 'the collapsed-card summary must correctly attribute the send to Telegram, using the existing V2.6.1 branch — no new branch added this round');
   assert.match(html, /LINE sent<\/div><div class="value">NO/);
   assert.match(html, /LINE attempted<\/div><div class="value">NO/);
+  assert.ok(html.includes('LINE 服務狀態'), 'the expanded LINE section must show the new service-status line when retired');
+  assert.ok(html.includes('已停用（自 V2.10.0，路況-074）'));
+});
+
+// ============================================================================
+// V2.10.1 (路況-075, executing 路況-074's own已標記待辦) — 查修頁補上「LINE
+// 已停用」專屬顯示理由。新增`lineRetired`欄位，寫入時讀取
+// isLineNotifyEnabled(env)的即時狀態；lineSummaryBadge()新增「⏸️ LINE 已
+// 停用」分支，展開區塊新增「LINE 服務狀態」一行。
+// ============================================================================
+
+test('V2.10.1 (1) regression lock: LINE啟用時（lineRetired:false顯式設定），既有三態顯示邏輯完全不受影響', async () => {
+  const env = await baseEnv();
+  await seedObservatoryRecord(env, {
+    eventId: 'PBS-LR-ENABLED-NONE',
+    lineRetired: false,
+    lineAttempted: false,
+    lineSent: false,
+  });
+  const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
+  assert.ok(html.includes('⏭️ LINE 未發送'), 'lineRetired:false時，未嘗試的既有情境仍應顯示既有的「未發送」，不得誤顯示為「已停用」');
+  assert.ok(!html.includes('⏸️ LINE 已停用'));
+  assert.ok(!html.includes('LINE 服務狀態'), '未停用時，展開區塊不應出現服務狀態這一行');
+});
+
+test('V2.10.1 (2): LINE停用時，收合卡片正確顯示「⏸️ LINE 已停用」', async () => {
+  const env = await baseEnv();
+  await seedObservatoryRecord(env, {
+    eventId: 'PBS-LR-RETIRED',
+    lineRetired: true,
+    lineAttempted: false,
+    lineSent: false,
+  });
+  const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
+  assert.ok(html.includes('⏸️ LINE 已停用'));
+  assert.ok(!html.includes('❌ LINE 發送失敗'));
+  assert.ok(!html.includes('⏭️ LINE 未發送'), '停用時必須顯示更精確的「已停用」，取代原本借用的「未發送」');
+});
+
+test('V2.10.1 (3): 展開區塊正確顯示新增的「LINE 服務狀態」行，內容為「已停用（自 V2.10.0，路況-074）」', async () => {
+  const env = await baseEnv();
+  await seedObservatoryRecord(env, {
+    eventId: 'PBS-LR-DETAIL',
+    lineRetired: true,
+    lineAttempted: false,
+    lineSent: false,
+  });
+  const html = await (await handleAiObservatoryView(env, viewRequest(), NOW)).text();
+  assert.match(html, /LINE 服務狀態<\/div><div class="value">已停用（自 V2\.10\.0，路況-074）/);
+});
+
+test('V2.10.1 (4) 向下相容 regression lock: 舊格式記錄（lineRetired欄位不存在／undefined）必須視同false，絕不誤判為已停用', async () => {
+  const env = await baseEnv();
+  // 刻意採用舊呼叫形狀——完全不傳lineRetired，模擬V2.10.1之前寫入、
+  // 在其48h TTL內被讀回的既有記錄。
+  const record = buildAiObservatoryRecord({
+    candidate: { road: '國道一號' },
+    eventId: 'PBS-LR-OLD',
+    lifecycle: 'NEW',
+    fingerprint: 'fp-lr-old',
+    outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+    lineAttempted: true,
+    lineSent: true,
+    now: NOW,
+  });
+  assert.equal(record.lineRetired, false, 'sanity: buildAiObservatoryRecord()本身的預設值必須是false，不是undefined');
+  await recordAiObservatoryEntry(env.TRAFFIC_KV, record, { taipeiDate: taipeiDateString(NOW), idempotencyKeyHash: 'hash-lr-old', now: NOW });
+
+  const res = await handleAiObservatoryView(env, viewRequest(), NOW);
+  assert.equal(res.status, 200, '必須正常渲染，絕不因缺少lineRetired欄位而拋錯');
+  const html = await res.text();
+  assert.ok(html.includes('✅ LINE 已發送'), '舊記錄本身lineSent:true，必須維持既有顯示，不受新欄位影響');
+  assert.ok(!html.includes('⏸️ LINE 已停用'), '缺少lineRetired欄位的舊記錄，絕不能被誤判為已停用');
+});
+
+test('V2.10.1 (5): buildDetailPlainText()的一鍵全選文字鏡像，與HTML畫面同步顯示（或不顯示）LINE服務狀態', () => {
+  const retiredRecord = buildAiObservatoryRecord({
+    candidate: { road: '國道一號', direction: '北向' },
+    eventId: 'UNIT-LR-1',
+    lifecycle: 'NEW',
+    fingerprint: 'fp-unit-lr-1',
+    outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+    lineRetired: true,
+    lineAttempted: false,
+    lineSent: false,
+    now: NOW,
+  });
+  const textRetired = buildDetailPlainText(retiredRecord, { notify: true, impact: 'HIGH', reason: 'x', confidence: 0.9 }, null, NOW);
+  assert.ok(textRetired.includes('LINE 服務狀態：已停用（自 V2.10.0，路況-074）'));
+
+  const enabledRecord = buildAiObservatoryRecord({
+    candidate: { road: '國道一號', direction: '北向' },
+    eventId: 'UNIT-LR-2',
+    lifecycle: 'NEW',
+    fingerprint: 'fp-unit-lr-2',
+    outcome: AI_OUTCOME.AI_NOTIFY_TRUE,
+    lineAttempted: true,
+    lineSent: true,
+    now: NOW,
+  });
+  const textEnabled = buildDetailPlainText(enabledRecord, { notify: true, impact: 'HIGH', reason: 'x', confidence: 0.9 }, null, NOW);
+  assert.ok(!textEnabled.includes('LINE 服務狀態'), '未停用時，純文字版本也不應出現這一行');
 });

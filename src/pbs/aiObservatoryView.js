@@ -149,6 +149,17 @@ function sourceLabel(source) {
   return SOURCE_LABELS[source] || source || 'PBS';
 }
 
+// V2.10.1 (路況-075) — a frozen historical fact ("哪一輪讓LINE停用"), not
+// a value derived from the CURRENT APP_VERSION at render time. LINE was
+// retired exactly once so far, in V2.10.0 (路況-074); this string records
+// THAT event and must stay fixed even as APP_VERSION keeps moving forward
+// in later, unrelated rounds. If LINE is ever re-enabled and later
+// retired again, that would be a NEW event with its own version/order
+// number — add a second constant (or make this reflect the MOST RECENT
+// retirement) at that time; never silently rewrite this one to describe
+// a different round.
+const LINE_RETIRED_STATUS_LABEL = '已停用（自 V2.10.0，路況-074）';
+
 function taipeiParts(iso) {
   if (!iso) return null;
   const ms = new Date(iso).getTime();
@@ -641,6 +652,7 @@ function renderDetail(record, decision, idem, now = new Date()) {
   </div>
   <div class="detail-section">
     <h4>${lineSectionTitle}</h4>
+    ${record.lineRetired ? renderField('LINE 服務狀態', LINE_RETIRED_STATUS_LABEL) : ''}
     ${renderField('LINE attempted', record.lineAttempted ? 'YES' : 'NO')}
     ${renderField('LINE sent', record.lineSent ? 'YES' : 'NO')}
     ${!record.lineAttempted ? renderField('未執行原因', lineNotAttemptedReason(record)) : ''}
@@ -828,6 +840,11 @@ export function buildDetailPlainText(record, decision, idem, now = new Date()) {
   sections.push(
     [
       lineSectionTitle,
+      // V2.10.1 (路況-075) — same fact renderDetail()'s own HTML section
+      // shows (record.lineRetired), kept in sync so the copy-all plain-
+      // text mirror never drifts from what the screen shows (路況-066的
+      // 既有維護承諾).
+      record.lineRetired ? plainField('LINE 服務狀態', LINE_RETIRED_STATUS_LABEL) : '',
       plainField('LINE attempted', record.lineAttempted ? 'YES' : 'NO'),
       plainField('LINE sent', record.lineSent ? 'YES' : 'NO'),
       !record.lineAttempted ? plainField('未執行原因', lineNotAttemptedReason(record)) : '',
@@ -885,8 +902,18 @@ function renderCopyAllTextBlock(record, decision, idem, now) {
 // LINE's status in plain language, not only when it succeeded ("LINE：
 // 未發送" is just as important a fact as "LINE：已發送" — a card that
 // stays silent about a non-send looks like an oversight, not a fact).
+// V2.10.1 (路況-075, executing 路況-074's own已標記待辦) — `lineRetired`
+// checked AFTER `lineSent` (a real success is always the most important
+// fact to show, regardless of the CURRENT config state) but BEFORE
+// `lineAttempted` (a retired event never actually attempts, so this
+// branch would otherwise never be reached for a retired record anyway —
+// ordered this way purely for defensive clarity, not because the two can
+// currently co-occur). `lineSent`/`lineAttempted`-failure branches keep
+// their existing, unchanged meaning — 路況-075 order's own explicit
+// "lineRetired為false或未記錄時，維持既有三態邏輯不變".
 function lineSummaryBadge(record) {
   if (record.lineSent) return '<span class="badge badge-line-ok">✅ LINE 已發送</span>';
+  if (record.lineRetired) return '<span class="badge badge-line-retired">⏸️ LINE 已停用</span>';
   if (record.lineAttempted) return '<span class="badge badge-line-fail">❌ LINE 發送失敗</span>';
   return '<span class="badge badge-line-none">⏭️ LINE 未發送</span>';
 }
@@ -1196,6 +1223,12 @@ const PAGE_STYLE = `
   .badge-line-ok { background: #12261a; color: #3fb950; }
   .badge-line-fail { background: #2b1414; color: #f85149; }
   .badge-line-none { background: #262b34; color: #9aa1ac; }
+  /* V2.10.1 (路況-075) — reuses this page's own existing "informational,
+     not alarming" color pairing (same as .pill-info) rather than
+     inventing a new color: LINE being retired is a deliberate policy
+     state, not a failure (.badge-line-fail's red) and not a generic
+     "nothing happened" (.badge-line-none's grey). */
+  .badge-line-retired { background: #0f2038; color: #58a6ff; }
   .badge-telegram-ok { background: #12261a; color: #3fb950; }
   .badge-telegram-fail { background: #2b1414; color: #f85149; }
   .badge-telegram-none { background: #262b34; color: #9aa1ac; }

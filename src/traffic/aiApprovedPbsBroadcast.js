@@ -246,7 +246,12 @@ function makeBroadcastContentResolver(env, event, text, completedProduct, lineEr
 // 測試，皆未設定任何LINE開關類環境變數）都會在真人尚未決定的情況下被
 // 意外關閉LINE，這正是`isCctvImageEnabled()`本身已經在Production安全
 // 運作至今、且完全未在wrangler.jsonc宣告過的同一個既有安全先例。
-function isLineNotifyEnabled(env) {
+//
+// V2.10.1 (路況-075) — exported so `debugPush.js#writeObservatoryRecord()`
+// can reuse this SAME判斷（never a second, potentially-diverging copy of
+// the polarity logic）to record `lineRetired` on every Observatory entry
+// — see that module's own V2.10.1 comment.判斷邏輯本身零行變動。
+export function isLineNotifyEnabled(env) {
   const raw = env && typeof env.LINE_NOTIFY_ENABLED === 'string' ? env.LINE_NOTIFY_ENABLED.trim().toUpperCase() : '';
   return raw !== 'FALSE' && raw !== '0' && raw !== 'OFF';
 }

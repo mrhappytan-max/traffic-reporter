@@ -283,6 +283,20 @@ export function buildAiObservatoryRecord({
   // order section 三 left this optional) — the raw field is available for
   // a future round.
   positionCooldownBlocked = null,
+  // V2.10.1 (路況-075, executing 路況-074's own已標記待辦) — records the
+  // real LINE_NOTIFY_ENABLED state (via aiApprovedPbsBroadcast.js's own
+  // isLineNotifyEnabled(env), see debugPush.js#writeObservatoryRecord's
+  // own V2.10.1 comment) at the moment THIS record was written — set on
+  // EVERY record, not only AI_NOTIFY_TRUE ones, since the collapsed-row
+  // badge and expanded LINE section render for every outcome. Defaults
+  // `false` (never retired) — a pre-V2.10.1 record read back within its
+  // still-live 48h TTL has no such field (`undefined`), and `false` is
+  // exactly the correct degrade: LINE genuinely was NOT retired at any
+  // point before V2.10.0 existed, so this is a true historical fact, not
+  // a guess. This is a policy/config fact orthogonal to lineAttempted/
+  // lineSent (which stay whatever they already were) — never recomputed
+  // from them.
+  lineRetired = false,
   primarySource = null,
   lastNotifiedAt = null,
   memoryWrite = false,
@@ -365,6 +379,7 @@ export function buildAiObservatoryRecord({
     sameIncident,
     materialChange,
     positionCooldownBlocked,
+    lineRetired,
     primarySource,
     lastNotifiedAt,
     memoryWrite: Boolean(memoryWrite),

@@ -165,3 +165,29 @@
 **待現場觀察事項（明確記錄，不得寫成已確認）**：LINE群組（含「小黃多元計程車分享群」）靜默停止後，是否確實無人反應異常或詢問——尚未取得；Telegram作為唯一主動推播管道，實際運作是否持續穩定——尚未取得。
 
 **V2.10.0封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-17，路況-074）。封版依據：程式碼變更完成、全量迴歸1895項／1879通過／16失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.10.0`、commit已push main並驗證。發現問題一律開下一個版本，不回頭改已封版的`V2.10.0`。
+
+## 修正紀錄｜V2.10.1 查修頁補上「LINE已停用」專屬顯示理由（路況-075，執行路況-074已標記待辦）（2026-09-17）
+
+**背景**：V2.10.0（路況-074）LINE主動事故推播正式退役後，查修頁借用既有V2.6.1的「未設定/未啟用」語意顯示——`lineSummaryBadge`顯示「⏭️ LINE 未發送」，`deriveFinalDecisionReason`顯示「經Telegram發送」——不會顯示錯誤，但無法區分「LINE整體已政策性停用」與「這次剛好沒送到（quota/API錯誤/無訂閱者）」。路況-074回報已明確記錄此為留待後續派工單處理的事項；本輪即為該後續派工單。
+
+**修正內容**：
+1. `traffic/aiApprovedPbsBroadcast.js#isLineNotifyEnabled()`改為`export`（判斷邏輯本身零行變動），供`debugPush.js`重用同一份判斷，避免第二份可能漂移的複本。
+2. `debugPush.js#writeObservatoryRecord()`（本專案所有Observatory寫入的唯一choke point）新增`lineRetired: !isLineNotifyEnabled(env)`，套用於**每一筆**記錄（不限AI_NOTIFY_TRUE），因為收合卡片徽章與展開LINE段落對所有outcome都會渲染。
+3. `aiObservatoryIndex.js#buildAiObservatoryRecord()`新增`lineRetired = false`參數（預設false）。
+4. `aiObservatoryView.js#lineSummaryBadge()`新增分支：`lineSent`之後、`lineAttempted`失敗判斷之前插入`lineRetired`檢查，顯示「⏸️ LINE 已停用」，取代原本借用的「⏭️ LINE 未發送」。`lineSent`與`lineAttempted`失敗分支的既有判斷條件與文字**逐字不變**。
+5. 展開的LINE段落新增一行「LINE 服務狀態：已停用（自 V2.10.0，路況-074）」（`lineRetired===true`時顯示），文字為凍結的歷史事實常數（`LINE_RETIRED_STATUS_LABEL`），不隨當下`APP_VERSION`浮動——記錄的是「哪一輪讓LINE停用」，不是「現在是第幾版」。
+6. `buildDetailPlainText()`（路況-066的一鍵全選文字鏡像）同步新增相同一行，維持既有的「純文字版本與畫面顯示不得漂移」維護承諾。
+
+**向下相容**：`lineRetired`欄位不存在的舊格式記錄（V2.10.1之前寫入、其48h TTL內被讀回）透過`buildAiObservatoryRecord()`的預設參數值自動degrade為`false`——這同時是正確的歷史事實（LINE在V2.10.0存在之前，從未真的被停用過），不是猜測。
+
+**明確不觸碰（依訂單不授權事項）**：任何推播邏輯、AI決策邏輯、`isLineNotifyEnabled()`本身的判斷方式（僅改為`export`，邏輯零行變動）；已封版之前所有版本（V2.10.0及更早）的任何記錄。
+
+**測試**：`test/aiObservatoryView.test.js`新增5則——(1)LINE啟用時（`lineRetired:false`）既有三態顯示邏輯不受影響regression lock；(2)停用時收合卡片正確顯示「⏸️ LINE 已停用」；(3)展開區塊正確顯示新增的「LINE 服務狀態」行；(4)舊格式記錄（`lineRetired`未定義）向下相容regression lock，不誤判為已停用；(5)`buildDetailPlainText()`同步鏡像。既有V2.10.0測試（其本身情境恰好就是`LINE_NOTIFY_ENABLED=FALSE`，正是本輪新增判斷會實際改變顯示文字的精確情境）斷言更新為新的、更精確的「⏸️ LINE 已停用」文字，測試標題同步更新反映這個預期內的顯示升級，而非既有斷言邏輯被隨意調整。
+
+**測試總數跨輪銜接揭露（依AGENTS.md第6節路況-071新增規則）**：本輪`git stash -u`基準1895項／1879通過／16失敗，與上一輪（V2.10.0，路況-074）報告收尾的1895/1879/16完全銜接，無落差。
+
+**APP_VERSION**：`V2.10.0`→`V2.10.1`（PATCH，純顯示層新增，比照V2.5.1/V2.6.1/V2.8.x先例）。全量迴歸1900項／1884通過／16失敗；`git stash -u`基準1895項／1879通過／16失敗；測試名稱集合逐字比對確認`NEW_FAILURES=0`（5則新測試全數通過，既有16則失敗與基準逐字相同，0新增0消失——此沙盒環境原生依賴限制導致的既有已知失敗，與本輪異動檔案無關）。
+
+**待現場觀察事項（明確記錄，不得寫成已確認）**：真實Production查修頁上，「⏸️ LINE 已停用」徽章與展開區塊的「LINE 服務狀態」行，是否確實讓真人不需再翻wrangler.jsonc或工程記憶就能理解為何沒有LINE記錄——尚未取得。
+
+**V2.10.1封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-17，路況-075）。封版依據：程式碼變更完成、全量迴歸1900項／1884通過／16失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.10.1`、commit已push main並驗證。發現問題一律開下一個版本，不回頭改已封版的`V2.10.1`。

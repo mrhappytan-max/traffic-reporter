@@ -320,7 +320,7 @@ import { isWindowsPbsAiCandidateEligible, buildAiCandidate, PBS_AI_DECISION_MODE
 import { DEBRIS_RISK } from '../traffic/debrisRiskPolicy.js';
 import { resolvePbsAiDecisionEnabled } from './aiConfig.js';
 import { resolveAiDecision, PBS_AI_MODEL_ID } from './aiDecisionEngine.js';
-import { runAiApprovedPbsBroadcast } from '../traffic/aiApprovedPbsBroadcast.js';
+import { runAiApprovedPbsBroadcast, isLineNotifyEnabled } from '../traffic/aiApprovedPbsBroadcast.js';
 import { isTdxRoadEventProductionNotifyEnabled } from '../traffic/sourceMode.js';
 import { taipeiDateString } from '../tdx/usageLedger.js';
 import { buildAiObservatoryRecord, recordAiObservatoryEntry, AI_OUTCOME } from './aiObservatoryIndex.js';
@@ -658,7 +658,16 @@ function buildPseudoCandidateFromRawEvent(event, generatedAt) {
  */
 async function writeObservatoryRecord(env, { candidate, eventId, lifecycle, fingerprint, now, idempotencyKeyHash, ...outcomeFields }) {
   try {
-    const record = buildAiObservatoryRecord({ candidate, eventId, lifecycle, fingerprint, now, ...outcomeFields });
+    // V2.10.1 (路況-075) — the SAME isLineNotifyEnabled(env) check
+    // aiApprovedPbsBroadcast.js#deliverToLineTargets() itself already
+    // gates on, read ONCE here (this is the one shared choke point every
+    // Observatory write already goes through) rather than threaded
+    // through every one of runAiDecisionPath's own return points. Set on
+    // EVERY record regardless of outcome — the collapsed-row LINE badge
+    // and the expanded LINE section both render for every record, not
+    // only AI_NOTIFY_TRUE ones, so this must be available everywhere
+    // aiObservatoryView.js reads it.
+    const record = buildAiObservatoryRecord({ candidate, eventId, lifecycle, fingerprint, now, lineRetired: !isLineNotifyEnabled(env), ...outcomeFields });
     await recordAiObservatoryEntry(env.TRAFFIC_KV, record, { taipeiDate: taipeiDateString(now), idempotencyKeyHash, now });
   } catch (err) {
     console.error(`[pbs-debug-push][ai-observatory] eventId=${eventId} lifecycle=${lifecycle} failed: ${err && err.message}`);

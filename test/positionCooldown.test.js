@@ -222,7 +222,7 @@ afterEach(() => {
 });
 
 test('APP_VERSION reflects the current release', () => {
-  assert.equal(APP_VERSION, 'V2.10.0');
+  assert.equal(APP_VERSION, 'V2.10.1');
 });
 
 // 路況-070 四節 (1): 60分鐘內同位置、無嚴重度上升（HIGH->HIGH）-> 擋下
