@@ -59,7 +59,6 @@ async function main() {
     lock = await acquireMonitorLock(lockPath);
     do {
       const roundTime = new Date();
-      await touchMonitorLock(lockPath, roundTime);
       try {
         const summary = await runLocalMonitor({ now: roundTime });
         summary.debugPush = await dispatchDebugChanges(summary, {
@@ -73,6 +72,11 @@ async function main() {
         console.log('SHOULD_PUSH=NO');
         if (!watch) process.exitCode = 1;
       }
+      // Heartbeat (路況-078): refresh the lock's mtime every round, success
+      // or failure alike, so acquireMonitorLock()'s staleness check has an
+      // accurate signal that this process is still looping — not just
+      // that it started at some point in the past.
+      await touchMonitorLock(lockPath, roundTime);
       if (watch) await new Promise((resolvePromise) => setTimeout(resolvePromise, intervalMs));
     } while (watch);
   } catch (error) {

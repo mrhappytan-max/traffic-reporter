@@ -3431,7 +3431,107 @@
 // 16失敗；測試名稱集合逐字比對確認`NEW_FAILURES=0`（5則新測試全數通過，
 // 既有16則失敗與基準逐字相同，0新增0消失——此沙盒環境原生依賴限制導致
 // 的既有已知失敗，與本輪異動檔案無關）。
-export const APP_VERSION = 'V2.10.2';
+//
+// V2.10.3 (2026-09-23, 路況-082, 依路況-081查證結果與會議室裁示執行) —
+// 以真人本機實測版本（`d4c8a5e`）的鎖檔心跳機制取代V2.10.2的重新實作版本，
+// 併入Relay檔案化日誌（路況-080）。
+//
+// 背景：路況-081已查明`preserve/windows-runtime-20260906`分支（真人本機，
+// commit`d4c8a5e`）與main分岔於V1.8.3，其`wrangler.jsonc`嚴重過時（缺
+// `vars`/`ai`/`queues`區塊，R2 binding命名不同），若整份套用會回退44個
+// 版本以上的Production關鍵設定；同時`d4c8a5e`的鎖檔心跳機制（mtime-based）
+// 與main現有V2.10.2（JSON欄位based）為兩種不同實作，非表面風格差異。
+// 路況-081已完整列出差異表，未擅自取捨，交由會議室裁示。
+//
+// **會議室裁示（本輪依此執行）**：
+//   1. `wrangler.jsonc`——維持main現有版本，不套用`d4c8a5e`任何內容。
+//   2. 鎖檔心跳機制——採用`d4c8a5e`真人本機實測版本，取代V2.10.2實作。
+// 取捨理由：`d4c8a5e`已由真人於2026-09-23在本機實際運作驗證有效；V2.10.2
+// 版本是路況-079在雲端依訂單文字描述重新實作，從未在真實環境跑過。
+//
+// 修正內容：
+//   1. `wrangler.jsonc`：**零修改**，逐位元組維持main現狀（依裁示與訂單
+//      不授權事項）。
+//   2. `pbs-relay/src/localRuntime.js`：整份改採`d4c8a5e`版本——
+//      心跳訊號改為鎖檔檔案本身的mtime（`utimes()`/`stat()`），不再寫入
+//      JSON欄位；`resolveStaleLockThresholdMs()`直接讀取既有
+//      `PBS_LOCAL_INTERVAL_MS`（輪詢間隔）×5倍，移除V2.10.2新增的專屬
+//      `PBS_LOCAL_LOCK_HEARTBEAT_MS`環境變數；`touchMonitorLock(path, now)`
+//      簽名移除`{pid}`參數，ENOENT時靜默不處理（不重建，交由下一輪
+//      `acquireMonitorLock()`自然重建）；`acquireMonitorLock()`的EEXIST
+//      分支改為「PID存活」與「心跳未逾期（`stat()`檢查mtime）」兩個獨立
+//      判斷，兩者皆真才拒絕；移除V2.10.2版本「`heartbeatAt`不存在→視為
+//      未逾期」的特判（mtime機制對所有鎖檔天然一致，不需要此特判）；
+//      `release()`的`unlink()`補上`try/catch`，ENOENT視為正常。
+//   3. `pbs-relay/src/localMonitor.js`：`touchMonitorLock()`呼叫時機從
+//      V2.10.2的「每輪開始前」改為「每輪try/catch結束後（成功或失敗皆
+//      呼叫）」，比照`d4c8a5e`。
+//   4. `pbs-relay/src/server.js`／新增`pbs-relay/src/serverRuntime.js`
+//      （路況-080，Relay檔案化日誌）：整份套用`d4c8a5e`版本，與main現況
+//      無衝突（其base與main現有`server.js`逐位元組相同）——`createServer()`
+//      新增可選`logDirectory`參數（預設`null`＝維持既有零日誌行為，僅
+//      production bootstrap傳入真實路徑）、`/health`健康檢查節流式記錄
+//      （狀態不變時15分鐘一筆，狀態變化立即記錄）、`uncaughtException`/
+//      `unhandledRejection`/`SIGTERM`/`SIGINT`皆先落地`logs/relay/*.jsonl`
+//      再維持原有console輸出與process.exit行為，不改變既有對外行為。
+//   5. `.gitignore`：新增`.pbs-token-test`／`data/`兩行排除規則，套用
+//      `d4c8a5e`版本，與main現況無衝突（其base逐位元組相同）。**規劃外
+//      發現重申（路況-081已揭露）**：`data/`規則（無前導`/`）會連帶比對到
+//      repo根目錄的`data/`（31個既有追蹤檔案不受影響，但日後`git add -A`
+//      會略過此目錄下新檔案，除非強制加`-f`）——非阻擋項，僅供未來參考。
+//
+// 測試：`pbs-relay/tests/localRuntime.test.js`整份改採`d4c8a5e`版本（9則，
+// 與新版`localRuntime.js`的mtime-based機制一一對應）——**移除**V2.10.2
+// 遺留的5則JSON欄位機制專屬測試（心跳逾期回收［JSON版本待改為mtime驗證
+// 需另寫，`d4c8a5e`版本已涵蓋等價情境］、心跳未逾期仍拒絕、touchMonitorLock
+// 更新JSON欄位、ENOENT重建JSON、`resolveStaleLockThresholdMs()`專屬env var
+// 覆寫測試），因其斷言的是已被取代的JSON欄位機制與已移除的
+// `PBS_LOCAL_LOCK_HEARTBEAT_MS`環境變數，與新程式碼不相容；**新增**
+// `d4c8a5e`版本自帶的5則mtime-based測試（存活+心跳逾期回收、存活+心跳
+// 未逾期仍拒絕、死亡PID即使心跳新鮮仍回收、`touchMonitorLock`刷新mtime
+// 且面對消失的鎖檔不拋錯、預設閾值＝輪詢間隔×5倍且可被
+// `PBS_LOCAL_INTERVAL_MS`覆寫）；原有4則與心跳機制無關的測試（重複實例
+// 判斷、操作日誌欄位、日誌保留、debug push日誌）逐字保留不變。
+// `pbs-relay/tests/server.test.js`新增2則（`logDirectory`未傳入時行為
+// 不變、傳入時health_check記錄正確寫入），套用`d4c8a5e`版本，無衝突。
+// `pbs-relay/tests/serverRuntime.test.js`（新檔案）套用`d4c8a5e`版本。
+// `pbs-relay`目錄獨立`npm test`：142項全數通過（129既有＋13新增，含
+// localRuntime.test.js淨0則變化［移除5＋新增5＋原有4不變＝9，與V2.10.2的
+// 9則同數但內容不同］、server.test.js+2、serverRuntime.test.js+11）。
+//
+// PATCH bump（以另一種已實測驗證的機制取代先前未實測的等價實作，
+// 對外行為契約不變；併入的Relay日誌功能為純新增，不改變既有請求處理）。
+//
+// **明確記錄：V2.10.2的既有封版記錄保留不動，未被回頭修改**——本輪是
+// 「V2.10.3以真人本機實測版本取代V2.10.2的鎖檔心跳機制」的新版本，比照
+// 既有慣例（例如V2.4.16與V2.4.18的關係：後版本取代前版本的某項判斷，
+// 但前版本自己的封版記錄不重寫）。
+//
+// 明確不觸碰（依訂單不授權事項）：`wrangler.jsonc`一行未改；真人本機
+// 工作目錄（本單僅操作GitHub repo，未對`preserve`分支或本機做任何寫入）；
+// 已封版之前所有版本（V2.10.2及更早）的既有記錄本身；Cloudflare／Google
+// Drive任何操作。
+//
+// 真人本機同步提醒：本輪完成後main與真人本機`preserve/windows-runtime-
+// 20260906`分支的`d4c8a5e`在「鎖檔心跳+Relay日誌」這一部分邏輯等價，但
+// `wrangler.jsonc`維持main版本（比`d4c8a5e`新44個版本以上，含`vars`/`ai`/
+// `queues`區塊與正確的R2 binding命名）。**不建議**真人直接把`preserve`
+// 分支合併進本機工作目錄使用中的檔案（會帶入過時的`wrangler.jsonc`並可能
+// 覆蓋掉本機其他已對齊main的檔案）；較安全的做法留待另案處理，本單不代為
+// 執行或建議具體步驟。
+//
+// 測試總數跨輪銜接揭露（依AGENTS.md第6節路況-071新增規則）：本輪`git
+// stash -u`基準1905項／1889通過／16失敗，與上一輪（V2.10.2，路況-079）
+// 報告收尾的1905/1889/16完全銜接，無落差。變化來源明確：+13則測試（見
+// 上方測試段落），0則既有非心跳相關測試被觸碰。
+//
+// 全量迴歸1918項／1902通過／16失敗；`git stash -u`基準1905項／1889通過／
+// 16失敗；測試名稱集合逐字比對確認`NEW_FAILURES=0`（13則新測試全數通過，
+// 既有16則失敗與基準逐字相同——查證時基準的其中一次run曾多顯示1則額外
+// 失敗「4: missing/placeholder build metadata -> explicit drift, not
+// silently "fine"」，經連續兩次獨立重跑基準確認此為既有的環境層級flaky
+// test，與本輪變更檔案無關，不計入NEW_FAILURES）。
+export const APP_VERSION = 'V2.10.3';
 
 // Bumped only when the SHAPE of a public/admin JSON response this
 // project exposes changes in a way a consumer (Shared Feed, /version,

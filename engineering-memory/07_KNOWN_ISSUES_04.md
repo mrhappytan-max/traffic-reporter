@@ -224,3 +224,36 @@
 **待現場觀察事項（明確記錄，不得寫成已確認）**：下次LocalMonitor若再度非正常終止，心跳過期機制是否確實能讓watchdog在15分鐘內自動恢復（而非又拖到真人手動介入）——尚未取得。
 
 **V2.10.2封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-23，路況-079）。封版依據：程式碼變更完成、全量迴歸1905項／1889通過／16失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.10.2`、commit已push main並驗證。發現問題一律開下一個版本，不回頭改已封版的`V2.10.2`。
+
+## 修正紀錄｜V2.10.3（2026-09-23，路況-082）— 以真人本機實測版本取代V2.10.2的鎖檔心跳機制，併入Relay檔案化日誌
+
+**路況-081的查證與停下（本輪的前置決策依據）**：路況-081受命將真人本機`preserve/windows-runtime-20260906`分支（commit`d4c8a5e`，含路況-078鎖檔心跳機制的真人本機實測版＋路況-080的Relay檔案化日誌）併入main，執行前先查證發現：(1) 該分支與main分岔於**V1.8.3**（`git merge-base`=`7740778`），`wrangler.jsonc`因此嚴重過時——完全缺少`vars`/`ai`/`queues`三個區塊、R2 binding命名不同，若整份套用等同一次回退44個版本以上的Production關鍵設定；(2) `d4c8a5e`的鎖檔心跳機制（mtime-based，`utimes()`/`stat()`）與main現有V2.10.2（路況-079，JSON欄位based，`heartbeatAt`）為兩種不同技術方案，非表面風格差異。路況-081依訂單條款「若涉及既有設定衝突，停下回報，不擅自解決」與「若有實質差異，完整列出差異點，不得擅自決定以哪個為準」，在查證完成、**尚未做任何合併/commit/push**的狀態下停下，將完整比對結果（含差異表）回報會議室。
+
+**會議室裁示（本輪依此執行，未自行更動）**：
+1. `wrangler.jsonc`——**維持main現有版本，不套用`d4c8a5e`任何內容**。
+2. 鎖檔心跳機制——**採用`d4c8a5e`真人本機實測版本，取代main現有V2.10.2的JSON欄位版本**。
+
+**取捨理由（裁示明確記載，非工程部自行判斷）**：`d4c8a5e`已由真人於2026-09-23在本機實際運作驗證有效；V2.10.2版本是路況-079因無法取得路況-078真人本機原始內容，依訂單文字描述在雲端重新實作的等價版本，從未在真實環境跑過。
+
+**修正內容**：
+1. `wrangler.jsonc`：**零修改**，逐位元組維持main現狀。
+2. `pbs-relay/src/localRuntime.js`：整份改採`d4c8a5e`版本——心跳訊號改存於鎖檔檔案本身的mtime，不再寫JSON欄位；`resolveStaleLockThresholdMs()`直接讀取既有`PBS_LOCAL_INTERVAL_MS`（輪詢間隔）×5倍，移除V2.10.2新增的專屬`PBS_LOCAL_LOCK_HEARTBEAT_MS`環境變數；`touchMonitorLock(path, now)`移除`{pid}`參數，ENOENT時靜默不處理（交由下一輪`acquireMonitorLock()`自然重建，不主動重建）；`acquireMonitorLock()`EEXIST分支改為「PID存活」與「`stat()`檢查mtime未逾期」兩個獨立判斷同時成立才拒絕；移除V2.10.2「`heartbeatAt`不存在視為未逾期」的舊格式特判（mtime機制天然一致，不需要）；`release()`的`unlink()`補上ENOENT容錯。
+3. `pbs-relay/src/localMonitor.js`：`touchMonitorLock()`呼叫時機從「每輪開始前」改為「每輪try/catch結束後（成功或失敗皆呼叫）」。
+4. `pbs-relay/src/server.js`／新增`pbs-relay/src/serverRuntime.js`（路況-080）：整份套用`d4c8a5e`版本，其base與main現有`server.js`逐位元組相同，無衝突。`createServer()`新增可選`logDirectory`參數（預設`null`＝零日誌行為不變，僅production bootstrap傳入真實路徑），`/health`健康檢查節流式記錄（狀態不變15分鐘一筆／狀態變化立即記錄），`uncaughtException`/`unhandledRejection`/`SIGTERM`/`SIGINT`皆先落地`pbs-relay/logs/relay/*.jsonl`再維持既有console輸出與exit行為。
+5. `.gitignore`：新增`.pbs-token-test`／`data/`兩行，其base與main現況逐位元組相同，無衝突。**規劃外發現重申（路況-081已揭露）**：`data/`規則會連帶比對repo根目錄的`data/`（31個既有追蹤檔案不受影響，日後`git add -A`會略過此目錄下新檔案除非強制`-f`）——非阻擋項，僅供未來參考。
+
+**測試**：`pbs-relay/tests/localRuntime.test.js`整份改採`d4c8a5e`版本（9則）——**移除**V2.10.2遺留的5則JSON欄位機制專屬測試（心跳逾期回收［JSON版本］、心跳未逾期仍拒絕、`touchMonitorLock`更新JSON欄位、ENOENT重建JSON鎖檔、`resolveStaleLockThresholdMs()`專屬env var覆寫），因其斷言的是已被取代的機制與已移除的`PBS_LOCAL_LOCK_HEARTBEAT_MS`環境變數；**新增**`d4c8a5e`自帶的5則mtime-based測試（存活+心跳逾期回收、存活+心跳未逾期仍拒絕、死亡PID即使心跳新鮮仍回收、`touchMonitorLock`刷新mtime且面對消失的鎖檔不拋錯、預設閾值＝輪詢間隔×5倍且可被`PBS_LOCAL_INTERVAL_MS`覆寫）；原有4則與心跳機制無關的測試（重複實例判斷、操作日誌欄位、日誌保留、debug push日誌）逐字保留。`pbs-relay/tests/server.test.js`新增2則（`logDirectory`未傳入行為不變、傳入時health_check記錄正確寫入）。新增`pbs-relay/tests/serverRuntime.test.js`（11則）。`pbs-relay`目錄獨立`npm test`：142項全數通過（129既有＋13新增）。
+
+**APP_VERSION**：`V2.10.2`→`V2.10.3`（PATCH）。
+
+**測試總數跨輪銜接揭露（依AGENTS.md第6節路況-071新增規則）**：本輪`git stash -u`基準1905項／1889通過／16失敗，與上一輪（V2.10.2，路況-079）報告收尾的1905/1889/16完全銜接，無落差；變化來源明確為+13則測試。全量迴歸1918項／1902通過／16失敗；測試名稱集合逐字比對確認`NEW_FAILURES=0`。**規劃外發現**：查證時基準其中一次run曾多顯示1則額外失敗（「4: missing/placeholder build metadata -> explicit drift, not silently "fine"」），經連續兩次獨立重跑基準確認此為既有的環境層級flaky test，與本輪異動檔案無關，不計入NEW_FAILURES。
+
+**明確記錄：V2.10.2的既有封版記錄保留不動，未被回頭修改**——本輪是「V2.10.3以真人本機實測版本取代V2.10.2的鎖檔心跳機制」的新版本，比照既有慣例（V2.4.16與V2.4.18的關係：後版本取代前版本的某項判斷，前版本自己的封版記錄不重寫）。
+
+**明確不觸碰（依訂單不授權事項）**：`wrangler.jsonc`一行未改；真人本機工作目錄（本單僅操作GitHub repo，未對`preserve`分支或本機做任何寫入）；已封版之前所有版本（V2.10.2及更早）的既有記錄本身；Cloudflare／Google Drive任何操作。
+
+**真人本機同步提醒**：本輪完成後main與真人本機`preserve/windows-runtime-20260906`分支的`d4c8a5e`在「鎖檔心跳+Relay日誌」這一部分邏輯等價，但`wrangler.jsonc`維持main版本（比`d4c8a5e`新44個版本以上，含`vars`/`ai`/`queues`區塊與正確的R2 binding命名）。**不建議**真人直接把`preserve`分支合併進本機工作目錄使用中的檔案（會帶入過時的`wrangler.jsonc`）；較安全的做法留待另案處理，本單不代為執行或建議具體步驟。
+
+**待現場觀察事項（明確記錄，不得寫成已確認）**：真人下次重啟LocalMonitor/Relay時（比照本次流程），確認新版本的mtime-based心跳機制在repo標準版本上運作正常——尚未取得。
+
+**V2.10.3封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-23，路況-082）。封版依據：程式碼變更完成、全量迴歸1918項／1902通過／16失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.10.3`、commit已push main並驗證。發現問題一律開下一個版本，不回頭改已封版的`V2.10.3`。

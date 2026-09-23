@@ -4,6 +4,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { createServer } from '../src/server.js';
 
 const TOKEN = 'integration-token';
@@ -121,4 +124,43 @@ test('RELAY_TOKEN never appears in any response body across the whole request/re
       assert.doesNotMatch(text, new RegExp(TOKEN));
     }
   );
+});
+
+// 路況-080: with no logDirectory passed (every test above), createServer()
+// must behave exactly as it always did — nothing above this line was
+// changed to prove that. These two tests cover the new, opt-in behavior
+// itself.
+test('GET /health without logDirectory still returns 200 and writes nothing (logging stays off by default)', async () => {
+  await withServer(
+    async () => new Response('[]', { status: 200 }),
+    async (base) => {
+      const res = await fetch(`${base}/health`);
+      assert.equal(res.status, 200);
+    }
+  );
+  // No assertion beyond "did not throw" is possible here without a
+  // directory to check — the absence of a logDirectory means
+  // createHealthCheckLogger() is never even constructed (see server.js),
+  // which is exercised directly in the next test instead.
+});
+
+test('GET /health with logDirectory set writes a health_check log record', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'pbs-relay-server-health-log-'));
+  const server = createServer({
+    relayToken: TOKEN,
+    fetchImpl: async () => new Response('[]', { status: 200 }),
+    logDirectory: directory,
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/health`);
+    assert.equal(res.status, 200);
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(new Date());
+    const log = await readFile(join(directory, `${today}.jsonl`), 'utf8');
+    assert.match(log, /"event":"health_check"/);
+    assert.match(log, /"status":"ok"/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
