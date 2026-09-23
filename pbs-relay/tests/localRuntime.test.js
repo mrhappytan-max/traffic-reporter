@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { acquireMonitorLock, purgeOldOperationalLogs, writeDebugPushLog, writeFailureLog, writeSuccessLog } from '../src/localRuntime.js';
+import {
+  acquireMonitorLock, purgeOldOperationalLogs, resolveStaleLockThresholdMs, touchMonitorLock,
+  writeDebugPushLog, writeFailureLog, writeSuccessLog,
+} from '../src/localRuntime.js';
 
 test('duplicate-instance lock rejects a live PID and recovers a stale lock', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'pbs-runtime-lock-'));
@@ -56,4 +59,57 @@ test('round and per-event debug logs contain only bounded counters and safe ACK 
   assert.match(log, /"debugPushAttemptedCount":1/);
   assert.match(log, /"accepted":true/);
   assert.doesNotMatch(log, /must-not-log|Authorization|secret/);
+});
+
+test('a live PID with a stale heartbeat is treated as an abandoned lock and recovered', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'pbs-runtime-lock-heartbeat-'));
+  const path = join(directory, 'monitor.lock');
+  const staleHeartbeat = new Date('2026-09-23T00:00:00Z');
+  await writeFile(path, JSON.stringify({ pid: 111, startedAt: staleHeartbeat.toISOString(), heartbeatAt: staleHeartbeat.toISOString() }));
+  const now = new Date(staleHeartbeat.getTime() + 16 * 60 * 1000);
+  const lock = await acquireMonitorLock(path, {
+    pid: 222, now, processRunning: (pid) => pid === 111, staleAfterMs: 15 * 60 * 1000,
+  });
+  assert.equal(JSON.parse(await readFile(path, 'utf8')).pid, 222);
+  await lock.release();
+});
+
+test('a live PID with a fresh heartbeat is still rejected as genuinely running', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'pbs-runtime-lock-fresh-heartbeat-'));
+  const path = join(directory, 'monitor.lock');
+  const freshHeartbeat = new Date('2026-09-23T00:00:00Z');
+  await writeFile(path, JSON.stringify({ pid: 111, startedAt: freshHeartbeat.toISOString(), heartbeatAt: freshHeartbeat.toISOString() }));
+  const now = new Date(freshHeartbeat.getTime() + 5 * 60 * 1000);
+  await assert.rejects(
+    acquireMonitorLock(path, { pid: 222, now, processRunning: (pid) => pid === 111, staleAfterMs: 15 * 60 * 1000 }),
+    (error) => error.code === 'MONITOR_ALREADY_RUNNING',
+  );
+});
+
+test('touchMonitorLock refreshes heartbeatAt on an existing lock without changing pid or startedAt', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'pbs-runtime-lock-touch-'));
+  const path = join(directory, 'monitor.lock');
+  const startedAt = new Date('2026-09-23T00:00:00Z');
+  await writeFile(path, JSON.stringify({ pid: 333, startedAt: startedAt.toISOString(), heartbeatAt: startedAt.toISOString() }));
+  const laterNow = new Date(startedAt.getTime() + 3 * 60 * 1000);
+  await touchMonitorLock(path, laterNow);
+  const updated = JSON.parse(await readFile(path, 'utf8'));
+  assert.equal(updated.pid, 333);
+  assert.equal(updated.startedAt, startedAt.toISOString());
+  assert.equal(updated.heartbeatAt, laterNow.toISOString());
+});
+
+test('touchMonitorLock recreates a lock file that disappeared instead of throwing (ENOENT defense)', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'pbs-runtime-lock-touch-enoent-'));
+  const path = join(directory, 'monitor.lock');
+  const now = new Date('2026-09-23T00:00:00Z');
+  await touchMonitorLock(path, now, { pid: 444 });
+  const recreated = JSON.parse(await readFile(path, 'utf8'));
+  assert.equal(recreated.pid, 444);
+  assert.equal(recreated.heartbeatAt, now.toISOString());
+});
+
+test('resolveStaleLockThresholdMs defaults to heartbeat interval times the stale multiplier and honors overrides', () => {
+  assert.equal(resolveStaleLockThresholdMs(), 15 * 60 * 1000);
+  assert.equal(resolveStaleLockThresholdMs({ heartbeatIntervalMs: 60_000, staleMultiplier: 3 }), 180_000);
 });

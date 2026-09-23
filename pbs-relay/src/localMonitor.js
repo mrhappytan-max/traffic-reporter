@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fetchPbsUpstream } from './upstreamClient.js';
 import { compareWithPreviousState, filterRelevantPbsEvents, parsePbsPayload } from './localPrototype.js';
 import { readLocalState, writeLocalState } from './localState.js';
-import { acquireMonitorLock, writeFailureLog, writeSuccessLog } from './localRuntime.js';
+import { acquireMonitorLock, touchMonitorLock, writeFailureLog, writeSuccessLog } from './localRuntime.js';
 import { dispatchDebugChanges, isDebugPushEnabled } from './localDebugPush.js';
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
@@ -59,6 +59,7 @@ async function main() {
     lock = await acquireMonitorLock(lockPath);
     do {
       const roundTime = new Date();
+      await touchMonitorLock(lockPath, roundTime);
       try {
         const summary = await runLocalMonitor({ now: roundTime });
         summary.debugPush = await dispatchDebugChanges(summary, {

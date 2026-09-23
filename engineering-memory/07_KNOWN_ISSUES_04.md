@@ -191,3 +191,36 @@
 **待現場觀察事項（明確記錄，不得寫成已確認）**：真實Production查修頁上，「⏸️ LINE 已停用」徽章與展開區塊的「LINE 服務狀態」行，是否確實讓真人不需再翻wrangler.jsonc或工程記憶就能理解為何沒有LINE記錄——尚未取得。
 
 **V2.10.1封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-17，路況-075）。封版依據：程式碼變更完成、全量迴歸1900項／1884通過／16失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.10.1`、commit已push main並驗證。發現問題一律開下一個版本，不回頭改已封版的`V2.10.1`。
+
+## 修正紀錄｜V2.10.2（2026-09-23，路況-079）— 提交路況-078的LocalMonitor鎖檔修復進main
+
+**背景（依路況-076/077/078既有查證，本輪不重查）**：2026-09-21晚間，LocalMonitor因非正常終止導致鎖檔（`local-monitor.lock`）卡死——舊有`acquireMonitorLock()`只以「PID是否存活」判斷鎖檔是否有效，watchdog每分鐘一次的自動重啟嘗試因此被誤判為「monitor仍在執行」而反覆失敗，且每次失敗前短暫開啟的視窗會搶走真人桌面焦點，造成打字內容被中斷清空。路況-078已由Cowork在真人本機工作目錄（`C:\Users\mrhap\traffic-reporter`）完成修復方案A（鎖檔新增心跳機制），惟該修改僅存在於本機工作目錄，尚未進入版本控制；本單負責將其正式提交進main。
+
+**取得修改內容的方式（訂單二擇一授權，明確揭露）**：本session在雲端repo工程部執行，**無法**取得真人本機工作目錄路況-078實際寫回的位元組內容——`git log`／`grep`遍查本repo與工程記憶皆查無路況-076/077/078相關記錄，該內容從未同步進本repo。故採**第二種方式**：依路況-079訂單本身對修改內容的技術描述（函式名稱、常數值、邏輯位置）在repo內重新實作等價變更。訂單提及的「5則測試詳見路況-078回報」同樣因原文不可得而**無法逐字重現**——本輪5則測試為依訂單描述的行為自行設計，非路況-078原始測試的複製，此落差已完整揭露，不宣稱兩者位元組相同。
+
+**修正內容（`pbs-relay/src/localRuntime.js`）**：
+1. 新增`DEFAULT_HEARTBEAT_INTERVAL_MS`（180000ms，比照既有`PBS_LOCAL_INTERVAL_MS`預設3分鐘輪詢間隔）與`DEFAULT_LOCK_STALE_MULTIPLIER`（5）。
+2. 新增`resolveStaleLockThresholdMs()`：回傳心跳過期閾值（預設180000×5=900000ms=15分鐘），支援`PBS_LOCAL_LOCK_HEARTBEAT_MS`／`PBS_LOCAL_LOCK_STALE_MULTIPLIER`環境變數覆寫。
+3. 新增`touchMonitorLock(path, now, { pid })`：更新鎖檔`heartbeatAt`欄位，不影響`pid`／`startedAt`；鎖檔已被外部刪除（ENOENT）時不拋錯，改以目前pid重新建立新鎖檔（ENOENT防呆）。
+4. `acquireMonitorLock()`新增`staleAfterMs`參數（預設取自`resolveStaleLockThresholdMs()`）；鎖檔內容新增`heartbeatAt`。既有EEXIST分支判斷從「PID存活即拒絕」改為「PID存活**且**心跳未逾期，才拒絕」；PID存活但心跳已逾期視為卡死殘留鎖檔，自動清除重取。舊格式鎖檔（無`heartbeatAt`）視為「心跳未逾期」以維持向下相容，既有測試逐字不變仍通過。
+5. `release()`既有清除邏輯**逐行不變**（依訂單不授權事項）。
+
+`pbs-relay/src/localMonitor.js`：import新增`touchMonitorLock`，watch迴圈內每輪`roundTime`計算後新增一行`await touchMonitorLock(lockPath, roundTime)`呼叫。
+
+**測試**：`pbs-relay/tests/localRuntime.test.js`新增5則（本輪自行設計，見上方揭露）——(1)PID存活但心跳已逾15分鐘閾值→視為卡死，自動清除重取；(2)PID存活且心跳未逾期→仍正確拒絕（確保新機制不削弱既有防重複啟動保護）；(3)`touchMonitorLock()`更新`heartbeatAt`，`pid`/`startedAt`不變；(4)`touchMonitorLock()`面對ENOENT不拋錯，改為重建；(5)`resolveStaleLockThresholdMs()`預設值與覆寫參數皆正確。`pbs-relay`目錄獨立執行`npm test`：129項全數通過。
+
+**APP_VERSION**：`V2.10.1`→`V2.10.2`（PATCH，修復性質，不改變對外行為契約）。
+
+**測試總數跨輪銜接揭露（依AGENTS.md第6節路況-071新增規則）**：本輪`git stash -u`基準1900項／1884通過／16失敗，與上一輪（V2.10.1，路況-075）報告收尾的1900/1884/16完全銜接，無落差。全量迴歸1905項／1889通過／16失敗；測試名稱集合逐字比對確認`NEW_FAILURES=0`（5則新測試全數通過，既有16則失敗與基準逐字相同）。
+
+**規劃外發現，完整揭露**：repo根目錄`node --test`預設遞迴掃描含`pbs-relay/tests/*.test.js`，故先前各輪回報的「全量迴歸」數字本就已包含pbs-relay測試，非本輪新納入，僅為本輪查證時重新確認並在此註明。
+
+**明確不觸碰（依訂單不授權事項）**：真人本機工作目錄（本單僅操作GitHub repo，未對本機做任何git操作）；方案B（視窗/啟動方式，真人已定案不執行）；`release()`既有清除邏輯；已封版之前所有版本（V2.10.1及更早）的任何記錄；Cloudflare／Google Drive任何操作。
+
+**明確記錄未解決事項**：LocalMonitor最初為何非正常終止（最上游根因）仍未查明，本單與路況-078皆未處理此根因，僅處理「非正常終止後鎖檔卡死、watchdog連帶失效」這一段下游後果。
+
+**真人本機工作目錄與本次GitHub提交的一致性：不一致，本單不負責使兩者一致**。本單提交的是本session依訂單描述重新實作的等價版本；真人本機工作目錄若仍保留路況-078當時Cowork寫入的版本，兩份程式碼在位元組層級大機率不同（縱使行為等價）。依訂單本文，兩者如何對齊屬於另一個獨立問題，本單不處理、不代為決定，僅如實記錄現狀不同步，留待真人後續決定（例如本機`git pull`覆蓋本機版本，或反向以本機版本為準另開一版）。
+
+**待現場觀察事項（明確記錄，不得寫成已確認）**：下次LocalMonitor若再度非正常終止，心跳過期機制是否確實能讓watchdog在15分鐘內自動恢復（而非又拖到真人手動介入）——尚未取得。
+
+**V2.10.2封版標記（依AGENTS.md第6節一段式封版規則）**：**SEALED**（2026-09-23，路況-079）。封版依據：程式碼變更完成、全量迴歸1905項／1889通過／16失敗、`git stash -u`對照基準以測試名稱集合比對`NEW_FAILURES=0`、`APP_VERSION`已bump至`V2.10.2`、commit已push main並驗證。發現問題一律開下一個版本，不回頭改已封版的`V2.10.2`。

@@ -1,7 +1,9 @@
-import { appendFile, mkdir, open, readFile, readdir, unlink } from 'node:fs/promises';
+import { appendFile, mkdir, open, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 export const DEFAULT_LOG_RETENTION_DAYS = 7;
+export const DEFAULT_HEARTBEAT_INTERVAL_MS = 3 * 60 * 1000;
+export const DEFAULT_LOCK_STALE_MULTIPLIER = 5;
 
 function taipeiDate(date) {
   return new Intl.DateTimeFormat('en-CA', {
@@ -14,14 +16,34 @@ function isProcessRunning(pid) {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
+export function resolveStaleLockThresholdMs({
+  heartbeatIntervalMs = Number(process.env.PBS_LOCAL_LOCK_HEARTBEAT_MS) || DEFAULT_HEARTBEAT_INTERVAL_MS,
+  staleMultiplier = Number(process.env.PBS_LOCAL_LOCK_STALE_MULTIPLIER) || DEFAULT_LOCK_STALE_MULTIPLIER,
+} = {}) {
+  return heartbeatIntervalMs * staleMultiplier;
+}
+
+export async function touchMonitorLock(path, now = new Date(), { pid = process.pid } = {}) {
+  let current;
+  try {
+    current = JSON.parse(await readFile(path, 'utf8'));
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+    current = { pid, startedAt: now.toISOString() };
+  }
+  current.heartbeatAt = now.toISOString();
+  await writeFile(path, `${JSON.stringify(current)}\n`, 'utf8');
+}
+
 export async function acquireMonitorLock(path, {
   pid = process.pid, now = new Date(), processRunning = isProcessRunning,
+  staleAfterMs = resolveStaleLockThresholdMs(),
 } = {}) {
   await mkdir(dirname(path), { recursive: true });
   const tryAcquire = async () => {
     try {
       const handle = await open(path, 'wx');
-      await handle.writeFile(`${JSON.stringify({ pid, startedAt: now.toISOString() })}\n`, 'utf8');
+      await handle.writeFile(`${JSON.stringify({ pid, startedAt: now.toISOString(), heartbeatAt: now.toISOString() })}\n`, 'utf8');
       let released = false;
       return {
         async release() {
@@ -38,9 +60,14 @@ export async function acquireMonitorLock(path, {
       };
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;
-      let existingPid = null;
-      try { existingPid = JSON.parse(await readFile(path, 'utf8')).pid; } catch { /* stale malformed lock */ }
-      if (processRunning(existingPid)) {
+      let existing = null;
+      try { existing = JSON.parse(await readFile(path, 'utf8')); } catch { /* stale malformed lock */ }
+      const existingPid = existing?.pid ?? null;
+      // Missing heartbeatAt means a lock written before this mechanism existed;
+      // treat it as fresh (pid-liveness-only) rather than infinitely stale.
+      const heartbeatStale = existing?.heartbeatAt != null
+        && now.getTime() - new Date(existing.heartbeatAt).getTime() > staleAfterMs;
+      if (processRunning(existingPid) && !heartbeatStale) {
         const duplicate = new Error(`PBS Local Monitor is already running with PID ${existingPid}`);
         duplicate.code = 'MONITOR_ALREADY_RUNNING';
         throw duplicate;
