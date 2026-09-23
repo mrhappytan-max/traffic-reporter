@@ -1,7 +1,26 @@
-import { appendFile, mkdir, open, readFile, readdir, unlink } from 'node:fs/promises';
+import { appendFile, mkdir, open, readFile, readdir, stat, unlink, utimes } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 export const DEFAULT_LOG_RETENTION_DAYS = 7;
+
+// Mirrors localMonitor.js's own PBS_LOCAL_INTERVAL_MS default (3 minutes).
+// Kept as an independent constant here — rather than imported from
+// localMonitor.js — to avoid a circular import between the two modules
+// (localMonitor.js already imports from this file).
+export const DEFAULT_HEARTBEAT_INTERVAL_MS = 3 * 60 * 1000;
+
+// 路況-076/077: on 2026-09-21 LocalMonitor was terminated abnormally and
+// never reached release()'s cleanup path, leaving data/local-monitor.lock
+// behind with a PID that no longer belonged to the real process. Because
+// acquireMonitorLock() only checked process.kill(pid, 0) — which merely
+// confirms *some* process currently holds that PID, not that it is the
+// original LocalMonitor — a later, unrelated process reusing the same PID
+// number would be enough to make the stale lock look "alive" forever,
+// permanently blocking every one-minute watchdog restart attempt. A lock
+// whose heartbeat is older than this many polling intervals is now also
+// treated as abandoned, even when its recorded PID still passes the
+// liveness check.
+export const DEFAULT_LOCK_STALE_MULTIPLIER = 5;
 
 function taipeiDate(date) {
   return new Intl.DateTimeFormat('en-CA', {
@@ -14,8 +33,41 @@ function isProcessRunning(pid) {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
+// PBS_LOCAL_INTERVAL_MS uses the same "Number(env || default)" pattern
+// localMonitor.js's main() uses for the same env var, so an override
+// there is picked up here too without the two modules importing from
+// each other.
+export function resolveStaleLockThresholdMs() {
+  const intervalMs = Number(process.env.PBS_LOCAL_INTERVAL_MS) || DEFAULT_HEARTBEAT_INTERVAL_MS;
+  return intervalMs * DEFAULT_LOCK_STALE_MULTIPLIER;
+}
+
+// Is the lock file's last-modified time older than the stale threshold?
+// A lock nobody has touched in that long is treated as abandoned
+// regardless of what isProcessRunning() says about its recorded PID.
+async function isLockStale(path, { now = new Date(), staleAfterMs } = {}) {
+  const stats = await stat(path);
+  return now.getTime() - stats.mtimeMs > staleAfterMs;
+}
+
+// Call once per watch-loop round (success or failure alike — a failed PBS
+// fetch still proves the process is alive and looping) so the lock's
+// mtime reflects when its owning process was last known to be working,
+// not just when it started. Never throws: a missed heartbeat should not
+// crash the monitor, and if the lock file is already gone there is
+// nothing to touch — acquireMonitorLock() will simply recreate it on the
+// next round.
+export async function touchMonitorLock(path, now = new Date()) {
+  try {
+    await utimes(path, now, now);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+}
+
 export async function acquireMonitorLock(path, {
   pid = process.pid, now = new Date(), processRunning = isProcessRunning,
+  staleAfterMs = resolveStaleLockThresholdMs(),
 } = {}) {
   await mkdir(dirname(path), { recursive: true });
   const tryAcquire = async () => {
@@ -40,12 +92,31 @@ export async function acquireMonitorLock(path, {
       if (error?.code !== 'EEXIST') throw error;
       let existingPid = null;
       try { existingPid = JSON.parse(await readFile(path, 'utf8')).pid; } catch { /* stale malformed lock */ }
-      if (processRunning(existingPid)) {
+      const alive = processRunning(existingPid);
+      // A PID that still looks alive is not enough on its own — PID
+      // numbers get reused once the original process is gone — so also
+      // require a recent heartbeat before trusting the lock. If the lock
+      // file vanishes between the readFile above and this stat() there is
+      // nothing left to check; treat that race the same as "not alive".
+      let stale = false;
+      if (alive) {
+        try {
+          stale = await isLockStale(path, { now, staleAfterMs });
+        } catch (statError) {
+          if (statError?.code !== 'ENOENT') throw statError;
+          stale = true;
+        }
+      }
+      if (alive && !stale) {
         const duplicate = new Error(`PBS Local Monitor is already running with PID ${existingPid}`);
         duplicate.code = 'MONITOR_ALREADY_RUNNING';
         throw duplicate;
       }
-      await unlink(path);
+      try {
+        await unlink(path);
+      } catch (unlinkError) {
+        if (unlinkError?.code !== 'ENOENT') throw unlinkError;
+      }
       return tryAcquire();
     }
   };

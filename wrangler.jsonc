@@ -1,50 +1,58 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "traffic-reporter",
-  "main": "src/index.js",
-  "compatibility_date": "2026-08-15",
-  "observability": {
-    "enabled": true
-  },
-  "triggers": {
-    // V1.6.1: every 10 minutes, UTC (Cloudflare Cron Triggers are always
-    // UTC; UTC minutes == Asia/Taipei minutes since Taipei is a fixed
-    // UTC+8 offset). PBS runs every tick (24/7). TDX (國道+省道 only —
-    // see src/tdx/sources.js's PRODUCTION_TDX_SOURCE_IDS) is further
-    // gated INSIDE the scheduled handler to only every 2nd tick
-    // (minute 00/20/40) and only 08:00–21:59:59 Asia/Taipei — see
-    // src/traffic/tdxSchedule.js. Deliberately still just ONE Cron
-    // trigger, not two competing schedules — "不要建立兩套互相複雜的
-    // Cron".
-    "crons": ["*/10 * * * *"]
-  },
-  // TRAFFIC_KV was originally bound only via the Cloudflare dashboard,
-  // which `wrangler deploy` silently dropped on the next deploy because
-  // this file is treated as the full declarative binding set (exactly
-  // the caveat this comment used to warn about). Declared explicitly now
-  // with the real namespace ID from the dashboard so it survives every
-  // deploy. TDX_CLIENT_ID/TDX_CLIENT_SECRET/LINE_CHANNEL_ACCESS_TOKEN/
-  // LINE_CHANNEL_SECRET remain Cloudflare Secrets configured outside this
-  // repo — see src/traffic/dedupe.js — and are unaffected by this change.
-  //
-  // V1.6.3: ADMIN_PASSWORD (HTTP Basic Auth for GET /health,
-  // /debug/status, /debug/tdx, /debug/pbs, /debug/pbs-vpc-probe — see
-  // src/security/adminAuth.js) is ALSO a Cloudflare Secret configured
-  // outside this repo (`wrangler secret put`), never declared here —
-  // this file never carries real credential values, only bindings/IDs
-  // that are not secret on their own. The admin username is a fixed
-  // constant ("admin") in code, not a Secret — no first-run setup page,
-  // no Cookie session, no password ever stored in KV.
-  "kv_namespaces": [
-    {
-      "binding": "TRAFFIC_KV",
-      "id": "a763ccea75b0481aa4da99fa43f8341a"
-    }
-  ],
-  "vpc_services": [
-    {
-      "binding": "PBS_RELAY_WINDOWS",
-      "service_id": "01a008ab-4cc4-7c22-a747-4e27cdcc83c8"
-    }
-  ]
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "traffic-reporter",
+	"main": "src/index.js",
+	"compatibility_date": "2026-08-15",
+	"observability": {
+		"enabled": true
+	},
+	"triggers": {
+		// V1.6.1: every 10 minutes, UTC (Cloudflare Cron Triggers are always
+		// UTC; UTC minutes == Asia/Taipei minutes since Taipei is a fixed
+		// UTC+8 offset). PBS runs every tick (24/7). TDX (國道+省道 only —
+		// see src/tdx/sources.js's PRODUCTION_TDX_SOURCE_IDS) is further
+		// gated INSIDE the scheduled handler to only every 2nd tick
+		// (minute 00/20/40) and only 08:00–21:59:59 Asia/Taipei — see
+		// src/traffic/tdxSchedule.js. Deliberately still just ONE Cron
+		// trigger, not two competing schedules — "不要建立兩套互相複雜的
+		// Cron".
+		"crons": [
+			"*/10 * * * *"
+		]
+	},
+	// TRAFFIC_KV was originally bound only via the Cloudflare dashboard,
+	// which `wrangler deploy` silently dropped on the next deploy because
+	// this file is treated as the full declarative binding set (exactly
+	// the caveat this comment used to warn about). Declared explicitly now
+	// with the real namespace ID from the dashboard so it survives every
+	// deploy. TDX_CLIENT_ID/TDX_CLIENT_SECRET/LINE_CHANNEL_ACCESS_TOKEN/
+	// LINE_CHANNEL_SECRET remain Cloudflare Secrets configured outside this
+	// repo — see src/traffic/dedupe.js — and are unaffected by this change.
+	//
+	// V1.6.3: ADMIN_PASSWORD (HTTP Basic Auth for GET /health,
+	// /debug/status, /debug/tdx, /debug/pbs, /debug/pbs-vpc-probe — see
+	// src/security/adminAuth.js) is ALSO a Cloudflare Secret configured
+	// outside this repo (`wrangler secret put`), never declared here —
+	// this file never carries real credential values, only bindings/IDs
+	// that are not secret on their own. The admin username is a fixed
+	// constant ("admin") in code, not a Secret — no first-run setup page,
+	// no Cookie session, no password ever stored in KV.
+	"kv_namespaces": [
+		{
+			"binding": "TRAFFIC_KV",
+			"id": "a763ccea75b0481aa4da99fa43f8341a"
+		}
+	],
+	"vpc_services": [
+		{
+			"binding": "PBS_RELAY_WINDOWS",
+			"service_id": "01a008ab-4cc4-7c22-a747-4e27cdcc83c8"
+		}
+	],
+	"r2_buckets": [
+		{
+			"bucket_name": "traffic-reporter-cctv-images",
+			"binding": "traffic_reporter_cctv_images"
+		}
+	]
 }

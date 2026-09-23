@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fetchPbsUpstream } from './upstreamClient.js';
 import { compareWithPreviousState, filterRelevantPbsEvents, parsePbsPayload } from './localPrototype.js';
 import { readLocalState, writeLocalState } from './localState.js';
-import { acquireMonitorLock, writeFailureLog, writeSuccessLog } from './localRuntime.js';
+import { acquireMonitorLock, touchMonitorLock, writeFailureLog, writeSuccessLog } from './localRuntime.js';
 import { dispatchDebugChanges, isDebugPushEnabled } from './localDebugPush.js';
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
@@ -72,6 +72,11 @@ async function main() {
         console.log('SHOULD_PUSH=NO');
         if (!watch) process.exitCode = 1;
       }
+      // Heartbeat (路況-078): refresh the lock's mtime every round, success
+      // or failure alike, so acquireMonitorLock()'s staleness check has an
+      // accurate signal that this process is still looping — not just
+      // that it started at some point in the past.
+      await touchMonitorLock(lockPath, roundTime);
       if (watch) await new Promise((resolvePromise) => setTimeout(resolvePromise, intervalMs));
     } while (watch);
   } catch (error) {
